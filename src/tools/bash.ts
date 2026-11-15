@@ -60,18 +60,20 @@ const capture = (file: string, args: string[]): Promise<string> =>
 
 // 超时或中止时结束命令启动的进程，哪步失败都不管。只靠 taskkill /T 不够：bash fork 出的子进程再 exec
 // msys 程序时（如 `sleep 30; true` 里的 sleep），中间的 Windows 进程会退出，父进程链断开；但它们还在 bash 的
-// msys 进程组里。所以用 msys 的 ps 列出组员的 Windows pid，连同 bash 交给 taskkill /F /T；再查一遍，结束其间
-// exec 出来的。不用 msys 的 kill -9：信号发给 exec 到一半的进程会卡 5 秒，其间别的组员照常运行。
-// 仍会漏掉：用 setsid 离开进程组的进程；正好在结束那一刻创建的进程。几个调用同时被结束时 ps 偶尔也卡 5 秒。
+// msys 进程组里。所以先用 taskkill /F /T 结束 bash 的进程树，再读 pgid 文件：bash 已经没了，读到的不会再变。
+// 先读再结束不行：bash 可能在这之间写下 pgid、启动命令，组员就没人找了。然后用 msys 的 ps 列出组员的
+// Windows pid 交给 taskkill /F /T；再查一遍，结束其间 exec 出来的。不用 msys 的 kill -9：信号发给 exec 到一半的
+// 进程会卡 5 秒，其间别的组员照常运行。仍会漏掉的进程见 kb-tools 的“结束进程”。
 async function killAll(exe: string, pid: number | undefined, pgidFile: string): Promise<void> {
-  const pgid = (await readFile(pgidFile, "utf8").catch(() => "")).trim(); // 空：bash 还没开始执行命令
+  const killTrees = (pids: string[]) => pids.length > 0 && capture("taskkill", ["/F", "/T", ...pids.flatMap((p) => ["/PID", p])]);
+  await killTrees([String(pid)]);
+  const pgid = (await readFile(pgidFile, "utf8").catch(() => "")).trim();
+  if (!/^\d+$/.test(pgid)) return; // bash 没开始执行命令，也不会再开始了
   const group = async (): Promise<string[]> => {
-    if (!/^\d+$/.test(pgid)) return [];
     const ps = await capture(path.join(exe, "..", "..", "usr", "bin", "ps.exe"), ["-l"]); // PID PPID PGID WINPID…，行首可有状态字母
     return [...ps.matchAll(/^[^\d\n]*\d+\s+\d+\s+(\d+)\s+(\d+)/gm)].filter((m) => m[1] === pgid).map((m) => m[2] ?? "");
   };
-  const killTrees = (pids: string[]) => pids.length > 0 && capture("taskkill", ["/F", "/T", ...pids.flatMap((p) => ["/PID", p])]);
-  await killTrees([String(pid), ...(await group())]);
+  await killTrees(await group());
   await killTrees(await group());
 }
 
