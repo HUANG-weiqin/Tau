@@ -158,7 +158,7 @@ type Reply =
 - 本地时间是 CLI 进程的 `new Date().toLocaleString()`，用系统默认区域，不用投影里的 `now`。服务和 CLI 在同一台机器上。
 - 阶段：`idle`；跑过一轮时 `idle(done)`、`idle(stepLimit)`、`idle(stopped)` 或 `idle(error)`；`等模型 第<s>步`、`换段中 第<s>步`、`等工具 第<s>步`。
 - 用量不小于 1000 时写成 `<x.x>k`。
-- 运行多久只用一个单位：`<n>秒`、`<n>分`、`<x.x>时`、`<x.x>天`。
+- 运行多久只用一个单位：`<n>秒`、`<n>分`、`<x.x>时`、`<x.x>天`。和 `self` 一样向下取整，所以 `ps` 不会比 `self` 显示得更久。
 - 没有进程时，第二行是 `没有进程。`。
 - 投影里有、`ps` 没显示的：模型、排队消息数、本段开始多久、兄弟进程、出错的原因。
 
@@ -265,7 +265,7 @@ tau stop <进程>
 | `src/server/listen.ts` | `listen`：在命名管道上监听；`EADDRINUSE` 变成“已经有一个 tau 服务” |
 | `src/server/credentials.ts` | `piCredentials`：只读 pi 的凭据文件，只交出 `api_key` 条目 |
 | `src/protocol.ts` | `PIPE`、`Request`、`Reply` |
-| `src/cli/main.ts` | `main`（命令和退出码）、`request`（连接、发一行、逐行交出回复）、`formatPs` |
+| `src/cli/main.ts` | `main`（命令和退出码）、`request`（连接、发一行、逐行交出回复）、`formatPs`、`ago` |
 | `src/main.ts` | 入口：`serve` 或 CLI；`~/.tau` 的位置；信号处理 |
 | `tau.cmd` | 启动脚本 |
 | `test/server/e2e.test.ts` | faux 模型端到端；回执之前断开；连不上 |

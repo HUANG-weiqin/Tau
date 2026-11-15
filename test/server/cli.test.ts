@@ -12,7 +12,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { format } from "node:util";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import type { AssistantMessage, FauxProviderHandle, FauxResponseFactory, Message as AiMessage, MutableModels, RegisterFauxProviderOptions } from "@earendil-works/pi-ai";
-import { main, request } from "../../src/cli/main.ts";
+import { ago, main, request } from "../../src/cli/main.ts";
 import { contextUsed } from "../../src/kernel/derive.ts";
 import type { Projection } from "../../src/kernel/observe.ts";
 import type { Message } from "../../src/kernel/types.ts";
@@ -227,6 +227,14 @@ function segmentOf(svc: Service, id: string): Message[] {
 
 const PLAIN = "只读的进程：等着";
 const MEM = "带记忆的进程：记住颜色";
+
+
+test("ps 的运行多久和 self 一样向下取整：ps 不会比 self 显示得更久", () => {
+  assert.equal(ago(6_999), "6秒");
+  assert.equal(ago(119_999), "1分");
+  assert.equal(ago(3_600_000 + 359_999), "1.0时");
+  assert.equal(ago(86_400_000 * 2 - 1), "1.9天");
+});
 
 test("用 CLI 同时运行两个进程：带记忆的写入又读回记忆，不带记忆的请求里没有记忆工具；停止一个，另一个照常结束", { timeout: 10_000 }, async (t) => {
   const e = await setup(t, { mem: "read, memory", plain: "read" });

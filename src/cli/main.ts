@@ -107,10 +107,11 @@ function k(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
 
-function ago(ms: number): string {
-  const s = Math.round(ms / 1000);
+/** 运行多久，只用一个单位。和 `self` 一样向下取整（导出给测试）。 */
+export function ago(ms: number): string {
+  const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}秒`;
-  if (s < 3600) return `${Math.round(s / 60)}分`;
-  if (s < 86400) return `${(s / 3600).toFixed(1)}时`;
-  return `${(s / 86400).toFixed(1)}天`;
+  if (s < 3600) return `${Math.floor(s / 60)}分`;
+  if (s < 86400) return `${(Math.floor(s / 360) / 10).toFixed(1)}时`;
+  return `${(Math.floor(s / 8640) / 10).toFixed(1)}天`;
 }
