@@ -75,7 +75,7 @@ test("接进 pi-ai：文件里的 key 优先；只有 OAuth 或 key 为空时用
   writeFileSync(path, JSON.stringify({ deepseek: { type: "api_key", key: "file-ds" }, anthropic: { type: "oauth", access: "a", refresh: "r", expires: 1 } }));
   assert.deepEqual((await models.getAuth("deepseek"))?.auth, { apiKey: "file-ds" });
   assert.deepEqual((await models.getAuth("anthropic"))?.auth, { apiKey: "env-an" });
-  // pi-ai 逐字段合并：key 为空时仍读环境变量。
+  // deepseek 的 key 为空串时仍读环境变量。cloudflare 和 google-vertex 不是这样（kb-service）。
   writeFileSync(path, JSON.stringify({ deepseek: { type: "api_key", key: "" } }));
   assert.deepEqual((await models.getAuth("deepseek"))?.auth, { apiKey: "env-ds" });
   // 读凭据在发请求之前失败，所以不连网络。

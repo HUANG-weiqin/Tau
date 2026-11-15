@@ -89,13 +89,13 @@
 - 已核实（`@earendil-works/pi-ai` 1.0.0）：
   - 模型目录带 `getModel` 和 `streamSimple(model, context, options)`。`streamSimple` 要整个模型对象，所以调用时仍从目录取模型。
   - 内置的模型目录是 `@earendil-works/pi-ai/providers/all` 的 `builtinModels()`。`createModels()` 返回空目录，没有任何 provider；测试用它装 faux provider。（D20 改正了之前“`createModels()` 就是模型目录”的说法。）
-  - 转换消息时，连续的用户消息原样传过。各家模型接不接受，第 3 步用真模型核实。
+  - 转换消息时，连续的用户消息原样传过。各家模型接不接受，第 3 步用真模型核实。（后来只在 opencode-go/deepseek-v4.1-flash 上核实，见 [D24](#d24-真模型验收)。）
   - `~/.pi/agent/auth.json` 的凭据和 pi-ai 的 `Credential` 同形（`api_key` 或 `oauth`）。tau 还不读它。（D23 改为只读复用其中的 `api_key` 条目。）
   - `providers/faux` 提供假模型，可以用于测试。
   - 用户消息带 `timestamp`；助手消息带 `usage`（含 `totalTokens` 和 `cost`）、`stopReason`（`pending`、`stop`、`length`、`toolUse`、`error`、`aborted`、`deferred`）和可选的 `errorMessage`。模型失败写在助手消息里，不抛出。
   - pi-ai 自己估算用量时取 `totalTokens`，为 0 时取 `input + output + cacheRead + cacheWrite`。
   - 模型带 `contextWindow`；请求上下文由 `systemPrompt`、`messages` 和可选的 `tools` 组成。
-  - 转换消息时，pi-ai 给没有结果的工具调用补一条结果，跳过 `error` 和 `aborted` 的助手消息；接口要求工具结果后面接助手消息时，自动插入一条。
+  - 转换消息时，pi-ai 给没有结果的工具调用补一条结果，跳过 `error` 和 `aborted` 的助手消息；接口要求工具结果后面接助手消息时，自动插入一条。（后来核实：只在 openai-completions 里有，要模型的 compat 打开 `requiresAssistantAfterToolResult`，内置模型都没打开，见 [D24](#d24-真模型验收)。）
 - `contextWindow` 在进程启动时冻结进快照，是为了让 `decide` 不做 I/O。
 - 理由：Pi Web 最复杂的代码都源于 Agent 循环不归自己，只能适配 SDK 的私有 API。
 - 放弃：`@earendil-works/pi-coding-agent`（143 MB，带扩展、codemode、TUI）。4 个工具自己写。
@@ -227,7 +227,7 @@
   - `Env.utcOffsetMinutes` 删掉，本地时间在内核外格式化；`observe` 只收 `now`，不收记忆视图。
   - `read` 自己的大小上限、`self` 的 2 KiB 上限删掉，统一用工具结果的字节上限。
 - YAGNI：`stepsPerTurn` 从预设字段改为内核常量 `STEPS_PER_TURN`，预设从 4 个字段减到 3 个。现在没有人需要每个预设用不同的步数。
-- 风险表：pi-ai 已经处理“工具结果后接用户消息”，只剩“连续多条用户消息”要核实，删掉“补一条固定助手回复”的后备方案。加上 `tau ps` 会随年头变慢。
+- 风险表：pi-ai 已经处理“工具结果后接用户消息”，只剩“连续多条用户消息”要核实，删掉“补一条固定助手回复”的后备方案。加上 `tau ps` 会随年头变慢。（后来核实：“已经处理”不成立，见 [D24](#d24-真模型验收)。）
 - 文档：`decide` 签名、库里有哪几张表、事务做哪几件事，只留在一处（当时是设计稿；第 2 步之后是 [kb-kernel](kb-kernel.md) 和 [kb-store](kb-store.md)）；“打开进程”改为“处理一条输入”；模块依赖改正（`store` 通过接口使用记忆）；`tau send` 挪到清单第 3 步；第 2 步用假的库内工具测试；清单的不变量改为运行中也成立的写法。
 - 审查者认为应该保留的：纯 `decide` 加“一条输入一个事务”；`effectOf` 推出副作用；`purpose` 存在阶段里（保存当时的决定，比事后重算估算值稳）；`Turn` 和 `ended` 的位置；`endTurn` 的两种补法；失败的回复不写入；库内副作用同事务执行；全库自增版本号加“写入 = 删旧插新”；记忆一个总上限；命名管道即锁。
 - 没有采纳：把 `segment.memoryView` 改成新段的第一条系统消息。D17 已经定过，改动面大，审查者自己也不建议现在动。
@@ -284,7 +284,7 @@
   - 正常退出不是“只关库”，先等现有连接全部结束（[kb-service](kb-service.md#退出)）。kb-executor 之前的说法已改正。
 - 还没定的：
   - 认证：能不能复用 pi-ai 的凭据存储，还没核实。后来由 [D23](#d23-凭据只读复用-pi-的凭据文件) 定下。
-  - 各家模型接不接受连续多条用户消息，还没用真模型核实（设计稿[风险](../docs/design/mvp.md#风险)）。
+  - 各家模型接不接受连续多条用户消息，还没用真模型核实（设计稿[风险](../docs/design/mvp.md#风险)）。后来在 opencode-go/deepseek-v4.1-flash 上核实（[D24](#d24-真模型验收)）。
   - `tau ps` 显示的比 `self` 少，`idle` 和结束原因是英文。执行清单第 5 步要求两者一致（[kb-service](kb-service.md#tau-ps-的文字格式)）。
 
 ### D22 换段阈值、用量估算和记忆上限
@@ -311,7 +311,7 @@
   - 一次回复的工具调用太多时，补的结果会超过余量，交接请求可能超过窗口。改为不写入这条回复，本轮出错结束（[kb-kernel](kb-kernel.md#流程模型回复用途-turn)）。
   - `node:sqlite` 读 `TEXT` 在 U+0000 处截断；孤立的代理项存成 U+FFFD，量的和存的不是同一份文本；视图检查按 JS 字符串去掉旧行，在上限处覆盖会失败。改法见 [kb-memory](kb-memory.md#编码u0000-和孤立的代理项)。
   - 测试用的假记忆库不渲染真的视图，也不检查上限。测试不再断言它的视图文本。
-- 没解决的风险在设计稿的[风险](../docs/design/mvp.md#风险)表：2 字节一个 token 的下限、输出上限 1/8、GPT-5 的 400K 条目、小窗口。2 字节一个 token 没在本机量过，因为本机没有缓存的分词器词表，下载要许可。
+- 没解决的风险在设计稿的[风险](../docs/design/mvp.md#风险)表：2 字节一个 token 的下限、输出上限 1/8、GPT-5 的 400K 条目、小窗口。2 字节一个 token 没在本机量过，因为本机没有缓存的分词器词表，下载要许可。后来用真模型返回的用量量过（[D24](#d24-真模型验收)）。
 
 ### D23 凭据：只读复用 pi 的凭据文件
 
@@ -327,8 +327,38 @@
   - **只用环境变量**：要用户在启动服务的环境里再配一遍 key。
   - **tau 自己的凭据文件**：多一份要维护的秘密，没有用户需要它。
   - **复用 pi 的 OAuth**：要写回刷新后的令牌，和 pi 并发写同一个文件。
-- 后果：凭据文件里某个 provider 的 `key` 非空时，pi-ai 不再看这个 provider 的 API Key 环境变量；`key` 缺失或为空时照样读（pi-ai 逐字段合并）。bash 和服务以同一个用户运行，能读这个文件，符合“没有沙箱”（D7）。
-- 对抗式核查后补的：JSON 报错不带文件内容（V8 的报错会引用 key 的开头）；顶层不是对象、`key` 不是字符串时报错；拒绝非字面量 key；记下 pi 写文件时的竞态和不跟随 `PI_CODING_AGENT_DIR`。细节在 [kb-service](kb-service.md#启动脚本和入口)。
+- 后果：凭据文件里某个 provider 的 `key` 非空时，pi-ai 不再看这个 provider 的 API Key 环境变量；`key` 缺失时照样读（pi-ai 逐字段合并）；`key` 是空串时，cloudflare 和 google-vertex 不读。bash 和服务以同一个用户运行，能读这个文件，符合“没有沙箱”（D7）。
+- 对抗式核查后补的：JSON 报错不带文件内容（V8 的报错会引用 key 的开头）；顶层不是对象、`key` 不是字符串时报错；拒绝非字面量 key；记下 pi 写文件时的竞态和不跟随 `PI_CODING_AGENT_DIR`。细节在 [kb-service](kb-service.md#启动脚本和入口) 和 [kb-service 的坑点](kb-service.md#坑点)。
+
+### D24 真模型验收
+
+- 状态：默认（2026-11-15）。这是核实记录，用户还没确认。模型是 `opencode-go/deepseek-v4.1-flash`：API `openai-completions`，窗口 1M，凭据走 D23。`deepseek/deepseek-flash` 余额不足，`opencode-go/deepseek-v4-flash` 不在套餐里，都没用上。
+- 量法：探针脚本直接调 pi-ai，用 tau 的 `piCredentials`、`messageBytes`、`tokens`、`usageOf`、`HANDOFF_INSTRUCTION` 和工具定义。走查用 `serve()` 起临时服务：临时库、临时预设、测试管道，模型目录和 `src/main.ts` 一样，命令走真的 CLI `main`。脚本没进仓库。
+- 连续用户消息：三种形状都被接受，回答正确。一是两条连续的用户消息；二是 `[用户消息, 交接指令]`，带工具定义；三是真模型发出的工具调用和结果之后，再接两条用户消息。真服务里在“等模型”时停止再发，接口也接受了，但模型照做了被停的请求。
+- 第 3 步的任务：真模型依次 `read`、`edit`、`bash`，文件确实改了。
+- 第 5 步走查：带记忆的进程先 `memory_set`，下一轮用 `memory_get` 读回。它和不带记忆的进程同时运行过。停止其中一个，另一个照常结束。同一个预设的兄弟，阶段和步数在 `self` 和 `tau ps` 里一致；两次查看相隔约 2 秒，时长不可比。结束时 `effects`、`mailbox` 为空，`assertInvariants` 对所有进程成立。
+- 字节估算，只在这个模型上量过。量法：一条消息的请求，减去只含一句话的请求，比较 `input + cacheRead + cacheWrite`。
+
+  | 内容 | 字节/token |
+  |---|---|
+  | 英文 | 4.1 |
+  | TS 代码 | 3.7 |
+  | 中文文档 | 3.5 |
+  | 空白缩进 | 3.2 |
+  | JSON 日志 | 2.5 |
+  | emoji | 2.3 |
+  | 数字 CSV | 1.99 |
+  | 随机符号 | 1.75 |
+  | 随机生僻汉字 | 1.7 |
+  | 随机十六进制、base64 | 1.4 |
+
+  清单要的四类（中文、TS、英文、JSON 日志）都满足“下一次回复的用量不超过上一次的用量加估算”。最紧的是 JSON 日志，余 3,487 token。最后四类低于 2。
+- 对抗式核查发现、已经改的：凭据的四处（D23）；`tau ps` 的时长改为向下取整，和 `self` 一样。
+- 发现了、只记下的：
+  - 估算误差会累加（设计稿的[风险](../docs/design/mvp.md#风险)，[kb-kernel 的坑点](kb-kernel.md#坑点)）。
+  - 停止和失败不告诉模型（[kb-kernel 的坑点](kb-kernel.md#坑点)）。真服务里，被停的写诗请求在下一轮被照做了。下一条消息明说了“不用做”，也没拦住。
+  - pi-ai 对“工具结果后接用户消息”没有通用的处理，D19 的说法不对。只有 openai-completions 有一个兼容开关 `requiresAssistantAfterToolResult`，默认关，内置模型都没打开。其它 API 原样发出。
+- 没核实的：其它 API（`anthropic-messages`、`openai-responses` 等）；DeepSeek 直连；GPT-5 的 400K 条目；在用模型的 1M 窗口是不是真实的输入上限；用真模型换一次段。
 
 ## 未确认的默认值
 

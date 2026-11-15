@@ -1,6 +1,6 @@
 # tau MVP 执行清单
 
-`updated: 2026-11-15` · **当前：第 5 步**（第 3、4 步还有用真模型核实的项）
+`updated: 2026-11-15` · **当前：第 0 到 5 步完成**（没核实两项：GPT-5 的 400K 条目，现在不用；在用模型的 1M 窗口是不是真实的输入上限）
 
 按顺序做。每一步结束时，测试全部通过。设计细节见[设计稿](../design/mvp.md)，本清单只列任务和验收，不复述设计。
 
@@ -76,7 +76,7 @@
 ## 第 3 步：真模型、工具、服务
 
 - [x] 核实 pi-ai 的消息格式，定下 `segment_messages` 的存储格式（[D21](../../.knowledge/kb-decisions.md#d21-第-3-步定下的事)）。
-- [ ] 核实连续多条用户消息（模型出错后再发消息、交接指令接在用户消息后面），pi-ai 能否正确转换给各家模型。
+- [x] 核实连续多条用户消息（模型出错后再发消息、交接指令接在用户消息后面），pi-ai 能否正确转换给用到的模型。只核实了 opencode-go/deepseek-v4.1-flash（[D24](../../.knowledge/kb-decisions.md#d24-真模型验收)）。
 - [x] 认证：只读复用 pi 的凭据文件里的 `api_key` 条目，没有时用环境变量（[D23](../../.knowledge/kb-decisions.md#d23-凭据只读复用-pi-的凭据文件)）。
 - [x] 模型适配：`builtinModels()`（`@earendil-works/pi-ai/providers/all`）的模型目录加 `streamSimple`；按模型 ID 从目录取模型，查不到就上报 `error`；流式文本转发给观察者；助手消息原样存进工作段。
 - [x] 预设读取：3 个字段的前置信息，未知字段报错；启动时从模型目录查出 `contextWindow` 冻结进快照，查不到就启动失败。
@@ -87,7 +87,7 @@
 **验收**
 
 - [x] 用 faux 假模型跑通“读一个文件、改一行、跑一次命令”的测试（`test/server/e2e.test.ts`）。
-- [ ] 用真模型手动完成同样的任务。
+- [x] 用真模型手动完成同样的任务（[D24](../../.knowledge/kb-decisions.md#d24-真模型验收)）。
 - [x] 工具调用配对有专门的测试：多个工具调用、中途停止、中途崩溃（`test/server/pairing.test.ts`）。
 - [x] bash 超时能结束它启动的孙进程（`test/tools/bash.test.ts`）。
 - [x] 服务在回执之前断开时，CLI 提示“结果未知”（`test/server/e2e.test.ts`）。
@@ -109,8 +109,8 @@
 - [x] 5 种窗口（65,536 到 1,000,000）下，主路径和三条角落路径（停止、步数用完、交接一直失败，之后再发大消息）的交接请求加交接说明都放得进窗口（`test/kernel/acceptance.test.ts`）。
 - [x] 记忆的三个上限在边界上准确，被拒绝的写入不改库、不用掉版本号（`test/memory/kv.test.ts`）。
 - [x] 调用模型时请求的输出上限是 `min(model.maxTokens, 窗口的 1/8)`，交接调用也一样（`test/store/executor.test.ts`）。
-- [ ] 用真模型核实 2 字节一个 token 的估算：对用到的每家 provider，各发约 32 KiB 的中文文档、TS 代码、英文、JSON 日志，下一次回复的 `input + cacheRead + cacheWrite` 不超过上一次的用量加上中间消息的估算。
-- [ ] 核实 GPT-5 的 400K 条目的输入上限是不是约 272K（[设计稿的风险](../design/mvp.md#风险)）。
+- [x] 用真模型核实 2 字节一个 token 的估算：对用到的每家 provider，各发约 32 KiB 的中文文档、TS 代码、英文、JSON 日志，下一次回复的 `input + cacheRead + cacheWrite` 不超过上一次的用量加上中间消息的估算。只量了 opencode-go/deepseek-v4.1-flash（[D24](../../.knowledge/kb-decisions.md#d24-真模型验收)）。
+- [ ] 核实 GPT-5 的 400K 条目的输入上限是不是约 272K（[设计稿的风险](../design/mvp.md#风险)）。现在不用这类条目，用到时再核实。
 
 **收尾**：新建 `kb-memory.md`。
 
@@ -124,7 +124,7 @@
 - [x] 用 CLI 同时运行两个进程，一个用 `tools` 含 `memory` 的预设，一个用不含的（`test/server/cli.test.ts`，faux 模型）。
 - [x] `self` 能显示上下文用量、时间和运行中的兄弟进程；`tau ps` 显示的内容和它一致（`test/server/cli.test.ts`）。
 - [x] 在服务运行中随机杀掉它几次。每次重启后，恢复完成、执行器开始之前，没有 `running` 行，`assertInvariants` 成立（`test/server/kill.test.ts`）。
-- [ ] 手动走一遍：用带记忆的预设启动进程 → 用 `send` 对话 → 再用不带记忆的预设启动一个进程 → 两个同时运行 → 停止其中一个。
+- [x] 手动走一遍：用带记忆的预设启动进程 → 用 `send` 对话 → 再用不带记忆的预设启动一个进程 → 两个同时运行 → 停止其中一个（[D24](../../.knowledge/kb-decisions.md#d24-真模型验收)）。
 
 **收尾**：更新 `kb-service.md` 和 `kb-overview.md` 的入口。
 

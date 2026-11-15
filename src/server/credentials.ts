@@ -33,7 +33,8 @@ export function piCredentials(file: string): CredentialStore {
       const c = (await keys()).get(id);
       const key: unknown = c?.key;
       if (key !== undefined && typeof key !== "string") throw new Error(`${file} 里 ${id} 的 key 不是字符串。`);
-      // pi 把 `!` 开头的 key 当命令执行，把 `$` 当变量和转义。tau 不解析，原样发出去就是把命令原文当 key。
+      // pi 把 `!` 开头的 key 当命令执行，`$` 可能是变量或转义。tau 不解析，原样发出去就是把命令原文当 key。
+      // 含 `$` 一律拒绝，比 pi 严；已知的 provider key 都不含 `$`。
       if (key !== undefined && (key.startsWith("!") || key.includes("$"))) throw new Error(`tau 只支持字面量 key：${file} 里 ${id} 的 key 用了 pi 的命令或变量写法。`);
       return c;
     },

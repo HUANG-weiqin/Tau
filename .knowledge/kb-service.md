@@ -203,8 +203,10 @@ tau stop <进程>
 - `src/main.ts`：第一个参数是 `serve` 就动态导入服务的模块并启动，其余参数忽略。否则交给 CLI 的 `main`，返回值写进 `process.exitCode`。
 - 管道名、库和预设的位置写死在 `protocol.ts`、`main.ts` 和 `presets/load.ts`。`serve()` 和 CLI 的 `main` 接受别的管道和路径，只给测试用。
 - 服务的模型目录是 `builtinModels({ credentials })`（[kb-executor.md](kb-executor.md#调用模型actionsts)）。`credentials` 只读 `~/.pi/agent/auth.json` 里 `type` 为 `api_key` 的条目，每次调用都重读，从不写入（`src/server/credentials.ts`，理由见 [D23](kb-decisions.md#d23-凭据只读复用-pi-的凭据文件)）。
-- 文件里这个 provider 的 `key` 非空时，API Key 用它。没有这个条目（包括只有 OAuth 条目）、`key` 缺失或为空时，pi-ai 从服务进程的环境变量读 API Key（例如 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`）。pi-ai 逐字段合并：条目的其他字段（`env`）也一样。
-- 只支持字面量 `key`。以 `!` 开头（pi 当命令执行）或含 `$`（pi 当变量和转义）的 `key` 会报错，不原样发出去。
+- 文件里这个 provider 的 `key` 非空时，API Key 用它。没有这个条目（包括只有 OAuth 条目），或者 `key` 缺失时，pi-ai 从服务进程的环境变量读 API Key（例如 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`）。
+- `key` 是空串时各家不同。多数 provider 照样读环境变量。cloudflare-workers-ai、cloudflare-ai-gateway、google-vertex 把空串当成已有的值，不读环境变量，结果是没有配置。条目的 `env` 字段也是这样逐字段合并。
+- tau 不检查 `env` 的形状。写坏的 `env` 可能被忽略，退回进程的环境变量。pi 自己不会写出这种文件。
+- 只支持字面量 `key`。以 `!` 开头（pi 当命令执行）或含 `$`（pi 可能当变量或转义）的 `key` 会报错，不原样发出去。含 `$` 一律拒绝，比 pi 严；已知的 provider key 都不含 `$`。
 - 文件不存在算没有凭据。不是合法的 JSON、顶层不是对象、`key` 不是字符串时，这次模型调用以错误结束。报错不带文件内容：V8 的 JSON 报错会引用出错处附近的原文，可能是 key 的开头，而报错会存进库、显示在 CLI 上。
 - 路径写死成 `~/.pi/agent/auth.json`，不跟随 pi 的 `PI_CODING_AGENT_DIR`。
 - 模型调用由服务进程发出。CLI 的环境不影响模型调用。
