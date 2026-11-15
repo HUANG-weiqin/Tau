@@ -5,6 +5,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { MESSAGE_MAX_BYTES, utf8Bytes } from "../../src/kernel/derive.ts";
 import { bash } from "../../src/tools/bash.ts";
 
@@ -159,6 +160,20 @@ describe("超时和中止结束孙进程", { concurrency: 2, timeout: 30_000 }, 
     assert.match((await run(msysGrandchild("am"), 60, abortOnStart("am"))).text, /已中止/);
     await assertKilled("am");
   });
+});
+
+// bash 刚启动、还没写 pgid 时就中止，它可能在结束进程的途中写下 pgid、启动 sh。先读 pgid 再结束 bash 的话，
+// 读到的是空，不按进程组找，这样的 sh 就漏掉了。中止时刻铺满启动期（约 0.1 秒）。
+// 只测 msys 版：这时创建的原生进程本来就可能漏掉（kb-tools 的“结束进程”）。
+// 没漏掉的探针要么没启动，要么已断开。漏掉的 sh 在之后一两百毫秒内启动探针，探针一直连着。
+test("启动途中中止：msys 程序启动的孙进程也被结束", async () => {
+  const names: string[] = [];
+  for (let ms = 0; ms <= 240; ms += 20) {
+    names.push(`s${ms}`);
+    await run(msysGrandchild(`s${ms}`), 60, AbortSignal.timeout(ms));
+  }
+  await sleep(1000);
+  assert.deepEqual(names.filter((n) => probe(n).socket?.destroyed === false), []);
 });
 
 test("调用前已中止时不运行", async () => {

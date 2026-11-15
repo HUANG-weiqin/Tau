@@ -152,16 +152,21 @@ WRAPPER = echo $$ > "$TAU_PGID"; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMM
 
 超时或中止时 `killAll` 只运行一次。每一步失败都忽略：
 
-1. 读 pgid 文件。读到空：bash 还没开始执行命令。
-2. 运行 `<根>\usr\bin\ps.exe -l`。它的列是 `PID PPID PGID WINPID …`，行首可能有状态字母。取 PGID 等于 pgid 的行的 WINPID。
-3. 对 `spawn` 的 pid 和这些 WINPID 一起运行 `taskkill /F /T`。
-4. 再做一次第 2、3 步，不含 `spawn` 的 pid。这一遍结束其间 exec 出来的进程。
+1. 对 `spawn` 的 pid 运行 `taskkill /F /T`。启动器、bash 和还在 Windows 父进程链上的子孙一起结束。
+2. 读 pgid 文件。读到空：bash 没开始执行命令，以后也不会了，到此为止。
+3. 运行 `<根>\usr\bin\ps.exe -l`。它的列是 `PID PPID PGID WINPID …`，行首可能有状态字母。取 PGID 等于 pgid 的行的 WINPID。
+4. 对这些 WINPID 运行 `taskkill /F /T`。
+5. 再做一次第 3、4 步。这一遍结束其间 exec 出来的进程。
 
 - 只靠 `taskkill /T` 不够。bash fork 出的子进程再 exec msys 程序时（如 `sleep 30; true` 里的 `sleep`），中间的 Windows 进程会退出，Windows 的父进程链断开。这些进程仍在 bash 的 msys 进程组里。
+- 先结束 bash，再读 pgid 文件。这时 bash 已经没了，读到的不会再变。反过来不行：读到空以后、bash 被结束以前，bash 可能写下 pgid、启动命令。它 exec 出来的 msys 进程不在进程树上，又因为读到的是空，没人按进程组去找。bash 刚启动就被中止时，这样漏掉很常见。
+- 还在父进程链上的子孙（例如 `node x & sleep 30` 里的 node）在第 1 步就结束了，不等 `ps`。
 - 非交互的 bash 不开作业控制，`&` 启动的进程也在同一个组里。所以超时或中止时它们也被结束。
 - 不用 msys 的 `kill -9`。信号发给 exec 到一半的进程会卡约 5 秒，其间别的组员照常运行。
-- 会漏掉：用 `setsid` 离开进程组的进程；正好在结束那一刻创建的进程。
-- `ps` 偶尔卡约 5 秒才运行（见坑点“msys 程序同时启动”）。调用晚约 5 秒返回。
+- 会漏掉：
+  - 用 `setsid` 离开进程组的进程。
+  - 正好在结束那一刻创建的原生进程。`taskkill /T` 先拍下进程树，再从叶子往上结束。拍下以后、创建它的进程被结束以前新建的进程，不在快照里。创建它的 msys 进程随后被结束，它也就不在 `ps` 里了。bash 刚开始执行命令时被结束，最容易碰上，例如 bash 启动卡了约 5 秒，正好在那时超时或中止。
+- `ps` 偶尔卡约 5 秒才运行（见坑点“msys 程序同时启动”）。msys 组员晚约 5 秒被结束，调用也晚返回。
 
 #### pgid 文件
 
@@ -208,7 +213,7 @@ WRAPPER = echo $$ > "$TAU_PGID"; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMM
 | 用 Git for Windows 的 `bin\bash.exe`，经 `PATH` 上的 `git.exe` 找到 | MVP 只支持 Windows；System32 和 WindowsApps 里的 `bash.exe` 是 WSL |
 | `-c`，不加 `-l` | 每次省约 0.8 秒；`bin\bash.exe` 已设好 `PATH` |
 | 命令经环境变量传入，在固定的包装脚本里 `eval` | 反斜杠原样保留；能先写 pgid 再执行命令 |
-| 结束进程：msys 进程组加 `taskkill /F /T`，做两遍 | `taskkill /T` 漏掉 exec 断链的进程；msys 的 `kill -9` 会卡约 5 秒 |
+| 结束进程：先 `taskkill /F /T` bash 的进程树，再读 pgid，按 msys 进程组 `taskkill /F /T` 两遍 | `taskkill /T` 漏掉 exec 断链的进程；先读 pgid 会漏掉 bash 在结束途中启动的组员；msys 的 `kill -9` 会卡约 5 秒 |
 | 正常退出时不结束后台进程，只排空 200 毫秒 | 否则调用要等后台进程结束才返回。工具描述写明后台进程不归它管 |
 | 输出在内存里只留头尾 | 巨量输出不占内存；结果本来就要截到上限 |
 | `read`、`edit` 拒绝非 UTF-8 文件 | `edit` 曾毁掉 GBK、UTF-16 文件（[D20](kb-decisions.md#d20-实现第-0-到-2-步时定下的事)） |
@@ -271,6 +276,7 @@ WRAPPER = echo $$ > "$TAU_PGID"; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMM
 | 不运行 | `timeout` 不是正数；调用前已中止 |
 | 超时 | 1 秒超时及时返回，是错误，pgid 文件已删 |
 | 结束孙进程 | 超时和中止各两种孙进程：探针在 Windows 父进程链上（原生），或是 bash fork 后 exec 的 `sh` 的子进程（msys，只有按进程组才找得到）。探针启动过，后来断开 |
+| 启动途中中止 | 中止时刻铺满 bash 的启动期（0 到 240 毫秒）。msys 版的探针一个都没留下 |
 | 巨量输出 | 约 500 万字节：结果不超上限；首尾标记都在；省略数加保留的字节数等于总数 |
 | 后台进程 | `sleep 8 &` 不让调用挂住；pgid 文件已删 |
 
@@ -279,8 +285,9 @@ WRAPPER = echo $$ > "$TAU_PGID"; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMM
 - 中止测试等探针连上才中止。这时 bash 已经启动完，在等它。
 - 超时设 8 秒，留出 bash 启动卡住的约 5 秒（见坑点“msys 程序同时启动”）。探针没在超时前连上，测试报“孙进程应该已经启动过”。
 - 结束得慢不算错。没被结束的探针一直连着，测试到 30 秒失败。
+- 启动途中中止的测试只用 msys 版：那一刻创建的原生进程本来就可能漏掉（见“结束进程”）。漏掉的 `sh` 在一两百毫秒内启动探针，测试最后等 1 秒再看。旧的顺序（先读 pgid 再结束 bash）几乎每次都漏掉几个。
 
-改 `killAll` 后必须跑这四个测试。
+改 `killAll` 后必须跑这五个测试。
 
 ## 坑点
 
