@@ -48,6 +48,11 @@ const BASH: ToolSpec = {
   inStore: false,
 };
 
+/** 记忆的上限，按 UTF-8 字节算。由记忆的实现检查；视图按渲染后的文本算。 */
+export const MEMORY_KEY_MAX_BYTES = 128;
+export const MEMORY_VALUE_MAX_BYTES = 4096;
+export const MEMORY_VIEW_MAX_BYTES = 16384;
+
 const MEMORY: ToolSpec[] = [
   {
     name: "memory_get",
@@ -57,7 +62,9 @@ const MEMORY: ToolSpec[] = [
   },
   {
     name: "memory_set",
-    description: "写入一个键。version 是你读到的版本号；省略 version 表示这个键现在必须不存在。版本对不上时写入失败，结果里带最新值。",
+    description:
+      "写入一个键。version 是你读到的版本号；省略 version 表示这个键现在必须不存在。版本对不上时写入失败，结果里带最新值。" +
+      `键最多 ${MEMORY_KEY_MAX_BYTES} 字节，值最多 ${MEMORY_VALUE_MAX_BYTES} 字节，整个记忆视图最多 ${MEMORY_VIEW_MAX_BYTES} 字节（按 UTF-8 算）；超出时不写入。`,
     parameters: object({ key: str("键"), value: str("值"), version: int("读到的版本号") }, ["key", "value"]),
     inStore: true,
   },

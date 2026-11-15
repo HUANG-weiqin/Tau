@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { edit, read, write } from "../../src/tools/files.ts";
-import { TOOL_RESULT_MAX_BYTES } from "../../src/kernel/derive.ts";
+import { MESSAGE_MAX_BYTES } from "../../src/kernel/derive.ts";
 
 let dir = "";
 
@@ -237,7 +237,7 @@ describe("encoding and line endings", () => {
     const p = await file("huge.txt", lines.join("\n") + "\n");
     const r = await read({ path: p }, dir);
     assert.equal(r.isError, false);
-    assert.ok(Buffer.byteLength(r.text, "utf8") <= TOOL_RESULT_MAX_BYTES);
+    assert.ok(Buffer.byteLength(r.text, "utf8") <= MESSAGE_MAX_BYTES);
     assert.ok(r.text.startsWith("     1\tline0\n"));
     assert.ok(r.text.endsWith("line199999"));
   });

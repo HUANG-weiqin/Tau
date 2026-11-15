@@ -5,18 +5,23 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { TOOL_RESULT_MAX_BYTES, utf8Bytes } from "../../src/kernel/derive.ts";
+import { MESSAGE_MAX_BYTES, utf8Bytes } from "../../src/kernel/derive.ts";
 import { bash } from "../../src/tools/bash.ts";
 
 let dir = "";
+let tmp = "";
 
 before(async () => {
   dir = await mkdtemp(path.join(os.tmpdir(), "tau-bash-"));
+  // 别的测试文件在别的进程里同时运行 bash，也在系统临时目录里建删 pgid 文件。这个文件的 bash 用自己的临时目录。
+  tmp = await mkdtemp(path.join(os.tmpdir(), "tau-bash-tmp-"));
+  process.env.TEMP = process.env.TMP = tmp;
 });
 
 after(async () => {
   // exec 到一半被结束的 msys 进程可能还占着工作目录一两秒。
   await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  await rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 function run(command: string, timeout?: number, signal: AbortSignal = new AbortController().signal) {
@@ -145,7 +150,7 @@ test("巨量输出只留头尾，字节不超上限，省略数准确", async ()
   const r = await run("echo HEAD-MARK; yes line | head -n 1000000; echo TAIL-MARK");
   const total = 10 + 5 * 1000000 + 10; // 实际输出的字节数
   assert.equal(r.isError, false);
-  assert.ok(utf8Bytes(r.text) <= TOOL_RESULT_MAX_BYTES, `${utf8Bytes(r.text)} 字节`);
+  assert.ok(utf8Bytes(r.text) <= MESSAGE_MAX_BYTES, `${utf8Bytes(r.text)} 字节`);
   assert.ok(r.text.startsWith("HEAD-MARK\nline\n"));
   assert.ok(r.text.endsWith("line\nTAIL-MARK\n[退出码 0]"));
   const marker = /\n…（中间省略 (\d+) 字节）…\n/.exec(r.text);

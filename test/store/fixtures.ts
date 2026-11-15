@@ -38,7 +38,10 @@ export function tempDb(t: TestContext): DatabaseSync {
 
 export type FakeMemory = Memory & { calls: string[] };
 
-/** 用 Map 实现的记忆库：版本号全库自增，写入 = 删旧插新。`calls` 记录每次调用。 */
+/**
+ * 用 Map 实现的记忆库：版本号全库自增，写入 = 删旧插新。`calls` 记录每次调用。
+ * 它不检查上限，视图格式也不是真实的（真实的见 src/memory/kv.ts 和它的测试）：测试不要断言它的视图文本。
+ */
 export function fakeMemory(): FakeMemory {
   const rows = new Map<string, Versioned & { ns: string; key: string }>();
   const calls: string[] = [];

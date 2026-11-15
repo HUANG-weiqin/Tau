@@ -1,15 +1,61 @@
 // 能从工作段算出来的值都在这里算，不存（设计稿第 4.1 节）。
 import { systemPrompt, toolDefinitions } from "./context.ts";
-import type { AssistantMessage, Instant, Message, Process, ToolCall } from "./types.ts";
+import { unreachable } from "./types.ts";
+import type { AssistantMessage, Instant, Message, PresetSnapshot, Process, ToolCall } from "./types.ts";
 
 /** 每轮最多调用多少次模型。 */
 export const STEPS_PER_TURN = 100;
-/** 上下文用量达到窗口的这个比例就换段。第 4 步定。 */
-export const HANDOFF_RATIO = 0.75;
-/** 按字节估算用量时，多少字节算一个 token。第 4 步定。 */
-export const BYTES_PER_TOKEN = 3;
-/** 所有工具结果共用的字节上限，超出时保留头尾。 */
-export const TOOL_RESULT_MAX_BYTES = 32 * 1024;
+/** 按字节估算用量时，多少字节算一个 token。常见文本至少约 2 字节一个 token，所以宁可估高。 */
+export const BYTES_PER_TOKEN = 2;
+/** 工具结果和 decide 写入的用户消息共用的字节上限，超出时保留头尾。 */
+export const MESSAGE_MAX_BYTES = 32 * 1024;
+/** 阈值之上留给交接指令、补的结果、消息框架和估算误差的 token。 */
+export const MARGIN_TOKENS = 4096;
+
+export function tokens(bytes: number): number {
+  return Math.ceil(bytes / BYTES_PER_TOKEN);
+}
+
+/** 一次回复最多输出多少 token：窗口的 1/8。执行器请求时再取它和模型上限中较小的。 */
+export function outputMax(p: PresetSnapshot): number {
+  return Math.floor(p.contextWindow / 8);
+}
+
+/** 换段阈值。阈值之上要放得下：一次回复、一个没检查的工具结果、交接说明的输出和余量。 */
+export function handoffThreshold(p: PresetSnapshot): number {
+  return p.contextWindow - 2 * outputMax(p) - tokens(MESSAGE_MAX_BYTES) - MARGIN_TOKENS;
+}
+
+/** 一条消息实际发出的原始 UTF-8 字节数，不算 JSON 外壳和转义。工具调用的参数本来就按 JSON 发，所以按 JSON 算。 */
+export function messageBytes(m: Message): number {
+  switch (m.role) {
+    case "user":
+      return typeof m.content === "string" ? utf8Bytes(m.content) : sum(m.content.map(blockBytes));
+    case "assistant":
+      return sum(m.content.map(blockBytes));
+    case "toolResult":
+      return utf8Bytes(m.toolCallId) + utf8Bytes(m.toolName) + sum(m.content.map(blockBytes));
+    default:
+      return unreachable(m);
+  }
+}
+
+function blockBytes(c: Exclude<Message["content"], string>[number]): number {
+  switch (c.type) {
+    case "text":
+      return utf8Bytes(c.text);
+    case "thinking":
+      return utf8Bytes(c.thinking);
+    case "toolCall":
+      return utf8Bytes(c.id) + utf8Bytes(c.name) + utf8Bytes(JSON.stringify(c.arguments));
+    case "image":
+      return c.data.length;
+    default:
+      return unreachable(c);
+  }
+}
+
+const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
 /** UTF-8 字节数。孤立的代理项按替换字符算 3 字节。 */
 export function utf8Bytes(s: string): number {
@@ -24,24 +70,19 @@ export function utf8Bytes(s: string): number {
   return n;
 }
 
-function estimate(text: string): number {
-  return Math.ceil(utf8Bytes(text) / BYTES_PER_TOKEN);
-}
-
 export function usageOf(m: AssistantMessage): number {
   const u = m.usage;
   return u.totalTokens || u.input + u.output + u.cacheRead + u.cacheWrite;
 }
 
-/** 上下文用量（token）：最后一条用量不为 0 的助手消息，加上它之后的消息的估算。 */
+/** 上下文用量（token）：最后一条用量不为 0 的助手消息，加上它之后的消息的估算。估算只在总字节数上取整一次。 */
 export function contextUsed(p: Process, segment: readonly Message[]): number {
+  const bytes = (ms: readonly Message[]) => sum(ms.map(messageBytes));
   for (let i = segment.length - 1; i >= 0; i--) {
     const m = segment[i]!;
-    if (m.role !== "assistant" || usageOf(m) === 0) continue;
-    const after = segment.slice(i + 1);
-    return usageOf(m) + (after.length === 0 ? 0 : estimate(JSON.stringify(after.map((x) => x.content))));
+    if (m.role === "assistant" && usageOf(m) > 0) return usageOf(m) + tokens(bytes(segment.slice(i + 1)));
   }
-  return estimate(systemPrompt(p) + JSON.stringify(toolDefinitions(p.preset)) + JSON.stringify(segment.map((x) => x.content)));
+  return tokens(utf8Bytes(systemPrompt(p)) + utf8Bytes(JSON.stringify(toolDefinitions(p.preset))) + bytes(segment));
 }
 
 /** 本段开始时间：本段第一条消息的时间戳。 */
@@ -61,7 +102,7 @@ export function pendingCalls(segment: readonly Message[]): ToolCall[] {
 }
 
 /** 超出字节上限时保留头尾，中间换成一行说明。只扫描保留的部分和一次全长计数，不拷贝整串。 */
-export function clip(text: string, maxBytes: number = TOOL_RESULT_MAX_BYTES): string {
+export function clip(text: string, maxBytes: number = MESSAGE_MAX_BYTES): string {
   const total = utf8Bytes(text);
   if (total <= maxBytes) return text;
   const marker = (n: number) => `\n…（中间省略 ${n} 字节）…\n`;

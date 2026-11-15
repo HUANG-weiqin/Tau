@@ -1,5 +1,6 @@
 // 库内副作用：记忆工具和 `self`，在处理输入的事务里执行，恰好一次（设计稿第 4.4、8、9 节）。
 import { observe } from "../kernel/observe.ts";
+import { MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
 import { unreachable } from "../kernel/types.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { PhaseView, Projection } from "../kernel/observe.ts";
@@ -23,7 +24,9 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
       if (typeof key !== "string" || typeof value !== "string") return bad("key 和 value 必须是字符串。");
       if (version != null && !isInt(version)) return bad("version 必须是整数，或者省略。");
       const r = memory.set(ns, key, value, isInt(version) ? version : null);
-      return r.ok ? ok(`已写入 ${key}，版本 ${r.version}。`) : conflict(key, r.current);
+      if (r.ok) return ok(`已写入 ${key}，版本 ${r.version}。`);
+      if ("over" in r) return { text: "超出上限，没有写入：" + overText(r.over, r.bytes), isError: true };
+      return conflict(key, r.current);
     }
     case "memory_delete": {
       if (typeof key !== "string" || !isInt(version)) return bad("key 必须是字符串，version 必须是整数。");
@@ -49,6 +52,19 @@ function bad(text: string): ToolResultContent {
 
 function show(key: string, v: Versioned): string {
   return `${key}（版本 ${v.version}）：\n${v.value}`;
+}
+
+function overText(over: "key" | "value" | "view", bytes: number): string {
+  switch (over) {
+    case "key":
+      return `键有 ${bytes} 字节，上限 ${MEMORY_KEY_MAX_BYTES} 字节。`;
+    case "value":
+      return `值有 ${bytes} 字节，上限 ${MEMORY_VALUE_MAX_BYTES} 字节。`;
+    case "view":
+      return `写入后记忆视图有 ${bytes} 字节，上限 ${MEMORY_VIEW_MAX_BYTES} 字节。先删掉或缩短不需要的键。`;
+    default:
+      return unreachable(over);
+  }
 }
 
 function conflict(key: string, current: Versioned | null): ToolResultContent {

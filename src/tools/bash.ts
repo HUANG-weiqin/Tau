@@ -4,13 +4,13 @@ import { existsSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { clip, TOOL_RESULT_MAX_BYTES } from "../kernel/derive.ts";
+import { clip, MESSAGE_MAX_BYTES } from "../kernel/derive.ts";
 import type { ToolResultContent } from "../kernel/types.ts";
 
 const DEFAULT_SECONDS = 120;
 const MAX_SECONDS = 600;
 // 输出过长时只留头尾各这么多字节，中段只计数。两段加上说明行仍在工具结果上限内。
-const KEEP_BYTES = TOOL_RESULT_MAX_BYTES / 2 - 256;
+const KEEP_BYTES = MESSAGE_MAX_BYTES / 2 - 256;
 // bash 退出后，它留下的后台进程（如 `sleep 100 &`）还占着输出管道，close 要等它们结束。所以 exit 后
 // 只再读这么久就关管道返回。后台进程继续运行，不归本工具管；它再写输出会遇到管道已关（msys 程序因 SIGPIPE 退出）。
 const DRAIN_MS = 200;

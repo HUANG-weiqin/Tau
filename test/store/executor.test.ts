@@ -3,7 +3,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import { createActions } from "../../src/executor/actions.ts";
 import { createExecutor } from "../../src/executor/executor.ts";
+import { start } from "../../src/kernel/decide.ts";
+import type { Message, Process } from "../../src/kernel/types.ts";
 import { loadProcess, loadSegment, openDb } from "../../src/store/db.ts";
 import { handleNext, send, startProcess } from "../../src/store/inputs.ts";
 import { effectRows, fakeMemory, gated, mailbox, PRESET, say, scripted, settle, tempDb, tempDir, toolCall, use } from "./fixtures.ts";
@@ -211,4 +215,35 @@ test("竞态：库内工具的结果还在信箱里排队时先处理用户消�
   await settle(db, memory, exec, actions.gates);
   assert.equal(memory.calls.filter((c) => c === "set").length, 1);
   assert.deepEqual(loadProcess(db, "p1")?.phase, { tag: "idle", ended: "done" });
+});
+
+test("调用模型时 maxTokens 取模型的上限和窗口的 1/8 中较小的，交接调用也一样", async () => {
+  const cases: [number, number][] = [
+    [65_536, 8_192],
+    [64_000, 8_192],
+    [128_000, 16_384],
+    [200_000, 64_000],
+    [1_000_000, 128_000],
+    [1_048_576, 65_536],
+  ];
+  const faux = fauxProvider({ models: cases.map(([w, m]) => ({ id: `m${w}`, contextWindow: w, maxTokens: m })) });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const actions = createActions(models, () => {});
+  const segment: Message[] = [{ role: "user", content: "你好", timestamp: 0 }];
+  for (const [w, m] of cases) {
+    for (const purpose of ["turn", "handoff"] as const) {
+      let seen: number | undefined;
+      faux.setResponses([
+        (_context, options) => {
+          seen = options?.maxTokens;
+          return fauxAssistantMessage("好");
+        },
+      ]);
+      const preset = { ...PRESET, model: `${faux.getModel().provider}/m${w}`, contextWindow: w };
+      const process: Process = { ...start("p1", preset, { now: 0, memoryView: "" }), lastEffect: 1, phase: { tag: "awaitingModel", turn: { steps: 1, queued: [] }, purpose } };
+      await actions.callModel({ process, segment, effect: { kind: "callModel", n: 1, purpose } }, new AbortController().signal);
+      assert.equal(seen, Math.min(m, Math.floor(w / 8)), `${w}/${m}，${purpose}`);
+    }
+  }
 });

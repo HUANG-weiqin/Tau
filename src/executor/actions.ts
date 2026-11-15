@@ -2,6 +2,7 @@
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import type { Models } from "@earendil-works/pi-ai";
 import { buildContext, toolDefinitions } from "../kernel/context.ts";
+import { outputMax } from "../kernel/derive.ts";
 import type { ProcessId } from "../kernel/types.ts";
 import { bash } from "../tools/bash.ts";
 import { edit, read, write } from "../tools/files.ts";
@@ -15,7 +16,9 @@ export function createActions(models: Models, onText: (id: ProcessId, delta: str
       const slash = name.indexOf("/");
       const model = models.getModel(name.slice(0, slash), name.slice(slash + 1));
       if (!model) throw new Error(`模型目录里没有 ${name}`);
-      const stream = models.streamSimple(model, buildContext(job.process, job.segment), { signal, sessionId: job.process.id });
+      // 输出上限不超过窗口的 1/8：换段阈值按这个数留空间（kernel/derive.ts）。
+      const maxTokens = Math.min(model.maxTokens, outputMax(job.process.preset));
+      const stream = models.streamSimple(model, buildContext(job.process, job.segment), { signal, sessionId: job.process.id, maxTokens });
       for await (const e of stream) if (e.type === "text_delta") onText(job.process.id, e.delta);
       return stream.result();
     },

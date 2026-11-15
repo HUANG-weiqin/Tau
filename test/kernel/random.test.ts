@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { HANDOFF_INSTRUCTION } from "../../src/kernel/context.ts";
 import { decide, effectOf } from "../../src/kernel/decide.ts";
-import { BYTES_PER_TOKEN, contextUsed, HANDOFF_RATIO, TOOL_RESULT_MAX_BYTES, utf8Bytes } from "../../src/kernel/derive.ts";
+import { contextUsed, handoffThreshold, MESSAGE_MAX_BYTES, tokens, utf8Bytes } from "../../src/kernel/derive.ts";
 import { unreachable } from "../../src/kernel/types.ts";
 import type { AssistantMessage, Effect, Env, Input, Message, PresetTool, Process } from "../../src/kernel/types.ts";
 import { assistant, call, current, feed, preset, textOf, usage, world } from "./helpers.ts";
@@ -53,7 +53,7 @@ const POOL = (() => {
   const r = rng(7);
   const words = ["const", "return", "函数", "进程", "工作段", "\n", "\"q\"", "\t", "{", "}", "x = 1;", "测试", "path/to/file.ts", "'s'", "\\"];
   let s = "";
-  while (s.length < TOOL_RESULT_MAX_BYTES + 40_000) s += r.pick(words) + " ";
+  while (s.length < MESSAGE_MAX_BYTES + 40_000) s += r.pick(words) + " ";
   return s;
 })();
 
@@ -83,7 +83,7 @@ const PROFILES: Profile[] = [
     name: "普通",
     seeds: [1, 2, 3, 4, 5, 6, 7, 8],
     steps: 2_500,
-    windows: [2_000, 8_000, 50_000, 200_000],
+    windows: [28_000, 36_000, 80_000, 200_000],
     actions: { user: 10, stop: 3, complete: 45, deliver: 25, duplicate: 5, drop: 2, forge: 5, crash: 2 },
     replies: { toolUse: 45, noCalls: 4, stop: 25, stopWithCalls: 3, length: 5, error: 5, aborted: 5, pending: 4, deferred: 4 },
     handoffs: { note: 70, lengthNote: 10, empty: 5, toolUse: 5, error: 5, aborted: 5 },
@@ -95,7 +95,7 @@ const PROFILES: Profile[] = [
     name: "失控",
     seeds: [101, 102, 103],
     steps: 4_000,
-    windows: [3_000, 20_000],
+    windows: [28_500, 48_000],
     actions: { user: 2, stop: 0, complete: 60, deliver: 35, duplicate: 1, drop: 0, forge: 1, crash: 0 },
     replies: { toolUse: 99, noCalls: 0, stop: 1, stopWithCalls: 0, length: 0, error: 0, aborted: 0, pending: 0, deferred: 0 },
     handoffs: { note: 97, lengthNote: 0, empty: 3, toolUse: 0, error: 0, aborted: 0 },
@@ -107,7 +107,7 @@ const PROFILES: Profile[] = [
     name: "不稳定",
     seeds: [201, 202, 203],
     steps: 2_500,
-    windows: [5_000, 100_000],
+    windows: [32_000, 100_000],
     actions: { user: 15, stop: 8, complete: 30, deliver: 20, duplicate: 12, drop: 5, forge: 12, crash: 8 },
     replies: { toolUse: 45, noCalls: 4, stop: 25, stopWithCalls: 3, length: 5, error: 5, aborted: 5, pending: 4, deferred: 4 },
     handoffs: { note: 40, lengthNote: 10, empty: 15, toolUse: 15, error: 10, aborted: 10 },
@@ -153,7 +153,7 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
   let ids = 0;
 
   const usageFor = (purpose: "turn" | "handoff" | null): AssistantMessage["usage"] => {
-    const base = contextUsed(w.p, current(w)) + (purpose === "handoff" ? Math.ceil(utf8Bytes(HANDOFF_INSTRUCTION) / BYTES_PER_TOKEN) : 0);
+    const base = contextUsed(w.p, current(w)) + (purpose === "handoff" ? tokens(utf8Bytes(HANDOFF_INSTRUCTION)) : 0);
     const out = r.int(10, 800);
     const roll = r.float();
     if (roll < 0.1) {
@@ -231,7 +231,7 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
         return { kind: "modelResult", n: e.n, outcome: { status: "ok", message: modelReply(e.purpose) } };
       case "runTool": {
         if (r.chance(profile.toolInterrupted)) return { kind: "toolResult", n: e.n, outcome: { status: "interrupted" } };
-        const size = r.chance(profile.hugeResult) ? TOOL_RESULT_MAX_BYTES + r.int(1, 30_000) : r.chance(0.3) ? r.int(1_000, 8_000) : r.int(0, 300);
+        const size = r.chance(profile.hugeResult) ? MESSAGE_MAX_BYTES + r.int(1, 30_000) : r.chance(0.3) ? r.int(1_000, 8_000) : r.int(0, 300);
         return { kind: "toolResult", n: e.n, outcome: { status: "ok", content: { text: text(r, size), isError: r.chance(0.1) } } };
       }
       default:
@@ -382,6 +382,6 @@ test("随机数生成器：同一个种子给同样的序列", () => {
   const b = rng(42);
   for (let i = 0; i < 100; i++) assert.equal(a.float(), b.float());
   assert.notEqual(rng(1).float(), rng(2).float());
-  // 阈值的比例在 (0, 1) 里，随机的窗口才会触发换段。
-  assert.ok(HANDOFF_RATIO > 0 && HANDOFF_RATIO < 1);
+  // 每个随机的窗口阈值都是正数：小窗口测的是频繁换段，不是每次调用都换段。
+  for (const w of PROFILES.flatMap((p) => p.windows)) assert.ok(handoffThreshold(preset({ contextWindow: w })) > 0, `窗口 ${w}`);
 });

@@ -21,7 +21,7 @@ const SEEDS = [1, 2, 3, 4];
 const USER_MESSAGES = 8;
 const STOPS = 2;
 /** 窗口小一些，让换段也会发生。 */
-const CRASH_PRESET: PresetSnapshot = { ...PRESET, contextWindow: 6000 };
+const CRASH_PRESET: PresetSnapshot = { ...PRESET, contextWindow: 33_000 };
 /** read 是库外工具；memory_*、self 是库内工具；bash 不在预设里；nope 不存在。 */
 const TOOLS = ["read", "read", "read", "memory_get", "memory_set", "self", "bash", "nope"];
 

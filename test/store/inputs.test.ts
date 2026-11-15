@@ -2,6 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { start } from "../../src/kernel/decide.ts";
+import { handoffThreshold } from "../../src/kernel/derive.ts";
 import { createExecutor } from "../../src/executor/executor.ts";
 import { loadProcess, loadSegment, tx } from "../../src/store/db.ts";
 import { runInStore } from "../../src/store/instore.ts";
@@ -27,7 +28,7 @@ test("启动进程时冻结记忆视图；预设没有 memory 时不读记忆库
   const memory = fakeMemory();
   memory.set(PRESET.id, "name", "tau", null);
   startProcess(db, memory, "p1", PRESET, "a", 0);
-  assert.equal(loadProcess(db, "p1")?.segment.memoryView, "name: tau");
+  assert.equal(loadProcess(db, "p1")?.segment.memoryView, memory.view(PRESET.id));
   memory.calls.length = 0;
   startProcess(db, memory, "p2", { ...PRESET, id: "tmp", tools: ["read"] }, "b", 0);
   assert.equal(loadProcess(db, "p2")?.segment.memoryView, "");
@@ -191,8 +192,8 @@ test("记忆工具：读、写、冲突时带最新值、删除、参数错误",
 test("处理一条输入只读当前段：旧段不加载，查询走 (process_id, segment_seq)", async (t) => {
   const db = tempDb(t);
   const memory = fakeMemory();
-  const preset = { ...PRESET, contextWindow: 4000 };
-  const exec = createExecutor(db, scripted([reply("toolUse", [toolCall("c1", "read", { path: "a" })], 3900), say("交接说明"), say("完成"), say("又完成")]));
+  const preset = { ...PRESET, contextWindow: 32_000 };
+  const exec = createExecutor(db, scripted([reply("toolUse", [toolCall("c1", "read", { path: "a" })], handoffThreshold(preset)), say("交接说明"), say("完成"), say("又完成")]));
   startProcess(db, memory, "p1", preset, "a", 0);
   await settle(db, memory, exec);
   const p = loadProcess(db, "p1")!;

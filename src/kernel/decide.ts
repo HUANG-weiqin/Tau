@@ -1,6 +1,6 @@
 // start、decide、effectOf：纯函数（设计稿第 4.3 节和第 5 节）。
-import { HANDOFF_HEADER } from "./context.ts";
-import { clip, contextUsed, HANDOFF_RATIO, pendingCalls, STEPS_PER_TURN } from "./derive.ts";
+import { CARRY_HEADER, HANDOFF_HEADER, HANDOFF_INSTRUCTION, tailStart } from "./context.ts";
+import { clip, contextUsed, handoffThreshold, MARGIN_TOKENS, pendingCalls, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
 import { unreachable } from "./types.ts";
 import type { AssistantMessage, Effect, Ended, Env, Input, Message, Phase, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Turn } from "./types.ts";
 
@@ -75,11 +75,10 @@ function onReply(d: Draft, turn: Turn, m: AssistantMessage): void {
   const r = m.stopReason;
   switch (r) {
     case "toolUse":
-      push(d, m);
-      if (pendingCalls(d.seg).length > 0) return enter(d, { tag: "awaitingTool", turn });
-      return endTurn(d, turn, "done");
     case "stop":
+      if (tooManyCalls(m)) return endTurn(d, turn, { error: "一次回复的工具调用太多" });
       push(d, m);
+      if (r === "toolUse" && pendingCalls(d.seg).length > 0) return enter(d, { tag: "awaitingTool", turn });
       return endTurn(d, turn, "done");
     case "length":
       return endTurn(d, turn, { error: "输出被截断" });
@@ -96,14 +95,26 @@ function onReply(d: Draft, turn: Turn, m: AssistantMessage): void {
   }
 }
 
+/**
+ * 这条回复的工具调用要是都补成“未执行”，补的结果和交接指令放不放得进 MARGIN_TOKENS。放不进时换段请求可能超过窗口，
+ * 所以和 `length` 一样不写入。ID 算两次：它由服务端分配，回复的用量里没有它，之后的请求里调用和结果各带一次。
+ */
+function tooManyCalls(m: AssistantMessage): boolean {
+  const bytes = m.content.reduce((n, c) => (c.type === "toolCall" ? n + 2 * utf8Bytes(c.id) + utf8Bytes(c.name) + utf8Bytes(SKIPPED) : n), 0);
+  return tokens(bytes) + tokens(utf8Bytes(HANDOFF_INSTRUCTION)) > MARGIN_TOKENS;
+}
+
 /** 第 5.4 节。 */
 function onHandoff(d: Draft, turn: Turn, m: AssistantMessage): void {
   const note = m.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n").trim();
   if ((m.stopReason === "stop" || m.stopReason === "length") && note !== "") {
     if (d.append.length > 0) throw new Error("换段前不能有要追加的消息");
+    // 交接请求没带段末的用户消息（见 buildContext），把它们原样附在交接说明后面。
+    const tail = d.seg.slice(tailStart(d.seg)).flatMap((u) => (u.role === "user" && typeof u.content === "string" ? [u.content] : []));
+    const carried = tail.length === 0 ? "" : `\n\n${CARRY_HEADER}\n\n${tail.join("\n\n")}`;
     d.p = { ...d.p, segment: { seq: d.p.segment.seq + 1, memoryView: d.env.memoryView } };
     d.seg = [];
-    push(d, userMessage(HANDOFF_HEADER + note, d.env.now));
+    push(d, userMessage(HANDOFF_HEADER + note + carried, d.env.now));
     return continueTurn(d, turn);
   }
   return endTurn(d, turn, { error: "交接失败：" + (m.errorMessage ?? m.stopReason) });
@@ -141,7 +152,7 @@ function enter(d: Draft, phase: Exclude<Phase, { tag: "idle" }>): void {
 }
 
 function overThreshold(d: Draft): boolean {
-  return contextUsed(d.p, d.seg) >= HANDOFF_RATIO * d.p.preset.contextWindow;
+  return contextUsed(d.p, d.seg) >= handoffThreshold(d.p.preset);
 }
 
 function push(d: Draft, m: Message): void {
@@ -149,8 +160,9 @@ function push(d: Draft, m: Message): void {
   d.append.push(m);
 }
 
+/** decide 写入的每条用户消息都裁剪到字节上限：空闲时的消息、合并的排队消息、新段的第一条。 */
 function userMessage(text: string, now: number): Message {
-  return { role: "user", content: text, timestamp: now };
+  return { role: "user", content: clip(text), timestamp: now };
 }
 
 function toolResult(call: ToolCall, text: string, isError: boolean, now: number): Message {

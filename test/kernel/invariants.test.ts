@@ -1,7 +1,7 @@
 // assertInvariants 自己的测试：合法状态通过，每一种被破坏的状态都被发现。
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { HANDOFF_RATIO, STEPS_PER_TURN } from "../../src/kernel/derive.ts";
+import { handoffThreshold, STEPS_PER_TURN } from "../../src/kernel/derive.ts";
 import type { Message, Phase, Process } from "../../src/kernel/types.ts";
 import { assertInvariants } from "../invariants.ts";
 import { assistant, call, current, feed, preset, reply, toolDone, userInput, world } from "./helpers.ts";
@@ -72,13 +72,13 @@ test("awaitingModel：最后一条不能是助手消息，用途要和阈值一�
   const model = (purpose: "turn" | "handoff") => running(p, { tag: "awaitingModel", turn: { steps: 1, queued: [] }, purpose });
   broken(model("turn"), [user("u"), assistant({ usage: 100, text: "好" })], /最后一条是助手消息/);
   broken(model("handoff"), [user("u")], /用途是 handoff，但上下文用量 \d+ 没有达到阈值/);
-  const full = Math.ceil(HANDOFF_RATIO * p.preset.contextWindow);
+  const full = handoffThreshold(p.preset);
   broken(model("turn"), [user("u"), assistant({ usage: full, text: "好" }), user("再来")], /用途是 turn，但上下文用量 \d+ 已经达到阈值/);
 });
 
 test("awaitingTool：已有结果后用量到阈值，就不该再等下一个工具", () => {
   const { p } = midTools();
-  const full = Math.ceil(HANDOFF_RATIO * p.preset.contextWindow);
+  const full = handoffThreshold(p.preset);
   broken(p, [user("u"), assistant({ usage: full, calls: [call("c1"), call("c2")] }), result("c1")], /达到阈值.*却还在等下一个工具/);
   // 第一个工具不检查阈值：回复本身的用量到了阈值，也照样执行。
   assertInvariants(p, [user("u"), assistant({ usage: full, calls: [call("c1"), call("c2")] })]);

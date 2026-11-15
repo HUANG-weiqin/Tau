@@ -2,7 +2,7 @@
 // 存储层的不变量在第 2 步另加，并复用这个函数。
 import { isDeepStrictEqual } from "node:util";
 import { effectOf } from "../src/kernel/decide.ts";
-import { contextUsed, HANDOFF_RATIO, STEPS_PER_TURN } from "../src/kernel/derive.ts";
+import { contextUsed, handoffThreshold, STEPS_PER_TURN } from "../src/kernel/derive.ts";
 import { unreachable } from "../src/kernel/types.ts";
 import type { Ended, Message, Process, ToolCall, Turn } from "../src/kernel/types.ts";
 
@@ -25,7 +25,7 @@ export function assertInvariants(p: Process, segment: readonly Message[]): void 
 
   const missing = pairing(segment, bad);
   const effect = effectOf(p, segment);
-  const threshold = HANDOFF_RATIO * p.preset.contextWindow;
+  const threshold = handoffThreshold(p.preset);
   const { phase } = p;
   switch (phase.tag) {
     case "idle":

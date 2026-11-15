@@ -3,13 +3,14 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import type { StopReason } from "@earendil-works/pi-ai";
-import { buildContext, HANDOFF_INSTRUCTION } from "../../src/kernel/context.ts";
+import { buildContext, CARRY_HEADER, HANDOFF_HEADER, HANDOFF_INSTRUCTION } from "../../src/kernel/context.ts";
 import { effectOf, start } from "../../src/kernel/decide.ts";
-import { BYTES_PER_TOKEN, contextUsed, HANDOFF_RATIO, pendingCalls, STEPS_PER_TURN, TOOL_RESULT_MAX_BYTES, utf8Bytes } from "../../src/kernel/derive.ts";
+import { BYTES_PER_TOKEN, clip, contextUsed, handoffThreshold, MESSAGE_MAX_BYTES, pendingCalls, STEPS_PER_TURN, utf8Bytes } from "../../src/kernel/derive.ts";
 import type { Ended, Input, Message } from "../../src/kernel/types.ts";
 import {
   assistant,
   call,
+  codeText,
   current,
   env,
   feed,
@@ -33,7 +34,7 @@ const SKIPPED = "未执行";
 
 const W = 100_000;
 const P = preset({ contextWindow: W });
-const T = HANDOFF_RATIO * W;
+const T = handoffThreshold(P);
 /** 远低于阈值的用量。 */
 const LOW = 1_000;
 /** 达到阈值的用量。 */
@@ -208,6 +209,21 @@ describe("5.2 每种输入", () => {
     assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [] }, purpose: "turn" });
   });
 
+  test("decide 写入的用户消息裁剪到字节上限：空闲时的消息、合并的排队消息", () => {
+    const big = codeText(100 * 1024);
+    const w = begin(big);
+    assert.equal(textOf(current(w)[0]!), clip(big));
+    assert.ok(utf8Bytes(textOf(current(w)[0]!)) <= MESSAGE_MAX_BYTES);
+
+    const q = withCalls(["c1"]);
+    const parts = [codeText(20_000, "甲"), codeText(20_000, "乙")];
+    for (const text of parts) feed(q, userInput(text));
+    assert.deepEqual(q.p.phase.tag !== "idle" && q.p.phase.turn.queued, parts, "排队时不裁剪");
+    const s = feed(q, stopInput());
+    assert.equal(textOf(s.append.at(-1)!), clip(parts.join("\n\n")));
+    assert.ok(utf8Bytes(textOf(s.append.at(-1)!)) <= MESSAGE_MAX_BYTES);
+  });
+
   test("userMessage，进程正在运行：放进 turn.queued，不写工作段，不发新副作用", () => {
     const w = begin();
     const a = feed(w, userInput("甲"));
@@ -257,7 +273,7 @@ describe("5.2 每种输入", () => {
   test("toolResult 正常，写入后用量到阈值：剩下的调用补“未执行”，然后换段", () => {
     const margin = 500;
     const big = "a".repeat((margin + 50) * BYTES_PER_TOKEN);
-    assert.ok(utf8Bytes(big) <= TOOL_RESULT_MAX_BYTES, "前提：这个结果不会被截断");
+    assert.ok(utf8Bytes(big) <= MESSAGE_MAX_BYTES, "前提：这个结果不会被截断");
     const w = withCalls(["c1", "c2", "c3"], HIGH - margin);
     assert.ok(contextUsed(w.p, current(w)) < T);
     const s = toolDone(w, big);
@@ -279,11 +295,11 @@ describe("5.2 每种输入", () => {
   });
 
   test("toolResult 超出字节上限：写入时保留头尾", () => {
-    const text = "头".repeat(1000) + "中😀".repeat(TOOL_RESULT_MAX_BYTES) + "尾".repeat(1000);
+    const text = "头".repeat(1000) + "中😀".repeat(MESSAGE_MAX_BYTES) + "尾".repeat(1000);
     const w = withCalls(["c1"]);
     const s = toolDone(w, text);
     const stored = textOf(s.append[0]!);
-    assert.ok(utf8Bytes(stored) <= TOOL_RESULT_MAX_BYTES, `写入了 ${utf8Bytes(stored)} 字节`);
+    assert.ok(utf8Bytes(stored) <= MESSAGE_MAX_BYTES, `写入了 ${utf8Bytes(stored)} 字节`);
     assert.ok(stored.startsWith("头".repeat(1000)));
     assert.ok(stored.endsWith("尾".repeat(1000)));
     assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(stored), "截断不能拆开代理对");
@@ -555,6 +571,35 @@ describe("5.4 换段", () => {
     reply(w, assistant({ usage: 3_000, text: "交接说明" }));
     assert.equal(w.p.segment.seq, 2);
     assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 2, queued: [] }, purpose: "turn" });
+  });
+
+  test("4. 段末还没处理的用户消息不进交接请求，原样附在新段第一条消息的说明后面", () => {
+    const w = atHandoff();
+    const kept = current(w);
+    for (const text of ["甲", "乙"]) {
+      reply(w, assistant({ usage: 3_000, stopReason: "error", errorMessage: "超时" }));
+      feed(w, userInput(text));
+      assert.equal(w.p.phase.tag === "awaitingModel" && w.p.phase.purpose, "handoff");
+      assert.deepEqual(buildContext(w.p, current(w)).messages, [...kept, { role: "user", content: HANDOFF_INSTRUCTION, timestamp: 0 }], "交接请求每次都一样");
+    }
+    const s = reply(w, assistant({ usage: 3_000, text: "交接说明" }), env(9));
+    assert.deepEqual(s.append, [{ role: "user", content: `${HANDOFF_HEADER}交接说明\n\n${CARRY_HEADER}\n\n甲\n\n乙`, timestamp: 9 }]);
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 2, queued: [] }, purpose: "turn" });
+  });
+
+  test("4. 带过去的消息很大时，新段第一条消息整体裁剪到字节上限", () => {
+    const w = atHandoff();
+    const tail = [codeText(MESSAGE_MAX_BYTES, "甲"), codeText(MESSAGE_MAX_BYTES, "乙")];
+    for (const text of tail) {
+      reply(w, assistant({ usage: 3_000, stopReason: "error", errorMessage: "超时" }));
+      feed(w, userInput(text));
+    }
+    const note = codeText(20_000, "note").trim();
+    const s = reply(w, assistant({ usage: 3_000, text: note }));
+    const first = textOf(s.append[0]!);
+    assert.equal(first, clip(`${HANDOFF_HEADER}${note}\n\n${CARRY_HEADER}\n\n${tail.map((t) => clip(t)).join("\n\n")}`));
+    assert.ok(utf8Bytes(first) <= MESSAGE_MAX_BYTES, `${utf8Bytes(first)} 字节`);
+    assert.ok(first.startsWith(HANDOFF_HEADER + note.slice(0, 1000)));
   });
 
   test("一轮跨越换段：步数和排队的消息带到新段", () => {

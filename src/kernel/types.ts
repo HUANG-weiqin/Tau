@@ -75,12 +75,17 @@ export interface Versioned {
   version: number;
 }
 
-/** 记忆接口（设计稿第 8.1 节）。全部同步，在事务里执行。 */
+/** 记忆接口（设计稿第 8.1 节）。全部同步，在事务里执行。view(ns) 的 UTF-8 字节数永远不超过 MEMORY_VIEW_MAX_BYTES；set 拒绝会超出的写入。 */
 export interface Memory {
   view(ns: string): string;
   get(ns: string, key: string): Versioned | null;
-  /** `expected: null` 表示这个键现在必须不存在。 */
-  set(ns: string, key: string, value: string, expected: number | null): { ok: true; version: number } | { ok: false; current: Versioned | null };
+  /** `expected: null` 表示这个键现在必须不存在。按键、值、版本、视图的顺序检查；`bytes` 是超出的那一项的字节数。 */
+  set(
+    ns: string,
+    key: string,
+    value: string,
+    expected: number | null,
+  ): { ok: true; version: number } | { ok: false; current: Versioned | null } | { ok: false; over: "key" | "value" | "view"; bytes: number };
   delete(ns: string, key: string, expected: number): { ok: true } | { ok: false; current: Versioned | null };
 }
 
