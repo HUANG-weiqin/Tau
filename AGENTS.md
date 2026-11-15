@@ -78,7 +78,7 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 
 - 依赖白名单：`@earendil-works/pi-ai`（精确锁定 `1.0.0`），开发依赖 `typescript` 和 `@types/node`。加新依赖要在[决策记录](.knowledge/kb-decisions.md)里写明理由。
 - SQLite 用内置的 `node:sqlite`，运行时加 `--disable-warning=ExperimentalWarning`。
-- 没有构建步骤：Node 24 直接运行 `.ts`。只用可擦除的 TS 语法（不用 enum、namespace、参数属性）；import 写 `.ts` 扩展名。
+- 没有构建步骤：Node 24（不低于 24.21）直接运行 `.ts`。只用可擦除的 TS 语法（不用 enum、namespace、参数属性）；import 写 `.ts` 扩展名。
 - tsconfig：strict 全开，`noEmit`、`erasableSyntaxOnly`、`allowImportingTsExtensions`、`verbatimModuleSyntax`。
 - 测试用 `node:test`。类型检查只跑 `tsc`。
 - 代码量预算：不算测试，`src/` 不超过 3000 行。写到一半时校准这个数字。

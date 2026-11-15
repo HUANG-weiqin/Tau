@@ -198,7 +198,7 @@ tau stop <进程>
 
 ### 启动脚本和入口
 
-- `tau.cmd` 只有一行：`@node --disable-warning=ExperimentalWarning "%~dp0src\main.ts" %*`。它按自己所在的目录找 `src\main.ts`，在任何当前目录都能用。需要 PATH 上的 `node`（`package.json` 要求不低于 24.14），直接运行 `.ts`。
+- `tau.cmd` 只有一行：`@node --disable-warning=ExperimentalWarning "%~dp0src\main.ts" %*`。它按自己所在的目录找 `src\main.ts`，在任何当前目录都能用。需要 PATH 上的 `node`（`package.json` 要求不低于 24.21），直接运行 `.ts`。
 - 这个参数让 `node:sqlite` 不打印 `ExperimentalWarning`（[D11](kb-decisions.md#d11-sqlite-驱动)）。只有 `serve` 加载 `node:sqlite`，但脚本对所有命令都加。`npm test` 和 kill 测试的子进程加同样的参数。
 - `src/main.ts`：第一个参数是 `serve` 就动态导入服务的模块并启动，其余参数忽略。否则交给 CLI 的 `main`，返回值写进 `process.exitCode`。
 - 管道名、库和预设的位置写死在 `protocol.ts`、`main.ts` 和 `presets/load.ts`。`serve()` 和 CLI 的 `main` 接受别的管道和路径，只给测试用。

@@ -103,7 +103,7 @@
 ### D11 SQLite 驱动
 
 - 状态：已确认（随 D18）。
-- 已核实：`node:sqlite` 在 Node 24.14 上会打印 `ExperimentalWarning`；运行时加 `--disable-warning=ExperimentalWarning` 后不再打印。
+- 已核实：`node:sqlite` 在 Node 24.14 上会打印 `ExperimentalWarning`；运行时加 `--disable-warning=ExperimentalWarning` 后不再打印。（后来核实：Node 24.15 起 `node:sqlite` 标为 release candidate。24.22.1 上不加这个参数也不打印。）
 - 决定：用内置的 `node:sqlite`，只用最基本的同步 API。少一个原生依赖，也不用为 Node 升级重新编译。
 - 代价：它仍是实验 API，几年内可能变化。变化时要改 `store/`、`memory/kv.ts`，以及执行器和服务里直接写的 SQL（D20 改正了之前“只改 `store/`”的说法）。
 - 放弃：`better-sqlite3`。它成熟，但是要编译原生模块。
@@ -135,7 +135,8 @@
 ### D15 工具链：没有构建步骤
 
 - 状态：已确认（随 D14）。
-- 已核实：Node 24.14 直接运行 `.ts` 不打印警告；`node --test` 自动找到 `*.test.ts`。
+- 已核实：Node 24.14 直接运行 `.ts` 不打印警告；`node --test` 自动找到 `*.test.ts`。（后来核实：24.22.1 上同样成立。）
+- 后来改为要求 Node 不低于 24.21：测试清理靠 `rmSync` 的重试，24.21 之前它在 Windows 上不重试（[kb-tools](kb-tools.md#坑点)）。
 - 决定：不用 vitest、ESLint 和 tsc 构建。测试用 `node:test`；kernel 无 I/O 用一个扫描 import 的测试检查；`typescript` 只跑 `tsc --noEmit`。开发依赖还有 `@types/node`，因为 `tsc` 要检查 `node:` 模块的类型。
 - tsconfig 开 `verbatimModuleSyntax`：只有类型的 import 必须写成 `import type`，Node 擦除类型后才不会去加载它。
 - 代价：只能用可擦除的 TS 语法；import 必须写 `.ts` 扩展名。
