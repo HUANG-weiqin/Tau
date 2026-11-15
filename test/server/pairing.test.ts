@@ -3,7 +3,8 @@
 import { test } from "node:test";
 import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -50,7 +51,7 @@ function setup(t: TestContext): Env {
     // 已经“崩溃”的服务再关一次会因为库已关而拒绝，忽略。
     for (const s of env.services) await s.close().catch(() => {});
     await noChildren(10_000);
-    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); // 停止会结束 bash，原因同 kill.test.ts
   });
   return env;
 }

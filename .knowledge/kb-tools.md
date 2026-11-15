@@ -287,6 +287,7 @@ WRAPPER = echo $$ > "$TAU_PGID"; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMM
 - **shell 路径缓存了“找不到”。** 服务启动之后才装 Git，要重启服务。
 - **结束不了就不返回。** bash 启动之后，调用只在它的 `exit` 或 `close` 之后返回。`ps` 和 `taskkill` 没有超时。它们挂住，或者结束不了 bash 时，调用一直不返回。停止进程只让执行器丢弃结果（[kb-executor](kb-executor.md#控制流)）。
 - **服务退出时不结束 bash。** 崩溃时没有人调用 `killAll`；正常退出也不中止动作（[kb-executor](kb-executor.md#崩溃窗口)）。手动核实过：硬杀运行 `bash()` 的 Node 进程后，`usr\bin\bash.exe`、原生孙进程和 msys 孙进程都继续运行到结束，pgid 文件留下。它们之后的输出无处可去。仓库里没有测试覆盖这一点（设计稿[风险](../docs/design/mvp.md#风险)）。
+- **测试删工作目录要用异步 `rm` 重试。** 结束 bash 的那一刻，正在 fork 或 exec 的 msys 进程会卡住约 5 秒。这期间它的当前目录句柄不允许删除，工作目录删不掉。启动完的 msys 进程不占目录。Node 24.14 到 24.20 的 `rmSync` 在 Windows 上遇到这种占用不重试，立刻报 `EPERM`，`maxRetries` 不起作用。24.21 修了。异步的 `rm` 一直会重试。
 - **`ps -l` 的格式。** Git 升级后列变了，组员就找不到，只剩 `taskkill /T`。原生孙进程在 Windows 父进程链上，照样被结束；两个 msys 孙进程的测试会失败。
 
 ## 关联模块

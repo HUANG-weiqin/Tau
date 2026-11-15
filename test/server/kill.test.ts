@@ -5,7 +5,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -131,11 +132,12 @@ test("服务运行中被随机硬杀 5 次：每次恢复后没有 running 行�
   const pipe = `\\\\.\\pipe\\tau-test-kill-${process.pid}-${Math.random().toString(16).slice(2)}`;
   const dbPath = join(dir, "tau.db");
   const kids: Child[] = [];
-  t.after(() => {
+  t.after(async () => {
     // 断言失败时也不留下服务：还活着的子进程连同它的进程树一起结束。
     for (const c of kids) if (alive(c)) spawnSync("taskkill", ["/PID", String(c.proc.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
-    // bash 里 fork 出的 msys sleep 不在 Windows 进程树上，可能还在工作目录里多活几百毫秒。
-    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    // 硬杀那一刻正在 fork 或 exec 的 msys 进程会卡住约 5 秒，期间 work 删不掉。
+    // 所以用异步 rm 重试：Node 24.14 到 24.20 的 rmSync 在 Windows 上遇到这种占用不重试（kb-tools 的坑点）。
+    await rm(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   });
   const boot = async (): Promise<Child> => {
     const c = launch([pipe, dbPath, presets]);
