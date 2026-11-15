@@ -111,11 +111,12 @@
 spawn(<根>\bin\bash.exe, ["-c", WRAPPER])
   cwd = workdir；stdin 是空设备；stdout、stderr 是管道；不弹窗口
   env = 服务的全部环境变量 + TAU_PGID（pgid 文件路径）+ TAU_COMMAND（命令原文）
-WRAPPER = echo $$ > "$TAU_PGID"; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMMAND"
+WRAPPER = echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMMAND"
 ```
 
 - 命令经环境变量传入，不拼进命令行。反斜杠和引号原样到达 bash。直接用 `-c <命令>` 时，Windows 命令行会把 `\\` 压成 `\`。
 - 先写 pgid 文件，再执行命令。`$$` 是 bash 的 msys pid，也是它的进程组号。
+- 写不进 pgid 文件（例如临时目录不存在）就不执行命令。bash 报错，退出码 1。否则超时或中止时，没人按进程组去找命令启动的 msys 进程。
 - `export -n` 之后，命令启动的子进程看不到这两个变量。命令自己的 shell 里仍能读到。
 - bash 的退出码就是命令的退出码。命令里的 `exit N` 结束整个 bash。
 
@@ -273,7 +274,7 @@ WRAPPER = echo $$ > "$TAU_PGID"; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMM
 | 测试 | 证明 |
 |---|---|
 | 基本 | 输出和退出码；`timeout` 超过 600 照常运行；非零退出码是错误；多行命令和 `set -e`；反斜杠和引号原样；子进程看不到 `TAU_` 变量；stderr 收进输出；补换行；在工作目录里运行 |
-| 不运行 | `timeout` 不是正数；调用前已中止 |
+| 不运行 | `timeout` 不是正数；调用前已中止；pgid 文件写不进 |
 | 超时 | 1 秒超时：远早于 60 秒的命令返回，是错误，pgid 文件已删。bash 启动卡住时没有超时前的输出，所以这里不查输出 |
 | 结束孙进程 | 超时和中止各两种孙进程：探针在 Windows 父进程链上（原生），或是 bash fork 后 exec 的 `sh` 的子进程（msys，只有按进程组才找得到）。探针启动过，后来断开。原生的超时测试还查超时前的输出保留 |
 | 启动途中中止 | 中止时刻铺满 bash 的启动期（0 到 240 毫秒）。msys 版的探针一个都没留下 |

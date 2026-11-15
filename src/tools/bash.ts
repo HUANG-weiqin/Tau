@@ -14,9 +14,9 @@ const KEEP_BYTES = MESSAGE_MAX_BYTES / 2 - 256;
 // bash 退出后，它留下的后台进程（如 `sleep 100 &`）还占着输出管道，close 要等它们结束。所以 exit 后
 // 只再读这么久就关管道返回。后台进程继续运行，不归本工具管；它再写输出会遇到管道已关（msys 程序因 SIGPIPE 退出）。
 const DRAIN_MS = 200;
-// 先把 bash 的 msys pid（也是它的进程组号）写进临时文件，再执行命令。命令经环境变量传入，
+// 先把 bash 的 msys pid（也是它的进程组号）写进临时文件，再执行命令；写不进就不执行。命令经环境变量传入，
 // 不拼进脚本，反斜杠原样保留；export -n 让子进程看不到这两个变量。
-const WRAPPER = 'echo $$ > "$TAU_PGID"; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMMAND"';
+const WRAPPER = 'echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMMAND"';
 
 const fail = (text: string): ToolResultContent => ({ text, isError: true });
 

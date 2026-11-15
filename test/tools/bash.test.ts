@@ -186,6 +186,19 @@ test("调用前已中止时不运行", async () => {
   assert.equal(exists("aborted.txt"), false);
 });
 
+// 写不进 pgid 就运行的话，超时或中止时没人按进程组去找它启动的 msys 进程。
+test("pgid 文件写不进时不运行命令", async () => {
+  process.env.TEMP = process.env.TMP = path.join(tmp, "missing");
+  try {
+    const r = await run("echo x > nopgid.txt");
+    assert.match(r.text, /No such file or directory\n\[退出码 1\]$/);
+    assert.equal(r.isError, true);
+    assert.equal(exists("nopgid.txt"), false);
+  } finally {
+    process.env.TEMP = process.env.TMP = tmp;
+  }
+});
+
 test("巨量输出只留头尾，字节不超上限，省略数准确", async () => {
   const r = await run("echo HEAD-MARK; yes line | head -n 1000000; echo TAIL-MARK");
   const total = 10 + 5 * 1000000 + 10; // 实际输出的字节数
