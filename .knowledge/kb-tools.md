@@ -166,7 +166,9 @@ WRAPPER = echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$
 - 不用 msys 的 `kill -9`。信号发给 exec 到一半的进程会卡约 5 秒，其间别的组员照常运行。
 - 会漏掉：
   - 用 `setsid` 离开进程组的进程。
-  - 正好在结束那一刻创建的原生进程。`taskkill /T` 先拍下进程树，再从叶子往上结束。拍下以后、创建它的进程被结束以前新建的进程，不在快照里。创建它的 msys 进程随后被结束，它也就不在 `ps` 里了。bash 刚开始执行命令时被结束，最容易碰上，例如 bash 启动卡了约 5 秒，正好在那时超时或中止。
+  - 正好在结束那一刻创建的进程。bash 刚开始执行命令时被结束，最容易碰上，例如 bash 启动卡了约 5 秒，正好在那时超时或中止。任何顺序的 `taskkill` 和 `ps` 都避不开：
+    - 原生进程：`taskkill /T` 先拍下进程树，再从叶子往上结束。拍下以后、创建它的进程被结束以前新建的进程，不在快照里。创建它的 msys 进程随后被结束，它也就不在 `ps` 里了。
+    - msys 进程：创建它的进程在 fork 或 exec 途中被结束时，新进程有时卡在 msys 的启动里。它不在 `ps -l` 里，不运行命令，不占工作目录，约 5 分钟后自己退出。实测在调用开始后 20 到 140 毫秒中止，约一成留下这样的 `sh`。
 - `ps` 偶尔卡约 5 秒才运行（见坑点“msys 程序同时启动”）。msys 组员晚约 5 秒被结束，调用也晚返回。
 
 #### pgid 文件
@@ -305,11 +307,11 @@ WRAPPER = echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$
 - **结束不了就不返回。** bash 启动之后，调用只在它的 `exit` 或 `close` 之后返回。`ps` 和 `taskkill` 没有超时。它们挂住，或者结束不了 bash 时，调用一直不返回。停止进程只让执行器丢弃结果（[kb-executor](kb-executor.md#控制流)）。
 - **服务退出时不结束 bash。** 崩溃时没有人调用 `killAll`；正常退出也不中止动作（[kb-executor](kb-executor.md#崩溃窗口)）。手动核实过：硬杀运行 `bash()` 的 Node 进程后，`usr\bin\bash.exe`、原生孙进程和 msys 孙进程都继续运行到结束，pgid 文件留下。它们之后的输出无处可去。仓库里没有测试覆盖这一点（设计稿[风险](../docs/design/mvp.md#风险)）。
 - **`ps -l` 的格式。** Git 升级后列变了，组员就找不到，只剩 `taskkill /T`。原生孙进程在 Windows 父进程链上，照样被结束；msys 版的孙进程测试会失败。
-- **msys 程序同时启动。** 两个 msys 程序（bash、`ps`、`sh`……）几乎同时启动时，其中一个偶尔要过约 5 秒才开始运行。单个启动时没见过。在 Git for Windows 2.49（msys 运行时 3.5.7）上实测过两个 bash 同时启动。影响：
+- **msys 程序同时启动。** 两个 msys 程序（bash、`ps`、`sh`……）几乎同时启动时，其中一个偶尔要过约 5 秒才开始运行。单个启动、又没被打断时，没见过。在 Git for Windows 2.49（msys 运行时 3.5.7）上实测过两个 bash 同时启动。影响：
   - 超时从 `spawn` 算起，包括 bash 的启动。卡住时命令少跑约 5 秒。超时不到 5 秒的命令，可能一行都没跑就被结束。
-  - `killAll` 的 `ps` 卡住时，msys 组员晚约 5 秒被结束，调用也晚返回。
+  - `killAll` 的 `ps` 卡住时怎样，见“结束进程”。
   - 测试不能假设 bash 几秒内一定启动，也不能把调用的时长卡在几秒内（见上面的 bash 测试）。
-- **测试删工作目录要靠重试。** 结束 bash 的那一刻，正在 fork 或 exec 的 msys 进程会卡住约 5 秒。这期间它的当前目录句柄不允许删除，工作目录删不掉。启动完的 msys 进程不占目录。测试用 `rmSync` 加 `maxRetries` 等它。Node 24.21 之前，`rmSync` 在 Windows 上遇到这种占用不重试，立刻报 `EPERM`。所以 `package.json` 要求 Node 不低于 24.21。
+- **测试删工作目录要靠重试。** 结束 bash 的那一刻，正在 fork 或 exec 的 msys 进程会卡住约 5 秒。这期间它的当前目录句柄不允许删除，工作目录删不掉。启动完的 msys 进程不占目录。“结束进程”里卡约 5 分钟的 `sh` 也不占目录。测试用 `rmSync` 加 `maxRetries` 等它。Node 24.21 之前，`rmSync` 在 Windows 上遇到这种占用不重试，立刻报 `EPERM`。所以 `package.json` 要求 Node 不低于 24.21。
 
 ## 关联模块
 

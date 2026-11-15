@@ -75,7 +75,7 @@ async function assertKilled(name: string): Promise<void> {
 }
 
 // 探针连上才中止。这时 bash 已经启动完，在等它。不能按时间中止：bash 偶尔要卡约 5 秒才启动，
-// 中止会正好落在它创建进程的时候，那一刻创建的原生进程结束不了（kb-tools 的“结束进程”）。
+// 中止会正好落在它创建进程的时候，那一刻创建的进程可能结束不了（kb-tools 的“结束进程”）。
 function abortOnStart(name: string): AbortSignal {
   const ac = new AbortController();
   void probe(name).start.promise.then(() => ac.abort());
