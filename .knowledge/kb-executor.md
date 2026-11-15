@@ -86,7 +86,7 @@ abort(id, n)
 3. 只把 `text_delta` 事件交给 `onText`。服务怎样转发，见 [kb-service.md](kb-service.md#流式文本)。
 4. 返回 `stream.result()`，也就是最终的助手消息。
 
-- 服务的模型目录是 `builtinModels()`（`@earendil-works/pi-ai/providers/all`）。`createModels()` 返回空目录，测试用它装 faux provider。
+- 服务的模型目录来自 `@earendil-works/pi-ai/providers/all` 的 `builtinModels`，怎样创建见 [kb-service.md](kb-service.md#启动脚本和入口)。`createModels()` 返回空目录，测试用它装 faux provider。
 - `sessionId` 用进程 ID，换段后不变。支持会话缓存的 provider 会用它。
 - 凭据由服务在创建模型目录时传入，执行器不管。凭据从哪来见 [kb-service.md](kb-service.md#启动脚本和入口)。
 - 请求用 `claim` 时读出的进程记录和工作段。运行中排队的用户消息在 `turn.queued` 里，不进这次请求。

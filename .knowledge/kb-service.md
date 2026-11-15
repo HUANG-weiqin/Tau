@@ -203,7 +203,10 @@ tau stop <进程>
 - `src/main.ts`：第一个参数是 `serve` 就动态导入服务的模块并启动，其余参数忽略。否则交给 CLI 的 `main`，返回值写进 `process.exitCode`。
 - 管道名、库和预设的位置写死在 `protocol.ts`、`main.ts` 和 `presets/load.ts`。`serve()` 和 CLI 的 `main` 接受别的管道和路径，只给测试用。
 - 服务的模型目录是 `builtinModels({ credentials })`（[kb-executor.md](kb-executor.md#调用模型actionsts)）。`credentials` 只读 `~/.pi/agent/auth.json` 里 `type` 为 `api_key` 的条目，每次调用都重读，从不写入（`src/server/credentials.ts`，理由见 [D23](kb-decisions.md#d23-凭据只读复用-pi-的凭据文件)）。
-- 某个 provider 在这个文件里有 `api_key`，就只用它。没有时（包括只有 OAuth 条目），pi-ai 从服务进程的环境变量读 API Key（例如 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`）。文件不存在算没有凭据；内容不是 JSON 时，这次模型调用失败。
+- 文件里这个 provider 的 `key` 非空时，API Key 用它。没有这个条目（包括只有 OAuth 条目）、`key` 缺失或为空时，pi-ai 从服务进程的环境变量读 API Key（例如 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`）。pi-ai 逐字段合并：条目的其他字段（`env`）也一样。
+- 只支持字面量 `key`。以 `!` 开头（pi 当命令执行）或含 `$`（pi 当变量和转义）的 `key` 会报错，不原样发出去。
+- 文件不存在算没有凭据。不是合法的 JSON、顶层不是对象、`key` 不是字符串时，这次模型调用以错误结束。报错不带文件内容：V8 的 JSON 报错会引用出错处附近的原文，可能是 key 的开头，而报错会存进库、显示在 CLI 上。
+- 路径写死成 `~/.pi/agent/auth.json`，不跟随 pi 的 `PI_CODING_AGENT_DIR`。
 - 模型调用由服务进程发出。CLI 的环境不影响模型调用。
 
 ### 退出
@@ -269,7 +272,7 @@ tau stop <进程>
 | `test/server/pairing.test.ts` | 服务层的工具调用配对：按顺序、运行中停止、运行中崩溃 |
 | `test/server/kill.test.ts`、`test/server/child.ts` | 子进程里的真服务被随机硬杀 |
 | `test/server/listen.test.ts` | 单实例 |
-| `test/server/credentials.test.ts` | 只交出 `api_key`；不写入；文件不存在和格式坏；每次重读 |
+| `test/server/credentials.test.ts` | 只交出 `api_key`；不写入；文件不存在、格式坏、顶层不是对象，报错不带文件内容；只支持字面量 key；每次重读；接进 pi-ai 后 key 的优先顺序和坏文件的结果 |
 | `test/server/cli.test.ts` | 第 5 步验收：经 CLI 同时跑两个进程；`self` 和 `tau ps` 一致；流式文本；模型不在目录里 |
 
 命令：`npm test`。只跑服务测试：`node --disable-warning=ExperimentalWarning --test "test/server/*.test.ts"`。
@@ -296,6 +299,7 @@ tau stop <进程>
 ## 坑点
 
 - **在 `pump` 之外推进状态。** `pump` 的同步是服务里“没有并发”的唯一来源。验证：pairing 的停止用例（中止及时到达）、kill 测试。
+- **pi 正在写凭据文件。** pi 在锁里原地截断再写，tau 读时不拿锁。读到空文件或半个文件时，这次模型调用以“不是合法的 JSON”结束，重发即可。窗口很小，但服务要跑很多年。
 - **回执提前发。** 回执必须在事务提交之后。kill 测试断言有回执的消息一条不丢。
 - **`settle` 不查信箱。** 进程 `idle` 而新消息还在排队时，新连接会拿到上一轮的回复。这一条没有专门的测试。
 - **`pump` 抛出。** `handleNext` 或 `claim` 抛出，说明库或代码坏了（[kb-store.md](kb-store.md#坑点)）。在请求里抛出时，已经发了回执的连接再收到一行 `error`，CLI 退出码 1，服务继续跑，信箱卡住。在动作结束后的 `pump` 里抛出时，没有人接住，Node 按未处理的拒绝让进程以码 1 退出，不经过 `fatal`。重启后第一次 `pump` 再抛出，服务起不来。

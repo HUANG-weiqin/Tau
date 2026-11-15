@@ -283,7 +283,7 @@ WRAPPER = echo $$ > "$TAU_PGID"; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMM
 - **写文件不是原子的。** 服务在 `write` 或 `edit` 写到一半时被杀，文件可能只剩一部分。重启后结果是“被中断”（[kb-executor](kb-executor.md#崩溃窗口)）。中止不影响文件工具，它们照样写完（[kb-executor](kb-executor.md#坑点)）。
 - **`write` 不保留原文件的 BOM 和 CRLF。** 它只写模型给的内容。
 - **bash 输出只按 UTF-8 解码。** Windows 原生程序按系统代码页输出时，非 ASCII 字符变成替换字符。头尾的切口也可能切开一个多字节字符。
-- **bash 继承服务的全部环境变量。** 服务环境里的 API Key、pi 的凭据文件（[D23](kb-decisions.md#d23-凭据只读复用-pi-的凭据文件)），命令都能读到。这符合“没有沙箱”（D7）。
+- **bash 继承服务的全部环境变量。** 服务环境里的 API Key，命令都能读到。bash 和服务以同一个用户运行，所以也能读 pi 的凭据文件（[D23](kb-decisions.md#d23-凭据只读复用-pi-的凭据文件)）。这符合“没有沙箱”（D7）。
 - **shell 路径缓存了“找不到”。** 服务启动之后才装 Git，要重启服务。
 - **结束不了就不返回。** bash 启动之后，调用只在它的 `exit` 或 `close` 之后返回。`ps` 和 `taskkill` 没有超时。它们挂住，或者结束不了 bash 时，调用一直不返回。停止进程只让执行器丢弃结果（[kb-executor](kb-executor.md#控制流)）。
 - **服务退出时不结束 bash。** 崩溃时没有人调用 `killAll`；正常退出也不中止动作（[kb-executor](kb-executor.md#崩溃窗口)）。手动核实过：硬杀运行 `bash()` 的 Node 进程后，`usr\bin\bash.exe`、原生孙进程和 msys 孙进程都继续运行到结束，pgid 文件留下。它们之后的输出无处可去。仓库里没有测试覆盖这一点（设计稿[风险](../docs/design/mvp.md#风险)）。

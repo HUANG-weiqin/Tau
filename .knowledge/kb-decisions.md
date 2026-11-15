@@ -90,7 +90,7 @@
   - 模型目录带 `getModel` 和 `streamSimple(model, context, options)`。`streamSimple` 要整个模型对象，所以调用时仍从目录取模型。
   - 内置的模型目录是 `@earendil-works/pi-ai/providers/all` 的 `builtinModels()`。`createModels()` 返回空目录，没有任何 provider；测试用它装 faux provider。（D20 改正了之前“`createModels()` 就是模型目录”的说法。）
   - 转换消息时，连续的用户消息原样传过。各家模型接不接受，第 3 步用真模型核实。
-  - `~/.pi/agent/auth.json` 的凭据和 pi-ai 的 `Credential` 同形（`api_key` 或 `oauth`）。tau 还不读它。
+  - `~/.pi/agent/auth.json` 的凭据和 pi-ai 的 `Credential` 同形（`api_key` 或 `oauth`）。tau 还不读它。（D23 改为只读复用其中的 `api_key` 条目。）
   - `providers/faux` 提供假模型，可以用于测试。
   - 用户消息带 `timestamp`；助手消息带 `usage`（含 `totalTokens` 和 `cost`）、`stopReason`（`pending`、`stop`、`length`、`toolUse`、`error`、`aborted`、`deferred`）和可选的 `errorMessage`。模型失败写在助手消息里，不抛出。
   - pi-ai 自己估算用量时取 `totalTokens`，为 0 时取 `input + output + cacheRead + cacheWrite`。
@@ -321,12 +321,14 @@
   - 用户已经在 pi 里登录过这些 provider。再要一份 key 是重复劳动。
   - **只读**：tau 不写这个文件，`modify` 和 `delete` 直接报错。写入会和 pi 抢同一个文件。
   - **不用 OAuth 条目**：OAuth 的访问令牌会过期，刷新后要写回文件。只读就做不到，所以当作没有这个条目，pi-ai 接着查环境变量。
-  - **每次调用都重读**：pi 换了 key，tau 不用重启。文件不存在算没有凭据；内容不是 JSON 就报错，这次模型调用失败，不悄悄退回环境变量。
+  - **每次调用都重读**：pi 换了 key，tau 不用重启。文件不存在算没有凭据；内容不对就报错，这次模型调用失败，不悄悄退回环境变量。
+  - **只支持字面量 key**：pi 的 key 还能写成 `!命令` 和 `$变量`。tau 不执行命令，也不展开变量，遇到就报错。原样发出去，等于把命令原文当 key 发给 provider。
 - 放弃：
   - **只用环境变量**：要用户在启动服务的环境里再配一遍 key。
   - **tau 自己的凭据文件**：多一份要维护的秘密，没有用户需要它。
   - **复用 pi 的 OAuth**：要写回刷新后的令牌，和 pi 并发写同一个文件。
-- 后果：凭据文件里有某个 provider 的 `api_key` 时，pi-ai 不再看这个 provider 的环境变量（pi-ai 的规则：存了凭据就由它负责）。bash 能读到这个文件，符合“没有沙箱”（D7）。
+- 后果：凭据文件里某个 provider 的 `key` 非空时，pi-ai 不再看这个 provider 的 API Key 环境变量；`key` 缺失或为空时照样读（pi-ai 逐字段合并）。bash 和服务以同一个用户运行，能读这个文件，符合“没有沙箱”（D7）。
+- 对抗式核查后补的：JSON 报错不带文件内容（V8 的报错会引用 key 的开头）；顶层不是对象、`key` 不是字符串时报错；拒绝非字面量 key；记下 pi 写文件时的竞态和不跟随 `PI_CODING_AGENT_DIR`。细节在 [kb-service](kb-service.md#启动脚本和入口)。
 
 ## 未确认的默认值
 
