@@ -39,7 +39,7 @@
 ### D4 纯 decide、单信箱、事务提交
 
 - 状态：已确认。用户的目标是“状态统一管理，其余都是纯函数”。
-- 决定：纯函数 `decide` 处理每条输入；进程在等的副作用由纯函数 `effectOf` 算出；所有输入进同一个信箱；一条输入一个事务。签名只写在设计稿第 4.3 节。
+- 决定：纯函数 `decide` 处理每条输入；进程在等的副作用由纯函数 `effectOf` 算出；所有输入进同一个信箱；一条输入一个事务。签名见 [kb-kernel](kb-kernel.md#函数)。
 - 放弃：
   - 一个全局 store 加异步 reducer：每次跨越 `await` 都要复核状态，这正是 Pi Web 复杂的来源。
   - 照字面理解“全部纯函数”：SDK 流、子进程和崩溃窗口永远不纯。它们被关进执行器，执行器不做决策。
@@ -71,7 +71,7 @@
 ### D8 一个用户级 SQLite
 
 - 状态：已确认。
-- 决定：预设以外的全部数据放在一个用户级库 `~/.tau/tau.db`，项目目录里不写任何东西。表、WAL 设置和备份办法见设计稿第 7 节。
+- 决定：预设以外的全部数据放在一个用户级库 `~/.tau/tau.db`，项目目录里不写任何东西。表、WAL 设置和备份办法见 [kb-store](kb-store.md#位置)。
 - MVP 不做迁移：有了需要保留的真数据再加。
 - 放弃：
   - “库可以丢，纯文本才是真相”：这个前提是笔记为纯文本文件；记忆改成键值存储后不再成立。
@@ -87,7 +87,10 @@
 
 - 状态：已确认。
 - 已核实（`@earendil-works/pi-ai` 1.0.0）：
-  - `createModels()` 返回带 `streamSimple(model, context, options)` 的模型目录。`streamSimple` 要整个模型对象，所以调用时仍从目录取模型。
+  - 模型目录带 `getModel` 和 `streamSimple(model, context, options)`。`streamSimple` 要整个模型对象，所以调用时仍从目录取模型。
+  - 内置的模型目录是 `@earendil-works/pi-ai/providers/all` 的 `builtinModels()`。`createModels()` 返回空目录，没有任何 provider；测试用它装 faux provider。（D20 改正了之前“`createModels()` 就是模型目录”的说法。）
+  - 转换消息时，连续的用户消息原样传过。各家模型接不接受，第 3 步用真模型核实。
+  - `~/.pi/agent/auth.json` 的凭据和 pi-ai 的 `Credential` 同形（`api_key` 或 `oauth`）。tau 还不读它。
   - `providers/faux` 提供假模型，可以用于测试。
   - 用户消息带 `timestamp`；助手消息带 `usage`（含 `totalTokens` 和 `cost`）、`stopReason`（`pending`、`stop`、`length`、`toolUse`、`error`、`aborted`、`deferred`）和可选的 `errorMessage`。模型失败写在助手消息里，不抛出。
   - pi-ai 自己估算用量时取 `totalTokens`，为 0 时取 `input + output + cacheRead + cacheWrite`。
@@ -102,7 +105,7 @@
 - 状态：已确认（随 D18）。
 - 已核实：`node:sqlite` 在 Node 24.14 上会打印 `ExperimentalWarning`；运行时加 `--disable-warning=ExperimentalWarning` 后不再打印。
 - 决定：用内置的 `node:sqlite`，只用最基本的同步 API。少一个原生依赖，也不用为 Node 升级重新编译。
-- 代价：它仍是实验 API，几年内可能变化。变化时只改 `store/`。
+- 代价：它仍是实验 API，几年内可能变化。变化时要改 `store/`、`memory/kv.ts`，以及执行器和服务里直接写的 SQL（D20 改正了之前“只改 `store/`”的说法）。
 - 放弃：`better-sqlite3`。它成熟，但是要编译原生模块。
 
 ### D12 小而硬，严格 YAGNI
@@ -139,7 +142,7 @@
 - 第 0 步定下（默认）：
   - 精确锁定 `typescript` 7.0.2 和 `@types/node` 24.19.2。
   - 测试放在 `test/`，不放在 `src/`。这样 `src/kernel/` 的扫描没有例外，`loc` 直接统计整个 `src/`。
-  - import 扫描测试（`test/kernel-imports.test.ts`）同时禁止 kernel 用 `await`、`Date`、`Math.random`、`process.`、定时器和动态 import，对应 AGENTS.md 的纯函数规则。
+  - import 扫描测试（`test/kernel-imports.test.ts`）同时禁止 kernel 用 `await`、`Date`、`Math.random`、`process.`、`globalThis`、定时器、动态 import 和 `require`，对应 AGENTS.md 的纯函数规则。
 
 ### D16 服务只在命名管道上监听，MVP 用 CLI
 
@@ -163,7 +166,7 @@
   - **命名管道就是锁**：同一个管道不能被监听两次，删掉锁文件。
   - **副作用结果按种类分型**，不用 `unknown`。
   - 按 YAGNI 删掉花费统计和“距你上次说话多久”：它们是我加的，用户没要求过。
-- 已核实：同一个进程里第二次监听同一个命名管道会得到 `EADDRINUSE`。跨进程的情况在执行清单第 2 步核实。
+- 已核实：第二次监听同一个命名管道会得到 `EADDRINUSE`，同一个进程里和跨进程都一样（`test/server/listen.test.ts`）。
 
 ### D18 第三轮审查：两个审查者，24 项修改
 
@@ -225,9 +228,45 @@
   - `read` 自己的大小上限、`self` 的 2 KiB 上限删掉，统一用工具结果的字节上限。
 - YAGNI：`stepsPerTurn` 从预设字段改为内核常量 `STEPS_PER_TURN`，预设从 4 个字段减到 3 个。现在没有人需要每个预设用不同的步数。
 - 风险表：pi-ai 已经处理“工具结果后接用户消息”，只剩“连续多条用户消息”要核实，删掉“补一条固定助手回复”的后备方案。加上 `tau ps` 会随年头变慢。
-- 文档：`decide` 签名、库里有哪几张表、事务做哪几件事，只留在设计稿；“打开进程”改为“处理一条输入”；模块依赖改正（`store` 通过接口使用记忆）；`tau send` 挪到清单第 3 步；第 2 步用假的库内工具测试；清单的不变量改为运行中也成立的写法。
+- 文档：`decide` 签名、库里有哪几张表、事务做哪几件事，只留在一处（当时是设计稿；第 2 步之后是 [kb-kernel](kb-kernel.md) 和 [kb-store](kb-store.md)）；“打开进程”改为“处理一条输入”；模块依赖改正（`store` 通过接口使用记忆）；`tau send` 挪到清单第 3 步；第 2 步用假的库内工具测试；清单的不变量改为运行中也成立的写法。
 - 审查者认为应该保留的：纯 `decide` 加“一条输入一个事务”；`effectOf` 推出副作用；`purpose` 存在阶段里（保存当时的决定，比事后重算估算值稳）；`Turn` 和 `ended` 的位置；`endTurn` 的两种补法；失败的回复不写入；库内副作用同事务执行；全库自增版本号加“写入 = 删旧插新”；记忆一个总上限；命名管道即锁。
 - 没有采纳：把 `segment.memoryView` 改成新段的第一条系统消息。D17 已经定过，改动面大，审查者自己也不建议现在动。
+
+### D20 实现第 0 到 2 步时定下的事
+
+- 状态：默认（2026-11-15）。用户还没逐条确认。
+- 模块内的选择和理由写在模块页的“决策”里：[内核](kb-kernel.md#决策)、[存储](kb-store.md#决策)、[执行器](kb-executor.md#决策)。这里只记跨模块的选择、和原设计稿不同的地方、还没定的事、审查修掉的缺陷。设计稿第 4 到 7 节已改成指向这三页的链接。
+- 跨模块的选择：
+  - **库内工具在第 2 步就做了**，比执行清单早。`self` 和 `memory_*` 建在 `Memory` 接口上，测试用假记忆库；SQLite 实现是 `src/memory/kv.ts`。参数、结果和文字格式见 [kb-store](kb-store.md#投影与命令)。记忆的上限仍在第 4 步。
+  - **库内工具的参数不是对象时，当作空对象**；库外工具的参数由 pi-ai 校验，`null` 算参数错误。理由见 [kb-store](kb-store.md#坑点)。
+  - **执行器依赖存储**：它的三个事务用 `store/db.ts` 的 `tx` 和行读写，并直接写 `effects` 表的 SQL。设计稿第 3 节和 D11 已按代码改正。
+  - **服务的模型目录是 `builtinModels()`**：`createModels()` 是空目录（D10 已改正）。
+  - **崩溃注入把每个事务边界都当崩溃点**，包括“`claim` 已提交、结果还没写”的窗口。做法见 [kb-executor](kb-executor.md#崩溃注入teststorecrashtestts)。
+- 和原设计稿不同的地方。模块页按代码写，理由在模块页里：
+  - 新段第一条消息是 `HANDOFF_HEADER` 加交接说明（[kb-kernel](kb-kernel.md#流程换段)）。
+  - 系统提示词多了工作目录一行，记忆视图前加了标题（[kb-kernel](kb-kernel.md#函数)）。
+  - 工具结果按位置配对，不按 ID（[kb-kernel](kb-kernel.md#决策)）。
+  - `endTurn` 只在阶段是 `awaitingTool` 时写“被中断，结果未知”（[kb-kernel](kb-kernel.md#流程两个辅助步骤)）。
+  - 工具结果在 `decide` 里统一裁剪；`read` 和 `bash` 另外自己裁剪（[kb-kernel](kb-kernel.md#决策)）。
+  - 种类不对的结果和 pi-ai 之外的 `stopReason` 都不让 `decide` 抛错（[kb-kernel](kb-kernel.md#决策)）。
+  - 换段失败时，排队的消息照样写进旧段（[kb-kernel](kb-kernel.md#流程换段)）。
+  - `handleNext` 取全局最早的一条输入，不分进程（[kb-store](kb-store.md#决策)）。
+  - 执行器不自己发现行被删，由服务调用 `abort`（[kb-executor](kb-executor.md#控制流)）。
+  - 只有 `bash` 拿到中止信号（[kb-executor](kb-executor.md#运行工具actionsts)）。
+- 还没定的：
+  - 内核的四个常量都是占位值，第 4 步定（[kb-kernel](kb-kernel.md#常量)）。换段阈值的空档列在执行清单第 4 步。
+  - 处理一条输入时，带记忆的预设每次都读记忆视图，`self` 读全部进程记录。这和 AGENTS.md 的“处理一条输入只读进程记录和当前工作段”不一致（[kb-store](kb-store.md#处理一条输入读什么)）。
+  - SQL 散在 `store/` 以外的三处：要不要收回 `store/`。
+- 审查修掉的缺陷：第 2 步之后的一轮对抗式审查确认了 11 项缺陷，每项都先写最小反例测试再修。主要的：
+  - 内核：重复或为空的工具调用 ID 让进程卡在 `awaitingTool`。改为按位置配对。
+  - 内核：`clip` 拷贝整串，一亿多字符的结果在事务里让 V8 中止，每次重启都一样。改为只扫描保留的头尾。
+  - 内核：`utf8Bytes` 遇到孤立的代理项会跳过下一个字符。改为按 3 字节算。
+  - 存储：库内工具的参数为 `null` 时抛错，堵住所有进程的信箱。改为当作空对象。
+  - 预设：ID 大小写不同时 NTFS 读到同一个文件，身份和记忆库分裂。改为精确匹配目录项。
+  - 预设：`workdir` 为空或是相对路径时，按服务的当前目录解析。改为必须是绝对路径。
+  - 预设：文件以 UTF-8 BOM 开头时解析失败。改为忽略 BOM。
+  - 工具：`edit` 会毁掉 GBK、UTF-16 等非 UTF-8 文件。改为 `read` 和 `edit` 都拒绝这类文件。
+  - 工具：多行 `edit` 在 CRLF 文件上永远匹配不到。改为按 CRLF 重试，写入时保持 CRLF。
 
 ## 未确认的默认值
 
@@ -242,4 +281,5 @@
 ## 关联模块
 
 - [kb-overview.md](kb-overview.md)
+- [kb-kernel.md](kb-kernel.md)、[kb-store.md](kb-store.md)、[kb-executor.md](kb-executor.md)
 - [kb-piweb-lessons.md](kb-piweb-lessons.md)

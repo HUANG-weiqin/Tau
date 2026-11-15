@@ -28,9 +28,9 @@ tau 不负责：
 输入（用户消息 / 副作用结果 / 停止）
         ↓
    信箱（SQLite）
-        ↓  每个进程一次取一条
+        ↓  按到达顺序一次取一条
    decide：纯函数，算出新的进程记录和要追加的消息
-        ↓  一条输入一个事务（步骤见设计稿第 4.4 节）
+        ↓  一条输入一个事务（步骤见 kb-store.md）
    effectOf：纯函数，算出进程在等的副作用
         ↓  库内副作用在事务里执行；库外副作用进待办副作用表
         ↓
@@ -64,11 +64,24 @@ tau 不负责：
 
 ## 投影与命令
 
-投影的内容见[设计稿第 9 节](../docs/design/mvp.md#9-自省)。
+投影的内容见[设计稿第 9 节](../docs/design/mvp.md#9-自省)，字段见 [kb-kernel.md](kb-kernel.md#投影与命令)。
 
 ## 入口
 
-还没有源码。见[设计稿](../docs/design/mvp.md)和[执行清单](../docs/plan/mvp-checklist.md)。
+| 路径 | 内容 | 细节 |
+|---|---|---|
+| `src/main.ts` | `tau serve` 启动服务；其余命令交给 CLI | — |
+| `src/server/serve.ts` | 把库、执行器和管道装配起来；`pump` 处理信箱、开始副作用 | [设计稿第 11 节](../docs/design/mvp.md#11-服务与-cli) |
+| `src/server/listen.ts` | 在命名管道上监听，监听成功就是单实例锁 | [设计稿第 11 节](../docs/design/mvp.md#11-服务与-cli) |
+| `src/cli/main.ts`、`src/protocol.ts` | 命令行和线协议；CLI 只依赖协议 | [设计稿第 11 节](../docs/design/mvp.md#11-服务与-cli) |
+| `src/kernel/` | 纯函数：`decide`、`effectOf`、`observe`、`buildContext`、派生值、工具描述 | [kb-kernel.md](kb-kernel.md) |
+| `src/store/` | 表、处理输入的事务、库内工具 | [kb-store.md](kb-store.md) |
+| `src/executor/` | 库外副作用的开始、中止、上报，启动恢复 | [kb-executor.md](kb-executor.md) |
+| `src/memory/kv.ts` | `Memory` 接口的 SQLite 实现 | [设计稿第 8 节](../docs/design/mvp.md#8-记忆) |
+| `src/tools/` | `read`、`write`、`edit`、`bash` | [设计稿第 10 节](../docs/design/mvp.md#10-工具) |
+| `src/presets/load.ts` | 读预设文件，生成快照 | [设计稿第 2 节](../docs/design/mvp.md#2-预设) |
+
+测试在 `test/`，按模块分目录；执行器的测试在 `test/store/`。命令：`npm test`、`npm run typecheck`、`npm run loc`。完成门槛见 AGENTS.md，当前进度见[执行清单](../docs/plan/mvp-checklist.md)。
 
 ## 坑点
 
@@ -81,5 +94,6 @@ tau 不负责：
 
 ## 关联模块
 
+- [kb-kernel.md](kb-kernel.md)、[kb-store.md](kb-store.md)、[kb-executor.md](kb-executor.md)
 - [kb-decisions.md](kb-decisions.md)
 - [kb-piweb-lessons.md](kb-piweb-lessons.md)
