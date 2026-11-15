@@ -116,13 +116,13 @@
 
 ## 第 5 步：自省与其余 CLI
 
-- [ ] `observe` 的数据收集，`self` 工具。`self` 已在第 2 步先写好（[kb-store](../../.knowledge/kb-store.md#self)），这一步按验收核对。
-- [ ] `tau ps`、`tau stop`。代码已在第 3 步先写好（[kb-service](../../.knowledge/kb-service.md#clisrcclimaints)），这一步按验收核对。
+- [x] `observe` 的数据收集，`self` 工具。`self` 已在第 2 步先写好（[kb-store](../../.knowledge/kb-store.md#self)），按验收核对过（`test/server/cli.test.ts`）。
+- [x] `tau ps`、`tau stop`。代码已在第 3 步先写好（[kb-service](../../.knowledge/kb-service.md#clisrcclimaints)），按验收核对过（`test/server/cli.test.ts`）。
 
 **验收**
 
-- [ ] 用 CLI 同时运行两个进程，一个用 `tools` 含 `memory` 的预设，一个用不含的。
-- [ ] `self` 能显示上下文用量、时间和运行中的兄弟进程；`tau ps` 显示的内容和它一致。
+- [x] 用 CLI 同时运行两个进程，一个用 `tools` 含 `memory` 的预设，一个用不含的（`test/server/cli.test.ts`，faux 模型）。
+- [x] `self` 能显示上下文用量、时间和运行中的兄弟进程；`tau ps` 显示的内容和它一致（`test/server/cli.test.ts`）。
 - [x] 在服务运行中随机杀掉它几次。每次重启后，恢复完成、执行器开始之前，没有 `running` 行，`assertInvariants` 成立（`test/server/kill.test.ts`）。
 - [ ] 手动走一遍：用带记忆的预设启动进程 → 用 `send` 对话 → 再用不带记忆的预设启动一个进程 → 两个同时运行 → 停止其中一个。
 
