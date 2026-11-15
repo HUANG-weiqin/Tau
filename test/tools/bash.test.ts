@@ -49,9 +49,9 @@ after(async () => {
   // 测试失败时可能留下没被结束的探针。关掉连接，它们自己退出。
   for (const p of probes.values()) p.socket?.destroy();
   server.close();
-  // exec 到一半被结束的 msys 进程可能还占着工作目录一两秒。
-  await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  await rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  // fork 或 exec 到一半被结束的 msys 进程可能还占着工作目录约 5 秒（kb-tools 坑点）。重试共等约 12 秒。
+  await rm(dir, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 });
+  await rm(tmp, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 });
 });
 
 function run(command: string, timeout?: number, signal: AbortSignal = new AbortController().signal) {
@@ -143,9 +143,15 @@ test("超时及时返回，是错误，临时文件已删", async () => {
 // 没被结束的探针一直连着，测试到 30 秒失败。
 describe("超时和中止结束孙进程", { concurrency: 2, timeout: 30_000 }, () => {
   // 探针连上过，说明命令在超时前就在运行，所以 before 一定在输出里。
+  // 原生探针在 killAll 第一步的 taskkill 里结束，不等 ps，所以它断开的时刻就是超时的时刻。
+  // 上限留出一次约 5 秒的卡顿；计时器慢一倍时照样查得出。
   test("超时：原生孙进程", async () => {
+    const start = Date.now();
+    const goneAt = probe("tn").gone.promise.then(() => Date.now() - start);
     const r = await run(`echo before; ${nativeGrandchild("tn")}`, 8);
     await assertKilled("tn");
+    const ms = await goneAt;
+    assert.ok(ms >= 8000 && ms < 15_000, `探针在第 ${ms} 毫秒断开`);
     assert.deepEqual(r, { text: "before\n[超时：8 秒后结束了命令启动的进程]", isError: true });
   });
 
@@ -167,10 +173,12 @@ describe("超时和中止结束孙进程", { concurrency: 2, timeout: 30_000 }, 
 });
 
 // bash 刚启动、还没写 pgid 时就中止，它可能在结束进程的途中写下 pgid、启动 sh。先读 pgid 再结束 bash 的话，
-// 读到的是空，不按进程组找，这样的 sh 就漏掉了。中止时刻铺满启动期（约 0.1 秒）。
-// 只测 msys 版：这时创建的原生进程本来就可能漏掉（kb-tools 的“结束进程”）。
-// 没漏掉的探针要么没启动，要么已断开。漏掉的 sh 在之后一两百毫秒内启动探针，探针一直连着。
-test("启动途中中止：msys 程序启动的孙进程也被结束", async () => {
+// 读到的是空，不按进程组找，这样的 sh 就漏掉了。中止时刻从 0 到 240 毫秒，盖住 bash 的启动期（约 0.1 秒）。
+// 漏掉的 sh 在之后一两百毫秒内启动探针，探针一直连着；没漏掉的探针要么没启动，要么已断开。
+// 只测 msys 版：那一刻创建的原生进程本来就可能漏掉。那一刻 exec 到一半的 sh 可能卡在启动里，
+// 不启动探针，这里看不见；它也不运行命令（kb-tools 的“结束进程”）。
+// killAll 没结束启动器时 run 不返回，所以给个上限。
+test("启动途中中止：msys 程序启动的孙进程也被结束", { timeout: 90_000 }, async () => {
   const names: string[] = [];
   for (let ms = 0; ms <= 240; ms += 20) {
     names.push(`s${ms}`);
