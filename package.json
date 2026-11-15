@@ -6,7 +6,7 @@
     "node": ">=24.14"
   },
   "scripts": {
-    "test": "node --disable-warning=ExperimentalWarning --test",
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.ts\"",
     "typecheck": "tsc",
     "loc": "node scripts/loc.ts"
   },

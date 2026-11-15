@@ -38,7 +38,9 @@ export function usageOf(m: AssistantMessage): number {
 export function contextUsed(p: Process, segment: readonly Message[]): number {
   for (let i = segment.length - 1; i >= 0; i--) {
     const m = segment[i]!;
-    if (m.role === "assistant" && usageOf(m) > 0) return usageOf(m) + estimate(JSON.stringify(segment.slice(i + 1).map((x) => x.content)));
+    if (m.role !== "assistant" || usageOf(m) === 0) continue;
+    const after = segment.slice(i + 1);
+    return usageOf(m) + (after.length === 0 ? 0 : estimate(JSON.stringify(after.map((x) => x.content))));
   }
   return estimate(systemPrompt(p) + JSON.stringify(toolDefinitions(p.preset)) + JSON.stringify(segment.map((x) => x.content)));
 }
