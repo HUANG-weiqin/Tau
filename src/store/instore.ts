@@ -7,7 +7,9 @@ import type { Ended, Instant, Memory, Message, Process, ToolCall, ToolResultCont
 import { loadProcesses } from "./db.ts";
 
 export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment: readonly Message[], call: ToolCall, now: Instant): ToolResultContent {
-  const { key, value, version } = call.arguments;
+  // 参数来自模型：pi-ai 把流式 JSON 'null' 解析成 null，所以不能直接解构。
+  const args: Record<string, unknown> = typeof call.arguments === "object" && call.arguments !== null ? call.arguments : {};
+  const { key, value, version } = args;
   const ns = p.preset.id;
   switch (call.name) {
     case "self":
