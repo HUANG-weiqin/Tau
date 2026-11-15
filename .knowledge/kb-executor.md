@@ -88,7 +88,7 @@ abort(id, n)
 
 - 服务的模型目录是 `builtinModels()`（`@earendil-works/pi-ai/providers/all`）。`createModels()` 返回空目录，测试用它装 faux provider。
 - `sessionId` 用进程 ID，换段后不变。支持会话缓存的 provider 会用它。
-- tau 不传凭据。凭据从哪来见 [kb-service.md](kb-service.md#启动脚本和入口)。
+- 凭据由服务在创建模型目录时传入，执行器不管。凭据从哪来见 [kb-service.md](kb-service.md#启动脚本和入口)。
 - 请求用 `claim` 时读出的进程记录和工作段。运行中排队的用户消息在 `turn.queued` 里，不进这次请求。
 
 输出上限 `maxTokens`：

@@ -202,7 +202,9 @@ tau stop <进程>
 - 这个参数让 `node:sqlite` 不打印 `ExperimentalWarning`（[D11](kb-decisions.md#d11-sqlite-驱动)）。只有 `serve` 加载 `node:sqlite`，但脚本对所有命令都加。`npm test` 和 kill 测试的子进程加同样的参数。
 - `src/main.ts`：第一个参数是 `serve` 就动态导入服务的模块并启动，其余参数忽略。否则交给 CLI 的 `main`，返回值写进 `process.exitCode`。
 - 管道名、库和预设的位置写死在 `protocol.ts`、`main.ts` 和 `presets/load.ts`。`serve()` 和 CLI 的 `main` 接受别的管道和路径，只给测试用。
-- 服务的模型目录是 `builtinModels()`（[kb-executor.md](kb-executor.md#调用模型actionsts)）。tau 不传凭据。模型调用由服务进程发出，pi-ai 默认按 provider 从这个进程的环境变量读 API Key（例如 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`）。CLI 的环境不影响模型调用。
+- 服务的模型目录是 `builtinModels({ credentials })`（[kb-executor.md](kb-executor.md#调用模型actionsts)）。`credentials` 只读 `~/.pi/agent/auth.json` 里 `type` 为 `api_key` 的条目，每次调用都重读，从不写入（`src/server/credentials.ts`，理由见 [D23](kb-decisions.md#d23-凭据只读复用-pi-的凭据文件)）。
+- 某个 provider 在这个文件里有 `api_key`，就只用它。没有时（包括只有 OAuth 条目），pi-ai 从服务进程的环境变量读 API Key（例如 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`）。文件不存在算没有凭据；内容不是 JSON 时，这次模型调用失败。
+- 模型调用由服务进程发出。CLI 的环境不影响模型调用。
 
 ### 退出
 
@@ -258,6 +260,7 @@ tau stop <进程>
 |---|---|
 | `src/server/serve.ts` | `serve`：启动顺序、`pump`、`settle`、`watch`、`handle`、`finalReply`、`parseRequest`、`close` |
 | `src/server/listen.ts` | `listen`：在命名管道上监听；`EADDRINUSE` 变成“已经有一个 tau 服务” |
+| `src/server/credentials.ts` | `piCredentials`：只读 pi 的凭据文件，只交出 `api_key` 条目 |
 | `src/protocol.ts` | `PIPE`、`Request`、`Reply` |
 | `src/cli/main.ts` | `main`（命令和退出码）、`request`（连接、发一行、逐行交出回复）、`formatPs` |
 | `src/main.ts` | 入口：`serve` 或 CLI；`~/.tau` 的位置；信号处理 |
@@ -266,6 +269,7 @@ tau stop <进程>
 | `test/server/pairing.test.ts` | 服务层的工具调用配对：按顺序、运行中停止、运行中崩溃 |
 | `test/server/kill.test.ts`、`test/server/child.ts` | 子进程里的真服务被随机硬杀 |
 | `test/server/listen.test.ts` | 单实例 |
+| `test/server/credentials.test.ts` | 只交出 `api_key`；不写入；文件不存在和格式坏；每次重读 |
 | `test/server/cli.test.ts` | 第 5 步验收：经 CLI 同时跑两个进程；`self` 和 `tau ps` 一致；流式文本；模型不在目录里 |
 
 命令：`npm test`。只跑服务测试：`node --disable-warning=ExperimentalWarning --test "test/server/*.test.ts"`。

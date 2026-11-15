@@ -73,6 +73,7 @@ tau 不负责：
 | `src/main.ts` | `tau serve` 启动服务；其余命令交给 CLI | [kb-service.md](kb-service.md#启动脚本和入口) |
 | `src/server/serve.ts` | 把库、执行器和管道装配起来；`pump` 处理信箱、开始副作用 | [kb-service.md](kb-service.md) |
 | `src/server/listen.ts` | 在命名管道上监听，监听成功就是单实例锁 | [kb-service.md](kb-service.md) |
+| `src/server/credentials.ts` | 只读 pi 的凭据文件，交给模型目录 | [kb-service.md](kb-service.md#启动脚本和入口) |
 | `src/cli/main.ts`、`src/protocol.ts` | 命令行和线协议；CLI 只依赖协议 | [kb-service.md](kb-service.md) |
 | `src/kernel/` | 纯函数：`decide`、`effectOf`、`observe`、`buildContext`、派生值、工具描述 | [kb-kernel.md](kb-kernel.md) |
 | `src/store/` | 表、处理输入的事务、库内工具 | [kb-store.md](kb-store.md) |

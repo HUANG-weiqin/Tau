@@ -6,12 +6,13 @@ if (cmd === "serve") {
   const { join } = await import("node:path");
   const { builtinModels } = await import("@earendil-works/pi-ai/providers/all");
   const { sqliteMemory } = await import("./memory/kv.ts");
+  const { piCredentials } = await import("./server/credentials.ts");
   const { presetsDir } = await import("./presets/load.ts");
   const { PIPE } = await import("./protocol.ts");
   const { serve } = await import("./server/serve.ts");
   const home = join(homedir(), ".tau");
   mkdirSync(join(home, "presets"), { recursive: true });
-  const service = await serve({ pipe: PIPE, dbPath: join(home, "tau.db"), presetsDir: presetsDir(), models: builtinModels(), memory: sqliteMemory });
+  const service = await serve({ pipe: PIPE, dbPath: join(home, "tau.db"), presetsDir: presetsDir(), models: builtinModels({ credentials: piCredentials(join(homedir(), ".pi", "agent", "auth.json")) }), memory: sqliteMemory });
   console.error(`tau 服务在 ${PIPE} 上运行。按 Ctrl+C 停止。`);
   const stop = (): void => void service.close().then(() => process.exit(0));
   process.once("SIGINT", stop);
