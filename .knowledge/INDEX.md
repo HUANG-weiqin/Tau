@@ -10,7 +10,7 @@
 
 | 你要解决的问题 | 先读 |
 |---|---|
-| 初次接手，判断一个功能该不该做 | [总览](kb-overview.md)，再读 AGENTS.md 的“准入规则” |
+| 初次接手，判断一个功能该不该做 | [总览](kb-overview.md)，再读 AGENTS.md 的“准入规则”和设计稿的 [MVP 不做](../docs/design/mvp.md#mvp-不做) |
 | 某个设计为什么是这样，当初放弃过什么 | [决策记录](kb-decisions.md) |
 | 想加一个看起来合理的机制（压缩、wait 工具、只读 bash 审查、按项目存数据） | 先读 [Pi Web 的教训](kb-piweb-lessons.md) |
 | 改内核、存储、记忆、自省或工具 | 设计稿的对应章节（模块页建立之前） |
@@ -25,7 +25,7 @@
 | [kb-piweb-lessons.md](kb-piweb-lessons.md) | Pi Web 的实测问题，以及 tau 对应的规则 |
 | [_template.md](_template.md) | 新页模板 |
 
-计划中的模块页，随实现建立：`kb-kernel.md`、`kb-store.md`、`kb-executor.md`、`kb-memory.md`、`kb-introspection.md`、`kb-tools.md`、`kb-ui.md`。
+计划中的模块页，随实现建立：`kb-kernel.md`、`kb-store.md`、`kb-executor.md`、`kb-tools.md`、`kb-memory.md`、`kb-service.md`（自省、守护进程、CLI）。
 
 ## 维护规则
 
