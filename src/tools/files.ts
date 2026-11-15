@@ -1,6 +1,7 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ToolResultContent } from "../kernel/types.ts";
+import { clip } from "../kernel/derive.ts";
 
 const ok = (text: string): ToolResultContent => ({ text, isError: false });
 const fail = (text: string): ToolResultContent => ({ text, isError: true });
@@ -12,11 +13,18 @@ function reason(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+// 必须是合法 UTF-8 且能无损还原（BOM 保留为 U+FEFF）；否则返回 undefined。
+function decode(buf: Buffer): string | undefined {
+  const text = buf.toString("utf8");
+  return Buffer.from(text, "utf8").equals(buf) ? text : undefined;
+}
+
 export async function read(args: { path: string; offset?: number; limit?: number }, workdir: string): Promise<ToolResultContent> {
   const file = path.resolve(workdir, args.path);
   try {
     if ((await stat(file)).isDirectory()) return fail(`是目录，不能读取：${file}`);
-    const text = await readFile(file, "utf8");
+    const text = decode(await readFile(file));
+    if (text === undefined) return fail(`不是 UTF-8 文本：${file}`);
     const lines = text === "" ? [] : text.split("\n");
     if (text.endsWith("\n")) lines.pop();
     if (lines.length === 0) return ok(`文件为空：${file}`);
@@ -27,7 +35,7 @@ export async function read(args: { path: string; offset?: number; limit?: number
     const out = lines
       .slice(offset - 1, end)
       .map((line, i) => `${String(offset + i).padStart(6)}\t${line.replace(/\r$/, "")}`);
-    return ok(out.join("\n"));
+    return ok(clip(out.join("\n")));
   } catch (e) {
     return fail(`读取失败：${file}（${reason(e)}）`);
   }
@@ -51,12 +59,17 @@ export async function edit(
   const file = path.resolve(workdir, args.path);
   if (args.old === "") return fail(`原文不能为空：${file}`);
   try {
-    const text = await readFile(file, "utf8");
-    const parts = text.split(args.old);
+    const text = decode(await readFile(file));
+    if (text === undefined) return fail(`不是 UTF-8 文本，不能编辑：${file}`);
+    // 模型看到的行不含 \r。CRLF 文件里：多行原文换成 \r\n 再匹配，新文本的 \n 也换成 \r\n。
+    const crlf = text.includes("\r\n") && !args.old.includes("\r");
+    let parts = text.split(args.old);
+    if (parts.length === 1 && crlf) parts = text.split(args.old.replaceAll("\n", "\r\n"));
     const count = parts.length - 1;
     if (count === 0) return fail(`没找到原文：${file}`);
     if (count > 1 && !args.replaceAll) return fail(`原文出现 ${count} 次，必须唯一，或改用 replaceAll：${file}`);
-    await writeFile(file, parts.join(args.new), "utf8");
+    const repl = crlf ? args.new.replace(/(?<!\r)\n/g, "\r\n") : args.new;
+    await writeFile(file, parts.join(repl), "utf8");
     return ok(`已替换 ${count} 处：${file}`);
   } catch (e) {
     return fail(`编辑失败：${file}（${reason(e)}）`);

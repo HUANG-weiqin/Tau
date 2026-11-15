@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { edit, read, write } from "../../src/tools/files.ts";
+import { TOOL_RESULT_MAX_BYTES } from "../../src/kernel/derive.ts";
 
 let dir = "";
 
@@ -15,7 +16,7 @@ after(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-async function file(name: string, content: string): Promise<string> {
+async function file(name: string, content: string | Buffer): Promise<string> {
   const p = path.join(dir, name);
   await writeFile(p, content, "utf8");
   return p;
@@ -166,5 +167,78 @@ describe("edit", () => {
     const r = await edit({ path: "e-rel.txt", old: "one", new: "two" }, dir);
     assert.equal(r.isError, false);
     assert.equal(await readFile(path.join(dir, "e-rel.txt"), "utf8"), "two");
+  });
+});
+
+describe("encoding and line endings", () => {
+  const gbk = Buffer.from([0x65, 0x63, 0x68, 0x6f, 0x20, 0xc4, 0xe3, 0xba, 0xc3, 0x0d, 0x0a, 0x41, 0x3d, 0x31, 0x0d, 0x0a]);
+
+  test("edit refuses a GBK file and leaves bytes unchanged", async () => {
+    const p = await file("gbk-edit.txt", gbk);
+    const r = await edit({ path: p, old: "A=1", new: "A=2" }, dir);
+    assert.equal(r.isError, true);
+    assert.match(r.text, /不是 UTF-8 文本，不能编辑/);
+    assert.deepEqual(await readFile(p), gbk);
+  });
+
+  test("edit refuses a UTF-16LE file with BOM and leaves bytes unchanged", async () => {
+    const buf = Buffer.from("﻿abc", "utf16le");
+    const p = await file("u16-edit.txt", buf);
+    const r = await edit({ path: p, old: "abc", new: "x" }, dir);
+    assert.equal(r.isError, true);
+    assert.deepEqual(await readFile(p), buf);
+  });
+
+  test("read refuses a GBK file", async () => {
+    const p = await file("gbk-read.txt", gbk);
+    const r = await read({ path: p }, dir);
+    assert.equal(r.isError, true);
+    assert.match(r.text, /不是 UTF-8 文本：/);
+  });
+
+  test("edit keeps a UTF-8 BOM", async () => {
+    const p = await file("bom-edit.txt", "﻿hello\n");
+    const r = await edit({ path: p, old: "hello", new: "hi" }, dir);
+    assert.equal(r.isError, false);
+    assert.deepEqual(await readFile(p), Buffer.from("﻿hi\n", "utf8"));
+  });
+
+  test("multi-line edit on a CRLF file keeps CRLF everywhere", async () => {
+    const p = await file("crlf-multi.txt", "a\r\nb\r\nc\r\n");
+    const r = await edit({ path: p, old: "a\nb", new: "x\ny" }, dir);
+    assert.equal(r.isError, false);
+    assert.equal(await readFile(p, "utf8"), "x\r\ny\r\nc\r\n");
+  });
+
+  test("single-line edit with \\n in new writes CRLF on a CRLF file", async () => {
+    const p = await file("crlf-single.txt", "a\r\nb\r\n");
+    const r = await edit({ path: p, old: "a", new: "x\ny" }, dir);
+    assert.equal(r.isError, false);
+    assert.equal(await readFile(p, "utf8"), "x\r\ny\r\nb\r\n");
+  });
+
+  test("CRLF file: multi-line old found twice still needs uniqueness", async () => {
+    const p = await file("crlf-dup.txt", "a\r\nb\r\na\r\nb\r\n");
+    const r = await edit({ path: p, old: "a\nb", new: "x" }, dir);
+    assert.equal(r.isError, true);
+    assert.match(r.text, /2 次/);
+    assert.equal(await readFile(p, "utf8"), "a\r\nb\r\na\r\nb\r\n");
+  });
+
+  test("LF file is unaffected", async () => {
+    const p = await file("lf-multi.txt", "a\nb\nc\n");
+    const r = await edit({ path: p, old: "a\nb", new: "x\ny" }, dir);
+    assert.equal(r.isError, false);
+    assert.equal(await readFile(p, "utf8"), "x\ny\nc\n");
+  });
+
+  test("read of a ~200k line file is clipped and keeps first and last line", async () => {
+    const lines = Array.from({ length: 200_000 }, (_, i) => `line${i}`);
+    const p = await file("huge.txt", lines.join("\n") + "\n");
+    const r = await read({ path: p }, dir);
+    assert.equal(r.isError, false);
+    assert.ok(Buffer.byteLength(r.text, "utf8") <= TOOL_RESULT_MAX_BYTES);
+    assert.ok(r.text.startsWith("     1\tline0\n"));
+    assert.ok(r.text.endsWith("line199999"));
   });
 });
