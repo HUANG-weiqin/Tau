@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Models } from "@earendil-works/pi-ai";
@@ -17,12 +17,16 @@ function isTool(s: string): s is PresetTool {
 
 export function loadPreset(dir: string, id: string, models: Models): PresetSnapshot {
   if (id === "" || /[/\\:]|\.\./.test(id)) throw new Error(`预设 ID 不合法：${id}`);
+  const file = `${id}.md`;
   let text: string;
   try {
-    text = readFileSync(path.join(dir, `${id}.md`), "utf8");
+    // 精确匹配目录项：拒绝大小写不同的文件名（NTFS 下会读到同一个文件）和 8.3 短名。
+    if (!readdirSync(dir).includes(file)) throw new Error();
+    text = readFileSync(path.join(dir, file), "utf8");
   } catch {
     throw new Error(`找不到预设：${id}`);
   }
+  if (text.startsWith("\uFEFF")) text = text.slice(1);
   const lines = text.split(/\r?\n/);
   if (lines[0] !== "---") throw new Error(`预设 ${id} 缺少开头的 ---`);
   const end = lines.indexOf("---", 1);
@@ -42,7 +46,9 @@ export function loadPreset(dir: string, id: string, models: Models): PresetSnaps
     if (!fields.has(key)) throw new Error(`预设 ${id} 缺少字段：${key}`);
   }
 
-  const workdir = path.resolve(fields.get("workdir") ?? "");
+  const raw = fields.get("workdir") ?? "";
+  if (!path.isAbsolute(raw)) throw new Error(`预设 ${id} 的工作目录必须是绝对路径：${raw}`);
+  const workdir = path.resolve(raw);
   try {
     if (!statSync(workdir).isDirectory()) throw new Error();
   } catch {

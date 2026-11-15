@@ -132,6 +132,33 @@ test("missing file is an error naming the preset", () => {
   assert.throws(() => loadPreset(root, "ghost", models), /ghost/);
 });
 
+test("id must match the file name exactly (case variants rejected)", () => {
+  write("assistant", valid());
+  assert.equal(loadPreset(root, "assistant", models).id, "assistant");
+  assert.throws(() => loadPreset(root, "Assistant", models), /找不到预设：Assistant/);
+});
+
+for (const [name, line] of [
+  ["empty", "workdir:"],
+  ["dot", "workdir: ."],
+  ["relative", "workdir: relative/dir"],
+] as const) {
+  test(`workdir that is ${name} must be absolute`, () => {
+    const dir = write(`rel-${name}`, front([line, `model: ${modelStr}`, "tools:"]));
+    assert.throws(() => loadPreset(dir, `rel-${name}`, models), /工作目录必须是绝对路径/);
+  });
+}
+
+test("UTF-8 BOM is ignored", () => {
+  const body = Buffer.from(valid(), "utf8");
+  writeFileSync(path.join(root, "bom.md"), Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), body]));
+  writeFileSync(path.join(root, "nobom.md"), body);
+  const withBom = loadPreset(root, "bom", models);
+  const without = loadPreset(root, "nobom", models);
+  assert.deepEqual({ ...withBom, id: "" }, { ...without, id: "" });
+  assert.equal(withBom.id, "bom");
+});
+
 test("bad preset ids are rejected", () => {
   for (const id of ["../x", "a/b", "a\\b", "a:b", ""]) {
     assert.throws(() => loadPreset(root, id, models), /预设 ID 不合法/, id);
