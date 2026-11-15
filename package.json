@@ -1,0 +1,20 @@
+{
+  "name": "tau",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.14"
+  },
+  "scripts": {
+    "test": "node --disable-warning=ExperimentalWarning --test",
+    "typecheck": "tsc",
+    "loc": "node scripts/loc.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2"
+  }
+}

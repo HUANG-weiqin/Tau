@@ -1,6 +1,6 @@
 # tau MVP 执行清单
 
-`updated: 2026-11-15` · **当前：第 0 步，未开始**
+`updated: 2026-11-15` · **当前：第 1 步**
 
 按顺序做。每一步结束时，测试全部通过。设计细节见[设计稿](../design/mvp.md)，本清单只列任务和验收，不复述设计。
 
@@ -15,9 +15,9 @@
 
 ## 第 0 步：仓库骨架
 
-- [ ] `package.json`、`tsconfig.json`、`.gitignore`、`.gitattributes`（统一 LF），按 AGENTS.md 的“小而硬规矩”配置依赖和工具链。
-- [ ] 脚本：`test`、`typecheck`、`loc`（统计 `src/` 中不含测试的行数）。
-- [ ] 一个测试：扫描 `src/kernel/` 的 import 语句，只允许 kernel 内部的相对路径和 `import type`。
+- [x] `package.json`、`tsconfig.json`、`.gitignore`、`.gitattributes`（统一 LF），按 AGENTS.md 的“小而硬规矩”配置依赖和工具链。
+- [x] 脚本：`test`、`typecheck`、`loc`（统计 `src/` 中不含测试的行数）。
+- [x] 一个测试：扫描 `src/kernel/` 的 import 语句，只允许 kernel 内部的相对路径和 `import type`。
 
 **验收**
 

@@ -136,6 +136,10 @@
 - 决定：不用 vitest、ESLint 和 tsc 构建。测试用 `node:test`；kernel 无 I/O 用一个扫描 import 的测试检查；`typescript` 只跑 `tsc --noEmit`。开发依赖还有 `@types/node`，因为 `tsc` 要检查 `node:` 模块的类型。
 - tsconfig 开 `verbatimModuleSyntax`：只有类型的 import 必须写成 `import type`，Node 擦除类型后才不会去加载它。
 - 代价：只能用可擦除的 TS 语法；import 必须写 `.ts` 扩展名。
+- 第 0 步定下（默认）：
+  - 精确锁定 `typescript` 7.0.2 和 `@types/node` 24.19.2。
+  - 测试放在 `test/`，不放在 `src/`。这样 `src/kernel/` 的扫描没有例外，`loc` 直接统计整个 `src/`。
+  - import 扫描测试（`test/kernel-imports.test.ts`）同时禁止 kernel 用 `await`、`Date`、`Math.random`、`process.`、定时器和动态 import，对应 AGENTS.md 的纯函数规则。
 
 ### D16 服务只在命名管道上监听，MVP 用 CLI
 
