@@ -11,16 +11,15 @@ export const BYTES_PER_TOKEN = 3;
 /** 所有工具结果共用的字节上限，超出时保留头尾。 */
 export const TOOL_RESULT_MAX_BYTES = 32 * 1024;
 
+/** UTF-8 字节数。孤立的代理项按替换字符算 3 字节。 */
 export function utf8Bytes(s: string): number {
   let n = 0;
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);
-    if (c < 0x80) n += 1;
-    else if (c < 0x800) n += 2;
-    else if (c >= 0xd800 && c < 0xdc00) {
+    if (isHigh(c) && isLow(s.charCodeAt(i + 1))) {
       n += 4;
       i++;
-    } else n += 3;
+    } else n += width(c);
   }
   return n;
 }
@@ -56,28 +55,37 @@ export function pendingCalls(segment: readonly Message[]): ToolCall[] {
   while (i >= 0 && segment[i]!.role !== "assistant") i--;
   const last = segment[i];
   if (last?.role !== "assistant") return [];
-  const done = new Set<string>();
-  for (const m of segment.slice(i + 1)) if (m.role === "toolResult") done.add(m.toolCallId);
-  return last.content.filter((c): c is ToolCall => c.type === "toolCall" && !done.has(c.id));
+  // 按位置配对，不按 ID：结果总是按调用的顺序写入，而 ID 来自模型，可能重复或为空。
+  const answered = segment.slice(i + 1).filter((m) => m.role === "toolResult").length;
+  return last.content.filter((c): c is ToolCall => c.type === "toolCall").slice(answered);
 }
 
-/** 超出字节上限时保留头尾，中间换成一行说明。 */
+/** 超出字节上限时保留头尾，中间换成一行说明。只扫描保留的部分和一次全长计数，不拷贝整串。 */
 export function clip(text: string, maxBytes: number = TOOL_RESULT_MAX_BYTES): string {
   const total = utf8Bytes(text);
   if (total <= maxBytes) return text;
-  const half = Math.floor(maxBytes / 2) - 64;
-  const head = prefixWithin(text, half);
-  const tail = [...prefixWithin([...text].reverse().join(""), half)].reverse().join("");
-  return `${head}\n…（中间省略 ${total - utf8Bytes(head) - utf8Bytes(tail)} 字节）…\n${tail}`;
+  const marker = (n: number) => `\n…（中间省略 ${n} 字节）…\n`;
+  const budget = Math.max(0, Math.floor((maxBytes - utf8Bytes(marker(total))) / 2));
+  const head = text.slice(0, edge(text, budget, 1));
+  const tail = text.slice(edge(text, budget, -1));
+  return head + marker(total - utf8Bytes(head) - utf8Bytes(tail)) + tail;
 }
 
-function prefixWithin(text: string, maxBytes: number): string {
+/** 从头（1）或从尾（-1）取不超过 budget 字节的最长一段，返回它的边界下标。不拆开代理对。 */
+function edge(text: string, budget: number, dir: 1 | -1): number {
   let bytes = 0;
-  let out = "";
-  for (const ch of text) {
-    bytes += utf8Bytes(ch);
-    if (bytes > maxBytes) break;
-    out += ch;
+  let i = dir === 1 ? 0 : text.length;
+  while (dir === 1 ? i < text.length : i > 0) {
+    const c = text.charCodeAt(dir === 1 ? i : i - 1);
+    const pair = dir === 1 ? isHigh(c) && isLow(text.charCodeAt(i + 1)) : isLow(c) && isHigh(text.charCodeAt(i - 2));
+    const w = pair ? 4 : width(c);
+    if (bytes + w > budget) break;
+    bytes += w;
+    i += dir * (pair ? 2 : 1);
   }
-  return out;
+  return i;
 }
+
+const isHigh = (c: number) => c >= 0xd800 && c < 0xdc00;
+const isLow = (c: number) => c >= 0xdc00 && c < 0xe000;
+const width = (c: number) => (c < 0x80 ? 1 : c < 0x800 ? 2 : 3);

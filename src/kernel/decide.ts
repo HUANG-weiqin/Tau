@@ -111,9 +111,10 @@ function onHandoff(d: Draft, turn: Turn, m: AssistantMessage): void {
 
 /** 第 5.2 节，`toolResult` 正常。 */
 function onToolResult(d: Draft, turn: Turn, content: ToolResultContent): void {
-  const [call, ...rest] = pendingCalls(d.seg);
+  const call = pendingCalls(d.seg)[0];
   if (!call) throw new Error("awaitingTool 时没有待执行的工具调用");
   push(d, toolResult(call, clip(content.text), content.isError, d.env.now));
+  const rest = pendingCalls(d.seg);
   if (rest.length > 0 && !overThreshold(d)) return enter(d, { tag: "awaitingTool", turn });
   for (const c of rest) push(d, toolResult(c, SKIPPED, true, d.env.now));
   return continueTurn(d, turn);
@@ -126,9 +127,9 @@ function continueTurn(d: Draft, turn: Turn): void {
 }
 
 function endTurn(d: Draft, turn: Turn, ended: Ended): void {
-  const calls = pendingCalls(d.seg);
-  const waited = d.p.phase.tag === "awaitingTool" ? calls[0]?.id : undefined;
-  for (const c of calls) push(d, toolResult(c, c.id === waited ? INTERRUPTED : SKIPPED, true, d.env.now));
+  // 正在等的就是第一个待执行的调用：它可能已经开始。
+  const waiting = d.p.phase.tag === "awaitingTool";
+  pendingCalls(d.seg).forEach((c, i) => push(d, toolResult(c, waiting && i === 0 ? INTERRUPTED : SKIPPED, true, d.env.now)));
   if (turn.queued.length > 0) push(d, userMessage(turn.queued.join("\n\n"), d.env.now));
   if (ended === "done" && turn.queued.length > 0) return continueTurn(d, { steps: 0, queued: [] });
   d.p = { ...d.p, phase: { tag: "idle", ended } };
