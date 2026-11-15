@@ -234,6 +234,9 @@ test("ps 的运行多久和 self 一样向下取整：ps 不会比 self 显示�
   assert.equal(ago(119_999), "1分");
   assert.equal(ago(3_600_000 + 359_999), "1.0时");
   assert.equal(ago(86_400_000 * 2 - 1), "1.9天");
+  // 系统对时把时钟往回拨时，创建时间可能晚于现在。self 显示 0 秒，ps 也一样。
+  assert.equal(ago(-1), "0秒");
+  assert.equal(ago(-90_000), "0秒");
 });
 
 test("用 CLI 同时运行两个进程：带记忆的写入又读回记忆，不带记忆的请求里没有记忆工具；停止一个，另一个照常结束", { timeout: 10_000 }, async (t) => {
