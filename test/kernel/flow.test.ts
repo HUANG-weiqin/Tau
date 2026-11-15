@@ -31,6 +31,9 @@ import type { World } from "./helpers.ts";
 // 设计稿里写明的文本。
 const INTERRUPTED = "被中断，结果未知";
 const SKIPPED = "未执行";
+const STOPPED = "（用户停止了上一轮。上面还没回复的消息都已取消：不要回应它们，只回应下面这条消息。）";
+const STEP_LIMIT = "（上一轮的步数用完了，停在中途。）";
+const failed = (reason: string) => `（上一轮出错，没有做完：${reason}）`;
 
 const W = 100_000;
 const P = preset({ contextWindow: W });
@@ -583,7 +586,9 @@ describe("5.4 换段", () => {
       assert.deepEqual(buildContext(w.p, current(w)).messages, [...kept, { role: "user", content: HANDOFF_INSTRUCTION, timestamp: 0 }], "交接请求每次都一样");
     }
     const s = reply(w, assistant({ usage: 3_000, text: "交接说明" }), env(9));
-    assert.deepEqual(s.append, [{ role: "user", content: `${HANDOFF_HEADER}交接说明\n\n${CARRY_HEADER}\n\n甲\n\n乙`, timestamp: 9 }]);
+    // 交接失败之后发的消息带着说明，换段时说明也跟着带过去。
+    const n = failed("交接失败：超时");
+    assert.deepEqual(s.append, [{ role: "user", content: `${HANDOFF_HEADER}交接说明\n\n${CARRY_HEADER}\n\n${n}\n\n甲\n\n${n}\n\n乙`, timestamp: 9 }]);
     assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 2, queued: [] }, purpose: "turn" });
   });
 
@@ -597,7 +602,8 @@ describe("5.4 换段", () => {
     const note = codeText(20_000, "note").trim();
     const s = reply(w, assistant({ usage: 3_000, text: note }));
     const first = textOf(s.append[0]!);
-    assert.equal(first, clip(`${HANDOFF_HEADER}${note}\n\n${CARRY_HEADER}\n\n${tail.map((t) => clip(t)).join("\n\n")}`));
+    const n = failed("交接失败：超时");
+    assert.equal(first, clip(`${HANDOFF_HEADER}${note}\n\n${CARRY_HEADER}\n\n${tail.map((t) => clip(`${n}\n\n${t}`)).join("\n\n")}`));
     assert.ok(utf8Bytes(first) <= MESSAGE_MAX_BYTES, `${utf8Bytes(first)} 字节`);
     assert.ok(first.startsWith(HANDOFF_HEADER + note.slice(0, 1000)));
   });
@@ -621,5 +627,63 @@ describe("5.4 换段", () => {
     assert.deepEqual(brief(s.append), ["c1=一", `c2=${SKIPPED}`, `c3=${SKIPPED}`]);
     assert.deepEqual(pendingCalls(current(w)), []);
     assert.equal(w.p.phase.tag === "awaitingModel" && w.p.phase.purpose, "handoff");
+  });
+});
+
+describe("上一轮没有正常结束：下一条用户消息前面加一句说明", () => {
+  /** 一轮一直调用工具，直到步数用完。 */
+  function toStepLimit(w: World): void {
+    for (let id = 0; w.p.phase.tag !== "idle"; id++) {
+      reply(w, assistant({ usage: LOW, calls: [call(`c${id}`)] }));
+      toolDone(w, "好");
+    }
+    assert.deepEqual(w.p.phase, { tag: "idle", ended: "stepLimit" });
+  }
+
+  test("停止、步数用完、出错、服务重启中断：说明在前，空一行，再接原文", () => {
+    const cases: [string, (w: World) => void, string][] = [
+      ["等模型时停止", (w) => feed(w, stopInput()), STOPPED],
+      ["等工具时停止", (w) => (reply(w, assistant({ usage: LOW, calls: [call("c1")] })), feed(w, stopInput())), STOPPED],
+      ["步数用完", toStepLimit, STEP_LIMIT],
+      ["模型出错", (w) => reply(w, assistant({ usage: 0, stopReason: "error", errorMessage: "529 过载" })), failed("529 过载")],
+      ["输出被截断", (w) => reply(w, assistant({ usage: LOW, stopReason: "length", text: "半句" })), failed("输出被截断")],
+      ["服务重启", (w) => feed(w, modelInterrupted(w.p.lastEffect)), failed("服务重启，模型调用被中断")],
+    ];
+    for (const [label, end, note] of cases) {
+      const w = begin();
+      end(w);
+      assert.equal(w.p.phase.tag, "idle", label);
+      const s = feed(w, userInput("接下来做这个"));
+      assert.deepEqual(brief(s.append), [`user:${note}\n\n接下来做这个`], label);
+      assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [] }, purpose: "turn" }, label);
+    }
+  });
+
+  test("新进程的第一条消息、正常结束之后的消息：不加说明", () => {
+    const w = world(P);
+    assert.deepEqual(brief(feed(w, userInput("你好")).append), ["user:你好"]);
+    reply(w, assistant({ usage: LOW, text: "完成了" }));
+    assert.deepEqual(w.p.phase, { tag: "idle", ended: "done" });
+    assert.deepEqual(brief(feed(w, userInput("再来")).append), ["user:再来"]);
+  });
+
+  test("停止时排队的消息照常合并写入，不加说明；说明只加在之后的第一条消息上", () => {
+    const w = begin();
+    feed(w, userInput("甲"));
+    const s = feed(w, stopInput());
+    assert.deepEqual(brief(s.append), ["user:甲"]);
+    assert.deepEqual(brief(feed(w, userInput("乙")).append), [`user:${STOPPED}\n\n乙`]);
+    reply(w, assistant({ usage: LOW, text: "好" }));
+    assert.deepEqual(brief(feed(w, userInput("丙")).append), ["user:丙"]);
+  });
+
+  test("出错原因很长时只留头尾；说明加原文仍不超过字节上限", () => {
+    const reason = codeText(50_000, "因");
+    const w = begin();
+    reply(w, assistant({ usage: 0, stopReason: "error", errorMessage: reason }));
+    const big = codeText(100 * 1024);
+    const text = textOf(feed(w, userInput(big)).append[0]!);
+    assert.ok(text.startsWith(`（上一轮出错，没有做完：${clip(reason, 1024)}）`), text.slice(0, 200));
+    assert.ok(utf8Bytes(text) <= MESSAGE_MAX_BYTES);
   });
 });

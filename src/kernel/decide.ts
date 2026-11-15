@@ -46,7 +46,8 @@ function step(d: Draft, input: Input): void {
   switch (input.kind) {
     case "userMessage":
       if (phase.tag === "idle") {
-        push(d, userMessage(input.text, d.env.now));
+        const note = endedNote(phase.ended);
+        push(d, userMessage(note === "" ? input.text : `${note}\n\n${input.text}`, d.env.now));
         continueTurn(d, { steps: 0, queued: [] });
       } else {
         const turn = { ...phase.turn, queued: [...phase.turn.queued, input.text] };
@@ -159,6 +160,27 @@ function push(d: Draft, m: Message): void {
   d.seg.push(m);
   d.append.push(m);
 }
+
+/**
+ * 上一轮没有正常结束时，下一条用户消息前面的说明。段里不写失败的回复，也不写停止，模型否则看不出
+ * 上一轮没做完，会把旧请求当成还要做的事。合并的排队消息不加：说明只加在之后的第一条消息上。
+ */
+function endedNote(ended: Ended | undefined): string {
+  switch (ended) {
+    case undefined:
+    case "done":
+      return "";
+    case "stopped":
+      return "（用户停止了上一轮。上面还没回复的消息都已取消：不要回应它们，只回应下面这条消息。）";
+    case "stepLimit":
+      return "（上一轮的步数用完了，停在中途。）";
+    default:
+      return `（上一轮出错，没有做完：${clip(ended.error, ENDED_REASON_MAX_BYTES)}）`;
+  }
+}
+
+/** 说明里出错原因的字节上限。provider 的报错可能很长，原文由 CLI 显示给用户。 */
+const ENDED_REASON_MAX_BYTES = 1024;
 
 /** decide 写入的每条用户消息都裁剪到字节上限：空闲时的消息、合并的排队消息、新段的第一条。 */
 function userMessage(text: string, now: number): Message {

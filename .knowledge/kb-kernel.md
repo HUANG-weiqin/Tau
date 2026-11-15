@@ -157,8 +157,9 @@ interface Env { now: Instant; memoryView: string }
 | `BYTES_PER_TOKEN` | 2 | 已定 | 按字节估算用量时，多少字节算一个 token |
 | `MESSAGE_MAX_BYTES` | 32 KiB | 已定 | 每个工具结果和 `decide` 写入的每条用户消息的字节上限，超出时保留头尾 |
 | `MARGIN_TOKENS` | 4096 | 已定 | 阈值之上的余量：交接指令、补的结果、ID、消息框架和估算误差 |
+| `ENDED_REASON_MAX_BYTES` | 1024 | 已定 | 上一轮出错时，说明里的原因经 `clip` 截到这个字节数。在 `decide.ts`，不导出 |
 
-已定的值为什么是这样，见 [D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)。
+已定的值为什么是这样，见 [D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)；`ENDED_REASON_MAX_BYTES` 见 [D25](kb-decisions.md#d25-上一轮没有正常结束时下一条消息加说明)。
 
 | 固定文本 | 内容 | 用途 |
 |---|---|---|
@@ -166,6 +167,9 @@ interface Env { now: Instant; memoryView: string }
 | `SKIPPED` | 未执行 | 其余补的结果 |
 | `HANDOFF_HEADER` | （这是你在上一个工作段结束时写的交接说明。）加一个空行 | 新段第一条消息的开头 |
 | `CARRY_HEADER` | （下面是写交接说明时还没处理的用户消息。） | 新段第一条消息里，带过来的用户消息之前的一行 |
+| 上一轮的说明：停止 | （用户停止了上一轮。上面还没回复的消息都已取消：不要回应它们，只回应下面这条消息。） | 上一轮以 `stopped` 结束时，下一条用户消息的开头 |
+| 上一轮的说明：步数用完 | （上一轮的步数用完了，停在中途。） | 以 `stepLimit` 结束时 |
+| 上一轮的说明：出错 | （上一轮出错，没有做完：<原因>） | 以 `error` 结束时 |
 | `HANDOFF_INSTRUCTION` | 不调用工具，写交接说明：目标、做了什么和结果、下一步、没完成的事；写清还没回复完的用户请求要什么，最后几条还没处理的用户消息会原样附在后面。468 字节，估成 234 token | `buildContext` 加在末尾，不入库 |
 
 ### 换段阈值
@@ -223,7 +227,7 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 
 | 输入 | 条件 | 处理 |
 |---|---|---|
-| `userMessage` | `idle` | 经 `clip` 截到 `MESSAGE_MAX_BYTES` 后写入工作段，时间戳 `env.now`；`continueTurn({ steps: 0, queued: [] })` |
+| `userMessage` | `idle` | 上一轮没有正常结束（`ended` 是 `stopped`、`stepLimit` 或 `error`）时，原文前面加上一轮的说明和一个空行。再经 `clip` 截到 `MESSAGE_MAX_BYTES` 后写入工作段，时间戳 `env.now`；`continueTurn({ steps: 0, queued: [] })` |
 | `userMessage` | 运行中 | 追加到 `turn.queued`。不写段，副作用不变 |
 | `stop` | 运行中 | `endTurn(turn, "stopped")` |
 | `stop` | `idle` | 什么都不做 |
@@ -284,6 +288,7 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 - **工具结果和用户消息都在 `decide` 里统一裁剪。** 库内工具、执行器送回的结果都经过 `onToolResult`；空闲时的消息、合并的排队消息、新段第一条都经过 `userMessage`。`read` 和 `bash` 另外自己裁剪输出，巨大的结果不进信箱（[kb-tools.md](kb-tools.md)）。
 - **种类不对的结果按过时丢弃。** 编号等于 `lastEffect`，但种类和阶段对不上，也丢弃。忠实的环境里不会出现。
 - **运行时遇到 pi-ai 之外的 `stopReason`，按失败结束本轮，不抛错。**
+- **上一轮没有正常结束，就在下一条用户消息前面加说明。** 段里不写失败的回复，也不写停止，模型否则看不出上一轮没做完。说明由 `idle` 带的 `ended` 算出，写进消息正文，不加新状态。措辞和理由见 [D25](kb-decisions.md#d25-上一轮没有正常结束时下一条消息加说明)。
 
 ## 认知模型
 
@@ -356,7 +361,7 @@ type PhaseView =
 | 文件 | 内容 |
 |---|---|
 | `src/kernel/types.ts` | 全部类型、`unreachable` |
-| `src/kernel/decide.ts` | `start`、`decide`、`effectOf`、`continueTurn`、`endTurn`、`INTERRUPTED`、`SKIPPED` |
+| `src/kernel/decide.ts` | `start`、`decide`、`effectOf`、`continueTurn`、`endTurn`、`endedNote`（上一轮的说明）、`INTERRUPTED`、`SKIPPED`、`ENDED_REASON_MAX_BYTES` |
 | `src/kernel/derive.ts` | 派生值、`clip`、`utf8Bytes`、常量 |
 | `src/kernel/context.ts` | `buildContext`、`tailStart`、`systemPrompt`、`toolDefinitions`、交接文本 |
 | `src/kernel/observe.ts` | `observe` |
@@ -381,7 +386,8 @@ type PhaseView =
 - **换段循环靠步数收住。** 新段一开始就超过阈值时（例如系统提示词和工具定义已经超过），每次换段都成功，又立即再换段，直到 `stepLimit`。每条消息最多调用 `STEPS_PER_TURN` 次模型。不要让交接调用不计步。验证：`acceptance.test.ts`。
 - **小窗口。** 窗口小于 27,307 时阈值不大于 0，每次调用都是交接。空记忆、交接说明不超过 8 KiB 时，约从 36K 起能用。最坏的新段要约 63K 以上；64K 窗口只给预设提示词留约 2.6 到 4.9 KB（见[换段阈值](#换段阈值)）。加载预设时不检查。
 - **2 字节一个 token 是证明的前提。** 阈值检查只看估算。真实分词低于它时，误差按字节累加。误差只在两次真实用量之间累加。一次回复读回多个结果时，每个都少算。最后一次 `turn` 调用之前少算的部分，会让那次回复的用量超过 T + OUT。所以第 2、5、6、8 步都可能不成立，`turn` 调用本身也可能超过窗口。补的结果（S）里随机的 ID 也会被少算：在用的 opencode-go 的 ID 是 `call_` 加 24 个十六进制字符。超过窗口时，同一个请求每次重试都同样失败。量过的数见 [D24](kb-decisions.md#d24-真模型验收)，风险和应对见设计稿的[风险](../docs/design/mvp.md#风险)。
-- **停止和失败不告诉模型。** 在 `awaitingModel` 停止、模型失败或模型调用被中断时，`endTurn` 没有调用要补。段里不写回复，也不写标记；排队的消息照常合并写入。段末是那条用户消息（第 1 步就停），或者最后的工具结果。下一次发消息时，模型可能把没做完的请求当成还要做的事（[D24](kb-decisions.md#d24-真模型验收)）。工具运行中停止不一样：模型能看到“被中断，结果未知”。
+- **在等模型时停止或失败，只靠下一条消息里的说明告诉模型。** 这时段里不写回复，也不写标记。排队的消息照常合并写入。段末是那条用户消息、合并的排队消息，或者最后的工具结果。不加说明时，模型可能把没做完的请求当成还要做的事（[D24](kb-decisions.md#d24-真模型验收)）。在工具运行中停止或被中断时，模型另外还能看到“被中断，结果未知”。
+- **说明只加在空闲时收到的消息上。** 合并的排队消息不加，一轮只说一次。停止的说明把排队的消息也一并取消。说明是消息正文，存进段，换段时跟着带过去。不要改成假的助手消息，理由见 [D25](kb-decisions.md#d25-上一轮没有正常结束时下一条消息加说明)。验证：`flow.test.ts` 的“上一轮没有正常结束”。
 - **不要在 CLI 或服务的边上截断消息。** 上限只在 `decide` 的 `userMessage` 里检查。边上再截一次是第二个来源，也管不到合并的排队消息和带过来的消息。`turn.queued` 在本轮结束前保持原样。服务不另设上限；经 CLI 发来的消息受 Windows 命令行（32,767 个 UTF-16 单元）限制。
 - **交接请求不能带段末的用户消息。** 它们可能在阈值之后才到，大小不受阈值约束。带上它们，停止、步数用完或交接失败之后再发的大消息会让交接请求超过窗口。验证：`acceptance.test.ts` 的三条角落路径。
 - **换段失败时旧段也会变。** “旧段不变”只指没有交接说明、没有新段。排队的消息照样合并写进旧段。

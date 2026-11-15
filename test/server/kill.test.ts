@@ -222,6 +222,8 @@ test("服务运行中被随机硬杀 5 次：每次恢复后没有 running 行�
     assertStoreInvariants(db);
 
     // 每条用户消息拆成发出时的原文：排队的几条在本轮结束时用空行连成一条。
+    // 上一轮没有正常结束时，decide 在下一条消息前面加一段说明（kb-kernel 的常量）。它不是原文，先去掉。
+    const NOTE = /^（(用户停止了上一轮|上一轮的步数用完了|上一轮出错，没有做完：)/;
     const seen = new Map<string, string[]>();
     let merged = 0;
     for (const p of all) {
@@ -229,6 +231,7 @@ test("服务运行中被随机硬杀 5 次：每次恢复后没有 running 行�
         if (m.role !== "user") continue;
         assert.equal(typeof m.content, "string");
         const texts = String(m.content).split("\n\n");
+        if (NOTE.test(texts[0]!)) texts.shift();
         if (texts.length > 1) merged++;
         for (const text of texts) seen.set(text, [...(seen.get(text) ?? []), p.id]);
       }
