@@ -12,6 +12,7 @@
 |---|---|
 | 初次接手 | [AGENTS.md](../AGENTS.md)，再读[总览](kb-overview.md) |
 | 判断一个功能该不该做 | AGENTS.md 的“准入规则”，设计稿的 [MVP 不做](../docs/design/mvp.md#mvp-不做) |
+| 决定要做以后：接在哪里，按什么原则接 | [kb-extending.md](kb-extending.md) |
 | 某个设计为什么是这样，当初放弃过什么 | [决策记录](kb-decisions.md) |
 | 想加一个看起来合理的机制（压缩、wait 工具、只读 bash 审查、按项目存数据） | 先读 [Pi Web 的教训](kb-piweb-lessons.md) |
 | 改内核：类型、`decide`、流程、换段和换段阈值、用量估算、投影的字段 | [kb-kernel.md](kb-kernel.md) |
@@ -41,6 +42,7 @@
 | [kb-service.md](kb-service.md) | 服务的启动顺序、`pump`、观察者和最终回复、线协议和请求校验、进程 ID、流式文本、CLI 的命令、输出和退出码、`tau ps` 的文字格式、启动脚本、正常退出 |
 | [kb-decisions.md](kb-decisions.md) | 决定的理由、核实过的事实、放弃的方案、未确认的默认值 |
 | [kb-piweb-lessons.md](kb-piweb-lessons.md) | Pi Web 的实测问题，以及 tau 对应的规则 |
+| [kb-extending.md](kb-extending.md) | 扩展的核心原则和大致方向 |
 | [_template.md](_template.md) | 新页模板 |
 
 已建立的模块页：`kb-kernel.md`、`kb-store.md`、`kb-executor.md`、`kb-memory.md`、`kb-tools.md`、`kb-service.md`。计划中的模块页都已建立。预设和自省没有单独的模块页，细节留在设计稿第 2 节和第 9 节。
