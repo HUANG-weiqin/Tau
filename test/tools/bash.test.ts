@@ -144,7 +144,7 @@ test("超时及时返回，是错误，临时文件已删", async () => {
 describe("超时和中止结束孙进程", { concurrency: 2, timeout: 30_000 }, () => {
   // 探针连上过，说明命令在超时前就在运行，所以 before 一定在输出里。
   // 原生探针在 killAll 第一步的 taskkill 里结束，不等 ps，所以它断开的时刻就是超时的时刻。
-  // 上限留出一次约 5 秒的卡顿；计时器慢一倍时照样查得出。
+  // 上限留了余量（taskkill 偶尔晚约 5 秒才动手）；计时器慢一倍时照样查得出。
   test("超时：原生孙进程", async () => {
     const start = Date.now();
     const goneAt = probe("tn").gone.promise.then(() => Date.now() - start);
