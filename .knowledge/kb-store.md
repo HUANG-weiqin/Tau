@@ -17,7 +17,7 @@
 
 - `decide`、`effectOf`、`observe` 的逻辑：[kb-kernel.md](kb-kernel.md)。
 - 取 `pending` 行、标记 `running`、写回结果、启动恢复：[kb-executor.md](kb-executor.md)。
-- 什么时候调用这些事务、回执：[设计稿第 11 节](../docs/design/mvp.md#11-服务与-cli)。服务的 `pump` 怎样中止动作：[kb-executor.md](kb-executor.md#控制流)。
+- 什么时候调用这些事务、回执：[kb-service.md](kb-service.md)。服务的 `pump` 怎样中止动作：[kb-executor.md](kb-executor.md#控制流)。
 - `Memory` 接口的语义和记忆的上限：[设计稿第 8 节](../docs/design/mvp.md#8-记忆)。
 
 本页接管[设计稿](../docs/design/mvp.md)第 4.4 节和第 7 节的细节。
@@ -331,5 +331,5 @@ CREATE TABLE memory (
 
 - [kb-kernel.md](kb-kernel.md)：`decide`、`effectOf`、`observe`、内核不变量、工具结果的裁剪。
 - [kb-executor.md](kb-executor.md)：`effects` 的另一半：开始、完成、中止、启动恢复。
-- [设计稿第 11 节](../docs/design/mvp.md#11-服务与-cli)：服务、回执、`tau ps`。
+- [kb-service.md](kb-service.md)：服务、回执、`tau ps`。
 - [kb-decisions.md](kb-decisions.md)、[kb-overview.md](kb-overview.md)。

@@ -2,7 +2,7 @@
 
 `status: 草稿` · `updated: 2026-11-15`
 
-本稿负责还没有模块页的模块细节：目标、预设、总体结构、记忆、自省、工具、服务与 CLI，以及“MVP 不做”清单和风险。第 4 到 7 节的细节已经交给 [kb-kernel](../../.knowledge/kb-kernel.md)、[kb-store](../../.knowledge/kb-store.md) 和 [kb-executor](../../.knowledge/kb-executor.md)，这里只留链接。规则的摘要在 [AGENTS.md](../../AGENTS.md)，理由和核实证据在[决策记录](../../.knowledge/kb-decisions.md)，构建顺序在[执行清单](../plan/mvp-checklist.md)。
+本稿负责还没有模块页的模块细节：目标、预设、总体结构、记忆、自省，以及“MVP 不做”清单和风险。第 4 到 7 节、第 10 节和第 11 节的细节已经交给 [kb-kernel](../../.knowledge/kb-kernel.md)、[kb-store](../../.knowledge/kb-store.md)、[kb-executor](../../.knowledge/kb-executor.md)、[kb-tools](../../.knowledge/kb-tools.md) 和 [kb-service](../../.knowledge/kb-service.md)，这里只留链接。规则的摘要在 [AGENTS.md](../../AGENTS.md)，理由和核实证据在[决策记录](../../.knowledge/kb-decisions.md)，构建顺序在[执行清单](../plan/mvp-checklist.md)。
 
 本稿经过四轮审查（D14、D17、D18、D19）。被移出 MVP 的功能见 [MVP 不做](#mvp-不做)。
 
@@ -32,10 +32,25 @@ tools: read, write, edit, bash, memory
 你是……（角色提示词）
 ```
 
-- 前置信息只有这 3 个字段，每行一个 `key: value`。出现未知字段就报错。
+- 前置信息只有这 3 个字段，每行一个 `key: value`。
 - `tools` 里的 `memory` 表示进程有记忆库。
 - 进程启动时，预设被冻结成快照存进进程记录。之后修改预设文件，只影响新启动的进程。
 - 快照里还有一项：从 pi-ai 模型目录查到的这个模型的 `contextWindow`。查不到就启动失败。冻结它，是为了让 `decide` 不做 I/O。调用模型时，执行器仍从模型目录取模型（第 6 节）。
+
+读取预设（`src/presets/load.ts`）的规则：
+
+- 预设 ID 必须和 `presets/` 里的一个文件名（去掉 `.md`）完全相同，大小写也要相同，8.3 短名也不行。理由见 [D20](../../.knowledge/kb-decisions.md#d20-实现第-0-到-2-步时定下的事)。
+- 预设 ID 为空，或者含 `/`、`\`、`:`、`..` 时，拒绝。
+- 文件开头的 UTF-8 BOM 被忽略。行尾可以是 LF，也可以是 CRLF。
+- 第一行必须是 `---`。前置信息到下一行 `---` 为止。
+- 每行在第一个 `:` 处拆成键和值，两边去掉空白。空行跳过。
+- 没有 `:` 的行、未知字段、重复字段、缺少的字段，都报错。
+- `workdir` 必须是绝对路径，而且是一个存在的目录。不带盘符的 `/foo` 也算绝对路径，按服务当前目录所在的盘解析。
+- `model` 在第一个 `/` 处拆成 provider 和模型 ID，两边都不能为空。模型 ID 里可以再有 `/`。
+- `tools` 按逗号拆开，去掉空白，跳过空项。未知工具报错。重复的去掉，保留第一次出现的顺序。
+- `tools` 可以为空。这时进程只有 `self`。
+- 第二个 `---` 之后的正文去掉首尾空白，就是角色提示词。它可以为空。
+- 任何一条不满足，启动就失败，库里什么都不写（[kb-service](../../.knowledge/kb-service.md#请求的校验parserequest)）。
 
 用户要的三种 Agent 是写预设的三种方式，代码里没有这些类型：
 
@@ -104,7 +119,7 @@ src/
 
 ## 6. 执行器与崩溃
 
-待办副作用表的一行怎样开始、完成、中止和启动恢复，以及崩溃注入测试要覆盖什么，都在 [kb-executor.md](../../.knowledge/kb-executor.md)。bash 怎样结束进程树见[第 10 节](#10-工具)。
+待办副作用表的一行怎样开始、完成、中止和启动恢复，以及崩溃注入测试要覆盖什么，都在 [kb-executor.md](../../.knowledge/kb-executor.md)。bash 超时或中止时怎样结束进程，见 [kb-tools.md](../../.knowledge/kb-tools.md#结束进程)。
 
 ## 7. 存储
 
@@ -167,35 +182,11 @@ interface Memory {
 
 ## 10. 工具
 
-| 工具 | 说明 |
-|---|---|
-| `read(path, offset?, limit?)` | 文本文件，带行号；用 `offset` 和 `limit` 控制读多少 |
-| `write(path, content)` | 新建或整体覆盖 |
-| `edit(path, old, new, replaceAll?)` | 原文精确匹配；不加 `replaceAll` 时原文必须唯一 |
-| `bash(command, timeout?)` | 默认超时 120 秒，上限 600 秒；超时或中止时结束整棵进程树；没有后台任务；用哪个 shell 第 3 步定 |
-| `memory_get`、`memory_set`、`memory_delete` | `tools` 含 `memory` 时才有 |
-| `self` | 总是有 |
-
-- 前四个工具由预设的 `tools` 字段决定。
-- 相对路径按 `workdir` 解析。不限制路径：有 bash 就能绕过任何路径限制。
-- 所有工具结果共用一个字节上限，超出时保留头尾。
+`read`、`write`、`edit`、`bash` 的参数、行为、结果文本，以及路径和编码的规则，在 [kb-tools.md](../../.knowledge/kb-tools.md)。哪个预设有哪些工具、给模型看的描述在 [kb-kernel.md](../../.knowledge/kb-kernel.md#工具描述)。工具结果共用的字节上限在 [kb-kernel.md](../../.knowledge/kb-kernel.md#常量)。`memory_*` 和 `self` 的参数和结果在 [kb-store.md](../../.knowledge/kb-store.md#投影与命令)。
 
 ## 11. 服务与 CLI
 
-- `tau serve` 启动服务。它只在命名管道 `\\.\pipe\tau` 上监听，不开 TCP 端口。
-- 单实例：在管道上监听成功才算持有锁。同一个管道不能被监听两次，所以不需要锁文件。
-- 协议：每个连接发一行 JSON 作为请求，服务回若干行 JSON，然后关闭连接。
-
-| 请求 | 回复 |
-|---|---|
-| `start`（预设 ID、消息） | 一行回执（进程 ID）；然后是这个进程的流式文本，直到它回到 `idle`；最后一行是从库里取出的最终回复和结束原因 |
-| `send`（进程 ID、消息） | 同上 |
-| `stop`（进程 ID） | 一行回执 |
-| `ps` | 一行快照：每个进程的投影 |
-
-- 回执在命令写进库的事务提交之后才发出。没收到回执就断开时，CLI 提示“结果未知”，不自动重试。
-- 流式文本只是预览，最终回复来自库。
-- CLI 命令：`tau serve`、`tau start <预设> "消息"`、`tau send <进程> "消息"`、`tau ps`、`tau stop <进程>`。连续使用 `tau send` 就是对话。
+服务、线协议和 CLI 的细节在 [kb-service.md](../../.knowledge/kb-service.md)：命名管道和锁、启动顺序、回执、流式文本和最终回复、“结果未知”、CLI 的命令和退出码、`tau ps` 的文字格式。
 
 ## MVP 不做
 
@@ -243,6 +234,6 @@ interface Memory {
 | 换段的质量取决于模型写交接说明的能力，包括能否原样引用最后一条用户消息 | 测试只能验证机制；质量要靠真实使用观察 |
 | 普通回复 `length` 截断时，整条回复被丢弃 | 观察实际频率；需要时再定更细的处理 |
 | 进程永不删除。`tau ps` 要为每个进程读当前段，`self` 要读全部进程记录，都会随年头变慢 | 先接受；需要时再定 |
-| 服务崩溃后，bash 启动的子孙进程可能继续运行，而工具结果写的是“结果未知” | 第 3 步核实；先接受这个风险 |
+| 服务崩溃或正常退出后，bash 和它启动的子孙进程继续运行，而工具结果写的是“被中断，结果未知” | 先接受。第 3 步手动核实过，没有代码清理它们，也没有测试（[kb-tools 的坑点](../../.knowledge/kb-tools.md#坑点)）。超时或中止时怎样结束进程、会漏掉什么，见 [kb-tools](../../.knowledge/kb-tools.md#结束进程) |
 | `node:sqlite` 仍是实验 API，几年内可能变化 | 只用最基本的同步 API；变化时改 `store/`、`memory/kv.ts`，以及执行器和服务里直接写的 SQL（第 3 节） |
 | 没有沙箱 | 见 D7；不拦，但能发现、能撤销 |

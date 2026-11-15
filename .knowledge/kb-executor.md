@@ -19,7 +19,8 @@
 - 插入待办副作用表的行，或因为停止而删行。那是处理输入的事务（[kb-store.md](kb-store.md#同步副作用)）。
 - 库内副作用（`memory_*`、`self`）。它们在处理输入的事务里执行。
 - 重试和超时。没有自动重试。模型调用没有超时；bash 的超时在工具里。
-- 工具的实现，包括 bash 怎样结束进程树（[设计稿第 10 节](../docs/design/mvp.md#10-工具)）。
+- 工具的实现，包括 bash 怎样结束进程（[kb-tools.md](kb-tools.md)）。
+- 服务怎样调用执行器、怎样把流式文本转给连接（[kb-service.md](kb-service.md)）。
 
 本页接管[设计稿第 6 节](../docs/design/mvp.md#6-执行器与崩溃)的细节。
 
@@ -56,7 +57,7 @@ abort(id, n)
 - `startNext` 返回时动作已经开始。没有 `pending` 行时返回 `null`。
 - 返回的 promise 在结果写回或被丢弃之后完成。`complete` 抛出（例如库已关）时，promise 被拒绝。
 - 中止开关在 `finally` 里删掉。
-- 执行器不自己发现行被删了。服务的 `pump` 在 `handleNext` 返回 `abort` 时调用 `exec.abort`，然后循环 `startNext` 直到 `null`（`src/server/serve.ts`，[设计稿第 11 节](../docs/design/mvp.md#11-服务与-cli)）。
+- 执行器不自己发现行被删了。服务的 `pump` 在 `handleNext` 返回 `abort` 时调用 `exec.abort`，然后循环 `startNext` 直到 `null`（`src/server/serve.ts`，[kb-service.md](kb-service.md#pump)）。
 
 ### 活状态
 
@@ -82,20 +83,21 @@ abort(id, n)
 
 1. 按第一个 `/` 把快照里的模型 ID 拆成 provider 和模型 ID，用 `models.getModel` 现查。查不到就抛出 `模型目录里没有 <ID>`，执行器把它变成 `error` 回复。
 2. `models.streamSimple(model, buildContext(process, segment), { signal, sessionId: process.id })`。
-3. 只把 `text_delta` 事件交给 `onText`。服务转发给等这个进程的连接。流式文本只是预览，不进库。
+3. 只把 `text_delta` 事件交给 `onText`。服务怎样转发，见 [kb-service.md](kb-service.md#流式文本)。
 4. 返回 `stream.result()`，也就是最终的助手消息。
 
 - 服务的模型目录是 `builtinModels()`（`@earendil-works/pi-ai/providers/all`）。`createModels()` 返回空目录，测试用它装 faux provider。
 - `sessionId` 用进程 ID，换段后不变。支持会话缓存的 provider 会用它。
-- tau 不传凭据。凭据由 pi-ai 的模型目录解决。
+- tau 不传凭据。凭据从哪来见 [kb-service.md](kb-service.md#启动脚本和入口)。
 - 请求用 `claim` 时读出的进程记录和工作段。运行中排队的用户消息在 `turn.queued` 里，不进这次请求。
 
 ### 运行工具（`actions.ts`）
 
 1. 从 `toolDefinitions(preset)` 找到工具描述。
-2. 用 pi-ai 的 `validateToolArguments(tool, call)` 校验参数。它先按 JSON Schema 转换类型（`"5"` 变成 `5`），再检查。`null`、缺必填字段、多出字段都失败。失败时回 `参数错误：<pi-ai 的说明>`，`isError: true`。说明里带收到的参数原文。
+2. 用 pi-ai 的 `validateToolArguments(tool, call)` 校验参数。它先按 JSON Schema 转换类型（`"5"` 变成 `5`），再检查。参数整体是 `null`、缺必填字段、多出字段都失败。失败时回 `参数错误：<pi-ai 的说明>`，`isError: true`。说明里带收到的参数原文。
 3. 按名字调用 `read`、`write`、`edit`（传工作目录），或 `bash`（传工作目录和中止信号）。
 
+- 单个字段是 `null` 不一定失败：校验会改写一些值。工具收到的是改写后的值（[kb-tools.md](kb-tools.md#参数从哪来)）。
 - 只有 `bash` 拿到中止信号。`read`、`write`、`edit` 被中止时照样跑完，结果被丢弃。
 - 库内工具的参数不经过这里。它们在处理输入的事务里处理，`null` 参数当作空对象。
 - 工具不在预设里、或者名字是库内工具时，`runTool` 也回错误结果。正常流程走不到这两支：只有库外工具会进待办副作用表。
@@ -116,7 +118,7 @@ abort(id, n)
 
 - 收到 `interrupted` 后内核结束本轮（[kb-kernel.md](kb-kernel.md)）。
 - `running` 行属于 `idle` 或不存在的进程时，恢复抛出，服务不启动。
-- 服务正常退出时只关库，不中止动作。效果和崩溃一样：行留在 `running`，下次启动作为 `interrupted` 送回。bash 的子孙进程可能还在跑（设计稿[风险](../docs/design/mvp.md#风险)）。
+- 服务正常退出时不中止动作（[kb-service.md](kb-service.md#退出)）。没跑完的动作效果和崩溃一样：行留在 `running`，下次启动作为 `interrupted` 送回。bash 和它的子孙进程继续运行（[kb-tools.md](kb-tools.md#坑点)）。
 
 ## 决策
 
@@ -146,7 +148,7 @@ abort(id, n)
 ## 投影与命令
 
 - 执行器的状态不进投影。投影里的“等模型”“等工具”来自进程记录的阶段。
-- 流式文本只发给 `start`、`send` 的连接，不进投影，也不进库。
+- 流式文本不进投影，也不进库（[kb-service.md](kb-service.md#流式文本)）。
 - 执行器不新增命令。`tau stop` 经信箱停止进程，间接中止动作。
 
 ## 入口
@@ -165,7 +167,7 @@ abort(id, n)
 | `test/server/pairing.test.ts` | 服务层的工具调用配对：按顺序执行、运行中停止、运行中崩溃 |
 | `test/server/kill.test.ts` | 服务运行中被硬杀几次：每次恢复后没有 `running` 行，不变量成立 |
 
-命令：`npm test`。
+命令：`npm test`。服务层测试的细节见 [kb-service.md](kb-service.md#服务测试testserver)。
 
 ### 崩溃注入（`test/store/crash.test.ts`）
 
@@ -211,5 +213,5 @@ abort(id, n)
 - [kb-decisions.md](kb-decisions.md)：D4、D18、D19。
 - [kb-kernel.md](kb-kernel.md)：`effectOf`、结果的丢弃和裁剪、`interrupted` 怎样结束本轮。
 - [kb-store.md](kb-store.md)：处理输入的事务、待办副作用表的同步、表结构。
-- 工具和 bash 的进程树：[设计稿第 10 节](../docs/design/mvp.md#10-工具)。
-- 服务的 `pump` 和观察者：[设计稿第 11 节](../docs/design/mvp.md#11-服务与-cli)。
+- [kb-tools.md](kb-tools.md)：`read`、`write`、`edit`、`bash` 的实现，bash 怎样结束进程。
+- [kb-service.md](kb-service.md)：服务的 `pump`、观察者、流式文本、正常退出。

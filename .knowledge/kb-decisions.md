@@ -177,7 +177,7 @@
   3. **两个失败来源**：模型失败既可能是单独的输入，也可能写在助手消息里。改为只按 `stopReason` 处理；`length` 当作错误，因为截断的工具参数可能不完整。
   4. **记忆版本号的 ABA**：删掉再重建一个键后，旧版本号可能又对得上。改为全库自增 ID，写入 = 删旧行插新行。
   5. **`queued` 放错了层**：改为放进运行中阶段的 `Turn`。`endTurn` 给没有结果的工具调用补结果：正在等的写“被中断，结果未知”，其余写“未执行”；排队的消息合并成一条用户消息。
-  6. **bash 的孙进程**：超时或中止时结束整棵进程树。
+  6. **bash 的孙进程**：超时或中止时结束整棵进程树。（D21：代码尽力结束，有几种进程会漏掉。）
   7. **回执之前断开**：CLI 提示“结果未知”，不自动重试。
 - 补上的隐藏依赖：
   8. 消息不交替（工具结果后接用户消息、连续用户消息）列为风险，第 3 步核实。
@@ -268,6 +268,25 @@
   - 工具：`edit` 会毁掉 GBK、UTF-16 等非 UTF-8 文件。改为 `read` 和 `edit` 都拒绝这类文件。
   - 工具：多行 `edit` 在 CRLF 文件上永远匹配不到。改为按 CRLF 重试，写入时保持 CRLF。
 
+### D21 第 3 步定下的事
+
+- 状态：默认（2026-11-15）。用户还没逐条确认。
+- 模块内的选择和理由写在模块页的“决策”里：[工具](kb-tools.md#决策)、[服务与 CLI](kb-service.md#决策)。这里只记设计稿留给第 3 步的事、和原来的文档不同的地方、还没定的事。设计稿第 10、11 节已改成指向这两页的链接。
+- 设计稿留给第 3 步的事：
+  - **shell 是 Git for Windows 的 bash**。理由：模型最熟悉 bash。怎样找到它、怎样传命令、怎样结束进程，见 [kb-tools](kb-tools.md#bash)。
+  - **`segment_messages` 存 pi-ai 消息的 JSON，原样存**（[kb-store](kb-store.md#表)）。
+- 和原来的文档不同的地方。模块页按代码写：
+  - “超时或中止时结束整棵进程树”：代码尽力结束，有几种进程会漏掉（[kb-tools](kb-tools.md#结束进程)）。给模型看的工具描述和结果文本仍写“整棵进程树”。
+  - “没有后台任务”：`&` 照常可用，工具不管后台进程（[kb-tools](kb-tools.md#退出之后排空和后台进程)）。
+  - “原文精确匹配”：CRLF 文件上找不到时，按 CRLF 再找一次（[kb-tools](kb-tools.md#edit)）。
+  - 回复多了一种 `error`（[kb-service](kb-service.md#线协议srcprotocolts)）。
+  - 发最终回复还要求信箱里没有这个进程的输入（[kb-service](kb-service.md#观察者和最终回复)）。
+  - 正常退出不是“只关库”，先等现有连接全部结束（[kb-service](kb-service.md#退出)）。kb-executor 之前的说法已改正。
+- 还没定的：
+  - 认证：能不能复用 pi-ai 的凭据存储，还没核实。现在 tau 不传凭据（[kb-service](kb-service.md#启动脚本和入口)）。
+  - 各家模型接不接受连续多条用户消息，还没用真模型核实（设计稿[风险](../docs/design/mvp.md#风险)）。
+  - `tau ps` 显示的比 `self` 少，`idle` 和结束原因是英文。执行清单第 5 步要求两者一致（[kb-service](kb-service.md#tau-ps-的文字格式)）。
+
 ## 未确认的默认值
 
 这些都不影响开工，写代码时可以随时改：
@@ -281,5 +300,5 @@
 ## 关联模块
 
 - [kb-overview.md](kb-overview.md)
-- [kb-kernel.md](kb-kernel.md)、[kb-store.md](kb-store.md)、[kb-executor.md](kb-executor.md)
+- [kb-kernel.md](kb-kernel.md)、[kb-store.md](kb-store.md)、[kb-executor.md](kb-executor.md)、[kb-tools.md](kb-tools.md)、[kb-service.md](kb-service.md)
 - [kb-piweb-lessons.md](kb-piweb-lessons.md)

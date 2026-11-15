@@ -19,8 +19,8 @@
 
 - 读写库、处理输入的事务、同步待办副作用表：[kb-store.md](kb-store.md)。
 - 执行库外副作用：[kb-executor.md](kb-executor.md)。
-- 工具的行为：[设计稿第 10 节](../docs/design/mvp.md#10-工具)。记忆的语义：[设计稿第 8 节](../docs/design/mvp.md#8-记忆)。
-- 把投影格式化成文本：`self` 见 [kb-store.md](kb-store.md#self)，`tau ps` 见[设计稿第 11 节](../docs/design/mvp.md#11-服务与-cli)。
+- 工具的行为：[kb-tools.md](kb-tools.md)。记忆的语义：[设计稿第 8 节](../docs/design/mvp.md#8-记忆)。
+- 把投影格式化成文本：`self` 见 [kb-store.md](kb-store.md#self)，`tau ps` 见 [kb-service.md](kb-service.md#tau-ps-的文字格式)。
 
 本页接管[设计稿](../docs/design/mvp.md)第 4.1 到 4.3 节和第 5 节的细节。纯度规则在 [AGENTS.md](../AGENTS.md)，由 `test/kernel-imports.test.ts` 检查（见 [D15](kb-decisions.md#d15-工具链没有构建步骤)）。
 
@@ -339,7 +339,7 @@ type PhaseView =
 
 - [kb-store.md](kb-store.md)：处理输入的事务、同步待办副作用表、库内副作用。
 - [kb-executor.md](kb-executor.md)：执行 `effectOf` 算出的库外副作用。
-- [设计稿第 10 节](../docs/design/mvp.md#10-工具)：`read`、`write`、`edit`、`bash` 的行为。
+- [kb-tools.md](kb-tools.md)：`read`、`write`、`edit`、`bash` 的行为。
 - [设计稿第 8 节](../docs/design/mvp.md#8-记忆)：`Memory` 接口和记忆的规则。
-- [设计稿第 9 节](../docs/design/mvp.md#9-自省)、[第 11 节](../docs/design/mvp.md#11-服务与-cli)：`self`、`tau ps` 怎样呈现投影。
+- [设计稿第 9 节](../docs/design/mvp.md#9-自省)、[kb-service.md](kb-service.md#tau-ps-的文字格式)：`self`、`tau ps` 怎样呈现投影。
 - [kb-decisions.md](kb-decisions.md)、[kb-overview.md](kb-overview.md)。

@@ -75,22 +75,22 @@
 
 ## 第 3 步：真模型、工具、服务
 
-- [ ] 核实 pi-ai 的消息格式，定下 `segment_messages` 的存储格式。
+- [x] 核实 pi-ai 的消息格式，定下 `segment_messages` 的存储格式（[D21](../../.knowledge/kb-decisions.md#d21-第-3-步定下的事)）。
 - [ ] 核实连续多条用户消息（模型出错后再发消息、交接指令接在用户消息后面），pi-ai 能否正确转换给各家模型。
-- [ ] 认证：核实能否复用 pi-ai 的凭据存储；不能就先用环境变量里的 API Key。
-- [ ] 模型适配：`builtinModels()`（`@earendil-works/pi-ai/providers/all`）的模型目录加 `streamSimple`；按模型 ID 从目录取模型，查不到就上报 `error`；流式文本转发给观察者；助手消息原样存进工作段。
-- [ ] 预设读取：3 个字段的前置信息，未知字段报错；启动时从模型目录查出 `contextWindow` 冻结进快照，查不到就启动失败。
-- [ ] 4 个工具：`read`、`write`、`edit`、`bash`。定下 bash 用哪个 shell。
-- [ ] 工具结果的字节上限，超出时保留头尾。
-- [ ] `tau serve`、`tau start` 和 `tau send`：第 11 节的 JSON 行协议。`send` 和 `start` 走同一条路径。
+- [ ] 认证：核实能否复用 pi-ai 的凭据存储；不能就先用环境变量里的 API Key。还没核实（[D21](../../.knowledge/kb-decisions.md#d21-第-3-步定下的事)）。
+- [x] 模型适配：`builtinModels()`（`@earendil-works/pi-ai/providers/all`）的模型目录加 `streamSimple`；按模型 ID 从目录取模型，查不到就上报 `error`；流式文本转发给观察者；助手消息原样存进工作段。
+- [x] 预设读取：3 个字段的前置信息，未知字段报错；启动时从模型目录查出 `contextWindow` 冻结进快照，查不到就启动失败。
+- [x] 4 个工具：`read`、`write`、`edit`、`bash`。定下 bash 用哪个 shell（[D21](../../.knowledge/kb-decisions.md#d21-第-3-步定下的事)）。
+- [x] 工具结果的字节上限，超出时保留头尾。
+- [x] `tau serve`、`tau start` 和 `tau send`：第 11 节的 JSON 行协议。`send` 和 `start` 走同一条路径。
 
 **验收**
 
-- 用 faux 假模型跑通“读一个文件、改一行、跑一次命令”的测试。
-- 用真模型手动完成同样的任务。
-- 工具调用配对有专门的测试：多个工具调用、中途停止、中途崩溃。
-- bash 超时能结束它启动的孙进程。
-- 服务在回执之前断开时，CLI 提示“结果未知”。
+- [x] 用 faux 假模型跑通“读一个文件、改一行、跑一次命令”的测试（`test/server/e2e.test.ts`）。
+- [ ] 用真模型手动完成同样的任务。
+- [x] 工具调用配对有专门的测试：多个工具调用、中途停止、中途崩溃（`test/server/pairing.test.ts`）。
+- [x] bash 超时能结束它启动的孙进程（`test/tools/bash.test.ts`）。
+- [x] 服务在回执之前断开时，CLI 提示“结果未知”（`test/server/e2e.test.ts`）。
 
 **收尾**：新建 `kb-tools.md` 和 `kb-service.md`，更新 `kb-executor.md`。
 
@@ -112,14 +112,14 @@
 ## 第 5 步：自省与其余 CLI
 
 - [ ] `observe` 的数据收集，`self` 工具。`self` 已在第 2 步先写好（[kb-store](../../.knowledge/kb-store.md#self)），这一步按验收核对。
-- [ ] `tau ps`、`tau stop`。
+- [ ] `tau ps`、`tau stop`。代码已在第 3 步先写好（[kb-service](../../.knowledge/kb-service.md#clisrcclimaints)），这一步按验收核对。
 
 **验收**
 
-- 用 CLI 同时运行两个进程，一个用 `tools` 含 `memory` 的预设，一个用不含的。
-- `self` 能显示上下文用量、时间和运行中的兄弟进程；`tau ps` 显示的内容和它一致。
-- 在服务运行中随机杀掉它几次。每次重启后，恢复完成、执行器开始之前，没有 `running` 行，`assertInvariants` 成立。
-- 手动走一遍：用带记忆的预设启动进程 → 用 `send` 对话 → 再用不带记忆的预设启动一个进程 → 两个同时运行 → 停止其中一个。
+- [ ] 用 CLI 同时运行两个进程，一个用 `tools` 含 `memory` 的预设，一个用不含的。
+- [ ] `self` 能显示上下文用量、时间和运行中的兄弟进程；`tau ps` 显示的内容和它一致。
+- [x] 在服务运行中随机杀掉它几次。每次重启后，恢复完成、执行器开始之前，没有 `running` 行，`assertInvariants` 成立（`test/server/kill.test.ts`）。
+- [ ] 手动走一遍：用带记忆的预设启动进程 → 用 `send` 对话 → 再用不带记忆的预设启动一个进程 → 两个同时运行 → 停止其中一个。
 
 **收尾**：更新 `kb-service.md` 和 `kb-overview.md` 的入口。
 
