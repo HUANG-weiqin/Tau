@@ -1,24 +1,53 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readdirSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import { MESSAGE_MAX_BYTES, utf8Bytes } from "../../src/kernel/derive.ts";
 import { bash } from "../../src/tools/bash.ts";
 
 let dir = "";
 let tmp = "";
 
+// 结束孙进程的测试用的孙进程是 node 探针：连上这个命名管道，报上名字，然后一直运行，直到被结束或连接被关掉。
+// 连上就是启动了；连接断开就是探针进程没了。两件事都是操作系统给的事件，不靠等几秒再看文件。
+const PIPE = String.raw`\\.\pipe\tau-bash-test-` + process.pid;
+const PROBE = `const s = require("net").connect(${JSON.stringify(PIPE)}, () => s.write(process.argv[2]));
+s.on("close", () => process.exit());
+s.on("error", () => {});
+`;
+const server = net.createServer((socket) => {
+  socket.on("error", () => {});
+  socket.once("data", (name) => {
+    const p = probe(String(name));
+    p.socket = socket;
+    p.start.resolve();
+    socket.on("close", () => p.gone.resolve());
+  });
+});
+type Probe = { socket?: net.Socket; start: PromiseWithResolvers<void>; gone: PromiseWithResolvers<void> };
+const probes = new Map<string, Probe>();
+function probe(name: string): Probe {
+  let p = probes.get(name);
+  if (p === undefined) probes.set(name, (p = { start: Promise.withResolvers(), gone: Promise.withResolvers() }));
+  return p;
+}
+
 before(async () => {
   dir = await mkdtemp(path.join(os.tmpdir(), "tau-bash-"));
   // 别的测试文件在别的进程里同时运行 bash，也在系统临时目录里建删 pgid 文件。这个文件的 bash 用自己的临时目录。
   tmp = await mkdtemp(path.join(os.tmpdir(), "tau-bash-tmp-"));
   process.env.TEMP = process.env.TMP = tmp;
+  await writeFile(path.join(dir, "probe.cjs"), PROBE);
+  await new Promise<void>((listening) => server.listen(PIPE, listening));
 });
 
 after(async () => {
+  // 测试失败时可能留下没被结束的探针。关掉连接，它们自己退出。
+  for (const p of probes.values()) p.socket?.destroy();
+  server.close();
   // exec 到一半被结束的 msys 进程可能还占着工作目录一两秒。
   await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   await rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -31,33 +60,24 @@ function run(command: string, timeout?: number, signal: AbortSignal = new AbortC
 const exists = (name: string): boolean => existsSync(path.join(dir, name));
 const pgidFiles = (): string[] => readdirSync(os.tmpdir()).filter((f) => /^tau-bash-.*\.pgid$/.test(f));
 
-// 孙进程先写 <name>-started，3 秒后写 <name>-done。bash 自己在等，所以超时或中止一定先到。
-// 原生版：node 在 Windows 父进程链上。msys 版：sh 是 fork 后 exec 的 msys 程序，不在链上。
-function nativeGrandchild(name: string): string {
-  const js = `const fs=require('fs');fs.writeFileSync('${name}-started','');setTimeout(()=>fs.writeFileSync('${name}-done',''),3000)`;
-  return `node -e "${js}" & sleep 8`;
-}
+// bash 自己在等，探针又从不自己退出，所以超时或中止一定先到。
+// 原生版：探针在 Windows 父进程链上。msys 版：sh 是 fork 后 exec 的 msys 程序，不在链上，探针是 sh 的子进程，
+// 只有按进程组才找得到。
+const nativeGrandchild = (name: string): string => `node probe.cjs ${name} & sleep 30`;
+const msysGrandchild = (name: string): string => `sh -c 'node probe.cjs ${name}; true'; true`;
 
-function msysGrandchild(name: string): string {
-  return `sh -c 'touch ${name}-started; sleep 3; touch ${name}-done'; true`;
-}
-
-// 调用返回后再等过孙进程的 3 秒。它启动过、却没写出 done，才说明它被结束了。
+// 被结束的探针几毫秒内断开。没被结束的一直连着，这里等不到，测试按 describe 的 timeout 失败。
+// 结束得慢（msys 的 ps 偶尔卡约 5 秒）不算错。只有 killAll 会结束探针，所以断开就说明它结束了探针。
 async function assertKilled(name: string): Promise<void> {
-  await sleep(3500);
-  assert.ok(exists(`${name}-started`), "孙进程应该已经启动过");
-  assert.equal(exists(`${name}-done`), false);
+  assert.ok(probe(name).socket, "孙进程应该已经启动过");
+  await probe(name).gone.promise;
 }
 
-// 孙进程启动后再中止（最多等 5 秒），机器忙时也不会中止得太早。
+// 探针连上才中止。这时 bash 已经启动完，在等它。不能按时间中止：bash 偶尔要卡约 5 秒才启动，
+// 中止会正好落在它创建进程的时候，那一刻创建的原生进程结束不了（kb-tools 的“结束进程”）。
 function abortOnStart(name: string): AbortSignal {
   const ac = new AbortController();
-  const start = Date.now();
-  const timer = setInterval(() => {
-    if (!exists(`${name}-started`) && Date.now() - start < 5000) return;
-    clearInterval(timer);
-    ac.abort();
-  }, 50);
+  void probe(name).start.promise.then(() => ac.abort());
   return ac.signal;
 }
 
@@ -116,10 +136,11 @@ test("超时及时返回，是错误，临时文件已删", async () => {
   assert.deepEqual(pgidFiles(), files);
 });
 
-// 超时给孙进程留 2 秒启动。两个一组并发跑省时间；同时结束更多调用时 msys 的 ps 偶尔会卡 5 秒。
-describe("超时和中止结束孙进程", { concurrency: 2 }, () => {
+// 超时设 8 秒：bash 偶尔要卡约 5 秒才启动（kb-tools 坑点），探针得在超时前连上。两个一组并发跑省时间。
+// 没被结束的探针一直连着，测试到 30 秒失败。
+describe("超时和中止结束孙进程", { concurrency: 2, timeout: 30_000 }, () => {
   test("超时：原生孙进程", async () => {
-    assert.match((await run(nativeGrandchild("tn"), 2)).text, /超时/);
+    assert.match((await run(nativeGrandchild("tn"), 8)).text, /超时/);
     await assertKilled("tn");
   });
 
@@ -130,7 +151,7 @@ describe("超时和中止结束孙进程", { concurrency: 2 }, () => {
   });
 
   test("超时：msys 程序启动的孙进程", async () => {
-    assert.match((await run(msysGrandchild("tm"), 2)).text, /超时/);
+    assert.match((await run(msysGrandchild("tm"), 8)).text, /超时/);
     await assertKilled("tm");
   });
 
