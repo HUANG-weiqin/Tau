@@ -12,8 +12,11 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 
 1. 本文件：用词、必须遵守的规则、工作习惯。
 2. [`.knowledge/INDEX.md`](.knowledge/INDEX.md)：每类事实由哪个文件负责。
-3. [`docs/design/mvp.md`](docs/design/mvp.md)：模块细节和“MVP 不做”清单。
-4. [`docs/plan/mvp-checklist.md`](docs/plan/mvp-checklist.md)：当前做到哪一步。
+3. [总览的认知模型](.knowledge/kb-overview.md#认知模型)：一屏讲完 tau 的最小心智模型。
+4. [`docs/design/mvp.md`](docs/design/mvp.md)：模块细节和“MVP 不做”清单。
+5. [`docs/plan/mvp-checklist.md`](docs/plan/mvp-checklist.md)：当前做到哪一步。
+
+加功能前，按 [kb-extending 的推导顺序](.knowledge/kb-extending.md#推导顺序)逐条回答。
 
 修改行为前，先读对应的源码和测试。
 
@@ -35,7 +38,7 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 
 ## 必须遵守的规则
 
-每条规则都能对照代码检查。细节见括号里的设计稿章节。
+这一节和下面的准入规则是 tau 的架构宪法。每条规则都能对照代码检查。细节见括号里的设计稿章节。要破例，先在[决策记录](.knowledge/kb-decisions.md)写清理由，再改这里。
 
 **状态**（第 4 节）
 
@@ -72,7 +75,7 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 - 新功能必须能写成“新的输入类型”或“新的阶段”，不能在状态之外加可变字段。
 - 只调用依赖的公开、无状态函数。不碰私有 API，不打补丁。
 - 设计稿“MVP 不做”清单里的任何一项，要做之前先更新设计稿和清单。
-- 决定要做以后，接在哪里、按什么原则接，见 [kb-extending](.knowledge/kb-extending.md)。
+- 决定要做以后，接在哪里、按什么原则接，见 [kb-extending](.knowledge/kb-extending.md)的原则和推导顺序。
 
 ## 小而硬规矩
 
