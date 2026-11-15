@@ -75,7 +75,7 @@ export interface Versioned {
   version: number;
 }
 
-/** 记忆接口（设计稿第 8.1 节）。全部同步，在事务里执行。view(ns) 的 UTF-8 字节数永远不超过 MEMORY_VIEW_MAX_BYTES；set 拒绝会超出的写入。 */
+/** 记忆接口（见 .knowledge/kb-memory.md）。全部同步，在事务里执行。view(ns) 的 UTF-8 字节数永远不超过 MEMORY_VIEW_MAX_BYTES；set 拒绝会超出的写入。 */
 export interface Memory {
   view(ns: string): string;
   get(ns: string, key: string): Versioned | null;

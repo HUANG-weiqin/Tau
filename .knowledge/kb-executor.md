@@ -82,7 +82,7 @@ abort(id, n)
 ### 调用模型（`actions.ts`）
 
 1. 按第一个 `/` 把快照里的模型 ID 拆成 provider 和模型 ID，用 `models.getModel` 现查。查不到就抛出 `模型目录里没有 <ID>`，执行器把它变成 `error` 回复。
-2. `models.streamSimple(model, buildContext(process, segment), { signal, sessionId: process.id })`。
+2. `models.streamSimple(model, buildContext(process, segment), { signal, sessionId: process.id, maxTokens })`。`maxTokens` = `min(model.maxTokens, outputMax(preset))`，`outputMax` 是窗口的 1/8。轮次调用和交接调用一样。
 3. 只把 `text_delta` 事件交给 `onText`。服务怎样转发，见 [kb-service.md](kb-service.md#流式文本)。
 4. 返回 `stream.result()`，也就是最终的助手消息。
 
@@ -90,6 +90,14 @@ abort(id, n)
 - `sessionId` 用进程 ID，换段后不变。支持会话缓存的 provider 会用它。
 - tau 不传凭据。凭据从哪来见 [kb-service.md](kb-service.md#启动脚本和入口)。
 - 请求用 `claim` 时读出的进程记录和工作段。运行中排队的用户消息在 `turn.queued` 里，不进这次请求。
+
+输出上限 `maxTokens`：
+
+- 为什么是窗口的 1/8：换段阈值只给一次回复留 `outputMax` 的空间（[kb-kernel](kb-kernel.md#换段阈值)）。请求得更多，交接请求就可能放不进窗口。
+- 为什么取较小的：不向模型要它给不了的输出。快照只冻结窗口，`model.maxTokens` 调用时现查（[D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)）。
+- pi-ai 1.0.0 的 `buildBaseOptions` 取 `options.maxTokens ?? model.maxTokens`，再截到 `max(1, 窗口 − 它的估算 − 4096)`。这一步只会调低。
+- pi-ai 的估算是锚点用量加上之后的字符数 / 4，不超过内核的估算（字节数 / 2）。所以轮次调用时这一截不起作用。交接调用时，它最多把交接说明的上限压低“补的结果 + 交接指令”那么多。
+- tau 从不传 `reasoning`。不传时 Anthropic 和 Bedrock 不加思考预算，`maxTokens` 就是全部输出。
 
 ### 运行工具（`actions.ts`）
 
@@ -132,6 +140,7 @@ abort(id, n)
 | `Actions` 是两个有类型的函数，执行器自己构造 `Input` | 动作写不错结果的种类和编号；测试换一组假动作就能测执行器 |
 | 动作抛出也变成结果 | 模型失败和 pi-ai 一样写在助手消息里（D18 第 3 条）；工具失败是结果内容（[kb-kernel.md](kb-kernel.md)） |
 | 调用时才从模型目录取模型 | 快照只冻结 `contextWindow`（D19） |
+| 请求的输出上限取 `min(model.maxTokens, 窗口的 1/8)`，不冻结进快照 | 换段阈值按窗口的 1/8 留输出的空间；正确性不需要模型自己的上限（[D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)） |
 
 ## 认知模型
 
@@ -197,6 +206,7 @@ abort(id, n)
 | 竞态：停止时还是 `pending` | 执行器绝不会再开始它 |
 | 竞态：库外工具结果排在用户消息后面 | 先处理用户消息不会再插行，工具只执行一次 |
 | 竞态：库内工具结果排在用户消息后面 | `memory_set` 只执行一次 |
+| 调用模型的 `maxTokens` | 真的 `createActions` 加 faux 模型，几组接近真实目录的窗口和上限：轮次调用和交接调用都请求 `min(model.maxTokens, floor(W/8))` |
 
 ## 坑点
 
@@ -205,6 +215,7 @@ abort(id, n)
 - 把中止当成“外部世界没变”：只有模型和 bash 收到信号，文件工具照样写完。中止只保证结果被丢弃。
 - 一次服务启动建两个执行器：第二个的恢复会把第一个正在跑的副作用当成被中断。
 - 模型调用挂住时，执行器不会超时。进程一直在 `awaitingModel`，只能停止它。
+- 传 `reasoning`：Anthropic 和 Bedrock 会在 `maxTokens` 之上再加思考预算（默认最多 16,384），换段阈值的上界就不成立。升级 pi-ai 时，重查这一点和 `maxTokens` 只会被调低。
 - 崩溃测试的库句柄设 `synchronous = OFF`。原因和限制见 [kb-store.md 的坑点](kb-store.md#坑点)。
 
 ## 关联模块

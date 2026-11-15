@@ -1,4 +1,4 @@
-// 记忆的键值实现（设计稿第 8 节）。版本号是全库自增 ID，永远不复用；每次写入 = 删掉旧行，插入新行。
+// 记忆的键值实现（见 .knowledge/kb-memory.md）。版本号是全库自增 ID，永远不复用；每次写入 = 删掉旧行，插入新行。
 import type { DatabaseSync } from "node:sqlite";
 import { utf8Bytes } from "../kernel/derive.ts";
 import { MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";

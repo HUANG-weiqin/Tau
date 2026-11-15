@@ -77,7 +77,7 @@ tau 不负责：
 | `src/kernel/` | 纯函数：`decide`、`effectOf`、`observe`、`buildContext`、派生值、工具描述 | [kb-kernel.md](kb-kernel.md) |
 | `src/store/` | 表、处理输入的事务、库内工具 | [kb-store.md](kb-store.md) |
 | `src/executor/` | 库外副作用的开始、中止、上报，启动恢复 | [kb-executor.md](kb-executor.md) |
-| `src/memory/kv.ts` | `Memory` 接口的 SQLite 实现 | [设计稿第 8 节](../docs/design/mvp.md#8-记忆) |
+| `src/memory/kv.ts` | `Memory` 接口的 SQLite 实现 | [kb-memory.md](kb-memory.md) |
 | `src/tools/` | `read`、`write`、`edit`、`bash` | [kb-tools.md](kb-tools.md) |
 | `src/presets/load.ts` | 读预设文件，生成快照 | [设计稿第 2 节](../docs/design/mvp.md#2-预设) |
 
@@ -94,6 +94,6 @@ tau 不负责：
 
 ## 关联模块
 
-- [kb-kernel.md](kb-kernel.md)、[kb-store.md](kb-store.md)、[kb-executor.md](kb-executor.md)、[kb-tools.md](kb-tools.md)、[kb-service.md](kb-service.md)
+- [kb-kernel.md](kb-kernel.md)、[kb-store.md](kb-store.md)、[kb-executor.md](kb-executor.md)、[kb-memory.md](kb-memory.md)、[kb-tools.md](kb-tools.md)、[kb-service.md](kb-service.md)
 - [kb-decisions.md](kb-decisions.md)
 - [kb-piweb-lessons.md](kb-piweb-lessons.md)

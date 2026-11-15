@@ -1,4 +1,4 @@
-// 库内副作用：记忆工具和 `self`，在处理输入的事务里执行，恰好一次（见 .knowledge/kb-store.md；设计稿第 8、9 节）。
+// 库内副作用：记忆工具和 `self`，在处理输入的事务里执行，恰好一次（见 .knowledge/kb-store.md、kb-memory.md；设计稿第 9 节）。
 import { observe } from "../kernel/observe.ts";
 import { MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
 import { unreachable } from "../kernel/types.ts";

@@ -18,7 +18,7 @@
 - `decide`、`effectOf`、`observe` 的逻辑：[kb-kernel.md](kb-kernel.md)。
 - 取 `pending` 行、标记 `running`、写回结果、启动恢复：[kb-executor.md](kb-executor.md)。
 - 什么时候调用这些事务、回执：[kb-service.md](kb-service.md)。服务的 `pump` 怎样中止动作：[kb-executor.md](kb-executor.md#控制流)。
-- `Memory` 接口的语义和记忆的上限：[设计稿第 8 节](../docs/design/mvp.md#8-记忆)。
+- `Memory` 接口的语义、记忆的上限、视图的格式：[kb-memory.md](kb-memory.md)。
 
 本页接管[设计稿](../docs/design/mvp.md)第 4.4 节和第 7 节的细节。
 
@@ -182,7 +182,7 @@ CREATE TABLE memory (
 - 当前段靠主键前缀 `(process_id, segment_seq)` 定位。旧段不加载，不校验。
 - 当前段的大小被换段阈值限制住（[kb-kernel.md](kb-kernel.md)）。
 - 信箱的行处理完就删。`effects` 每个进程最多一行，只在等库外副作用时存在。
-- 记忆视图每条输入都读。它的大小只靠记忆的上限约束（[设计稿第 8.2 节](../docs/design/mvp.md#82-规则)）。`src/memory/kv.ts` 还没有上限，第 4 步加上之前，视图没有上界。
+- 记忆视图每条输入都读。它有上界：`set` 拒绝会让渲染后的视图超过上限的写入（[kb-memory.md](kb-memory.md#上限)）。
 - 例外：`self` 读全部进程记录。进程永不删除，所以它和 `tau ps` 一样会随年头变慢（[设计稿的风险表](../docs/design/mvp.md#风险)）。
 
 ## 决策
@@ -269,6 +269,16 @@ CREATE TABLE memory (
 - `version` 必须是整数，`1.5` 也不行。
 - 参数不对：结果是 `参数错误：<说明>`，`isError` 为 `true`，不碰记忆。
 - 版本对不上：不写入，`isError` 为 `true`，结果带最新值：`版本冲突，没有写入。现在的值是 <key>（版本 <v>）：` 换行接值。键已不存在时是 `版本冲突，没有写入。键 <key> 现在不存在。`。`memory_delete` 也用这两句。
+- `memory_set` 超出上限：不写入，`isError` 为 `true`。结果是 `超出上限，没有写入：` 接下表的一句。`N` 是 `Memory.set` 返回的 `bytes`，上限取自 `src/kernel/tools.ts` 的常量。
+
+| 超出的 | 接的那句 |
+|---|---|
+| `key` | `键有 N 字节，上限 128 字节。` |
+| `value` | `值有 N 字节，上限 4096 字节。` |
+| `view` | `写入后记忆视图有 N 字节，上限 16384 字节。先删掉或缩短不需要的键。` |
+
+- 超出上限和版本冲突同时发生时报哪个，见 [kb-memory.md 的检查顺序](kb-memory.md#set-的检查顺序)。`memory_set` 的描述引用这三个上限（[kb-kernel.md](kb-kernel.md#工具描述)）。
+- 这一节的文字由 `instore.ts` 写。`Memory` 只返回结构化的失败，不带文字。
 
 ### `self`
 
@@ -304,7 +314,7 @@ CREATE TABLE memory (
 | `src/store/db.ts` | `SCHEMA`、`SCHEMA_VERSION`、`openDb`、`tx`、行的读写 |
 | `src/store/inputs.ts` | `startProcess`、`send`、`handleNext`、同步副作用 |
 | `src/store/instore.ts` | `runInStore`：`self` 和 `memory_*` |
-| `src/memory/kv.ts` | `Memory` 的 SQLite 实现，服务用它；规则见[设计稿第 8.1 节](../docs/design/mvp.md#81-接口) |
+| `src/memory/kv.ts` | `Memory` 的 SQLite 实现，服务用它；规则见 [kb-memory.md](kb-memory.md) |
 | `test/store/db.test.ts` | 表、PRAGMA、表结构版本、主键和 `CHECK`、编号不复用、回滚 |
 | `test/store/inputs.test.ts` | 三个事务、同步规则、库内工具、只读当前段（读取行数和查询计划） |
 | `test/store/invariants.ts` | 存储层不变量 |
@@ -331,5 +341,6 @@ CREATE TABLE memory (
 
 - [kb-kernel.md](kb-kernel.md)：`decide`、`effectOf`、`observe`、内核不变量、工具结果的裁剪。
 - [kb-executor.md](kb-executor.md)：`effects` 的另一半：开始、完成、中止、启动恢复。
+- [kb-memory.md](kb-memory.md)：`Memory` 接口、上限、视图格式、版本号；测试用的假记忆库和真的有什么不同。
 - [kb-service.md](kb-service.md)：服务、回执、`tau ps`。
 - [kb-decisions.md](kb-decisions.md)、[kb-overview.md](kb-overview.md)。

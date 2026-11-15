@@ -2,7 +2,7 @@
 
 `status: 草稿` · `updated: 2026-11-15`
 
-本稿负责还没有模块页的模块细节：目标、预设、总体结构、记忆、自省，以及“MVP 不做”清单和风险。第 4 到 7 节、第 10 节和第 11 节的细节已经交给 [kb-kernel](../../.knowledge/kb-kernel.md)、[kb-store](../../.knowledge/kb-store.md)、[kb-executor](../../.knowledge/kb-executor.md)、[kb-tools](../../.knowledge/kb-tools.md) 和 [kb-service](../../.knowledge/kb-service.md)，这里只留链接。规则的摘要在 [AGENTS.md](../../AGENTS.md)，理由和核实证据在[决策记录](../../.knowledge/kb-decisions.md)，构建顺序在[执行清单](../plan/mvp-checklist.md)。
+本稿负责还没有模块页的模块细节：目标、预设、总体结构、自省，以及“MVP 不做”清单和风险。第 4 到 8 节、第 10 节和第 11 节的细节已经交给 [kb-kernel](../../.knowledge/kb-kernel.md)、[kb-store](../../.knowledge/kb-store.md)、[kb-executor](../../.knowledge/kb-executor.md)、[kb-memory](../../.knowledge/kb-memory.md)、[kb-tools](../../.knowledge/kb-tools.md) 和 [kb-service](../../.knowledge/kb-service.md)，这里只留链接。规则的摘要在 [AGENTS.md](../../AGENTS.md)，理由和核实证据在[决策记录](../../.knowledge/kb-decisions.md)，构建顺序在[执行清单](../plan/mvp-checklist.md)。
 
 本稿经过四轮审查（D14、D17、D18、D19）。被移出 MVP 的功能见 [MVP 不做](#mvp-不做)。
 
@@ -45,7 +45,7 @@ tools: read, write, edit, bash, memory
 - 第一行必须是 `---`。前置信息到下一行 `---` 为止。
 - 每行在第一个 `:` 处拆成键和值，两边去掉空白。空行跳过。
 - 没有 `:` 的行、未知字段、重复字段、缺少的字段，都报错。
-- `workdir` 必须是绝对路径，而且是一个存在的目录。不带盘符的 `/foo` 也算绝对路径，按服务当前目录所在的盘解析。
+- `workdir` 必须是绝对路径，而且是一个存在的目录。绝对路径只认两种：盘符开头（`E:/x`、`E:\x`）和 UNC（`\\server\share`）。不带盘符的 `/foo` 会落在服务当前目录所在的盘上，所以拒绝。
 - `model` 在第一个 `/` 处拆成 provider 和模型 ID，两边都不能为空。模型 ID 里可以再有 `/`。
 - `tools` 按逗号拆开，去掉空白，跳过空项。未知工具报错。重复的去掉，保留第一次出现的顺序。
 - `tools` 可以为空。这时进程只有 `self`。
@@ -139,31 +139,11 @@ src/
 
 ### 8.1 接口
 
-```ts
-interface Memory {
-  view(ns: string): string;
-  get(ns: string, key: string): { value: string; version: number } | null;
-  set(ns: string, key: string, value: string, expected: number | null):
-    { ok: true; version: number } | { ok: false; current: { value: string; version: number } | null };
-  delete(ns: string, key: string, expected: number):
-    { ok: true } | { ok: false; current: { value: string; version: number } | null };
-}
-```
-
-- 所有函数都是同步的，在事务里执行。
-- `ns` 参数的理由：一张表里存着多个库。
-- 版本号是全库自增的 ID，永远不复用。每次写入 = 删掉旧行，插入新行。所以“删掉再重建同一个键”之后，旧版本号一定对不上。
-- `expected: null` 表示“这个键现在必须不存在”。
-- 处理输入的事务只通过这个接口访问记忆。以后换成分层设计，只换实现。
+`Memory` 接口的类型、语义和契约在 [kb-memory.md](../../.knowledge/kb-memory.md#接口)。
 
 ### 8.2 规则
 
-- `tools` 含 `memory` 的进程有记忆库，`ns` 等于预设 ID。不含时没有记忆库和记忆工具，`Env.memoryView` 为空。
-- 上限（第 4 步定）：键不超过 128 字节，值不超过 4 KiB，整个库不超过视图预算。超出上限时写入失败，结果里说明原因。
-- 视图：按键排序，每行 `key: value`。因为库不超过视图预算，视图永远是全部内容。
-- 工具：`memory_get`、`memory_set`、`memory_delete`。视图是开段时的快照；要拿到现在的值和版本号，用 `memory_get`。参数和结果的写法见 [kb-store.md](../../.knowledge/kb-store.md#记忆工具)。
-- 版本冲突时，工具结果里带上最新值，由模型决定怎么合并。
-- 记忆变化不通知兄弟进程。
+谁有记忆库、三个上限和检查顺序、视图的格式、版本号的规则，在 [kb-memory.md](../../.knowledge/kb-memory.md)。记忆工具的参数和结果在 [kb-store.md](../../.knowledge/kb-store.md#记忆工具)。
 
 长期方向（挂载、日志、整理）见[决策记录](../../.knowledge/kb-decisions.md#d6-mvp-的记忆是带版本号的键值存储)。
 
@@ -182,7 +162,7 @@ interface Memory {
 
 ## 10. 工具
 
-`read`、`write`、`edit`、`bash` 的参数、行为、结果文本，以及路径和编码的规则，在 [kb-tools.md](../../.knowledge/kb-tools.md)。哪个预设有哪些工具、给模型看的描述在 [kb-kernel.md](../../.knowledge/kb-kernel.md#工具描述)。工具结果共用的字节上限在 [kb-kernel.md](../../.knowledge/kb-kernel.md#常量)。`memory_*` 和 `self` 的参数和结果在 [kb-store.md](../../.knowledge/kb-store.md#投影与命令)。
+`read`、`write`、`edit`、`bash` 的参数、行为、结果文本，以及路径和编码的规则，在 [kb-tools.md](../../.knowledge/kb-tools.md)。哪个预设有哪些工具、给模型看的描述在 [kb-kernel.md](../../.knowledge/kb-kernel.md#工具描述)。工具结果和 `decide` 写入的用户消息共用的字节上限在 [kb-kernel.md](../../.knowledge/kb-kernel.md#常量)。`memory_*` 和 `self` 的参数和结果在 [kb-store.md](../../.knowledge/kb-store.md#投影与命令)。
 
 ## 11. 服务与 CLI
 
@@ -229,9 +209,14 @@ interface Memory {
 | 风险 | 应对 |
 |---|---|
 | 重写时重新长出同样的复杂度 | 准入规则；YAGNI；同一个事实只有一个来源；代码量预算 |
-| 连续多条用户消息：模型出错后你再发消息，或者交接指令接在用户消息后面。有些模型要求用户和助手交替出现（工具结果后面接用户消息的情况，pi-ai 已经处理） | 已核实 pi-ai 的转换原样传过连续的用户消息（D10）；各家模型接不接受，第 3 步用真模型核实；不行再定办法 |
+| 连续多条用户消息：模型出错或本轮被停止后你再发消息；换段循环里段只剩第一条用户消息时，交接指令接在它后面（段末其它用户消息不进交接请求）。有些模型要求用户和助手交替出现（工具结果后面接用户消息的情况，pi-ai 已经处理） | 已核实 pi-ai 的转换原样传过连续的用户消息（D10）；各家模型接不接受，第 3 步用真模型核实；不行再定办法 |
 | 自己写循环，要处理工具调用配对、提示缓存和各家模型的差异 | 消息直接用 pi-ai 的格式；配对规则有专门的测试 |
-| 换段的质量取决于模型写交接说明的能力，包括能否原样引用最后一条用户消息 | 测试只能验证机制；质量要靠真实使用观察 |
+| 换段的质量取决于模型写交接说明的能力。段末还没处理的用户消息原样带到新段，但模型写说明时看不到它们 | 测试只能验证机制；质量要靠真实使用观察 |
+| 用量估算假设真实分词至少 2 字节一个 token，没在本机量过。Claude 4.7 以后的分词器上中文约 2.0 到 2.2，余量是唯一的缓冲。base64、hex、随机 ID、emoji、被逐位切开的数字、生僻汉字可能低到 1：一个 32 KiB 的结果比估算多约 16K token，余量盖不住。这时交接请求超过窗口，每次重试都同样失败 | 第 4 步用真模型核实（[执行清单](../plan/mvp-checklist.md#第-4-步换段与记忆)）；真超过时只能开新进程。理由见 [D22](../../.knowledge/kb-decisions.md#d22-换段阈值用量估算和记忆上限) |
+| 一次回复的输出上限是窗口的 1/8：200K 的 Claude 从 64K 降到 25K，64K 窗口只有 8K。大的 `write`、长推理会以“输出被截断”结束；不能关推理的模型可能交出空的交接说明 | 先接受，观察“输出被截断”的频率。空的交接说明算交接失败，再发一条消息就重试（[kb-kernel](../../.knowledge/kb-kernel.md#流程换段)） |
+| 模型目录里窗口写 400K 的 GPT-5 系列条目（多个 provider）：窗口含输出，输入上限约 272K。换段阈值 279,520 和交接请求的上界 346,138 都超过它 | 第 4 步用真模型核实；属实就在读取预设时修正窗口，记进决策，内核不变 |
+| 小窗口：阈值不大于 0 时每次调用都是交接，每条消息最多调用 `STEPS_PER_TURN` 次模型；64K 窗口给预设提示词只留几 KB | 先接受；读取预设时不检查。界线见 [kb-kernel 的坑点](../../.knowledge/kb-kernel.md#坑点) |
+| 一次回复的工具调用很多：补的“未执行”结果放不进余量，交接请求可能超过窗口 | 已处理：这样的回复不写入，本轮以“一次回复的工具调用太多”结束。能带多少个调用取决于 ID 的长度（[kb-kernel](../../.knowledge/kb-kernel.md#流程模型回复用途-turn)） |
 | 普通回复 `length` 截断时，整条回复被丢弃 | 观察实际频率；需要时再定更细的处理 |
 | 进程永不删除。`tau ps` 要为每个进程读当前段，`self` 要读全部进程记录，都会随年头变慢 | 先接受；需要时再定 |
 | 服务崩溃或正常退出后，bash 和它启动的子孙进程继续运行，而工具结果写的是“被中断，结果未知” | 先接受。第 3 步手动核实过，没有代码清理它们，也没有测试（[kb-tools 的坑点](../../.knowledge/kb-tools.md#坑点)）。超时或中止时怎样结束进程、会漏掉什么，见 [kb-tools](../../.knowledge/kb-tools.md#结束进程) |

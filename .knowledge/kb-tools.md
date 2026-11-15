@@ -70,7 +70,7 @@
 4. 空文件回 `文件为空`，不算错误。
 5. `offset` 默认 1，`limit` 默认读到末尾。任一小于 1 算错误。`offset` 超过行数时回总行数，不算错误。
 6. 每行写成 `<行号，右对齐 6 位>\t<行>`，用 `\n` 连接，末尾没有换行。
-7. 整段输出经 `clip` 截到 `TOOL_RESULT_MAX_BYTES`，保留头尾（[kb-kernel](kb-kernel.md#常量)）。
+7. 整段输出经 `clip` 截到 `MESSAGE_MAX_BYTES`，保留头尾（[kb-kernel](kb-kernel.md#常量)）。
 
 - 没有自己的大小上限（[D19](kb-decisions.md#d19-第四轮审查fable-52-复审-d18-之后的文档)）。整个文件读进内存。
 - 单行不截断。一行很长时，同样由 `clip` 保留整段输出的头尾。
@@ -137,7 +137,7 @@ WRAPPER = echo $$ > "$TAU_PGID"; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMM
 #### 输出
 
 - stdout 和 stderr 按到达顺序进同一份输出。
-- 内存里只留头尾各 `KEEP_BYTES` = `TOOL_RESULT_MAX_BYTES / 2 - 256` 字节，中间只计数。巨量输出不占内存。
+- 内存里只留头尾各 `KEEP_BYTES` = `MESSAGE_MAX_BYTES / 2 - 256` 字节，中间只计数。巨量输出不占内存。
 - 有省略时写成 `<头>\n…（中间省略 N 字节）…\n<尾>`，和 `clip` 的说明行同一格式。N 是丢掉的原始字节数。
 - 按 UTF-8 解码。输出不为空且不以换行结尾时补一个换行，再接状态行 `[…]`。整段再经 `clip`。
 
@@ -146,7 +146,7 @@ WRAPPER = echo $$ > "$TAU_PGID"; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMM
 - bash 退出后，最多再等 `DRAIN_MS` = 200 毫秒的 `close`，然后关掉管道返回。
 - 原因：`sleep 100 &` 这样的后台进程继承了输出管道，`close` 要等它们全部结束。
 - 正常退出时不结束后台进程。它继续运行，不归本工具管。它之后的输出丢失。msys 程序再写已关的管道时，因 SIGPIPE 退出。
-- 工具描述和原设计稿里的“没有后台任务”，在代码里就是这样：`&` 照常可用，但工具不跟踪，不收集之后的输出，以后也不结束它们。
+- 原设计稿里的“没有后台任务”，在代码里就是这样：`&` 照常可用，但工具不跟踪，不收集之后的输出，以后也不结束它们。工具描述照实写：命令退出后，留在后台的进程不再归本工具管，它们之后的输出看不到。
 
 #### 结束进程
 
@@ -189,8 +189,8 @@ WRAPPER = echo $$ > "$TAU_PGID"; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMM
 | `edit` | 多处且没有 `replaceAll` | `原文出现 N 次，必须唯一，或改用 replaceAll：<路径>` | 是 |
 | `edit` | 其它失败 | `编辑失败：<路径>（<原因>）` | 是 |
 | `bash` | 退出 | `<输出>[退出码 N]` | N 不是 0 时 |
-| `bash` | 超时 | `<输出>[超时：S 秒后结束了整棵进程树]` | 是 |
-| `bash` | 中止 | `<输出>[已中止，已结束整棵进程树]` | 是 |
+| `bash` | 超时 | `<输出>[超时：S 秒后结束了命令启动的进程]` | 是 |
+| `bash` | 中止 | `<输出>[已中止，结束了命令启动的进程]` | 是 |
 | `bash` | `timeout` 不是正数 | `timeout 必须是正数（秒）：<值>` | 是 |
 | `bash` | 调用前已中止 | `已中止，命令没有运行` | 是 |
 | `bash` | 找不到 shell | `需要 Git for Windows：PATH 上找不到 git.exe，也就找不到它的 bin\bash.exe` | 是 |
@@ -209,7 +209,7 @@ WRAPPER = echo $$ > "$TAU_PGID"; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMM
 | `-c`，不加 `-l` | 每次省约 0.8 秒；`bin\bash.exe` 已设好 `PATH` |
 | 命令经环境变量传入，在固定的包装脚本里 `eval` | 反斜杠原样保留；能先写 pgid 再执行命令 |
 | 结束进程：msys 进程组加 `taskkill /F /T`，做两遍 | `taskkill /T` 漏掉 exec 断链的进程；msys 的 `kill -9` 会卡约 5 秒 |
-| 正常退出时不结束后台进程，只排空 200 毫秒 | 否则调用要等后台进程结束才返回；“没有后台任务” |
+| 正常退出时不结束后台进程，只排空 200 毫秒 | 否则调用要等后台进程结束才返回。工具描述写明后台进程不归它管 |
 | 输出在内存里只留头尾 | 巨量输出不占内存；结果本来就要截到上限 |
 | `read`、`edit` 拒绝非 UTF-8 文件 | `edit` 曾毁掉 GBK、UTF-16 文件（[D20](kb-decisions.md#d20-实现第-0-到-2-步时定下的事)） |
 | `read` 去掉行尾 `\r`，`edit` 按 CRLF 重试并写回 CRLF | 多行 `edit` 在 CRLF 文件上曾永远匹配不到（D20） |
@@ -247,7 +247,7 @@ WRAPPER = echo $$ > "$TAU_PGID"; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMM
 | `src/tools/bash.ts` | `bash`：找 shell、包装脚本、输出、`killAll` |
 | `src/executor/actions.ts` | 校验参数，按名字调用工具（[kb-executor](kb-executor.md#运行工具actionsts)） |
 | `src/kernel/tools.ts` | 给模型看的工具描述（[kb-kernel](kb-kernel.md#工具描述)） |
-| `src/kernel/derive.ts` | `clip`、`TOOL_RESULT_MAX_BYTES` |
+| `src/kernel/derive.ts` | `clip`、`MESSAGE_MAX_BYTES` |
 | `test/tools/files.test.ts` | 文件工具 |
 | `test/tools/bash.test.ts` | bash |
 

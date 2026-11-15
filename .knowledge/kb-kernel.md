@@ -10,7 +10,7 @@
 
 - 进程记录、阶段、输入、副作用、环境的类型。
 - `start`、`decide`、`effectOf`：一条输入怎样改变进程记录和工作段，进程在等哪个副作用。
-- 派生值：上下文用量、待执行的工具调用、本段开始时间。
+- 派生值：上下文用量、输出上限、换段阈值、待执行的工具调用、本段开始时间。
 - `buildContext`：模型请求。
 - `observe`：投影。
 - 工具描述：名称、参数、库内还是库外。
@@ -19,7 +19,7 @@
 
 - 读写库、处理输入的事务、同步待办副作用表：[kb-store.md](kb-store.md)。
 - 执行库外副作用：[kb-executor.md](kb-executor.md)。
-- 工具的行为：[kb-tools.md](kb-tools.md)。记忆的语义：[设计稿第 8 节](../docs/design/mvp.md#8-记忆)。
+- 工具的行为：[kb-tools.md](kb-tools.md)。记忆的语义和上限：[kb-memory.md](kb-memory.md)。
 - 把投影格式化成文本：`self` 见 [kb-store.md](kb-store.md#self)，`tau ps` 见 [kb-service.md](kb-service.md#tau-ps-的文字格式)。
 
 本页接管[设计稿](../docs/design/mvp.md)第 4.1 到 4.3 节和第 5 节的细节。纯度规则在 [AGENTS.md](../AGENTS.md)，由 `test/kernel-imports.test.ts` 检查（见 [D15](kb-decisions.md#d15-工具链没有构建步骤)）。
@@ -57,7 +57,7 @@ type Ended = "done" | "stepLimit" | "stopped" | { error: string };
 - `purpose` 存在阶段里：它保存进入等待时的决定。
 - 进程在等的副作用编号就是 `lastEffect`，阶段里不另存。
 - 工作段的消息是 pi-ai 的 `UserMessage`、`AssistantMessage`、`ToolResultMessage`。
-- `Memory` 接口的类型也在 `types.ts`。语义见[设计稿第 8.1 节](../docs/design/mvp.md#81-接口)。
+- `Memory` 接口的类型也在 `types.ts`。语义见 [kb-memory.md](kb-memory.md#接口)。
 
 ### 输入、副作用、环境
 
@@ -89,10 +89,10 @@ interface Env { now: Instant; memoryView: string }
 | `start(id, preset, env)` | `decide.ts` | 建一个 `idle` 进程：段号 1，`lastEffect` 为 0，`memoryView` 和 `createdAt` 取自 `env` |
 | `decide(p, seg, input, env)` | `decide.ts` | 返回 `{ process, append }`，不发出副作用 |
 | `effectOf(p, seg)` | `decide.ts` | `idle`：`null`。`awaitingModel`：`callModel(lastEffect, purpose)`。`awaitingTool`：`runTool(lastEffect, 第一个待执行的调用)` |
-| `buildContext(p, seg)` | `context.ts` | 模型请求 |
+| `buildContext(p, seg)`、`tailStart(seg)` | `context.ts` | 模型请求；段末用户消息的起点 |
 | `observe(p, seg, siblings, now)` | `observe.ts` | 投影 |
 | `toolsFor(preset)`、`findTool(preset, name)` | `tools.ts` | 工具描述 |
-| `contextUsed`、`pendingCalls`、`segmentStartedAt`、`usageOf`、`clip`、`utf8Bytes` | `derive.ts` | 派生值和字节工具 |
+| `contextUsed`、`messageBytes`、`tokens`、`outputMax`、`handoffThreshold`、`pendingCalls`、`segmentStartedAt`、`usageOf`、`clip`、`utf8Bytes` | `derive.ts` | 派生值和字节工具 |
 
 `decide` 的输出约定：
 
@@ -105,7 +105,10 @@ interface Env { now: Instant; memoryView: string }
 
 - 系统提示词由三部分用空行连接：预设提示词；`工作目录：<workdir>`；记忆视图不为空时，`## 记忆（开段时的快照）` 加视图。
 - 工具：`toolDefinitions(preset)`，只放 `name`、`description`、`parameters`。交接调用带同样的工具，请求前缀不变。
-- 消息就是工作段。`awaitingModel(handoff)` 时，末尾加一条不入库的用户消息 `HANDOFF_INSTRUCTION`。它的时间戳取段里最后一条消息的，段空时取 `createdAt`。
+- 消息就是工作段。`awaitingModel(handoff)` 时：
+  - 去掉段末连续的用户消息（从 `tailStart` 起）。下标 0 总保留：第一条消息是写交接说明的依据。段末没有用户消息时什么都不去掉。
+  - 末尾加一条不入库的用户消息 `HANDOFF_INSTRUCTION`。时间戳取保留下来的最后一条消息的，段空时取 `createdAt`。
+- 去掉的消息在换段成功时原样带到新段（见[流程：换段](#流程换段)）。为什么不能带进交接请求，见坑点。
 
 ### 工具描述
 
@@ -124,6 +127,7 @@ interface Env { now: Instant; memoryView: string }
 
 - 参数都是 `additionalProperties: false` 的对象。
 - 顺序固定，按上表。
+- `memory_set` 的描述引用 `tools.ts` 里的三个记忆上限：`MEMORY_KEY_MAX_BYTES`、`MEMORY_VALUE_MAX_BYTES`、`MEMORY_VIEW_MAX_BYTES`。检查在记忆的实现里（[kb-memory.md](kb-memory.md#上限在哪里检查)）。
 - `findTool` 对不认识的工具和预设里没有的工具都返回 `undefined`。
 
 ### 派生值
@@ -132,32 +136,69 @@ interface Env { now: Instant; memoryView: string }
 
 | 值 | 函数 | 怎么算 |
 |---|---|---|
+| 一条消息的字节数 | `messageBytes(m)` | 实际发出的原始 UTF-8 字节，不算 JSON 外壳和转义。用户消息：正文。工具结果：`toolCallId` + `toolName` + 文本。助手消息：文本 + 思考 + 每个工具调用的 ID + 名称 + `JSON.stringify(arguments)`（参数本来就按 JSON 发）。图片：`data.length`。孤立的代理项按 3 字节算 |
+| 字节换成 token | `tokens(b)` | `ceil(b / BYTES_PER_TOKEN)`，只对总字节数取整一次 |
 | 一条助手消息的用量 | `usageOf(m)` | `usage.totalTokens`；为 0 时取 `input + output + cacheRead + cacheWrite` |
-| 上下文用量 | `contextUsed(p, seg)` | 段里最后一条用量不为 0 的助手消息的用量，加上它之后各消息 `content` 的 JSON 按字节估算 |
-| 上下文用量（没有这样的助手消息） | `contextUsed(p, seg)` | 系统提示词 + 工具定义的 JSON + 全段 `content` 的 JSON，全部按字节估算 |
-| 按字节估算 | 内部 | `ceil(UTF-8 字节数 / BYTES_PER_TOKEN)`。孤立的代理项按 3 字节算 |
-| 是否到阈值 | 内部 `overThreshold` | `contextUsed >= HANDOFF_RATIO × contextWindow` |
+| 上下文用量 | `contextUsed(p, seg)` | 段里最后一条用量不为 0 的助手消息（锚点）的用量，加上 `tokens(锚点之后各消息的 messageBytes 之和)` |
+| 上下文用量（没有锚点） | `contextUsed(p, seg)` | `tokens(系统提示词的字节 + 工具定义 JSON 的字节 + 全段 messageBytes 之和)` |
+| 一次回复的输出上限 | `outputMax(preset)` | `floor(contextWindow / 8)`。执行器请求 `min(model.maxTokens, outputMax)`（[kb-executor.md](kb-executor.md#调用模型actionsts)） |
+| 换段阈值 | `handoffThreshold(preset)` | `contextWindow − 2 × outputMax − tokens(MESSAGE_MAX_BYTES) − MARGIN_TOKENS`，见[换段阈值](#换段阈值) |
+| 是否到阈值 | 内部 `overThreshold` | `contextUsed >= handoffThreshold` |
+| 段末用户消息的起点 | `tailStart(seg)`（`context.ts`） | 段末最长一串用户消息的起点。段不空时最小为 1，段空时为 0 |
 | 本段开始时间 | `segmentStartedAt(seg)` | 第一条消息的 `timestamp`；段空时没有 |
 | 待执行的工具调用 | `pendingCalls(seg)` | 最后一条助手消息的工具调用，去掉前 k 个；k 是它后面的工具结果条数 |
 | 正在等的副作用 | `effectOf(p, seg)` | 见上一节 |
 
 ### 常量
 
-| 常量 | 值 | 状态 |
-|---|---|---|
-| `STEPS_PER_TURN` | 100 | 占位值，第 4 步定 |
-| `HANDOFF_RATIO` | 0.75 | 占位值，第 4 步定 |
-| `BYTES_PER_TOKEN` | 3 | 占位值，第 4 步定 |
-| `TOOL_RESULT_MAX_BYTES` | 32 KiB | 占位值，第 4 步定 |
+| 常量 | 值 | 状态 | 用途 |
+|---|---|---|---|
+| `STEPS_PER_TURN` | 100 | 占位值 | 每轮最多调用多少次模型。它是收住换段循环的最后一道保险（见坑点） |
+| `BYTES_PER_TOKEN` | 2 | 已定 | 按字节估算用量时，多少字节算一个 token |
+| `MESSAGE_MAX_BYTES` | 32 KiB | 已定 | 每个工具结果和 `decide` 写入的每条用户消息的字节上限，超出时保留头尾 |
+| `MARGIN_TOKENS` | 4096 | 已定 | 阈值之上的余量：交接指令、补的结果、ID、消息框架和估算误差 |
 
-阈值要给一个工具结果的上限、交接指令和交接说明留出空间。
+已定的值为什么是这样，见 [D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)。
 
 | 固定文本 | 内容 | 用途 |
 |---|---|---|
 | `INTERRUPTED` | 被中断，结果未知 | `endTurn` 给正在等的调用补的结果 |
 | `SKIPPED` | 未执行 | 其余补的结果 |
 | `HANDOFF_HEADER` | （这是你在上一个工作段结束时写的交接说明。）加一个空行 | 新段第一条消息的开头 |
-| `HANDOFF_INSTRUCTION` | 不调用工具，写交接说明：目标、做了什么和结果、下一步、没完成的事；原样引用还没回复完的最后一条用户消息 | `buildContext` 加在末尾，不入库 |
+| `CARRY_HEADER` | （下面是写交接说明时还没处理的用户消息。） | 新段第一条消息里，带过来的用户消息之前的一行 |
+| `HANDOFF_INSTRUCTION` | 不调用工具，写交接说明：目标、做了什么和结果、下一步、没完成的事；写清还没回复完的用户请求要什么，最后几条还没处理的用户消息会原样附在后面。468 字节，估成 234 token | `buildContext` 加在末尾，不入库 |
+
+### 换段阈值
+
+W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出上限。
+
+- OUT = `outputMax` = `floor(W / 8)`。
+- R = `tokens(MESSAGE_MAX_BYTES)` = 16,384，一个满上限的工具结果。
+- T = `handoffThreshold` = W − 2·OUT − R − `MARGIN_TOKENS`。阈值之上要放得下：一次回复、一个没检查的工具结果、交接说明的输出和余量。
+
+证明梗概。U 是用量估算，I = 234 是交接指令，S 是补的结果以及工具结果的 ID 和名称。
+
+1. 只有 U < T 时才发出用途 `turn` 的调用。写入的回复用量 ≤ 输入 + OUT。`length` 的回复不写入。
+2. 一条回复之后，下次检查前最多写入一个工具结果（≤ R）。之后每写一个结果都检查。
+3. 过了阈值，换段成功之前没有 `turn` 调用，只写补的结果和用户消息。
+4. 这些用户消息总在段末，交接请求不带它们。
+5. 所以交接请求不算指令时 < T + OUT + R + S。加上 I 和交接说明的 OUT：≤ W − `MARGIN_TOKENS` + I + S = W − 3,862 + S。
+6. S + I 超过 `MARGIN_TOKENS` 的回复不写入（见[流程：模型回复](#流程模型回复用途-turn)），所以总量不超过 W。
+7. 停止、步数用完、交接失败多少次、后来的消息多大，都不改变这个上界。重试发的是同一个请求。
+8. `turn` 调用：T + OUT < W。
+
+前提：真实的分词至少 2 字节一个 token；系统提示词和工具定义本身远小于窗口。
+
+| W | OUT | T（占 W） | 交接请求上界 T + OUT + R + I（不含 S） | 加交接说明 | 余下 | 提示词空间 |
+|---|---|---|---|---|---|---|
+| 65,536 | 8,192 | 28,672（43.8%） | 53,482 | 61,674 | 3,862 | 约 4.9 KB |
+| 64,000 | 8,000 | 27,520（43.0%） | 52,138 | 60,138 | 3,862 | 约 2.6 KB |
+| 128,000 | 16,000 | 75,520（59.0%） | 108,138 | 124,138 | 3,862 | 约 99 KB |
+| 200,000 | 25,000 | 129,520（64.8%） | 171,138 | 196,138 | 3,862 | 约 207 KB |
+| 1,000,000 | 125,000 | 729,520（73.0%） | 871,138 | 996,138 | 3,862 | 约 1.4 MB |
+
+- 余下总是 `MARGIN_TOKENS` − I = 3,862，先给 S。S 用不完的部分留给消息框架和估算误差。
+- 提示词空间：最坏的新段（全部工具、16 KiB 的记忆视图、32 KiB 的第一条消息）里，预设提示词还能有多少字节而不立即再换段。
 
 ### 流程：两个辅助步骤
 
@@ -174,7 +215,7 @@ interface Env { now: Instant; memoryView: string }
 **`endTurn(turn, ended)`**
 
 1. 给每个待执行的调用补一条结果，`isError` 为 `true`。阶段是 `awaitingTool` 时，第一个写 `INTERRUPTED`，其余写 `SKIPPED`。其它阶段全部写 `SKIPPED`。
-2. `turn.queued` 不空：用空行连接成一条用户消息，时间戳 `env.now`，写入当前段。
+2. `turn.queued` 不空：用空行连接成一条用户消息，经 `clip` 截到 `MESSAGE_MAX_BYTES`，时间戳 `env.now`，写入当前段。
 3. `ended` 是 `done` 且 `turn.queued` 不空：`continueTurn({ steps: 0, queued: [] })`。
 4. 否则进入 `idle`，带上 `ended`。
 
@@ -182,7 +223,7 @@ interface Env { now: Instant; memoryView: string }
 
 | 输入 | 条件 | 处理 |
 |---|---|---|
-| `userMessage` | `idle` | 写入工作段，时间戳 `env.now`；`continueTurn({ steps: 0, queued: [] })` |
+| `userMessage` | `idle` | 经 `clip` 截到 `MESSAGE_MAX_BYTES` 后写入工作段，时间戳 `env.now`；`continueTurn({ steps: 0, queued: [] })` |
 | `userMessage` | 运行中 | 追加到 `turn.queued`。不写段，副作用不变 |
 | `stop` | 运行中 | `endTurn(turn, "stopped")` |
 | `stop` | `idle` | 什么都不做 |
@@ -195,7 +236,7 @@ interface Env { now: Instant; memoryView: string }
 
 `toolResult` 正常：
 
-1. 文本经 `clip` 截到 `TOOL_RESULT_MAX_BYTES`，作为第一个待执行调用的结果写入。`toolCallId`、`toolName` 取自调用，`isError` 原样保留。
+1. 文本经 `clip` 截到 `MESSAGE_MAX_BYTES`，作为第一个待执行调用的结果写入。`toolCallId`、`toolName` 取自调用，`isError` 原样保留。
 2. 还有待执行的调用，并且没到阈值：进入下一个 `awaitingTool`。`lastEffect` 加一，步数不变。
 3. 否则给剩下的调用补 `SKIPPED`（没有就不补），然后 `continueTurn`。
 
@@ -205,6 +246,7 @@ interface Env { now: Instant; memoryView: string }
 
 | `stopReason` | 写入段 | 处理 |
 |---|---|---|
+| `toolUse` 或 `stop`，工具调用太多（先检查） | 否 | `endTurn(turn, { error: "一次回复的工具调用太多" })` |
 | `toolUse`，有工具调用 | 是 | 进入 `awaitingTool`，等第一个调用。这里不检查阈值 |
 | `toolUse`，没有工具调用 | 是 | `endTurn(turn, "done")` |
 | `stop` | 是 | `endTurn(turn, "done")`。带着工具调用时，它们都补 `SKIPPED` |
@@ -214,26 +256,32 @@ interface Env { now: Instant; memoryView: string }
 
 失败的回复不写入。所以错误不会被藏起来，最后一条助手消息的用量也不会变成 0。
 
+工具调用太多：每个调用按 2 × ID + 名称 + `未执行` 的字节算补的结果，换成 token 后加上交接指令的 234，超过 `MARGIN_TOKENS`。这样的回复写进去，换段请求可能超过窗口，所以和 `length` 一样不写入。
+
+- ID 算两次：它由服务端分配，不在回复的用量里；之后的请求里调用和结果各带一次。
+- 上限和窗口无关。以 `read` 为例：2 字节的 ID 约 454 个，Anthropic 的 ID（30 字节）约 105 个，openai-responses 的 ID（81 字节）约 44 个。
+
 ### 流程：换段
 
 1. `continueTurn` 发现到阈值，进入 `awaitingModel(handoff)`。`buildContext` 在末尾加交接指令。
 2. 交接说明 = 回复里所有 `text` 块用换行连接，再去掉首尾空白。思考块不算。
 3. 接受的条件：`stopReason` 是 `stop` 或 `length`，并且交接说明不为空。接受时：
    - `segment` 变成 `{ seq: seq + 1, memoryView: env.memoryView }`。
-   - 新段的第一条消息是用户消息：`HANDOFF_HEADER` + 交接说明，时间戳 `env.now`。
+   - 新段的第一条消息是用户消息，时间戳 `env.now`。内容是 `HANDOFF_HEADER` + 交接说明。旧段末尾有用户消息时（从 `tailStart` 起），再接空行、`CARRY_HEADER`、空行和这些消息的正文，正文之间用空行连接。整条经 `clip` 截到 `MESSAGE_MAX_BYTES`。
+   - 只带正文是字符串的用户消息。`decide` 写入的用户消息都是这种。
    - 用同一个 `turn` 执行 `continueTurn`：步数和排队的消息带到新段。
 4. 其它情况（包括 `toolUse` 和空说明）：`endTurn(turn, { error: "交接失败：" + (errorMessage ?? stopReason) })`。不写交接回复，不开新段。排队的消息仍按 `endTurn` 合并写进旧段。
-5. 失败后再发一条消息：新的一轮，`continueTurn` 立即再换段。一直失败时，每条消息只调用一次模型。
+5. 失败后再发一条消息：新的一轮，`continueTurn` 立即再换段。新消息在段末，不进交接请求，所以请求和上一次相同。一直失败时，每条消息只调用一次模型。
 6. 换段只发生在 `continueTurn` 里。这时所有工具调用都已有结果。
 
 ## 决策
 
-跨模块的决定见 [kb-decisions.md](kb-decisions.md)：D4（纯 `decide`）、D5（换段）、D17（单一来源、`failed` 并入 `idle`）、D18（每次调用模型都计步、`endTurn` 的两种补法、`length` 算错误）、D19（每个工具结果后检查阈值、工具被中断就结束本轮、交接调用带工具、`purpose` 存在阶段里）。
+跨模块的决定见 [kb-decisions.md](kb-decisions.md)：D4（纯 `decide`）、D5（换段）、D17（单一来源、`failed` 并入 `idle`）、D18（每次调用模型都计步、`endTurn` 的两种补法、`length` 算错误）、D19（每个工具结果后检查阈值、工具被中断就结束本轮、交接调用带工具、`purpose` 存在阶段里）、[D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)（换段阈值、用量估算、段末的用户消息不进交接请求、工具调用太多的回复不写入）。
 
 模块内的决定：
 
 - **工具结果按位置配对，不按 ID。** ID 来自模型，可能重复或为空：provider 不给 ID 时，pi-ai 填空串。结果总按调用的顺序写入，所以第 k 条结果属于第 k 个调用。
-- **所有工具结果在 `decide` 里统一裁剪。** 库内工具、执行器送回的结果都经过这一处。`read` 和 `bash` 另外自己裁剪输出，巨大的结果不进信箱（`src/tools/files.ts`、`src/tools/bash.ts`）。
+- **工具结果和用户消息都在 `decide` 里统一裁剪。** 库内工具、执行器送回的结果都经过 `onToolResult`；空闲时的消息、合并的排队消息、新段第一条都经过 `userMessage`。`read` 和 `bash` 另外自己裁剪输出，巨大的结果不进信箱（[kb-tools.md](kb-tools.md)）。
 - **种类不对的结果按过时丢弃。** 编号等于 `lastEffect`，但种类和阶段对不上，也丢弃。忠实的环境里不会出现。
 - **运行时遇到 pi-ai 之外的 `stopReason`，按失败结束本轮，不抛错。**
 
@@ -247,6 +295,7 @@ interface Env { now: Instant; memoryView: string }
 - 能从段算出的值不存。
 - 调用模型必须经过 `continueTurn`，这样才计步。
 - 结束一轮必须经过 `endTurn`，这样每个工具调用都有结果。
+- 写入用户消息必须经过 `userMessage`，这样才裁剪。
 - `lastEffect` 只在 `enter` 里加一。
 
 ### 不变量
@@ -299,7 +348,7 @@ type PhaseView =
 ```
 
 - 只给时刻和时长，单位毫秒。`age = now - createdAt`。`queued` 只给条数。
-- 本地时间、时区和文本格式在内核外：`self` 在事务里（[kb-store.md](kb-store.md#self)），`tau ps` 在 CLI 里（`src/cli/main.ts`）。
+- 本地时间、时区和文本格式在内核外：`self` 在事务里（[kb-store.md](kb-store.md#self)），`tau ps` 在 CLI 里（[kb-service.md](kb-service.md#tau-ps-的文字格式)）。
 - 内核不加命令。Agent 通过库内工具 `self` 看到投影。
 
 ## 入口
@@ -309,13 +358,15 @@ type PhaseView =
 | `src/kernel/types.ts` | 全部类型、`unreachable` |
 | `src/kernel/decide.ts` | `start`、`decide`、`effectOf`、`continueTurn`、`endTurn`、`INTERRUPTED`、`SKIPPED` |
 | `src/kernel/derive.ts` | 派生值、`clip`、`utf8Bytes`、常量 |
-| `src/kernel/context.ts` | `buildContext`、`systemPrompt`、`toolDefinitions`、交接文本 |
+| `src/kernel/context.ts` | `buildContext`、`tailStart`、`systemPrompt`、`toolDefinitions`、交接文本 |
 | `src/kernel/observe.ts` | `observe` |
-| `src/kernel/tools.ts` | 工具描述 |
+| `src/kernel/tools.ts` | 工具描述、记忆的三个上限 |
 | `test/invariants.ts` | `assertInvariants` |
 | `test/kernel/helpers.ts` | 内存里的 `World`、`feed`、`reply`、`toolDone` |
 | `test/kernel/flow.test.ts` | 第 5 节每一行流程和丢弃规则 |
-| `test/kernel/acceptance.test.ts` | 换段不会无限循环；很多大结果时工作段不超过窗口 |
+| `test/kernel/derive.test.ts` | 字节估算、只取整一次、输出上限和阈值、`clip` |
+| `test/kernel/context.test.ts` | 系统提示词、工具描述、交接请求去掉段末用户消息 |
+| `test/kernel/acceptance.test.ts` | 换段不会无限循环；5 种窗口下，主路径和三条角落路径的交接请求加交接说明放得进窗口；工具调用太多的回复不写入 |
 | `test/kernel/random.test.ts` | 带种子的随机序列 |
 | `test/kernel/longrun.test.ts` | 长跑：进程记录和当前段有上界 |
 | `test/kernel/regressions.test.ts` | 审查发现的缺陷的最小反例 |
@@ -327,12 +378,15 @@ type PhaseView =
 
 - **按 ID 配对。** 重复或为空的 ID 会让进程永远等一个“已有结果”的调用。`pendingCalls` 和 `endTurn` 都按位置算。验证：`regressions.test.ts` 的重复 ID 用例，`assertInvariants` 的配对检查。
 - **过时的结果。** 编号不对、进程 `idle`、种类不对的结果一律丢弃。每个工具都有新编号，所以上一个工具迟到的结果不会被当成下一个的。验证：`flow.test.ts` 的“4.2 丢弃过时和重复的结果”。
-- **换段循环靠步数收住。** 新段一开始就超过阈值时（例如系统提示词和工具定义已经超过），每次换段都成功，又立即再换段，直到 `stepLimit`。不要让交接调用不计步。验证：`acceptance.test.ts`。
+- **换段循环靠步数收住。** 新段一开始就超过阈值时（例如系统提示词和工具定义已经超过），每次换段都成功，又立即再换段，直到 `stepLimit`。每条消息最多调用 `STEPS_PER_TURN` 次模型。不要让交接调用不计步。验证：`acceptance.test.ts`。
+- **小窗口。** 窗口小于 27,307 时阈值不大于 0，每次调用都是交接。空记忆、交接说明不超过 8 KiB 时，约从 36K 起能用。最坏的新段要约 63K 以上；64K 窗口只给预设提示词留约 2.6 到 4.9 KB（见[换段阈值](#换段阈值)）。加载预设时不检查。
+- **2 字节一个 token 是证明的前提。** 真实分词低于它时，余量盖不住，交接请求可能超过窗口，每次重试都同样失败。哪些文本会低于它、怎样核实，见设计稿的[风险](../docs/design/mvp.md#风险)。
+- **不要在 CLI 或服务的边上截断消息。** 上限只在 `decide` 的 `userMessage` 里检查。边上再截一次是第二个来源，也管不到合并的排队消息和带过来的消息。`turn.queued` 在本轮结束前保持原样。服务不另设上限；经 CLI 发来的消息受 Windows 命令行（32,767 个 UTF-16 单元）限制。
+- **交接请求不能带段末的用户消息。** 它们可能在阈值之后才到，大小不受阈值约束。带上它们，停止、步数用完或交接失败之后再发的大消息会让交接请求超过窗口。验证：`acceptance.test.ts` 的三条角落路径。
 - **换段失败时旧段也会变。** “旧段不变”只指没有交接说明、没有新段。排队的消息照样合并写进旧段。
 - **失败的回复不能写进段。** 写进去会让最后一条助手消息的用量变成 0，上下文用量退回字节估算。
 - **`decide` 抛错会卡住整个信箱。** 事务回滚，输入留在信箱最前面，而处理输入总取全局最早的一条（见 [kb-store.md](kb-store.md)）。`decide` 只对不可能的状态抛错，外部来的怪值（未知 `stopReason`、巨大的结果）都要按普通失败处理。
 - **`clip` 不能拷贝整串。** 它只数一次全长字节，再扫描保留的头尾。拷贝过整串时，一亿多字符的结果在事务里让 V8 中止。它也不拆开代理对。上限小于省略说明那一行时，输出只有说明行，会超过上限。验证：`regressions.test.ts`。
-- **阈值的空档（第 4 步处理）。** `toolUse` 回复之后的第一个工具不检查阈值；一条很大的用户消息可能在阈值附近到来；字节估算按 JSON 转义后的字节计。
 - **交接调用也带工具。** 这样请求前缀不变。代价是模型可能回 `toolUse`，这算交接失败。
 
 ## 关联模块
@@ -340,6 +394,6 @@ type PhaseView =
 - [kb-store.md](kb-store.md)：处理输入的事务、同步待办副作用表、库内副作用。
 - [kb-executor.md](kb-executor.md)：执行 `effectOf` 算出的库外副作用。
 - [kb-tools.md](kb-tools.md)：`read`、`write`、`edit`、`bash` 的行为。
-- [设计稿第 8 节](../docs/design/mvp.md#8-记忆)：`Memory` 接口和记忆的规则。
+- [kb-memory.md](kb-memory.md)：`Memory` 接口、记忆的规则和上限。
 - [设计稿第 9 节](../docs/design/mvp.md#9-自省)、[kb-service.md](kb-service.md#tau-ps-的文字格式)：`self`、`tau ps` 怎样呈现投影。
 - [kb-decisions.md](kb-decisions.md)、[kb-overview.md](kb-overview.md)。

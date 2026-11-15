@@ -1,6 +1,6 @@
 # tau MVP 执行清单
 
-`updated: 2026-11-15` · **当前：第 3 步**
+`updated: 2026-11-15` · **当前：第 5 步**（第 3、4 步还有用真模型核实的项）
 
 按顺序做。每一步结束时，测试全部通过。设计细节见[设计稿](../design/mvp.md)，本清单只列任务和验收，不复述设计。
 
@@ -96,16 +96,21 @@
 
 ## 第 4 步：换段与记忆
 
-- [ ] 上下文用量的派生函数接上真实的 `usage`；定按字节估算的系数。
-- [ ] 记忆的键值实现（`AUTOINCREMENT` 版本号）、`memory_get`、`memory_set`、`memory_delete`、视图；`Env.memoryView` 接上记忆实现。代码已在第 2 步先写好（`src/memory/kv.ts`、[kb-store](../../.knowledge/kb-store.md#记忆工具)），这一步按验收核对。
-- [ ] 定换段阈值、记忆的各项上限和视图预算。
-- [ ] 补上换段阈值的空档（[kb-kernel 的坑点](../../.knowledge/kb-kernel.md#坑点)）。
+- [x] 上下文用量的派生函数接上真实的 `usage`；定按字节估算的系数（[D22](../../.knowledge/kb-decisions.md#d22-换段阈值用量估算和记忆上限)，`test/kernel/derive.test.ts`）。
+- [x] 记忆的键值实现（`AUTOINCREMENT` 版本号）、`memory_get`、`memory_set`、`memory_delete`、视图；`Env.memoryView` 接上记忆实现（[kb-memory](../../.knowledge/kb-memory.md)，`test/memory/kv.test.ts`、`test/store/inputs.test.ts`）。
+- [x] 定换段阈值、记忆的各项上限和视图预算（D22，`test/kernel/derive.test.ts`、`test/kernel/context.test.ts`）。
+- [x] 补上换段阈值的空档：交接请求加交接说明放得进窗口（[kb-kernel](../../.knowledge/kb-kernel.md#换段阈值)，`test/kernel/acceptance.test.ts`）。
 
 **验收**
 
-- 一个进程经过 20 次换段后，处理一条输入时从库里读取的行数，和只有 1 段时相同。用读取行数衡量，不用耗时衡量。
-- 两个进程同时写同一个键：后写的那个得到冲突和最新值，重试后成功。
-- 库里还有别的键，被删的键持有最大的版本号：删掉再重建，拿着旧版本号写入一定失败。
+- [x] 一个进程经过 20 次换段后，处理一条输入时从库里读取的行数，和只有 1 段时相同。用读取行数衡量，不用耗时衡量（`test/store/longrun.test.ts`：换段 20 次以上，最后一段每条输入的读取行数和第 2 段相同）。
+- [x] 两个进程同时写同一个键：后写的那个得到冲突和最新值，重试后成功（`test/memory/kv.test.ts`）。
+- [x] 库里还有别的键，被删的键持有最大的版本号：删掉再重建，拿着旧版本号写入一定失败（`test/memory/kv.test.ts`）。
+- [x] 5 种窗口（65,536 到 1,000,000）下，主路径和三条角落路径（停止、步数用完、交接一直失败，之后再发大消息）的交接请求加交接说明都放得进窗口（`test/kernel/acceptance.test.ts`）。
+- [x] 记忆的三个上限在边界上准确，被拒绝的写入不改库、不用掉版本号（`test/memory/kv.test.ts`）。
+- [x] 调用模型时请求的输出上限是 `min(model.maxTokens, 窗口的 1/8)`，交接调用也一样（`test/store/executor.test.ts`）。
+- [ ] 用真模型核实 2 字节一个 token 的估算：对用到的每家 provider，各发约 32 KiB 的中文文档、TS 代码、英文、JSON 日志，下一次回复的 `input + cacheRead + cacheWrite` 不超过上一次的用量加上中间消息的估算。
+- [ ] 核实 GPT-5 的 400K 条目的输入上限是不是约 272K（[设计稿的风险](../design/mvp.md#风险)）。
 
 **收尾**：新建 `kb-memory.md`。
 
