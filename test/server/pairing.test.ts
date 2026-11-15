@@ -200,7 +200,7 @@ test("3 个工具调用按顺序执行：每个调用恰好一个结果，按调
 
 test("第 2 个调用运行中停止：第 1 个是真结果，第 2 个被中断，第 3 个未执行；sleep 很快被中止；之后的 send 照常工作", async (t) => {
   const e = setup(t);
-  e.faux.setResponses([threeCalls("echo started > started.txt; sleep 5; echo finished > finished.txt"), fauxAssistantMessage(fauxText("这次好了。"))]);
+  e.faux.setResponses([threeCalls("echo started > started.txt; sleep 60; echo finished > finished.txt"), fauxAssistantMessage(fauxText("这次好了。"))]);
   const { svc } = await boot(e);
   const first = call(e.pipe, { op: "start", preset: "dev", text: "做三件事" });
   const id = await first.receipt;
@@ -211,11 +211,10 @@ test("第 2 个调用运行中停止：第 1 个是真结果，第 2 个被中�
   const t0 = performance.now();
   assert.deepEqual(await call(e.pipe, { op: "stop", process: id }).done, [{ type: "receipt", process: id }]);
   assert.deepEqual((await first.done).at(-1), { type: "final", reply: "", ended: "stopped" });
-  // 停止的事务删掉了 running 行，服务随即中止 bash。bash 不被中止的话要 5 秒后才退出。
-  await until(() => children() === 0, 4_000, "被中止的 bash 退出");
-  const ms = Math.round(performance.now() - t0);
-  t.diagnostic(`从发出停止到 bash 退出：${ms} 毫秒`);
-  assert.ok(ms < 2_500, `bash 在停止后 ${ms} 毫秒才退出`);
+  // 停止的事务删掉了 running 行，服务随即中止 bash。命令要跑 60 秒，bash 远早于此退出，就说明被中止了。
+  // 不卡紧时间：结束进程用的 ps 和 taskkill 偶尔卡约 5 秒（kb-tools 坑点）。
+  await until(() => children() === 0, 30_000, "被中止的 bash 退出");
+  t.diagnostic(`从发出停止到 bash 退出：${Math.round(performance.now() - t0)} 毫秒`);
 
   const seg = segmentOf(svc.db, id);
   assert.deepEqual(seg.map(shape), ["user", "assistant c1,c2,c3", "toolResult c1", "toolResult c2", "toolResult c3"]);
@@ -224,7 +223,7 @@ test("第 2 个调用运行中停止：第 1 个是真结果，第 2 个被中�
   assertQuiet(svc.db);
 
   // 被中止的 bash 迟到的上报被丢弃：它的行已经不在了。
-  await noChildren(4_000);
+  await noChildren(30_000);
   const later = await call(e.pipe, { op: "send", process: id, text: "再来一次" }).done;
   assert.deepEqual(later.at(-1), { type: "final", reply: "这次好了。", ended: "done" });
   const after = segmentOf(svc.db, id);
@@ -272,7 +271,8 @@ test("第 2 个调用运行中崩溃：重启后第 2 个被中断、第 3 个�
   assert.deepEqual(later.at(-1), { type: "final", reply: "重启后也好了。", ended: "done" });
 
   // 崩溃前启动的 bash 跑完了（写了 finished.txt），它的结果没有进库，也没有被重做。
-  await noChildren(5_000);
+  // sleep 2 加上 msys 程序启动偶尔卡的约 5 秒（kb-tools 坑点）。
+  await noChildren(15_000);
   assert.equal(existsSync(join(e.work, "finished.txt")), true);
   const after = segmentOf(svc.db, id);
   assert.deepEqual(after.slice(0, seg.length), seg);
