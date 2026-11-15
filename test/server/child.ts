@@ -1,5 +1,5 @@
 // kill.test.ts 的子进程：在命名管道上跑真的服务。模型是 faux，回复只由上下文决定，会调用 read 和 bash。
-// 用法：node --disable-warning=ExperimentalWarning test/server/child.ts <pipe> <dbPath> <presetsDir>
+// 用法：node test/server/child.ts <pipe> <dbPath> <presetsDir>
 // 父进程用 taskkill /T /F 硬杀它，所以这里没有任何退出处理。
 import { setTimeout as sleep } from "node:timers/promises";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai";

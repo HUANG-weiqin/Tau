@@ -54,7 +54,7 @@ const refuse: Actions = {
 };
 
 function launch(args: string[]): Child {
-  const proc = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", CHILD, ...args], { stdio: ["pipe", "ignore", "pipe"], windowsHide: true });
+  const proc = spawn(process.execPath, [CHILD, ...args], { stdio: ["pipe", "ignore", "pipe"], windowsHide: true });
   const stderr: string[] = [];
   proc.stderr?.setEncoding("utf8").on("data", (d: string) => stderr.push(d));
   return { proc, stderr, exit: new Promise((resolve) => proc.once("exit", () => resolve())) };

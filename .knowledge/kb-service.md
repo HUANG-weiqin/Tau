@@ -198,8 +198,8 @@ tau stop <进程>
 
 ### 启动脚本和入口
 
-- `tau.cmd` 只有一行：`@node --disable-warning=ExperimentalWarning "%~dp0src\main.ts" %*`。它按自己所在的目录找 `src\main.ts`，在任何当前目录都能用。需要 PATH 上的 `node`（`package.json` 要求不低于 24.21），直接运行 `.ts`。
-- 这个参数让 `node:sqlite` 不打印 `ExperimentalWarning`（[D11](kb-decisions.md#d11-sqlite-驱动)）。只有 `serve` 加载 `node:sqlite`，但脚本对所有命令都加。`npm test` 和 kill 测试的子进程加同样的参数。
+- `tau.cmd` 只有一行：`@node "%~dp0src\main.ts" %*`。它按自己所在的目录找 `src\main.ts`，在任何当前目录都能用。需要 PATH 上的 `node`（`package.json` 要求不低于 24.21），直接运行 `.ts`。
+- 启动脚本和测试都不加 `--disable-warning`，原因见 [D11](kb-decisions.md#d11-sqlite-驱动)。
 - `src/main.ts`：第一个参数是 `serve` 就动态导入服务的模块并启动，其余参数忽略。否则交给 CLI 的 `main`，返回值写进 `process.exitCode`。
 - 管道名、库和预设的位置写死在 `protocol.ts`、`main.ts` 和 `presets/load.ts`。`serve()` 和 CLI 的 `main` 接受别的管道和路径，只给测试用。
 - 服务的模型目录是 `builtinModels({ credentials })`（[kb-executor.md](kb-executor.md#调用模型actionsts)）。`credentials` 只读 `~/.pi/agent/auth.json` 里 `type` 为 `api_key` 的条目，每次调用都重读，从不写入（`src/server/credentials.ts`，理由见 [D23](kb-decisions.md#d23-凭据只读复用-pi-的凭据文件)）。
@@ -277,7 +277,7 @@ tau stop <进程>
 | `test/server/credentials.test.ts` | 只交出 `api_key`；不写入；文件不存在、格式坏、顶层不是对象，报错不带文件内容；只支持字面量 key；每次重读；接进 pi-ai 后 key 的优先顺序和坏文件的结果 |
 | `test/server/cli.test.ts` | 第 5 步验收：经 CLI 同时跑两个进程；`self` 和 `tau ps` 一致；流式文本；模型不在目录里 |
 
-命令：`npm test`。只跑服务测试：`node --disable-warning=ExperimentalWarning --test "test/server/*.test.ts"`。
+命令：`npm test`。只跑服务测试：`node --test "test/server/*.test.ts"`。
 
 ### 服务测试（`test/server/`）
 

@@ -324,7 +324,7 @@ CREATE TABLE memory (
 | `test/store/executor.test.ts` | 执行器和竞态（见 [kb-executor.md](kb-executor.md)） |
 | `test/store/fixtures.ts` | 临时库、假记忆库、`countReads`、带种子的随机数 |
 
-只跑存储测试：`node --disable-warning=ExperimentalWarning --test "test/store/*.test.ts"`。完成门槛见 AGENTS.md。
+只跑存储测试：`node --test "test/store/*.test.ts"`。完成门槛见 AGENTS.md。
 
 ## 坑点
 

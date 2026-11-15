@@ -221,7 +221,7 @@ interface Memory {
 - 检查顺序。
 - 第 4 步的验收：两个进程写同一个键，后写的得到冲突和最新值，重试后成功；删掉再重建持有最大版本号的键，拿旧版本号写入失败。
 
-只跑记忆测试：`node --disable-warning=ExperimentalWarning --test "test/memory/*.test.ts"`。完成门槛见 AGENTS.md。
+只跑记忆测试：`node --test "test/memory/*.test.ts"`。完成门槛见 AGENTS.md。
 
 ## 坑点
 

@@ -103,9 +103,10 @@
 ### D11 SQLite 驱动
 
 - 状态：已确认（随 D18）。
-- 已核实：`node:sqlite` 在 Node 24.14 上会打印 `ExperimentalWarning`；运行时加 `--disable-warning=ExperimentalWarning` 后不再打印。（后来核实：Node 24.15 起 `node:sqlite` 标为 release candidate。24.22.1 上不加这个参数也不打印。）
+- 已核实：`node:sqlite` 在 Node 24.14 上会打印 `ExperimentalWarning`；运行时加 `--disable-warning=ExperimentalWarning` 后不再打印。
+- 后来：Node 24.15 删掉了 `node:sqlite` 的实验警告，同时把它标为 release candidate（PR #61262）。24.22.1 上核实过，不加参数也不打印。最低版本 24.21（[D15](#d15-工具链没有构建步骤)）晚于 24.15，所以删掉了这个参数。24.21 本身没有运行过。
 - 决定：用内置的 `node:sqlite`，只用最基本的同步 API。少一个原生依赖，也不用为 Node 升级重新编译。
-- 代价：它仍是实验 API，几年内可能变化。变化时要改 `store/`、`memory/kv.ts`，以及执行器和服务里直接写的 SQL（D20 改正了之前“只改 `store/`”的说法）。
+- 代价：它还不是稳定 API，几年内可能变化。变化时要改 `store/`、`memory/kv.ts`，以及执行器和服务里直接写的 SQL（D20 改正了之前“只改 `store/`”的说法）。
 - 放弃：`better-sqlite3`。它成熟，但是要编译原生模块。
 
 ### D12 小而硬，严格 YAGNI
