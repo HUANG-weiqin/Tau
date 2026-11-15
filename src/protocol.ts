@@ -1,4 +1,4 @@
-// CLI 和服务之间唯一的线协议（设计稿第 11 节）。每个连接：客户端发一行 JSON 请求，服务回若干行 JSON，然后关闭。
+// CLI 和服务之间唯一的线协议（见 .knowledge/kb-service.md）。每个连接：客户端发一行 JSON 请求，服务回若干行 JSON，然后关闭。
 import type { Projection } from "./kernel/observe.ts";
 import type { Ended } from "./kernel/types.ts";
 

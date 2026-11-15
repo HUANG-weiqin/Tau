@@ -142,6 +142,8 @@ for (const [name, line] of [
   ["empty", "workdir:"],
   ["dot", "workdir: ."],
   ["relative", "workdir: relative/dir"],
+  ["drive-less slash", "workdir: /foo"],
+  ["drive-less backslash", "workdir: \\foo"],
 ] as const) {
   test(`workdir that is ${name} must be absolute`, () => {
     const dir = write(`rel-${name}`, front([line, `model: ${modelStr}`, "tools:"]));

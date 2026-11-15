@@ -1,4 +1,4 @@
-// start、decide、effectOf：纯函数（设计稿第 4.3 节和第 5 节）。
+// start、decide、effectOf：纯函数（见 .knowledge/kb-kernel.md）。
 import { CARRY_HEADER, HANDOFF_HEADER, HANDOFF_INSTRUCTION, tailStart } from "./context.ts";
 import { clip, contextUsed, handoffThreshold, MARGIN_TOKENS, pendingCalls, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
 import { unreachable } from "./types.ts";

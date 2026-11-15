@@ -1,4 +1,4 @@
-// 工具描述是纯数据：名称、说明、参数，以及它是库内还是库外的副作用（设计稿第 10 节）。
+// 工具描述是纯数据：名称、说明、参数，以及它是库内还是库外的副作用（见 .knowledge/kb-tools.md）。
 import type { Tool } from "@earendil-works/pi-ai";
 import type { PresetSnapshot } from "./types.ts";
 
@@ -43,7 +43,7 @@ const EDIT: ToolSpec = {
 
 const BASH: ToolSpec = {
   name: "bash",
-  description: "在工作目录里运行一条命令，返回输出和退出码。默认超时 120 秒，上限 600 秒；超时或中止时结束整棵进程树。没有后台任务。",
+  description: "在工作目录里运行一条 bash 命令（Git for Windows），返回输出和退出码。默认超时 120 秒，上限 600 秒；超时或中止时结束它启动的进程。命令退出后，留在后台的进程不再归本工具管，它们之后的输出看不到。",
   parameters: object({ command: str("要运行的命令"), timeout: int("超时秒数") }, ["command"]),
   inStore: false,
 };

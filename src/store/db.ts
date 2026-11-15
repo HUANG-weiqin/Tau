@@ -1,4 +1,4 @@
-// SQLite：表、事务和行的读写（设计稿第 7 节）。只用 node:sqlite 最基本的同步 API。
+// SQLite：表、事务和行的读写（见 .knowledge/kb-store.md）。只用 node:sqlite 最基本的同步 API。
 import { DatabaseSync } from "node:sqlite";
 import type { Input, Message, Process, ProcessId } from "../kernel/types.ts";
 

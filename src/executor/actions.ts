@@ -1,4 +1,4 @@
-// 真正的动作：调用模型、运行库外工具（设计稿第 6 节、第 10 节）。
+// 真正的动作：调用模型、运行库外工具（见 .knowledge/kb-executor.md、.knowledge/kb-tools.md）。
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import type { Models } from "@earendil-works/pi-ai";
 import { buildContext, toolDefinitions } from "../kernel/context.ts";

@@ -1,4 +1,4 @@
-// 服务：把库、执行器和管道装配起来（设计稿第 11 节）。只有一个同步的 pump 推进状态，所以没有并发。
+// 服务：把库、执行器和管道装配起来（见 .knowledge/kb-service.md）。只有一个同步的 pump 推进状态，所以没有并发。
 import { randomBytes } from "node:crypto";
 import type { Server, Socket } from "node:net";
 import { createInterface } from "node:readline";

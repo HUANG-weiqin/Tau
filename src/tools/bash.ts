@@ -90,8 +90,8 @@ export async function bash(args: { command: string; timeout?: number }, workdir:
     // 正在结束进程时，它完成后给出结束的原因。
     let killing: Promise<string> | undefined;
     const kill = (why: string): void => void (killing ??= killAll(exe, child.pid, pgidFile).then(() => why));
-    const onAbort = (): void => kill("已中止，已结束整棵进程树");
-    const timer = setTimeout(() => kill(`超时：${seconds} 秒后结束了整棵进程树`), seconds * 1000);
+    const onAbort = (): void => kill("已中止，结束了命令启动的进程");
+    const timer = setTimeout(() => kill(`超时：${seconds} 秒后结束了命令启动的进程`), seconds * 1000);
     signal.addEventListener("abort", onAbort, { once: true });
     const stopWatching = (): void => {
       clearTimeout(timer);

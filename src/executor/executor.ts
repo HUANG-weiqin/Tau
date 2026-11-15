@@ -1,4 +1,4 @@
-// 执行器：库外副作用的开始、中止、上报（设计稿第 6 节）。不做决策，不重试。
+// 执行器：库外副作用的开始、中止、上报（见 .knowledge/kb-executor.md）。不做决策，不重试。
 import { effectOf } from "../kernel/decide.ts";
 import { unreachable } from "../kernel/types.ts";
 import type { DatabaseSync } from "node:sqlite";

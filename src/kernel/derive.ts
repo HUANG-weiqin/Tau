@@ -1,4 +1,4 @@
-// 能从工作段算出来的值都在这里算，不存（设计稿第 4.1 节）。
+// 能从工作段算出来的值都在这里算，不存（见 .knowledge/kb-kernel.md）。
 import { systemPrompt, toolDefinitions } from "./context.ts";
 import { unreachable } from "./types.ts";
 import type { AssistantMessage, Instant, Message, PresetSnapshot, Process, ToolCall } from "./types.ts";

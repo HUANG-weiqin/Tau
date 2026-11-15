@@ -112,7 +112,7 @@ test("超时及时返回，是错误，临时文件已删", async () => {
   const r = await run("echo before; sleep 8", 1);
   assert.ok(Date.now() - start < 5000, `用了 ${Date.now() - start} 毫秒`);
   assert.equal(r.isError, true);
-  assert.equal(r.text, "before\n[超时：1 秒后结束了整棵进程树]");
+  assert.equal(r.text, "before\n[超时：1 秒后结束了命令启动的进程]");
   assert.deepEqual(pgidFiles(), files);
 });
 
@@ -125,7 +125,7 @@ describe("超时和中止结束孙进程", { concurrency: 2 }, () => {
 
   test("中止：原生孙进程", async () => {
     const r = await run(nativeGrandchild("an"), 60, abortOnStart("an"));
-    assert.deepEqual(r, { text: "[已中止，已结束整棵进程树]", isError: true });
+    assert.deepEqual(r, { text: "[已中止，结束了命令启动的进程]", isError: true });
     await assertKilled("an");
   });
 

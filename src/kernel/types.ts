@@ -1,4 +1,4 @@
-// 内核的全部类型。外部类型只能 import type（见设计稿第 4 节）。
+// 内核的全部类型。外部类型只能 import type（见 .knowledge/kb-kernel.md）。
 import type { AssistantMessage, Context, ToolCall, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 
 export type { AssistantMessage, ToolCall, ToolResultMessage, UserMessage };

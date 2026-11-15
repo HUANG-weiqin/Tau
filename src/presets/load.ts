@@ -47,7 +47,10 @@ export function loadPreset(dir: string, id: string, models: Models): PresetSnaps
   }
 
   const raw = fields.get("workdir") ?? "";
-  if (!path.isAbsolute(raw)) throw new Error(`预设 ${id} 的工作目录必须是绝对路径：${raw}`);
+  // Windows 上 path.isAbsolute("/foo") 为真，但它会落在服务当前盘符下，所以只认盘符路径和 UNC 路径。
+  if (!/^[A-Za-z]:[\\/]/.test(raw) && !/^[\\/]{2}[^\\/]/.test(raw)) {
+    throw new Error(`预设 ${id} 的工作目录必须是绝对路径：${raw}`);
+  }
   const workdir = path.resolve(raw);
   try {
     if (!statSync(workdir).isDirectory()) throw new Error();

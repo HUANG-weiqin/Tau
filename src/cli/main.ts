@@ -1,4 +1,4 @@
-// 命令行（设计稿第 11 节）。只依赖 protocol.ts。
+// 命令行（见 .knowledge/kb-service.md）。只依赖 protocol.ts。
 import { connect } from "node:net";
 import { PIPE } from "../protocol.ts";
 import type { Reply, Request } from "../protocol.ts";

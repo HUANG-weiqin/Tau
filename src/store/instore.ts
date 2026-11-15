@@ -1,4 +1,4 @@
-// 库内副作用：记忆工具和 `self`，在处理输入的事务里执行，恰好一次（设计稿第 4.4、8、9 节）。
+// 库内副作用：记忆工具和 `self`，在处理输入的事务里执行，恰好一次（见 .knowledge/kb-store.md；设计稿第 8、9 节）。
 import { observe } from "../kernel/observe.ts";
 import { MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
 import { unreachable } from "../kernel/types.ts";
@@ -71,7 +71,7 @@ function conflict(key: string, current: Versioned | null): ToolResultContent {
   return { text: `版本冲突，没有写入。${current ? `现在的值是 ${show(key, current)}` : `键 ${key} 现在不存在。`}`, isError: true };
 }
 
-/** 本地时间和时区在内核外格式化（设计稿第 4.3 节）。 */
+/** 本地时间和时区在内核外格式化（见 .knowledge/kb-kernel.md）。 */
 function formatSelf(v: Projection): string {
   const s = v.self;
   const lines = [

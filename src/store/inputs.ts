@@ -1,4 +1,4 @@
-// 进程的事务：启动、收一条命令、处理一条输入（设计稿第 4.4 节）。每个函数恰好一个事务。
+// 进程的事务：启动、收一条命令、处理一条输入（见 .knowledge/kb-store.md）。每个函数恰好一个事务。
 import { decide, effectOf, start } from "../kernel/decide.ts";
 import { findTool } from "../kernel/tools.ts";
 import { unreachable } from "../kernel/types.ts";

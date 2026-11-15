@@ -1,9 +1,9 @@
-// 从进程记录和工作段构造模型请求（设计稿第 4.3 节）。
+// 从进程记录和工作段构造模型请求（见 .knowledge/kb-kernel.md）。
 import type { Tool } from "@earendil-works/pi-ai";
 import { toolsFor } from "./tools.ts";
 import type { Message, ModelRequest, PresetSnapshot, Process } from "./types.ts";
 
-/** 换段时末尾加的用户消息，不入库（设计稿第 5.4 节）。 */
+/** 换段时末尾加的用户消息，不入库（见 .knowledge/kb-kernel.md）。 */
 export const HANDOFF_INSTRUCTION = [
   "上下文快满了，要换到一个新的工作段。",
   "这一次不要调用任何工具，直接写一份交接说明。它会成为新工作段的第一条消息，旧段的内容你之后看不到。",

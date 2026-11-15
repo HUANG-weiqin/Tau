@@ -1,4 +1,4 @@
-// 单实例：只在命名管道上监听，监听成功才算持有锁（设计稿第 11 节）。同一个管道不能被监听两次，所以没有锁文件。
+// 单实例：只在命名管道上监听，监听成功才算持有锁（见 .knowledge/kb-service.md）。同一个管道不能被监听两次，所以没有锁文件。
 import { createServer } from "node:net";
 import type { Server, Socket } from "node:net";
 
