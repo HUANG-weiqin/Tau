@@ -127,22 +127,26 @@ test("timeout 不是正数时报错，不运行", async () => {
   assert.equal(exists("zero.txt"), false);
 });
 
+// 命令要跑 60 秒，调用远早于此返回，就说明没等命令。不卡紧时间：bash 启动和 ps 都偶尔卡约 5 秒（kb-tools 坑点）。
+// bash 启动卡住时，1 秒的超时会落在命令运行之前，没有 before。超时前的输出保留，由“超时：原生孙进程”检查。
 test("超时及时返回，是错误，临时文件已删", async () => {
   const files = pgidFiles();
   const start = Date.now();
-  const r = await run("echo before; sleep 8", 1);
-  assert.ok(Date.now() - start < 5000, `用了 ${Date.now() - start} 毫秒`);
+  const r = await run("echo before; sleep 60", 1);
+  assert.ok(Date.now() - start < 30_000, `用了 ${Date.now() - start} 毫秒`);
   assert.equal(r.isError, true);
-  assert.equal(r.text, "before\n[超时：1 秒后结束了命令启动的进程]");
+  assert.match(r.text, /^(before\n)?\[超时：1 秒后结束了命令启动的进程\]$/);
   assert.deepEqual(pgidFiles(), files);
 });
 
 // 超时设 8 秒：bash 偶尔要卡约 5 秒才启动（kb-tools 坑点），探针得在超时前连上。两个一组并发跑省时间。
 // 没被结束的探针一直连着，测试到 30 秒失败。
 describe("超时和中止结束孙进程", { concurrency: 2, timeout: 30_000 }, () => {
+  // 探针连上过，说明命令在超时前就在运行，所以 before 一定在输出里。
   test("超时：原生孙进程", async () => {
-    assert.match((await run(nativeGrandchild("tn"), 8)).text, /超时/);
+    const r = await run(`echo before; ${nativeGrandchild("tn")}`, 8);
     await assertKilled("tn");
+    assert.deepEqual(r, { text: "before\n[超时：8 秒后结束了命令启动的进程]", isError: true });
   });
 
   test("中止：原生孙进程", async () => {
@@ -195,12 +199,13 @@ test("巨量输出只留头尾，字节不超上限，省略数准确", async ()
   assert.equal(Number(marker[1]) + kept, total);
 });
 
-// 正常退出时不结束后台进程：它继续运行，只是不再拖住调用。
+// 正常退出时不结束后台进程：它继续运行，只是不再拖住调用。后台进程要跑 30 秒，调用远早于此返回，就说明没等它。
+// 不卡紧时间：bash 启动偶尔卡约 5 秒（kb-tools 坑点）。
 test("后台进程占着管道也不会让调用挂住，临时文件已删", async () => {
   const files = pgidFiles();
   const start = Date.now();
-  const r = await run("sleep 8 & echo started");
-  assert.ok(Date.now() - start < 3000, `用了 ${Date.now() - start} 毫秒`);
+  const r = await run("sleep 30 & echo started");
+  assert.ok(Date.now() - start < 15_000, `用了 ${Date.now() - start} 毫秒`);
   assert.deepEqual(r, { text: "started\n[退出码 0]", isError: false });
   assert.deepEqual(pgidFiles(), files);
 });
