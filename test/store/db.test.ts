@@ -6,10 +6,12 @@ import { DatabaseSync } from "node:sqlite";
 import { openDb, SCHEMA_VERSION, tx } from "../../src/store/db.ts";
 import { tempDb, tempDir } from "./fixtures.ts";
 
-test("新库：5 张表、WAL、synchronous=FULL、记下表结构版本", (t) => {
+test("新库：6 张表、WAL、synchronous=FULL、记下表结构版本", (t) => {
   const db = tempDb(t);
   const tables = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((r) => r.name);
-  assert.deepEqual(tables, ["effects", "mailbox", "memory", "processes", "segment_messages"]);
+  assert.deepEqual(tables, ["blobs", "effects", "mailbox", "memory", "processes", "segment_messages"]);
+  assert.equal(SCHEMA_VERSION, 2);
+  assert.deepEqual(db.prepare("PRAGMA table_info(blobs)").all().map((c) => [c.name, c.type]), [["hash", "TEXT"], ["data", "BLOB"]]);
   assert.equal(db.prepare("PRAGMA journal_mode").get()?.journal_mode, "wal");
   assert.equal(db.prepare("PRAGMA synchronous").get()?.synchronous, 2);
   assert.equal(db.prepare("PRAGMA user_version").get()?.user_version, SCHEMA_VERSION);
@@ -29,7 +31,7 @@ test("表结构版本不一致就拒绝启动，提示重建库", (t) => {
   const raw = new DatabaseSync(path);
   raw.exec(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
   raw.close();
-  assert.throws(() => openDb(path), /表结构版本是 2.*重建/);
+  assert.throws(() => openDb(path), new RegExp(`表结构版本是 ${SCHEMA_VERSION + 1}.*重建`));
 });
 
 test("effects：每个进程最多一行，状态只能是 pending 或 running", (t) => {

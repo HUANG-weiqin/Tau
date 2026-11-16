@@ -7,7 +7,7 @@ import type { Models } from "@earendil-works/pi-ai";
 import { createActions } from "../executor/actions.ts";
 import { createExecutor } from "../executor/executor.ts";
 import { observe } from "../kernel/observe.ts";
-import { unreachable } from "../kernel/types.ts";
+import { unreachable, userLetter } from "../kernel/types.ts";
 import type { Memory, Message, Process, ProcessId } from "../kernel/types.ts";
 import { loadPreset } from "../presets/load.ts";
 import type { Reply, Request } from "../protocol.ts";
@@ -84,7 +84,7 @@ export async function serve(opts: ServeOptions): Promise<Service> {
         return watch(s, id);
       }
       case "send":
-        send(db, req.process, { kind: "userMessage", text: req.text });
+        send(db, req.process, userLetter(req.text));
         return watch(s, req.process);
       case "stop":
         send(db, req.process, { kind: "stop" });

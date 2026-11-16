@@ -116,7 +116,7 @@ type Reply =
 | 请求 | 服务做什么 | 回复 |
 |---|---|---|
 | `start` | `loadPreset` 读预设；生成进程 ID；`startProcess` | `receipt`，若干 `text`，`final` |
-| `send` | `send` 放进一条 `userMessage`；进程不存在就抛出 | 同上 |
+| `send` | `send` 放进一封用户的信；进程不存在就抛出 | 同上 |
 | `stop` | `send` 放进一条 `stop` | `receipt` |
 | `ps` | 读全部进程记录；每个进程 `observe(p, 当前段, 全部进程, now)` | 一行 `ps` |
 | 处理时抛出 | — | 一行 `error`，然后关闭 |

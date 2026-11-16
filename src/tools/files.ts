@@ -1,10 +1,11 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { textContent } from "../kernel/types.ts";
 import type { ToolResultContent } from "../kernel/types.ts";
 import { clip } from "../kernel/derive.ts";
 
-const ok = (text: string): ToolResultContent => ({ text, isError: false });
-const fail = (text: string): ToolResultContent => ({ text, isError: true });
+const ok = (text: string): ToolResultContent => ({ content: textContent(text), isError: false });
+const fail = (text: string): ToolResultContent => ({ content: textContent(text), isError: true });
 
 function reason(e: unknown): string {
   const code = (e as { code?: string }).code;

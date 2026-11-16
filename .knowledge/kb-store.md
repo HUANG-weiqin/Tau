@@ -71,6 +71,10 @@ CREATE TABLE memory (
   value TEXT NOT NULL,
   UNIQUE (ns, key)
 ) STRICT;
+CREATE TABLE blobs (
+  hash TEXT PRIMARY KEY,
+  data BLOB NOT NULL
+) STRICT;
 ```
 
 | 表 | 一行是什么 | 谁写 |
@@ -80,6 +84,7 @@ CREATE TABLE memory (
 | `mailbox` | 一条输入。`input_json` 是 `Input` 的 JSON | 见下 |
 | `effects` | 进程正在等的库外副作用：编号 `n` 和状态 | `handleNext` 和执行器 |
 | `memory` | 一个键现在的值 | `Memory` 的实现 `src/memory/kv.ts` |
+| `blobs` | 一块大数据（图片）：哈希和原始字节，只增（[设计稿 5.6](../docs/design/kernel-v2.md)）。现在没有代码写它 | 以后和引用它的信件或工具结果在同一个事务里写 |
 
 - 段号从 1 开始。段内序号从 0 开始，每段重新计。
 - 没有删除进程或旧段的代码。旧段一直留在库里。
@@ -90,7 +95,7 @@ CREATE TABLE memory (
 
 | 输入 | 谁放进信箱 |
 |---|---|
-| `userMessage` | `startProcess`、`send` |
+| 信件（CLI 寄来的是用户的信） | `startProcess`、`send` |
 | `stop` | `send` |
 | 库内工具的结果、工具不存在的错误结果 | `handleNext` 的同步步骤 |
 | 库外副作用的 `modelResult`、`toolResult` | 执行器完成动作时 |
@@ -107,7 +112,7 @@ CREATE TABLE memory (
 1. `PRAGMA journal_mode = WAL`。结果不是 `wal` 就关库并抛出。所以 `:memory:` 会被拒绝。
 2. `PRAGMA synchronous = FULL`。回执承诺“写进库才返回”，所以每次提交都要落盘。这是连接级设置，每次打开都设。
 3. 读 `PRAGMA user_version`：
-   - 0 是新库：在一个事务里建 5 张表，并写入 `SCHEMA_VERSION`（现在是 1）。
+   - 0 是新库：在一个事务里建 6 张表，并写入 `SCHEMA_VERSION`（现在是 2）。
    - 等于 `SCHEMA_VERSION`：直接用。
    - 其它值：关库并抛出，提示停掉服务、移走旧库、重启后重建。MVP 不做迁移。
 
@@ -121,8 +126,8 @@ CREATE TABLE memory (
 
 | 函数 | 做什么 | 失败时 |
 |---|---|---|
-| `startProcess(db, memory, id, preset, text, now)` | 用 `start` 建 `idle` 进程记录并插入；第一条消息作为 `userMessage` 进信箱 | ID 重复：主键冲突，什么都不写 |
-| `send(db, id, input)` | 把 `userMessage` 或 `stop` 放进已有进程的信箱 | 进程不存在：抛出“没有这个进程”，什么都不写 |
+| `startProcess(db, memory, id, preset, text, now)` | 用 `start` 建 `idle` 进程记录并插入；第一条消息作为用户的信进信箱 | ID 重复：主键冲突，什么都不写 |
+| `send(db, id, input)` | 把信件或 `stop` 放进已有进程的信箱 | 进程不存在：抛出“没有这个进程”，什么都不写 |
 | `handleNext(db, memory, now)` | 处理信箱里最早的一条输入 | 抛出时整个事务回滚，这条输入留在队头 |
 
 `Env` 怎样算：`now` 由调用方传入；预设 `tools` 含 `memory` 时，`memoryView` 是 `memory.view(preset.id)`，否则是空串，不碰记忆。
@@ -156,7 +161,7 @@ CREATE TABLE memory (
 | `callModel` | 插入一行 `pending` |
 | `runTool`，库外工具 | 插入一行 `pending` |
 | `runTool`，库内工具 | 在这个事务里执行，结果作为 `toolResult` 放进信箱 |
-| `runTool`，不认识的工具或预设里没有的工具 | 把 `{ text: "工具 <name> 不存在，或者预设里没有它。", isError: true }` 作为 `toolResult` 放进信箱 |
+| `runTool`，不认识的工具或预设里没有的工具 | 把内容为这句文本的错误结果（`工具 <name> 不存在，或者预设里没有它。`）作为 `toolResult` 放进信箱 |
 
 - 库内还是库外，按进程快照里的预设判断：`findTool(p.preset, name)` 的 `inStore`。
 - 事务里放进信箱的 `toolResult`，`status` 总是 `ok`，失败写在 `isError` 里。

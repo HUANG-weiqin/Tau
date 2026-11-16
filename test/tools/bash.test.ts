@@ -8,6 +8,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { MESSAGE_MAX_BYTES, utf8Bytes } from "../../src/kernel/derive.ts";
 import { bash } from "../../src/tools/bash.ts";
+import { plain } from "../plain.ts";
 
 let dir = "";
 let tmp = "";
@@ -54,8 +55,8 @@ after(async () => {
   await rm(tmp, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 });
 });
 
-function run(command: string, timeout?: number, signal: AbortSignal = new AbortController().signal) {
-  return bash({ command, timeout }, dir, signal);
+async function run(command: string, timeout?: number, signal: AbortSignal = new AbortController().signal) {
+  return plain(await bash({ command, timeout }, dir, signal));
 }
 
 const exists = (name: string): boolean => existsSync(path.join(dir, name));

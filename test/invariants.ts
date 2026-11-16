@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from "node:util";
 import { effectOf } from "../src/kernel/decide.ts";
 import { contextUsed, handoffThreshold, STEPS_PER_TURN } from "../src/kernel/derive.ts";
 import { unreachable } from "../src/kernel/types.ts";
-import type { Ended, Message, Process, ToolCall, Turn } from "../src/kernel/types.ts";
+import type { Ended, Letter, Message, Process, ToolCall, Turn } from "../src/kernel/types.ts";
 
 type Bad = (what: string) => Error;
 
@@ -116,8 +116,15 @@ function checkTurn(p: Process, turn: Turn, segment: readonly Message[], bad: Bad
   }
   // 本轮每调用一次模型，lastEffect 都加过一。
   if (p.lastEffect < turn.steps) throw bad(`lastEffect ${p.lastEffect} 小于本轮步数 ${turn.steps}`);
-  if (!Array.isArray(turn.queued) || turn.queued.some((q) => typeof q !== "string")) throw bad("turn.queued 应为字符串数组");
+  if (!Array.isArray(turn.queued) || turn.queued.some((q) => !isLetter(q))) throw bad("turn.queued 应为信件数组");
+  if (!Number.isInteger(turn.hops) || turn.hops < 0) throw bad(`本轮跳数是 ${turn.hops}`);
+  if (!Array.isArray(turn.replyTo) || new Set(turn.replyTo).size !== turn.replyTo.length) throw bad("turn.replyTo 应为去重的进程 ID 数组");
   if (segment.length === 0) throw bad("运行中工作段却是空的");
+}
+
+function isLetter(x: unknown): boolean {
+  const l = x as Partial<Letter> | null;
+  return typeof l === "object" && l !== null && typeof l.from === "object" && Array.isArray(l.content) && Number.isInteger(l.hops);
 }
 
 function checkEnded(e: Ended, bad: Bad): void {

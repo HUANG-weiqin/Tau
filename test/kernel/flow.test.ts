@@ -12,6 +12,7 @@ import {
   call,
   codeText,
   current,
+  letter,
   env,
   feed,
   modelInterrupted,
@@ -67,7 +68,7 @@ function atHandoff(): World {
   const w = begin();
   reply(w, assistant({ usage: HIGH, calls: [call("c1")] }));
   toolDone(w, "好");
-  assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 2, queued: [] }, purpose: "handoff" });
+  assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 2, queued: [], hops: 0, replyTo: [] }, purpose: "handoff" });
   return w;
 }
 
@@ -84,7 +85,8 @@ function assertDropped(w: World, input: Input): void {
 describe("4.3 start", () => {
   test("只建一个 idle 进程：段号 1，lastEffect 为 0，memoryView 取自 env", () => {
     const p = start("p1", P, env(123, "k: v"));
-    assert.deepEqual(p, { id: "p1", preset: P, createdAt: 123, segment: { seq: 1, memoryView: "k: v" }, lastEffect: 0, phase: { tag: "idle" } });
+    assert.deepEqual(p, { id: "p1", preset: P, createdAt: 123, segment: { seq: 1, memoryView: "k: v" }, lastEffect: 0, phase: { tag: "idle" }, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } });
+    assert.equal("parent" in p, false, "没有 parent");
     assert.equal(effectOf(p, []), null);
   });
 
@@ -125,7 +127,7 @@ describe("5.1 continueTurn", () => {
     const w = atHandoff();
     const s = reply(w, assistant({ usage: 10, text: "交接说明" }));
     assert.equal(w.p.segment.seq, 2);
-    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 3, queued: [] }, purpose: "turn" });
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 3, queued: [], hops: 0, replyTo: [] }, purpose: "turn" });
     assert.equal(w.p.lastEffect, s.prev.lastEffect + 1);
   });
 
@@ -141,7 +143,7 @@ describe("5.1 continueTurn", () => {
       assert.deepEqual(w.p.phase, { tag: "idle", ended: "done" });
       feed(w, userInput("继续"));
       assert.equal(contextUsed(w.p, current(w)), Math.ceil(T) + delta);
-      assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [] }, purpose });
+      assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 0, replyTo: [] }, purpose });
     }
   });
 });
@@ -174,14 +176,14 @@ describe("5.1 endTurn", () => {
     toolDone(w, "好");
     feed(w, userInput("甲"));
     feed(w, userInput("乙"));
-    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 2, queued: ["甲", "乙"] }, purpose: "turn" });
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 2, queued: [letter("甲"), letter("乙")], hops: 0, replyTo: [] }, purpose: "turn" });
     const s = reply(w, assistant({ usage: LOW, text: "完成了" }));
     assert.equal(s.append.length, 2);
     assert.deepEqual(brief(s.append.slice(0, 1)), ["assistant:完成了"]);
     const merged = s.append[1]!;
     assert.equal(merged.role, "user");
     assert.ok(textOf(merged).indexOf("甲") >= 0 && textOf(merged).indexOf("甲") < textOf(merged).indexOf("乙"), textOf(merged));
-    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [] }, purpose: "turn" });
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 0, replyTo: [] }, purpose: "turn" });
     assert.equal(w.p.lastEffect, s.prev.lastEffect + 1);
   });
 
@@ -195,12 +197,12 @@ describe("5.1 endTurn", () => {
 });
 
 describe("5.2 每种输入", () => {
-  test("userMessage，进程 idle：写入工作段，用新的 Turn 执行 continueTurn", () => {
+  test("信，进程 idle：写入工作段，用新的 Turn 执行 continueTurn", () => {
     const w = world(P);
     const s = feed(w, userInput("你好"), env(10));
     assert.deepEqual(brief(s.append), ["user:你好"]);
     assert.equal(s.append[0]?.timestamp, 10);
-    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [] }, purpose: "turn" });
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 0, replyTo: [] }, purpose: "turn" });
     assert.deepEqual(s.after, { kind: "callModel", n: 1, purpose: "turn" });
 
     // 上一轮走了 2 步；新的一轮从头计步。
@@ -209,7 +211,7 @@ describe("5.2 每种输入", () => {
     reply(w, assistant({ usage: LOW, text: "完成了" }));
     assert.deepEqual(w.p.phase, { tag: "idle", ended: "done" });
     feed(w, userInput("再来"));
-    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [] }, purpose: "turn" });
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 0, replyTo: [] }, purpose: "turn" });
   });
 
   test("decide 写入的用户消息裁剪到字节上限：空闲时的消息、合并的排队消息", () => {
@@ -221,24 +223,60 @@ describe("5.2 每种输入", () => {
     const q = withCalls(["c1"]);
     const parts = [codeText(20_000, "甲"), codeText(20_000, "乙")];
     for (const text of parts) feed(q, userInput(text));
-    assert.deepEqual(q.p.phase.tag !== "idle" && q.p.phase.turn.queued, parts, "排队时不裁剪");
+    assert.deepEqual(q.p.phase.tag !== "idle" && q.p.phase.turn.queued, parts.map(letter), "排队时不裁剪");
     const s = feed(q, stopInput());
     assert.equal(textOf(s.append.at(-1)!), clip(parts.join("\n\n")));
     assert.ok(utf8Bytes(textOf(s.append.at(-1)!)) <= MESSAGE_MAX_BYTES);
   });
 
-  test("userMessage，进程正在运行：放进 turn.queued，不写工作段，不发新副作用", () => {
+  test("信，进程正在运行：放进 turn.queued，不写工作段，不发新副作用", () => {
     const w = begin();
     const a = feed(w, userInput("甲"));
     assert.deepEqual(a.append, []);
     assert.deepEqual(a.after, a.before);
-    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: ["甲"] }, purpose: "turn" });
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [letter("甲")], hops: 0, replyTo: [] }, purpose: "turn" });
 
     reply(w, assistant({ usage: LOW, calls: [call("c1")] }));
     const b = feed(w, userInput("乙"));
     assert.deepEqual(b.append, []);
     assert.deepEqual(b.after, b.before);
-    assert.deepEqual(w.p.phase, { tag: "awaitingTool", turn: { steps: 1, queued: ["甲", "乙"] } });
+    assert.deepEqual(w.p.phase, { tag: "awaitingTool", turn: { steps: 1, queued: [letter("甲"), letter("乙")], hops: 0, replyTo: [] } });
+  });
+
+  test("信的 hops 和 replyTo 并进新一轮；合并开新一轮时 hops 取最大、replyTo 去重", () => {
+    const from = { kind: "process", id: "x", preset: "other" } as const;
+    const w = world(P);
+    feed(w, { kind: "letter", letter: { from, content: [{ type: "text", text: "问" }], hops: 3, replyTo: "x" } });
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 3, replyTo: ["x"] }, purpose: "turn" });
+    const text = (t: string) => [{ type: "text", text: t } as const];
+    feed(w, { kind: "letter", letter: { from, content: text("乙"), hops: 5, replyTo: "y" } });
+    feed(w, { kind: "letter", letter: { from, content: text("丙"), hops: 2, replyTo: "y" } });
+    feed(w, userInput("丁"));
+    reply(w, assistant({ usage: LOW, text: "完成了" }));
+    assert.equal(textOf(current(w).at(-1)!), "乙\n\n丙\n\n丁", "合并的正文和 v1 一样，用空行连起来");
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 5, replyTo: ["y"] }, purpose: "turn" });
+  });
+
+  test("工具结果有多个文本块：连起来整体裁剪成一个文本块，不超过上限", () => {
+    const w = withCalls(["c1", "c2"]);
+    const part = codeText(32 * 1024);
+    const blocks = [0, 1, 2].map(() => ({ type: "text" as const, text: part }));
+    const s = feed(w, { kind: "toolResult", n: w.p.lastEffect, outcome: { status: "ok", content: { content: blocks, isError: false } } });
+    const r = s.append[0];
+    assert.ok(r?.role === "toolResult");
+    assert.deepEqual(r.content, [{ type: "text", text: clip(part + part + part) }]);
+    assert.ok(utf8Bytes(textOf(r)) <= MESSAGE_MAX_BYTES);
+  });
+
+  test("工具结果的内容是内容块：正常结果裁剪文本块，被中断和未执行的补成文本块", () => {
+    const w = withCalls(["c1", "c2"]);
+    const big = codeText(100 * 1024);
+    const s = feed(w, { kind: "toolResult", n: w.p.lastEffect, outcome: { status: "ok", content: { content: [{ type: "text", text: big }], isError: false } } });
+    const r = s.append[0];
+    assert.ok(r?.role === "toolResult");
+    assert.deepEqual(r.content, [{ type: "text", text: clip(big) }]);
+    feed(w, stopInput());
+    assert.deepEqual(current(w).slice(-1).map((m) => m.role === "toolResult" && [m.isError, m.content]), [[true, [{ type: "text", text: INTERRUPTED }]]]);
   });
 
   test("modelResult 被中断：endTurn(服务重启，模型调用被中断)，用途 turn 和 handoff 都一样", () => {
@@ -260,7 +298,7 @@ describe("5.2 每种输入", () => {
     const s = toolDone(w, "结果一", env(0), true);
     assert.deepEqual(brief(s.append), ["c1=结果一"]);
     assert.equal(s.append[0]?.role === "toolResult" && s.append[0].isError, true);
-    assert.deepEqual(w.p.phase, { tag: "awaitingTool", turn: { steps: 1, queued: [] } });
+    assert.deepEqual(w.p.phase, { tag: "awaitingTool", turn: { steps: 1, queued: [], hops: 0, replyTo: [] } });
     assert.equal(w.p.lastEffect, s.prev.lastEffect + 1);
     assert.deepEqual(s.after, { kind: "runTool", n: w.p.lastEffect, call: call("c2") });
   });
@@ -270,7 +308,7 @@ describe("5.2 每种输入", () => {
     toolDone(w, "一");
     const s = toolDone(w, "二");
     assert.deepEqual(brief(s.append), ["c2=二"]);
-    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 2, queued: [] }, purpose: "turn" });
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 2, queued: [], hops: 0, replyTo: [] }, purpose: "turn" });
   });
 
   test("toolResult 正常，写入后用量到阈值：剩下的调用补“未执行”，然后换段", () => {
@@ -282,7 +320,7 @@ describe("5.2 每种输入", () => {
     const s = toolDone(w, big);
     assert.ok(contextUsed(w.p, current(w)) >= T);
     assert.deepEqual(brief(s.append), [`c1=${big}`, `c2=${SKIPPED}`, `c3=${SKIPPED}`]);
-    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 2, queued: [] }, purpose: "handoff" });
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 2, queued: [], hops: 0, replyTo: [] }, purpose: "handoff" });
     assert.deepEqual(pendingCalls(current(w)), []);
   });
 
@@ -294,7 +332,7 @@ describe("5.2 每种输入", () => {
     assert.equal(w.p.phase.tag, "awaitingTool");
     const s = toolDone(w, big);
     assert.deepEqual(brief(s.append), [`c2=${big}`]);
-    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 2, queued: [] }, purpose: "handoff" });
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 2, queued: [], hops: 0, replyTo: [] }, purpose: "handoff" });
   });
 
   test("toolResult 超出字节上限：写入时保留头尾", () => {
@@ -414,7 +452,7 @@ describe("5.3 模型回复（用途 turn）", () => {
     const m = assistant({ usage: LOW, text: "我先读两个文件", calls: [call("c1"), call("c2", "bash", { command: "dir" })] });
     const s = reply(w, m);
     assert.deepEqual(s.append, [m]);
-    assert.deepEqual(w.p.phase, { tag: "awaitingTool", turn: { steps: 1, queued: [] } });
+    assert.deepEqual(w.p.phase, { tag: "awaitingTool", turn: { steps: 1, queued: [], hops: 0, replyTo: [] } });
     assert.deepEqual(s.after, { kind: "runTool", n: s.prev.lastEffect + 1, call: call("c1") });
   });
 
@@ -513,7 +551,7 @@ describe("5.4 换段", () => {
     assert.ok(textOf(first).endsWith(note), textOf(first));
     assert.ok(!textOf(first).includes("想一想"), "思考不是正文");
     assert.deepEqual(current(w), s.append);
-    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 3, queued: [] }, purpose: "turn" });
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 3, queued: [], hops: 0, replyTo: [] }, purpose: "turn" });
     assert.equal(w.p.lastEffect, s.prev.lastEffect + 1);
   });
 
@@ -522,7 +560,7 @@ describe("5.4 换段", () => {
     reply(w, assistant({ usage: 3_000, text: "截断的交接说明……", stopReason: "length" }));
     assert.equal(w.p.segment.seq, 2);
     assert.ok(textOf(current(w)[0]!).endsWith("截断的交接说明……"));
-    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 3, queued: [] }, purpose: "turn" });
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 3, queued: [], hops: 0, replyTo: [] }, purpose: "turn" });
   });
 
   test("3. 其它情况都算失败：不写入，endTurn(交接失败：…)，旧段不变", () => {
@@ -570,10 +608,10 @@ describe("5.4 换段", () => {
     reply(w, assistant({ usage: 3_000, stopReason: "toolUse", calls: [call("h1")] }));
     assert.deepEqual(w.p.phase, { tag: "idle", ended: { error: "交接失败：toolUse" } });
     feed(w, userInput("再试一次"));
-    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [] }, purpose: "handoff" });
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 0, replyTo: [] }, purpose: "handoff" });
     reply(w, assistant({ usage: 3_000, text: "交接说明" }));
     assert.equal(w.p.segment.seq, 2);
-    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 2, queued: [] }, purpose: "turn" });
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 2, queued: [], hops: 0, replyTo: [] }, purpose: "turn" });
   });
 
   test("4. 段末还没处理的用户消息不进交接请求，原样附在新段第一条消息的说明后面", () => {
@@ -589,7 +627,7 @@ describe("5.4 换段", () => {
     // 交接失败之后发的消息带着说明，换段时说明也跟着带过去。
     const n = failed("交接失败：超时");
     assert.deepEqual(s.append, [{ role: "user", content: `${HANDOFF_HEADER}交接说明\n\n${CARRY_HEADER}\n\n${n}\n\n甲\n\n${n}\n\n乙`, timestamp: 9 }]);
-    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 2, queued: [] }, purpose: "turn" });
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 2, queued: [], hops: 0, replyTo: [] }, purpose: "turn" });
   });
 
   test("4. 带过去的消息很大时，新段第一条消息整体裁剪到字节上限", () => {
@@ -612,17 +650,17 @@ describe("5.4 换段", () => {
     const w = atHandoff();
     feed(w, userInput("甲"));
     reply(w, assistant({ usage: 3_000, text: "交接说明" }));
-    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 3, queued: ["甲"] }, purpose: "turn" });
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 3, queued: [letter("甲")], hops: 0, replyTo: [] }, purpose: "turn" });
     const s = reply(w, assistant({ usage: 3_000, text: "完成了" }));
     assert.deepEqual(brief(s.append), ["assistant:完成了", "user:甲"]);
     assert.equal(w.p.segment.seq, 2);
-    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [] }, purpose: "turn" });
+    assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 0, replyTo: [] }, purpose: "turn" });
   });
 
   test("5. 换段只发生在 continueTurn 里，这时所有工具调用都已有结果", () => {
     const w = withCalls(["c1", "c2", "c3"], HIGH);
     // 回复本身的用量已经到阈值，第一个工具照样执行；结果写入后剩下的补“未执行”。
-    assert.deepEqual(w.p.phase, { tag: "awaitingTool", turn: { steps: 1, queued: [] } });
+    assert.deepEqual(w.p.phase, { tag: "awaitingTool", turn: { steps: 1, queued: [], hops: 0, replyTo: [] } });
     const s = toolDone(w, "一");
     assert.deepEqual(brief(s.append), ["c1=一", `c2=${SKIPPED}`, `c3=${SKIPPED}`]);
     assert.deepEqual(pendingCalls(current(w)), []);
@@ -655,7 +693,7 @@ describe("上一轮没有正常结束：下一条用户消息前面加一句说�
       assert.equal(w.p.phase.tag, "idle", label);
       const s = feed(w, userInput("接下来做这个"));
       assert.deepEqual(brief(s.append), [`user:${note}\n\n接下来做这个`], label);
-      assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [] }, purpose: "turn" }, label);
+      assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 0, replyTo: [] }, purpose: "turn" }, label);
     }
   });
 

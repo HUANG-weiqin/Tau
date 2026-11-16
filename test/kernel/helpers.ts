@@ -1,8 +1,8 @@
 // 内核测试的辅助：把 decide 的结果应用到内存里的状态上，以及预设、消息和输入的构造器。
 import type { AssistantMessage, StopReason, ToolCall, Usage } from "@earendil-works/pi-ai";
 import { decide, effectOf, start } from "../../src/kernel/decide.ts";
-import { unreachable } from "../../src/kernel/types.ts";
-import type { Effect, Env, Input, Message, PresetSnapshot, Process } from "../../src/kernel/types.ts";
+import { textContent, unreachable, userLetter } from "../../src/kernel/types.ts";
+import type { Effect, Env, Input, Letter, Message, PresetSnapshot, Process } from "../../src/kernel/types.ts";
 import { assertInvariants } from "../invariants.ts";
 
 export function preset(over: Partial<PresetSnapshot> = {}): PresetSnapshot {
@@ -69,11 +69,13 @@ export function assistant(s: ReplySpec): AssistantMessage {
   return m;
 }
 
-export const userInput = (text: string): Input => ({ kind: "userMessage", text });
+export const userInput = (text: string): Input => userLetter(text);
+/** 排队里的一封用户的信。 */
+export const letter = (text: string): Letter => userLetter(text).letter;
 export const stopInput = (): Input => ({ kind: "stop" });
 export const modelOk = (n: number, message: AssistantMessage): Input => ({ kind: "modelResult", n, outcome: { status: "ok", message } });
 export const modelInterrupted = (n: number): Input => ({ kind: "modelResult", n, outcome: { status: "interrupted" } });
-export const toolOk = (n: number, text: string, isError = false): Input => ({ kind: "toolResult", n, outcome: { status: "ok", content: { text, isError } } });
+export const toolOk = (n: number, text: string, isError = false): Input => ({ kind: "toolResult", n, outcome: { status: "ok", content: { content: textContent(text), isError } } });
 export const toolInterrupted = (n: number): Input => ({ kind: "toolResult", n, outcome: { status: "interrupted" } });
 
 /** 内存里的状态：进程记录，加上每一段的消息。 */

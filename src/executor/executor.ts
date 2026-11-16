@@ -1,6 +1,6 @@
 // 执行器：库外副作用的开始、中止、上报（见 .knowledge/kb-executor.md）。不做决策，不重试。
 import { effectOf } from "../kernel/decide.ts";
-import { unreachable } from "../kernel/types.ts";
+import { textContent, unreachable } from "../kernel/types.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { AssistantMessage, Effect, Input, Message, Process, ProcessId, ToolCall, ToolResultContent } from "../kernel/types.ts";
 import { loadProcess, loadSegment, post, tx } from "../store/db.ts";
@@ -104,7 +104,7 @@ function act(actions: Actions, job: Job, signal: AbortSignal): Promise<Input> {
     case "runTool":
       return attempt(() => actions.runTool(job, e.call, signal)).then(
         (content): Input => ({ kind: "toolResult", n: e.n, outcome: { status: "ok", content } }),
-        (err: unknown): Input => ({ kind: "toolResult", n: e.n, outcome: { status: "ok", content: { text: `工具执行失败：${message(err)}`, isError: true } } }),
+        (err: unknown): Input => ({ kind: "toolResult", n: e.n, outcome: { status: "ok", content: { content: textContent(`工具执行失败：${message(err)}`), isError: true } } }),
       );
     default:
       return unreachable(e);

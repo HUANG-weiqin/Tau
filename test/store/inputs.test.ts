@@ -2,12 +2,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { start } from "../../src/kernel/decide.ts";
+import { userLetter } from "../../src/kernel/types.ts";
 import { handoffThreshold } from "../../src/kernel/derive.ts";
 import { createExecutor } from "../../src/executor/executor.ts";
 import { loadProcess, loadSegment, tx } from "../../src/store/db.ts";
 import { runInStore } from "../../src/store/instore.ts";
 import { handleNext, send, startProcess } from "../../src/store/inputs.ts";
 import { countReads, effectRows, fakeMemory, gated, mailbox, PRESET, reply, say, scripted, settle, tempDb, toolCall, use } from "./fixtures.ts";
+import { plain, res } from "../plain.ts";
 import { assertStoreInvariants } from "./invariants.ts";
 
 test("启动进程：写入 idle 的进程记录，第一条消息进信箱；ID 重复时什么都不写", (t) => {
@@ -17,7 +19,7 @@ test("启动进程：写入 idle 的进程记录，第一条消息进信箱；ID
   const p = loadProcess(db, "p1");
   assert.deepEqual(p?.phase, { tag: "idle" });
   assert.equal(p?.createdAt, 5);
-  assert.deepEqual(mailbox(db), [{ id: "p1", input: { kind: "userMessage", text: "你好" } }]);
+  assert.deepEqual(mailbox(db), [{ id: "p1", input: userLetter("你好") }]);
   assert.throws(() => startProcess(db, memory, "p1", PRESET, "再来", 6));
   assert.equal(mailbox(db).length, 1);
   assertStoreInvariants(db);
@@ -79,7 +81,7 @@ test("库内工具：在同一个事务里执行，结果进信箱，不进副�
   await exec.startNext();
   handleNext(db, memory, 0);
   assert.deepEqual(effectRows(db), []);
-  assert.deepEqual(mailbox(db), [{ id: "p1", input: { kind: "toolResult", n: 2, outcome: { status: "ok", content: { text: "已写入 k，版本 1。", isError: false } } } }]);
+  assert.deepEqual(mailbox(db), [{ id: "p1", input: { kind: "toolResult", n: 2, outcome: { status: "ok", content: res("已写入 k，版本 1。") } } }]);
   assert.deepEqual(memory.get(PRESET.id, "k"), { value: "v", version: 1 });
   assertStoreInvariants(db);
   await settle(db, memory, exec);
@@ -110,7 +112,7 @@ test("不认识的工具、预设里没有的工具：错误结果在事务里�
 test("停止：删掉 pending 行时不用中止；删掉 running 行时返回它的编号", (t) => {
   const db = tempDb(t);
   const memory = fakeMemory();
-  const exec = createExecutor(db, gated(() => say("好"), () => ({ text: "", isError: false })));
+  const exec = createExecutor(db, gated(() => say("好"), () => res("")));
   startProcess(db, memory, "p1", PRESET, "a", 0);
   handleNext(db, memory, 0);
   send(db, "p1", { kind: "stop" });
@@ -130,14 +132,14 @@ test("停止：删掉 pending 行时不用中止；删掉 running 行时返回�
 test("运行中收到用户消息：在等的编号不变，副作用表不动", (t) => {
   const db = tempDb(t);
   const memory = fakeMemory();
-  const exec = createExecutor(db, gated(() => say("好"), () => ({ text: "", isError: false })));
+  const exec = createExecutor(db, gated(() => say("好"), () => res("")));
   startProcess(db, memory, "p1", PRESET, "a", 0);
   handleNext(db, memory, 0);
   void exec.startNext();
-  send(db, "p1", { kind: "userMessage", text: "再说一句" });
+  send(db, "p1", userLetter("再说一句"));
   const h = handleNext(db, memory, 0);
   assert.equal(h?.abort, null);
-  assert.deepEqual(h?.process.phase, { tag: "awaitingModel", purpose: "turn", turn: { steps: 1, queued: ["再说一句"] } });
+  assert.deepEqual(h?.process.phase, { tag: "awaitingModel", purpose: "turn", turn: { steps: 1, queued: [userLetter("再说一句").letter], hops: 0, replyTo: [] } });
   assert.deepEqual(effectRows(db), [{ id: "p1", n: 1, status: "running" }]);
   assertStoreInvariants(db);
 });
@@ -145,7 +147,7 @@ test("运行中收到用户消息：在等的编号不变，副作用表不动",
 test("self：投影写成文字，带本地时间、时区和运行中的兄弟进程", async (t) => {
   const db = tempDb(t);
   const memory = fakeMemory();
-  const actions = gated((job) => (job.process.id === "p2" ? use(toolCall("c1", "self")) : say("好")), () => ({ text: "", isError: false }));
+  const actions = gated((job) => (job.process.id === "p2" ? use(toolCall("c1", "self")) : say("好")), () => res(""));
   const exec = createExecutor(db, actions);
   startProcess(db, memory, "p1", PRESET, "a", 0);
   startProcess(db, memory, "p2", PRESET, "b", 60_000);
@@ -157,7 +159,7 @@ test("self：投影写成文字，带本地时间、时区和运行中的兄弟�
   handleNext(db, memory, 3_725_000);
   const [result] = mailbox(db);
   assert.ok(result?.input.kind === "toolResult" && result.input.outcome.status === "ok");
-  const text = result.input.outcome.content.text;
+  const text = plain(result.input.outcome.content).text;
   assert.match(text, new RegExp(`（${Intl.DateTimeFormat().resolvedOptions().timeZone}）`));
   assert.match(text, /进程：p2，预设 helper，模型 faux\/model-1，已运行 1 小时 1 分/);
   assert.match(text, /阶段：等工具结果，本轮第 1 步/);
@@ -169,7 +171,7 @@ test("记忆工具：读、写、冲突时带最新值、删除、参数错误",
   const db = tempDb(t);
   const memory = fakeMemory();
   const p = start("p1", PRESET, { now: 0, memoryView: "" });
-  const run = (name: string, args: Parameters<typeof toolCall>[2]) => runInStore(db, memory, p, [], toolCall("c", name, args), 0);
+  const run = (name: string, args: Parameters<typeof toolCall>[2]) => plain(runInStore(db, memory, p, [], toolCall("c", name, args), 0));
   assert.deepEqual(run("memory_get", { key: "k" }), { text: "键 k 不存在。", isError: false });
   assert.deepEqual(run("memory_set", { key: "k", value: "1" }), { text: "已写入 k，版本 1。", isError: false });
   assert.deepEqual(run("memory_set", { key: "k", value: "2" }), { text: "版本冲突，没有写入。现在的值是 k（版本 1）：\n1", isError: true });
@@ -205,7 +207,7 @@ test("处理一条输入只读当前段：旧段不加载，查询走 (process_i
   tx(db, () => {
     for (let i = 100; i < 1100; i++) insert.run(i);
   });
-  send(db, "p1", { kind: "userMessage", text: "b" });
+  send(db, "p1", userLetter("b"));
   const seen = countReads(db);
   handleNext(db, memory, 0);
   // 信箱 1 行 + 进程记录 1 行 + 当前段。
@@ -213,4 +215,17 @@ test("处理一条输入只读当前段：旧段不加载，查询走 (process_i
   const segmentSql = seen.sql.find((s) => s.includes("FROM segment_messages"));
   const plan = db.prepare(`EXPLAIN QUERY PLAN ${segmentSql}`).all("p1", 2).map((r) => String(r.detail));
   assert.match(plan.join("\n"), /SEARCH segment_messages USING INDEX \S+ \(process_id=\? AND segment_seq=\?\)/);
+});
+
+test("用户的信：信箱里是一个文本块、跳数 0、没有 replyTo；处理后段里的正文和 v1 的用户消息一样；新进程 usage 全是 0、没有 parent", (t) => {
+  const db = tempDb(t);
+  const memory = fakeMemory();
+  startProcess(db, memory, "p1", PRESET, "你好", 5);
+  assert.deepEqual(mailbox(db)[0]?.input, { kind: "letter", letter: { from: { kind: "user" }, content: [{ type: "text", text: "你好" }], hops: 0 } });
+  handleNext(db, memory, 7);
+  const p = loadProcess(db, "p1")!;
+  assert.deepEqual(p.usage, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+  assert.equal("parent" in p, false);
+  assert.deepEqual(loadSegment(db, p), [{ role: "user", content: "你好", timestamp: 7 }]);
+  assert.deepEqual(p.phase.tag === "awaitingModel" && [p.phase.turn.hops, p.phase.turn.replyTo], [0, []]);
 });

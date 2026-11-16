@@ -8,6 +8,7 @@ import type { JsonObject } from "@earendil-works/pi-ai";
 import type { Actions, Executor, Job } from "../../src/executor/executor.ts";
 import type { AssistantMessage, Input, Memory, Message, PresetSnapshot, ToolCall, ToolResultContent, Versioned } from "../../src/kernel/types.ts";
 import { openDb } from "../../src/store/db.ts";
+import { res } from "../plain.ts";
 import { handleNext } from "../../src/store/inputs.ts";
 
 export const PRESET: PresetSnapshot = {
@@ -116,7 +117,7 @@ export function scripted(replies: AssistantMessage[]): Actions & { log: string[]
     },
     async runTool(job, call) {
       log.push(`tool ${job.process.id} #${job.effect.n} ${call.name}`);
-      return { text: `out:${call.id}`, isError: false };
+      return res(`out:${call.id}`);
     },
   };
 }

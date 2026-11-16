@@ -38,9 +38,17 @@ interface Process {
   segment: { seq: number; memoryView: string };
   lastEffect: number;                // 最后发出的副作用编号，从 0 开始
   phase: Phase;
+  parent?: ProcessId;                // 建好后不变；CLI 建的进程没有
+  usage: Usage;                      // 累计用量；新进程全是 0
 }
 
-interface Turn { steps: number; queued: string[] }
+interface Usage { input: number; output: number; cacheRead: number; cacheWrite: number }
+
+type Sender = { kind: "user" } | { kind: "process"; id: ProcessId; preset: string; reply?: { ended: Ended } };
+interface Letter { from: Sender; content: Content[]; hops: number; replyTo?: ProcessId }
+type Content = TextContent | ImageContent;   // pi-ai 的类型
+
+interface Turn { steps: number; queued: Letter[]; hops: number; replyTo: ProcessId[] }
 type Purpose = "turn" | "handoff";
 
 type Phase =
@@ -54,6 +62,9 @@ type Ended = "done" | "stepLimit" | "stopped" | { error: string };
 - `PresetSnapshot` 有 `id`、`workdir`、`model`（`<provider>/<model-id>`）、`tools`、`prompt`、`contextWindow`。`tools` 是 `read`、`write`、`edit`、`bash`、`memory` 的子集。预设文件的格式见[设计稿第 2 节](../docs/design/mvp.md#2-预设)。
 - `segment.memoryView` 是开段那一刻的记忆视图。以后算不出来，所以存。
 - `turn.steps` 必须存：一轮可以跨越换段。
+- `turn.queued` 存信件原样，写进段时才渲染。`turn.hops` 是本轮已经写进段的信的最大跳数，`turn.replyTo` 是本轮结束时要寄回信的进程，去重。规则见[设计稿 5.3](../docs/design/kernel-v2.md#53-进程之间寄信派生停止回信跳数)。
+- `Letter.hops` 是这封信被进程之间的信一路引出来的跳数。CLI 寄来的信 `hops` 为 0，没有 `replyTo`。`replyTo` 有值时，处理这封信的那一轮结束时把最终回复寄给它。
+- `parent` 现在没有代码设置。`usage` 现在不累加。
 - `purpose` 存在阶段里：它保存进入等待时的决定。
 - 进程在等的副作用编号就是 `lastEffect`，阶段里不另存。
 - 工作段的消息是 pi-ai 的 `UserMessage`、`AssistantMessage`、`ToolResultMessage`。
@@ -63,12 +74,12 @@ type Ended = "done" | "stepLimit" | "stopped" | { error: string };
 
 ```ts
 type Input =
-  | { kind: "userMessage"; text: string }
+  | { kind: "letter"; letter: Letter }
   | { kind: "modelResult"; n: number; outcome: { status: "ok"; message: AssistantMessage } | { status: "interrupted" } }
   | { kind: "toolResult"; n: number; outcome: { status: "ok"; content: ToolResultContent } | { status: "interrupted" } }
   | { kind: "stop" };
 
-interface ToolResultContent { text: string; isError: boolean }
+interface ToolResultContent { content: Content[]; isError: boolean }
 
 type Effect =
   | { kind: "callModel"; n: number; purpose: Purpose }
@@ -219,16 +230,16 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 **`endTurn(turn, ended)`**
 
 1. 给每个待执行的调用补一条结果，`isError` 为 `true`。阶段是 `awaitingTool` 时，第一个写 `INTERRUPTED`，其余写 `SKIPPED`。其它阶段全部写 `SKIPPED`。
-2. `turn.queued` 不空：用空行连接成一条用户消息，经 `clip` 截到 `MESSAGE_MAX_BYTES`，时间戳 `env.now`，写入当前段。
-3. `ended` 是 `done` 且 `turn.queued` 不空：`continueTurn({ steps: 0, queued: [] })`。
+2. `turn.queued` 不空：每封信取文本块的正文，用空行连接成一条用户消息，经 `clip` 截到 `MESSAGE_MAX_BYTES`，时间戳 `env.now`，写入当前段。
+3. `ended` 是 `done` 且 `turn.queued` 不空：`continueTurn` 一个新的 `Turn`：`steps` 为 0，`queued` 为空，`hops` 取这批信的最大值，`replyTo` 取这批信的 `replyTo` 去重。
 4. 否则进入 `idle`，带上 `ended`。
 
 ### 流程：每种输入
 
 | 输入 | 条件 | 处理 |
 |---|---|---|
-| `userMessage` | `idle` | 上一轮没有正常结束（`ended` 是 `stopped`、`stepLimit` 或 `error`）时，原文前面加上一轮的说明和一个空行。再经 `clip` 截到 `MESSAGE_MAX_BYTES` 后写入工作段，时间戳 `env.now`；`continueTurn({ steps: 0, queued: [] })` |
-| `userMessage` | 运行中 | 追加到 `turn.queued`。不写段，副作用不变 |
+| `letter` | `idle` | 正文是信的文本块连起来（现在不加信的头）。上一轮没有正常结束（`ended` 是 `stopped`、`stepLimit` 或 `error`）时，正文前面加上一轮的说明和一个空行。再经 `clip` 截到 `MESSAGE_MAX_BYTES` 后写入工作段，时间戳 `env.now`；`continueTurn` 一个新的 `Turn`，`hops` 和 `replyTo` 只取自这封信 |
+| `letter` | 运行中 | 追加到 `turn.queued`。不写段，副作用不变 |
 | `stop` | 运行中 | `endTurn(turn, "stopped")` |
 | `stop` | `idle` | 什么都不做 |
 | `modelResult`、`toolResult` | `idle`，或 `n` 不是 `lastEffect`，或种类和阶段对不上 | 丢弃：进程记录和工作段都不变 |
@@ -240,7 +251,7 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 
 `toolResult` 正常：
 
-1. 文本经 `clip` 截到 `MESSAGE_MAX_BYTES`，作为第一个待执行调用的结果写入。`toolCallId`、`toolName` 取自调用，`isError` 原样保留。
+1. 全部文本块连起来，整体经 `clip` 截到 `MESSAGE_MAX_BYTES`，成一个文本块（图片块原样接在后面），作为第一个待执行调用的结果写入。`toolCallId`、`toolName` 取自调用，`isError` 原样保留。
 2. 还有待执行的调用，并且没到阈值：进入下一个 `awaitingTool`。`lastEffect` 加一，步数不变。
 3. 否则给剩下的调用补 `SKIPPED`（没有就不补），然后 `continueTurn`。
 
@@ -324,7 +335,7 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 | `awaitingModel` | 运行中的通用约束；结果齐全；最后一条不是助手消息；`effectOf` 是 `callModel(lastEffect, purpose)`；`purpose` 是 `handoff` 当且仅当用量到阈值 |
 | `awaitingTool` | 运行中的通用约束；有缺结果的调用；`effectOf` 是 `runTool(lastEffect, 第一个缺结果的调用)`；已经写过至少一个结果时，用量没到阈值 |
 
-运行中的通用约束：`1 <= steps <= STEPS_PER_TURN`；`lastEffect >= steps`；`queued` 是字符串数组；段不空。
+运行中的通用约束：`1 <= steps <= STEPS_PER_TURN`；`lastEffect >= steps`；`queued` 是信件数组；`hops` 是非负整数；`replyTo` 没有重复；段不空。
 
 测试辅助另外检查：
 

@@ -7,14 +7,16 @@ import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-work
 import { createActions } from "../../src/executor/actions.ts";
 import { createExecutor } from "../../src/executor/executor.ts";
 import { start } from "../../src/kernel/decide.ts";
+import { userLetter } from "../../src/kernel/types.ts";
 import type { Message, Process } from "../../src/kernel/types.ts";
 import { loadProcess, loadSegment, openDb } from "../../src/store/db.ts";
 import { handleNext, send, startProcess } from "../../src/store/inputs.ts";
 import { effectRows, fakeMemory, gated, mailbox, PRESET, say, scripted, settle, tempDb, tempDir, toolCall, use } from "./fixtures.ts";
 import type { Gate } from "./fixtures.ts";
+import { res } from "../plain.ts";
 import { assertStoreInvariants } from "./invariants.ts";
 
-const okTool = () => ({ text: "ok", isError: false });
+const okTool = () => res("ok");
 
 test("开始：一个事务标记 running，提交后同步开始动作；完成：删行，结果进信箱", async (t) => {
   const db = tempDb(t);
@@ -184,9 +186,9 @@ test("竞态：库外工具的结果还在信箱里排队时先处理用户消�
   await finishLast(actions.gates, exec.startNext());
   handleNext(db, memory, 0);
   const tool = exec.startNext();
-  send(db, "p1", { kind: "userMessage", text: "插一句" });
+  send(db, "p1", userLetter("插一句"));
   await finishLast(actions.gates, tool);
-  assert.deepEqual(mailbox(db).map((m) => m.input.kind), ["userMessage", "toolResult"]);
+  assert.deepEqual(mailbox(db).map((m) => m.input.kind), ["letter", "toolResult"]);
   handleNext(db, memory, 0);
   assert.deepEqual(effectRows(db), []);
   assert.equal(exec.startNext(), null);
@@ -205,9 +207,9 @@ test("竞态：库内工具的结果还在信箱里排队时先处理用户消�
   startProcess(db, memory, "p1", PRESET, "a", 0);
   handleNext(db, memory, 0);
   await finishLast(actions.gates, exec.startNext());
-  send(db, "p1", { kind: "userMessage", text: "插一句" });
+  send(db, "p1", userLetter("插一句"));
   handleNext(db, memory, 0); // 模型结果：在事务里执行 memory_set
-  assert.deepEqual(mailbox(db).map((m) => m.input.kind), ["userMessage", "toolResult"]);
+  assert.deepEqual(mailbox(db).map((m) => m.input.kind), ["letter", "toolResult"]);
   handleNext(db, memory, 0); // 用户消息：排队，编号不变
   assert.deepEqual(effectRows(db), []);
   assert.equal(memory.calls.filter((c) => c === "set").length, 1);
@@ -241,7 +243,7 @@ test("调用模型时 maxTokens 取模型的上限和窗口的 1/8 中较小的�
         },
       ]);
       const preset = { ...PRESET, model: `${faux.getModel().provider}/m${w}`, contextWindow: w };
-      const process: Process = { ...start("p1", preset, { now: 0, memoryView: "" }), lastEffect: 1, phase: { tag: "awaitingModel", turn: { steps: 1, queued: [] }, purpose } };
+      const process: Process = { ...start("p1", preset, { now: 0, memoryView: "" }), lastEffect: 1, phase: { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 0, replyTo: [] }, purpose } };
       await actions.callModel({ process, segment, effect: { kind: "callModel", n: 1, purpose } }, new AbortController().signal);
       assert.equal(seen, Math.min(m, Math.floor(w / 8)), `${w}/${m}，${purpose}`);
     }

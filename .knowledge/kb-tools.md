@@ -4,7 +4,7 @@
 
 ## 这个模块是干什么的
 
-本模块是四个库外工具的实现：`read`、`write`、`edit`（`src/tools/files.ts`）和 `bash`（`src/tools/bash.ts`）。每个工具是一个异步函数：收到参数和工作目录，返回 `{ text, isError }`。
+本模块是四个库外工具的实现：`read`、`write`、`edit`（`src/tools/files.ts`）和 `bash`（`src/tools/bash.ts`）。每个工具是一个异步函数：收到参数和工作目录，返回 `{ content, isError }`，`content` 是内容块，现在只有一个文本块。
 
 它负责：
 

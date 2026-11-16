@@ -1,7 +1,7 @@
 // 进程的事务：启动、收一条命令、处理一条输入（见 .knowledge/kb-store.md）。每个函数恰好一个事务。
 import { decide, effectOf, start } from "../kernel/decide.ts";
 import { findTool } from "../kernel/tools.ts";
-import { unreachable } from "../kernel/types.ts";
+import { textContent, unreachable, userLetter } from "../kernel/types.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { Effect, Env, Input, Instant, Memory, Message, PresetSnapshot, Process, ProcessId, ToolResultContent } from "../kernel/types.ts";
 import { appendMessages, loadProcess, loadSegment, post, saveProcess, tx } from "./db.ts";
@@ -11,17 +11,17 @@ function envFor(memory: Memory, preset: PresetSnapshot, now: Instant): Env {
   return { now, memoryView: preset.tools.includes("memory") ? memory.view(preset.id) : "" };
 }
 
-/** 写入 `start` 返回的进程记录，把第一条消息作为 `userMessage` 放进信箱。 */
+/** 写入 `start` 返回的进程记录，把第一条消息作为用户的信放进信箱。 */
 export function startProcess(db: DatabaseSync, memory: Memory, id: ProcessId, preset: PresetSnapshot, text: string, now: Instant): void {
   tx(db, () => {
     const p = start(id, preset, envFor(memory, preset, now));
     db.prepare("INSERT INTO processes (id, state_json) VALUES (?, ?)").run(id, JSON.stringify(p));
-    post(db, id, { kind: "userMessage", text });
+    post(db, id, userLetter(text));
   });
 }
 
-/** 把用户消息或停止放进一个已有进程的信箱。提交之后才能发回执。 */
-export function send(db: DatabaseSync, id: ProcessId, input: Extract<Input, { kind: "userMessage" | "stop" }>): void {
+/** 把信或停止放进一个已有进程的信箱。提交之后才能发回执。 */
+export function send(db: DatabaseSync, id: ProcessId, input: Extract<Input, { kind: "letter" | "stop" }>): void {
   tx(db, () => {
     if (!db.prepare("SELECT 1 FROM processes WHERE id = ?").get(id)) throw new Error(`没有这个进程：${id}`);
     post(db, id, input);
@@ -70,7 +70,7 @@ function syncEffects(db: DatabaseSync, memory: Memory, p: Process, seg: readonly
       if (spec?.inStore === false) break;
       const content: ToolResultContent = spec
         ? runInStore(db, memory, p, seg, after.call, now)
-        : { text: `工具 ${after.call.name} 不存在，或者预设里没有它。`, isError: true };
+        : { content: textContent(`工具 ${after.call.name} 不存在，或者预设里没有它。`), isError: true };
       post(db, p.id, { kind: "toolResult", n: after.n, outcome: { status: "ok", content } });
       return abort;
     }

@@ -3,8 +3,13 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { edit, read, write } from "../../src/tools/files.ts";
+import * as files from "../../src/tools/files.ts";
+import { plain } from "../plain.ts";
 import { MESSAGE_MAX_BYTES } from "../../src/kernel/derive.ts";
+
+const read = async (...a: Parameters<typeof files.read>) => plain(await files.read(...a));
+const write = async (...a: Parameters<typeof files.write>) => plain(await files.write(...a));
+const edit = async (...a: Parameters<typeof files.edit>) => plain(await files.edit(...a));
 
 let dir = "";
 

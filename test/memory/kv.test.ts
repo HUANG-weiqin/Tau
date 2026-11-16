@@ -5,23 +5,25 @@ import assert from "node:assert/strict";
 import type { DatabaseSync } from "node:sqlite";
 import { start } from "../../src/kernel/decide.ts";
 import { utf8Bytes } from "../../src/kernel/derive.ts";
-import type { Memory, ToolResultContent } from "../../src/kernel/types.ts";
+import type { Memory } from "../../src/kernel/types.ts";
 import { sqliteMemory } from "../../src/memory/kv.ts";
 import { runInStore } from "../../src/store/instore.ts";
 import { PRESET, tempDb, toolCall } from "../store/fixtures.ts";
+import { plain } from "../plain.ts";
 
 const NS = PRESET.id;
+type Plain = ReturnType<typeof plain>;
 
-function setup(t: TestContext): { db: DatabaseSync; memory: Memory; set: (key: string, value: string, version?: number, id?: string) => ToolResultContent } {
+function setup(t: TestContext): { db: DatabaseSync; memory: Memory; set: (key: string, value: string, version?: number, id?: string) => Plain } {
   const db = tempDb(t);
   const memory = sqliteMemory(db);
   const set = (key: string, value: string, version?: number, id = "p1") =>
-    runInStore(db, memory, start(id, PRESET, { now: 0, memoryView: "" }), [], toolCall("c", "memory_set", version === undefined ? { key, value } : { key, value, version }), 0);
+    plain(runInStore(db, memory, start(id, PRESET, { now: 0, memoryView: "" }), [], toolCall("c", "memory_set", version === undefined ? { key, value } : { key, value, version }), 0));
   return { db, memory, set };
 }
 
 const rows = (db: DatabaseSync) => db.prepare("SELECT version, ns, key, value FROM memory ORDER BY version").all();
-const over = (text: string): ToolResultContent => ({ text: `超出上限，没有写入：${text}`, isError: true });
+const over = (text: string): Plain => ({ text: `超出上限，没有写入：${text}`, isError: true });
 
 test("键、值或整个视图超出上限：给出确切的文本，库不变，版本号不前进", (t) => {
   const { db, memory, set } = setup(t);
@@ -83,7 +85,7 @@ test("U+0000 原样存取：memory_get 给完整的值，只差在 U+0000 之后
   const { db, memory, set } = setup(t);
   assert.deepEqual(set("cfg", "line1\u0000line2"), { text: "已写入 cfg，版本 1。", isError: false });
   const got = runInStore(db, memory, start("p1", PRESET, { now: 0, memoryView: "" }), [], toolCall("c", "memory_get", { key: "cfg" }), 0);
-  assert.equal(got.text, "cfg（版本 1）：\nline1\u0000line2");
+  assert.equal(plain(got).text, "cfg（版本 1）：\nline1\u0000line2");
   assert.equal(memory.set(NS, "a", "1", null).ok, true);
   assert.equal(memory.set(NS, "a\u0000b", "2", null).ok, true);
   assert.deepEqual(memory.get(NS, "a\u0000b"), { value: "2", version: 3 });
@@ -112,7 +114,7 @@ test("视图：每行一个键，键和值按 JSON 字符串写，按 UTF-8 字�
   assert.equal(memory.view(NS).split("\n").length, 4, "换行和冒号不会多出一行");
   assert.equal(memory.view("别的预设"), "");
   const got = runInStore(db, memory, start("p1", PRESET, { now: 0, memoryView: "" }), [], toolCall("c", "memory_get", { key }), 0);
-  assert.equal(got.text, `${key}（版本 3）：\n${value}`);
+  assert.equal(plain(got).text, `${key}（版本 3）：\n${value}`);
   assert.equal(set(key, "新", 3).isError, false);
 });
 

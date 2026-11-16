@@ -17,9 +17,9 @@ const done: readonly Message[] = deepFreeze([
   assistant({ usage: 10, calls: [call("c1")], timestamp: 2 }),
   { role: "toolResult", toolCallId: "c1", toolName: "read", content: [{ type: "text", text: "好" }], isError: false, timestamp: 3 },
 ]);
-const HANDOFF: Phase = { tag: "awaitingModel", turn: { steps: 2, queued: [] }, purpose: "handoff" };
+const HANDOFF: Phase = { tag: "awaitingModel", turn: { steps: 2, queued: [], hops: 0, replyTo: [] }, purpose: "handoff" };
 
-function proc(tools: PresetTool[], phase: Phase = { tag: "awaitingModel", turn: { steps: 1, queued: [] }, purpose: "turn" }, memoryView = ""): Process {
+function proc(tools: PresetTool[], phase: Phase = { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 0, replyTo: [] }, purpose: "turn" }, memoryView = ""): Process {
   return { ...start("p", preset({ tools, prompt: "你是写代码的助手。" }), env(0, memoryView)), lastEffect: 1, phase };
 }
 
@@ -101,5 +101,5 @@ test("memory_set 的说明引用三个上限", () => {
 
 test("idle 和 awaitingTool 时也不加交接指令", () => {
   assert.deepEqual(buildContext(proc(["read"], { tag: "idle", ended: "done" }), seg).messages, seg);
-  assert.deepEqual(buildContext(proc(["read"], { tag: "awaitingTool", turn: { steps: 1, queued: [] } }), seg).messages, seg);
+  assert.deepEqual(buildContext(proc(["read"], { tag: "awaitingTool", turn: { steps: 1, queued: [], hops: 0, replyTo: [] } }), seg).messages, seg);
 });

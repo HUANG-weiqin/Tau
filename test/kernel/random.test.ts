@@ -7,7 +7,8 @@ import { decide, effectOf } from "../../src/kernel/decide.ts";
 import { contextUsed, handoffThreshold, MESSAGE_MAX_BYTES, tokens, utf8Bytes } from "../../src/kernel/derive.ts";
 import { unreachable } from "../../src/kernel/types.ts";
 import type { AssistantMessage, Effect, Env, Input, Message, PresetTool, Process } from "../../src/kernel/types.ts";
-import { assistant, call, current, feed, preset, textOf, usage, world } from "./helpers.ts";
+import { res } from "../plain.ts";
+import { assistant, call, current, feed, preset, textOf, usage, userInput, world } from "./helpers.ts";
 import type { ReplySpec } from "./helpers.ts";
 
 /** mulberry32：32 位状态的伪随机数生成器。 */
@@ -232,7 +233,7 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
       case "runTool": {
         if (r.chance(profile.toolInterrupted)) return { kind: "toolResult", n: e.n, outcome: { status: "interrupted" } };
         const size = r.chance(profile.hugeResult) ? MESSAGE_MAX_BYTES + r.int(1, 30_000) : r.chance(0.3) ? r.int(1_000, 8_000) : r.int(0, 300);
-        return { kind: "toolResult", n: e.n, outcome: { status: "ok", content: { text: text(r, size), isError: r.chance(0.1) } } };
+        return { kind: "toolResult", n: e.n, outcome: { status: "ok", content: res(text(r, size), r.chance(0.1)) } };
       }
       default:
         return unreachable(e);
@@ -272,9 +273,9 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
       stats.dropped++;
       if (duplicate) stats.duplicates++;
     }
-    if (input.kind === "userMessage" && prev.phase.tag !== "idle") {
+    if (input.kind === "letter" && prev.phase.tag !== "idle") {
       assert.deepEqual(s.append, []);
-      assert.equal(w.p.phase.tag !== "idle" && w.p.phase.turn.queued.at(-1), input.text);
+      assert.equal(w.p.phase.tag !== "idle" && w.p.phase.turn.queued.at(-1), input.letter);
     }
     // 只重放执行器真正送回过的结果；伪造的编号可能在将来变成当前编号。
     if (isResult(input) && origin === "normal") history.push(input);
@@ -303,7 +304,7 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
     const eff = effectOf(w.p, current(w));
     switch (a) {
       case "user":
-        run({ kind: "userMessage", text: text(r, r.chance(0.05) ? r.int(2_000, 20_000) : r.int(1, 200)) });
+        run(userInput(text(r, r.chance(0.05) ? r.int(2_000, 20_000) : r.int(1, 200))));
         return true;
       case "stop":
         run({ kind: "stop" });
@@ -333,7 +334,7 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
       case "forge": {
         const n = r.chance(0.5) || w.p.lastEffect === 0 ? w.p.lastEffect + r.int(1, 3) : r.int(0, w.p.lastEffect - 1);
         const message = assistant({ usage: 10, text: "伪造的" });
-        run(r.chance(0.5) ? { kind: "modelResult", n, outcome: { status: "ok", message } } : { kind: "toolResult", n, outcome: { status: "ok", content: { text: "伪造的", isError: false } } }, "forged");
+        run(r.chance(0.5) ? { kind: "modelResult", n, outcome: { status: "ok", message } } : { kind: "toolResult", n, outcome: { status: "ok", content: res("伪造的") } }, "forged");
         return true;
       }
       case "crash": {

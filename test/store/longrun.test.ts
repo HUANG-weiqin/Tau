@@ -3,6 +3,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createExecutor } from "../../src/executor/executor.ts";
 import type { Job } from "../../src/executor/executor.ts";
+import { userLetter } from "../../src/kernel/types.ts";
+import { res } from "../plain.ts";
 import { loadProcess, loadSegment } from "../../src/store/db.ts";
 import { handleNext, send, startProcess } from "../../src/store/inputs.ts";
 import { countReads, fakeMemory, PRESET, reply, say, settle, tempDb, toolCall } from "./fixtures.ts";
@@ -24,7 +26,7 @@ test("长跑：200 轮、几十次换段，每条用户消息读取的行数按�
   const memory = fakeMemory();
   const exec = createExecutor(db, {
     callModel: async (job) => model(job),
-    runTool: async (_job, call) => ({ text: `out:${call.id}`, isError: false }),
+    runTool: async (_job, call) => res(`out:${call.id}`),
   });
   const seen = countReads(db);
   /** 每段里依次处理的用户消息各读了多少行。 */
@@ -33,7 +35,7 @@ test("长跑：200 轮、几十次换段，每条用户消息读取的行数按�
   let maxSegment = 0;
   startProcess(db, memory, "p1", { ...PRESET, contextWindow: 32_000 }, "开始", 0);
   for (let i = 0; i < 200; i++) {
-    if (i > 0) send(db, "p1", { kind: "userMessage", text: `第 ${i} 条消息` });
+    if (i > 0) send(db, "p1", userLetter(`第 ${i} 条消息`));
     const seq = loadProcess(db, "p1")!.segment.seq;
     seen.rows = 0;
     handleNext(db, memory, i);

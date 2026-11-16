@@ -48,7 +48,7 @@ test("工具结果：孤立、顺序不对、中间夹着别的消息、多出�
 test("idle 和 awaitingModel 时结果必须齐全", () => {
   const { p, seg } = midTools();
   broken({ ...p, phase: { tag: "idle", ended: "done" } }, seg, /idle 时工具调用 c2 没有结果/);
-  broken(running(p, { tag: "awaitingModel", turn: { steps: 1, queued: [] }, purpose: "turn" }), seg, /等模型时工具调用 c2 没有结果/);
+  broken(running(p, { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 0, replyTo: [] }, purpose: "turn" }), seg, /等模型时工具调用 c2 没有结果/);
 });
 
 test("awaitingTool 时必须恰好从 effectOf 指的调用开始缺", () => {
@@ -59,17 +59,17 @@ test("awaitingTool 时必须恰好从 effectOf 指的调用开始缺", () => {
 
 test("运行中的步数、lastEffect 和工作段", () => {
   const { p, seg } = midTools();
-  const turn = (steps: number) => running(p, { tag: "awaitingTool", turn: { steps, queued: [] } });
+  const turn = (steps: number) => running(p, { tag: "awaitingTool", turn: { steps, queued: [], hops: 0, replyTo: [] } });
   broken(turn(0), seg, /步数是 0/);
   broken(turn(STEPS_PER_TURN + 1), seg, new RegExp(`步数是 ${STEPS_PER_TURN + 1}`));
   broken({ ...turn(1), lastEffect: 0 }, seg, /lastEffect 0 小于本轮步数 1/);
-  broken(running(p, { tag: "awaitingModel", turn: { steps: 1, queued: [] }, purpose: "turn" }), [], /运行中工作段却是空的/);
+  broken(running(p, { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 0, replyTo: [] }, purpose: "turn" }), [], /运行中工作段却是空的/);
   broken({ ...p, lastEffect: -1 }, seg, /lastEffect 是 -1/);
 });
 
 test("awaitingModel：最后一条不能是助手消息，用途要和阈值一致", () => {
   const { p } = midTools();
-  const model = (purpose: "turn" | "handoff") => running(p, { tag: "awaitingModel", turn: { steps: 1, queued: [] }, purpose });
+  const model = (purpose: "turn" | "handoff") => running(p, { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 0, replyTo: [] }, purpose });
   broken(model("turn"), [user("u"), assistant({ usage: 100, text: "好" })], /最后一条是助手消息/);
   broken(model("handoff"), [user("u")], /用途是 handoff，但上下文用量 \d+ 没有达到阈值/);
   const full = handoffThreshold(p.preset);

@@ -147,7 +147,7 @@ test("一条回复带很多工具调用、每个结果都超过字节上限：�
       reply(w, assistant({ usage: req + I + 2_000, text: codeText(4_000, "note") }));
       assert.equal(w.p.segment.seq, 2, label);
       assert.ok(contextUsed(w.p, current(w)) <= W, label);
-      assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 3, queued: [] }, purpose: "turn" }, label);
+      assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 3, queued: [], hops: 0, replyTo: [] }, purpose: "turn" }, label);
     }
   }
 });

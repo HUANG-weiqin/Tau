@@ -1,7 +1,7 @@
 // 库内副作用：记忆工具和 `self`，在处理输入的事务里执行，恰好一次（见 .knowledge/kb-store.md、kb-memory.md；设计稿第 9 节）。
 import { observe } from "../kernel/observe.ts";
 import { MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
-import { unreachable } from "../kernel/types.ts";
+import { textContent, unreachable } from "../kernel/types.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { PhaseView, Projection } from "../kernel/observe.ts";
 import type { Ended, Instant, Memory, Message, Process, ToolCall, ToolResultContent, Versioned } from "../kernel/types.ts";
@@ -25,7 +25,7 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
       if (version != null && !isInt(version)) return bad("version 必须是整数，或者省略。");
       const r = memory.set(ns, key, value, isInt(version) ? version : null);
       if (r.ok) return ok(`已写入 ${key}，版本 ${r.version}。`);
-      if ("over" in r) return { text: "超出上限，没有写入：" + overText(r.over, r.bytes), isError: true };
+      if ("over" in r) return { content: textContent("超出上限，没有写入：" + overText(r.over, r.bytes)), isError: true };
       return conflict(key, r.current);
     }
     case "memory_delete": {
@@ -43,11 +43,11 @@ function isInt(v: unknown): v is number {
 }
 
 function ok(text: string): ToolResultContent {
-  return { text, isError: false };
+  return { content: textContent(text), isError: false };
 }
 
 function bad(text: string): ToolResultContent {
-  return { text: `参数错误：${text}`, isError: true };
+  return { content: textContent(`参数错误：${text}`), isError: true };
 }
 
 function show(key: string, v: Versioned): string {
@@ -68,7 +68,7 @@ function overText(over: "key" | "value" | "view", bytes: number): string {
 }
 
 function conflict(key: string, current: Versioned | null): ToolResultContent {
-  return { text: `版本冲突，没有写入。${current ? `现在的值是 ${show(key, current)}` : `键 ${key} 现在不存在。`}`, isError: true };
+  return { content: textContent(`版本冲突，没有写入。${current ? `现在的值是 ${show(key, current)}` : `键 ${key} 现在不存在。`}`), isError: true };
 }
 
 /** 本地时间和时区在内核外格式化（见 .knowledge/kb-kernel.md）。 */

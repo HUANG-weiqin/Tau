@@ -1,14 +1,14 @@
 // start、decide、effectOf：纯函数（见 .knowledge/kb-kernel.md）。
 import { CARRY_HEADER, HANDOFF_HEADER, HANDOFF_INSTRUCTION, tailStart } from "./context.ts";
 import { clip, contextUsed, handoffThreshold, MARGIN_TOKENS, pendingCalls, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
-import { unreachable } from "./types.ts";
-import type { AssistantMessage, Effect, Ended, Env, Input, Message, Phase, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Turn } from "./types.ts";
+import { textContent, unreachable } from "./types.ts";
+import type { AssistantMessage, Content, Effect, Ended, Env, Input, Letter, Message, Phase, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Turn } from "./types.ts";
 
 export const INTERRUPTED = "被中断，结果未知";
 export const SKIPPED = "未执行";
 
 export function start(id: ProcessId, preset: PresetSnapshot, env: Env): Process {
-  return { id, preset, createdAt: env.now, segment: { seq: 1, memoryView: env.memoryView }, lastEffect: 0, phase: { tag: "idle" } };
+  return { id, preset, createdAt: env.now, segment: { seq: 1, memoryView: env.memoryView }, lastEffect: 0, phase: { tag: "idle" }, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
 }
 
 /** 处理一条输入时的草稿。`seg` 是当前段的全部消息，`append` 是这次要追加的。 */
@@ -44,13 +44,14 @@ export function effectOf(p: Process, segment: readonly Message[]): Effect | null
 function step(d: Draft, input: Input): void {
   const { phase } = d.p;
   switch (input.kind) {
-    case "userMessage":
+    case "letter":
       if (phase.tag === "idle") {
         const note = endedNote(phase.ended);
-        push(d, userMessage(note === "" ? input.text : `${note}\n\n${input.text}`, d.env.now));
-        continueTurn(d, { steps: 0, queued: [] });
+        const text = letterText(input.letter);
+        push(d, userMessage(note === "" ? text : `${note}\n\n${text}`, d.env.now));
+        continueTurn(d, newTurn([input.letter]));
       } else {
-        const turn = { ...phase.turn, queued: [...phase.turn.queued, input.text] };
+        const turn = { ...phase.turn, queued: [...phase.turn.queued, input.letter] };
         d.p = { ...d.p, phase: { ...phase, turn } };
       }
       return;
@@ -125,10 +126,10 @@ function onHandoff(d: Draft, turn: Turn, m: AssistantMessage): void {
 function onToolResult(d: Draft, turn: Turn, content: ToolResultContent): void {
   const call = pendingCalls(d.seg)[0];
   if (!call) throw new Error("awaitingTool 时没有待执行的工具调用");
-  push(d, toolResult(call, clip(content.text), content.isError, d.env.now));
+  push(d, toolResult(call, clipContent(content.content), content.isError, d.env.now));
   const rest = pendingCalls(d.seg);
   if (rest.length > 0 && !overThreshold(d)) return enter(d, { tag: "awaitingTool", turn });
-  for (const c of rest) push(d, toolResult(c, SKIPPED, true, d.env.now));
+  for (const c of rest) push(d, toolResult(c, textContent(SKIPPED), true, d.env.now));
   return continueTurn(d, turn);
 }
 
@@ -141,10 +142,28 @@ function continueTurn(d: Draft, turn: Turn): void {
 function endTurn(d: Draft, turn: Turn, ended: Ended): void {
   // 正在等的就是第一个待执行的调用：它可能已经开始。
   const waiting = d.p.phase.tag === "awaitingTool";
-  pendingCalls(d.seg).forEach((c, i) => push(d, toolResult(c, waiting && i === 0 ? INTERRUPTED : SKIPPED, true, d.env.now)));
-  if (turn.queued.length > 0) push(d, userMessage(turn.queued.join("\n\n"), d.env.now));
-  if (ended === "done" && turn.queued.length > 0) return continueTurn(d, { steps: 0, queued: [] });
+  pendingCalls(d.seg).forEach((c, i) => push(d, toolResult(c, textContent(waiting && i === 0 ? INTERRUPTED : SKIPPED), true, d.env.now)));
+  if (turn.queued.length > 0) push(d, userMessage(turn.queued.map(letterText).join("\n\n"), d.env.now));
+  if (ended === "done" && turn.queued.length > 0) return continueTurn(d, newTurn(turn.queued));
   d.p = { ...d.p, phase: { tag: "idle", ended } };
+}
+
+/** 新一轮：`hops` 和 `replyTo` 只取自开这一轮的信（设计稿第 5.3 节规则 2、5）。 */
+function newTurn(letters: readonly Letter[]): Turn {
+  const replyTo = letters.flatMap((l) => (l.replyTo === undefined ? [] : [l.replyTo]));
+  return { steps: 0, queued: [], hops: Math.max(...letters.map((l) => l.hops)), replyTo: [...new Set(replyTo)] };
+}
+
+/** 信写进段的正文。这一步只有文本块；信的头和图片是设计稿第 5.1 节的事。 */
+function letterText(l: Letter): string {
+  return l.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("");
+}
+
+/** 全部文本块连起来，整体裁剪到字节上限，成一个文本块；图片块原样，接在后面。没有文本块就不加。 */
+function clipContent(content: readonly Content[]): Content[] {
+  const texts = content.flatMap((c) => (c.type === "text" ? [c.text] : []));
+  const images = content.filter((c) => c.type !== "text");
+  return texts.length === 0 ? images : [{ type: "text", text: clip(texts.join("")) }, ...images];
 }
 
 /** 进入一个等待阶段：发出下一个副作用编号。 */
@@ -187,6 +206,6 @@ function userMessage(text: string, now: number): Message {
   return { role: "user", content: clip(text), timestamp: now };
 }
 
-function toolResult(call: ToolCall, text: string, isError: boolean, now: number): Message {
-  return { role: "toolResult", toolCallId: call.id, toolName: call.name, content: [{ type: "text", text }], isError, timestamp: now };
+function toolResult(call: ToolCall, content: Content[], isError: boolean, now: number): Message {
+  return { role: "toolResult", toolCallId: call.id, toolName: call.name, content, isError, timestamp: now };
 }

@@ -9,12 +9,13 @@ import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { createExecutor } from "../../src/executor/executor.ts";
 import type { Executor, Job } from "../../src/executor/executor.ts";
-import { unreachable } from "../../src/kernel/types.ts";
+import { unreachable, userLetter } from "../../src/kernel/types.ts";
 import type { AssistantMessage, Input, Message, PresetSnapshot, ToolCall } from "../../src/kernel/types.ts";
 import { loadProcess, loadProcesses, openDb } from "../../src/store/db.ts";
 import { handleNext, send, startProcess } from "../../src/store/inputs.ts";
 import { allMessages, effectRows, fakeMemory, gated, hash, mailbox, PRESET, reply, rng, tempDir, toolCall } from "./fixtures.ts";
 import type { FakeMemory, Gate } from "./fixtures.ts";
+import { res } from "../plain.ts";
 import { assertStoreInvariants } from "./invariants.ts";
 
 const SEEDS = [1, 2, 3, 4];
@@ -86,7 +87,7 @@ function boot(path: string, dbs: DatabaseSync[]): Life {
   dbs.push(db);
   // 这里模拟的崩溃是关掉句柄，不是断电，不需要每次提交都落盘；关掉它让几千次重放快一些。
   db.exec("PRAGMA synchronous = OFF");
-  const actions = gated(model, (_job, call) => ({ text: `out:${call.id}`, isError: false }));
+  const actions = gated(model, (_job, call) => (res(`out:${call.id}`)));
   return { db, exec: createExecutor(db, actions), gates: actions.gates, inflight: [] };
 }
 
@@ -121,7 +122,7 @@ async function step(run: Run, kind: Kind): Promise<void> {
     }
     case "send": {
       const text = `<u${run.users.length + 1}>`;
-      send(db, pick(run, run.processes), { kind: "userMessage", text });
+      send(db, pick(run, run.processes), userLetter(text));
       run.users.push(text);
       return;
     }

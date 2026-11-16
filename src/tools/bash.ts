@@ -5,6 +5,7 @@ import { readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { clip, MESSAGE_MAX_BYTES } from "../kernel/derive.ts";
+import { textContent } from "../kernel/types.ts";
 import type { ToolResultContent } from "../kernel/types.ts";
 
 const DEFAULT_SECONDS = 120;
@@ -18,7 +19,7 @@ const DRAIN_MS = 200;
 // 不拼进脚本，反斜杠原样保留；export -n 让子进程看不到这两个变量。
 const WRAPPER = 'echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMMAND"';
 
-const fail = (text: string): ToolResultContent => ({ text, isError: true });
+const fail = (text: string): ToolResultContent => ({ content: textContent(text), isError: true });
 
 let shell: string | null | undefined;
 
@@ -108,7 +109,7 @@ export async function bash(args: { command: string; timeout?: number }, workdir:
     };
     const end = async (): Promise<void> => {
       const why = await killing;
-      finish(why !== undefined ? fail(out.text(why)) : { text: out.text(`退出码 ${code ?? -1}`), isError: code !== 0 });
+      finish(why !== undefined ? fail(out.text(why)) : { content: textContent(out.text(`退出码 ${code ?? -1}`)), isError: code !== 0 });
     };
     child.stdout.on("data", out.push);
     child.stderr.on("data", out.push);

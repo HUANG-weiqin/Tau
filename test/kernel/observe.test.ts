@@ -5,7 +5,7 @@ import { start } from "../../src/kernel/decide.ts";
 import { contextUsed } from "../../src/kernel/derive.ts";
 import { observe } from "../../src/kernel/observe.ts";
 import type { Message, Phase, Process } from "../../src/kernel/types.ts";
-import { assistant, call, current, deepFreeze, env, feed, preset, reply, userInput, world } from "./helpers.ts";
+import { assistant, call, current, deepFreeze, env, feed, letter, preset, reply, userInput, world } from "./helpers.ts";
 
 const A = preset({ id: "a", model: "faux/a" });
 const B = preset({ id: "b" });
@@ -14,8 +14,8 @@ function proc(id: string, pr = A, createdAt = 0, phase: Phase = { tag: "idle" })
   return { ...start(id, pr, env(createdAt)), lastEffect: phase.tag === "idle" ? 0 : 1, phase };
 }
 
-const busy: Phase = { tag: "awaitingModel", turn: { steps: 3, queued: ["x"] }, purpose: "turn" };
-const tooling: Phase = { tag: "awaitingTool", turn: { steps: 1, queued: [] } };
+const busy: Phase = { tag: "awaitingModel", turn: { steps: 3, queued: [letter("x")], hops: 0, replyTo: [] }, purpose: "turn" };
+const tooling: Phase = { tag: "awaitingTool", turn: { steps: 1, queued: [], hops: 0, replyTo: [] } };
 
 test("自己：ID、预设、模型、阶段、第几段、本段开始多久、上下文已用和窗口", () => {
   const w = world(A, env(1_000), "me");
