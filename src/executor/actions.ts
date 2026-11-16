@@ -12,8 +12,8 @@ import type { Actions } from "./executor.ts";
 /** 模型请求在拿到成功的响应之前的重试次数，交给 pi-ai（设计稿 5.7）。 */
 export const MODEL_RETRIES = 5;
 
-/** `onText` 收到模型的流式文本；它只是预览，不进库。`pipe` 是服务实际监听的管道名，bash 工具把它交给命令（TAU_PIPE）。 */
-export function createActions(models: Models, onText: (id: ProcessId, delta: string) => void, pipe: string): Actions {
+/** `onText` 收到模型的流式文本和产生它的副作用编号；它只是预览，不进库。`pipe` 是服务实际监听的管道名，bash 工具把它交给命令（TAU_PIPE）。 */
+export function createActions(models: Models, onText: (id: ProcessId, n: number, delta: string) => void, pipe: string): Actions {
   return {
     async callModel(job, signal) {
       const name = job.process.preset.model;
@@ -31,7 +31,7 @@ export function createActions(models: Models, onText: (id: ProcessId, delta: str
         maxRetries: MODEL_RETRIES,
         ...(thinking === undefined ? {} : { reasoning: thinking }),
       });
-      for await (const e of stream) if (e.type === "text_delta") onText(job.process.id, e.delta);
+      for await (const e of stream) if (e.type === "text_delta") onText(job.process.id, job.effect.n, e.delta);
       return stream.result();
     },
     async runTool(job, call, signal) {

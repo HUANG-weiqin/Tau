@@ -52,10 +52,11 @@ async function command(pipe: string, req: Request): Promise<number> {
         console.error(r.message);
         code = 1;
         return;
-      default: {
-        const unknown: never = r;
-        console.error(`无法识别的回复：${JSON.stringify(unknown)}`);
-      }
+      case "message":
+      case "end":
+      case "update":
+        // CLI 不发 history 和 watch，收到就是服务出了问题。
+        console.error(`无法识别的回复：${JSON.stringify(r)}`);
     }
   };
   try {

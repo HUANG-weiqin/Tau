@@ -64,7 +64,7 @@ type Ended = "done" | "stepLimit" | "stopped" | { error: string };
 - `turn.steps` 必须存：一轮可以跨越换段。
 - `turn.queued` 存信件原样，写进段时才渲染。`turn.hops` 是本轮已经写进段的信的最大跳数，`turn.replyTo` 是本轮结束时要寄回信的进程，去重。规则见[设计稿 5.3](../docs/design/kernel-v2.md#53-进程之间寄信派生停止回信跳数)。
 - `Letter.hops` 是这封信被进程之间的信一路引出来的跳数。CLI 寄来的信 `hops` 为 0，没有 `replyTo`。`replyTo` 有值时，处理这封信的那一轮结束时把最终回复寄给它。
-- `parent` 现在没有代码设置。`usage` 的累加规则见[累计用量](#累计用量)。
+- `parent` 由 `spawn` 设置，投影会带出来。`usage` 的累加规则见[累计用量](#累计用量)。
 - `purpose` 存在阶段里：它保存进入等待时的决定。
 - 进程在等的副作用编号就是 `lastEffect`，阶段里不另存。
 - 工作段的消息是 pi-ai 的 `UserMessage`、`AssistantMessage`、`ToolResultMessage`。
@@ -462,11 +462,15 @@ interface Projection {
     segment: number;                       // 段号
     segmentAge: number | null;             // 本段开始多久；段空时为 null
     context: { used: number; window: number };
+    messages: number;                      // 当前段的消息条数
+    usage: Usage;                          // 累计用量，跨段
   };
   siblings: ProcessView[];                 // 同一个预设、不处于 idle 的其他进程
+  children: ProcessView[];                 // parent 是自己、不处于 idle 的进程
+  idleChildren: number;                    // parent 是自己、处于 idle 的进程个数
 }
 
-interface ProcessView { id: ProcessId; preset: string; model: string; phase: PhaseView; age: number }
+interface ProcessView { id: ProcessId; preset: string; model: string; phase: PhaseView; age: number; parent?: ProcessId }
 
 type PhaseView =
   | { tag: "idle"; ended?: Ended }
@@ -475,6 +479,9 @@ type PhaseView =
 ```
 
 - 只给时刻和时长，单位毫秒。`age = now - createdAt`。`queued` 只给条数。
+- `parent` 没有时没有这个键。`children` 和 `siblings` 都从传入的全部进程记录里按条件挑，保持传入的顺序；子进程也可能同时是兄弟。只看直接的子进程，不含孙子。空闲子进程的 ID 不在投影里：要找，就按 `parent` 从协议 `ps` 的投影里挑。
+- `messages` 是当前段的消息条数；`usage` 是进程记录里的累计用量，不是从段里算的。
+- `idle` 阶段的出错原因经 `endedReason` 截短（先截到 1024 字节再把换行换成空格）。进程记录里存的仍是原文。运行中的进程没有结束原因，所以只有空闲的自己会出现截短的原因。
 - 本地时间、时区和文本格式在纯函数层外：`self` 在事务里（[kb-store.md](kb-store.md#self)），`tau ps` 在 CLI 里（[kb-service.md](kb-service.md#tau-ps-的文字格式)）。
 - 纯函数层不加命令。Agent 通过库内工具 `self` 看到投影。
 

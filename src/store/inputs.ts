@@ -27,6 +27,8 @@ export function send(db: DatabaseSync, id: ProcessId, input: Extract<Input, { ki
 
 export interface Handled {
   process: Process;
+  /** 处理之后的当前段。 */
+  segment: readonly Message[];
   /** 这个事务删掉了一个 `running` 行时，是它的副作用编号：调用方要中止执行器里的这个动作。 */
   abort: number | null;
 }
@@ -45,8 +47,9 @@ export function handleNext(db: DatabaseSync, memory: Memory, now: Instant, readP
     appendMessages(db, p, sameSegment ? seg.length : 0, append);
     for (const { to, letter } of out) putMail(db, to, { kind: "letter", letter });
     db.prepare("DELETE FROM mailbox WHERE seq = ?").run(row.seq as number);
-    const abort = syncEffects(db, memory, p, sameSegment ? [...seg, ...append] : append, effectOf(old, seg), now, readPreset);
-    return { process: p, abort };
+    const segment = sameSegment ? [...seg, ...append] : append;
+    const abort = syncEffects(db, memory, p, segment, effectOf(old, seg), now, readPreset);
+    return { process: p, segment, abort };
   });
 }
 

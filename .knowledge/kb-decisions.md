@@ -150,7 +150,7 @@
 
 - 状态：已确认（随 D14）。D18 把协议从 HTTP 加 SSE 改为 JSON 行。
 - 理由：浏览器连不上命名管道，所以不需要 Origin 和 Host 检查，也不占用端口。Web UI 移出 MVP。
-- 协议：每个连接一行 JSON 请求，服务回若干行 JSON。CLI 是唯一的客户端，不需要 HTTP 的路由、状态码和 SSE 分帧。
+- 协议：每个连接一行 JSON 请求，服务回若干行 JSON。客户端是 CLI，以及用协议的上层程序，都不需要 HTTP 的路由、状态码和 SSE 分帧。（原文“CLI 是唯一的客户端”，随 v2 的 `history` 和 `watch` 改正，见 D39。）
 - 已核实：HTTP 加 SSE 在 Windows 命名管道上也能工作。以后要加 Web UI 时可以再用。
 - MVP 只支持 Windows：命名管道路径、`taskkill /T /F` 都按 Windows 写。
 
@@ -588,6 +588,35 @@
   - 验收里的“bash 工具运行 `tau ps`”测试放在 `test/server/e2e.test.ts`，用仓库真的 `tau` 脚本。`TAU_PIPE` 的 CLI 默认值由它覆盖，没有另写单元测试。
 - D25 的新说明已用真模型重量，见 D25 的“v2 重量”。
 - 理由：见设计稿 5.3、5.9。
+
+### D38 第 5 步（前一半）：投影和 `self` 的文字
+
+- 状态：已确认（2026-11-16）。
+- 内容：设计稿第 4 节的投影和 5.3、5.8 的“模型和人”。实现见 [kb-kernel 的投影与命令](kb-kernel.md#投影与命令)、[kb-store 的 self](kb-store.md#self)。设计稿没写死、这里选定的：
+  - `parent` 没有时 `ProcessView` 里没有这个键，不写 `undefined`。
+  - `children` 和 `idleChildren` 只看 `parent` 等于自己的直接子进程，不分预设，不含孙子。`children` 保持传入的顺序（服务按进程 ID 排序）。
+  - `usage` 在投影里是进程记录的拷贝，不是同一个对象。
+  - 出错原因的截短只在 `phaseView` 做一次，所以 `endedText` 里再截一次是无害的重复（截短对已截短的文字不变）。
+  - `self` 的文字：没有父进程、运行中的子进程、空闲的子进程时，对应的行整行不出现，不写“没有”。兄弟一节照旧，没有时写一句“没有”。子进程的行比兄弟的多一个“预设”，因为子进程可以是别的预设。空闲子进程的 ID 不进文字，从协议 `ps` 的投影按 `parent` 找。
+  - `tau ps` 的文字、列数和退出码不变。
+- 理由：见设计稿第 4 节、5.3、5.8。
+
+### D39 第 5 步（后一半）：协议的 history、watch 和 text 的编号
+
+- 状态：已确认（2026-11-16）。
+- 内容：设计稿 5.9 的 `history`、`watch`，`text` 回复带进程和副作用编号。实现见 [kb-service 的历史和订阅](kb-service.md#历史和订阅)。设计稿没写死、这里选定的：
+  - 段号从 1 起（`start` 建的第一段是 1）。段号小于 1 或大于当前段，回 `error`。
+  - `history` 读整段进内存再写出，不分批。一段的大小有换段阈值管着。
+  - `update` 由 `handleNext` 返回的 `process` 和新的 `segment` 算出，`Handled` 因此多了 `segment`。没有订阅时 `pump` 不算。
+  - `watch` 的订阅不带 `process` 时，快照按进程 ID 排序。
+  - 快照里读不到的进程（不存在）整个请求回 `error`，不推半份快照。
+  - 写缓冲上限 `WATCH_BUFFER_MAX` 取 1 MiB，导出给测试。每次推送完检查，超过就销毁连接并从订阅表移除。
+  - 订阅方断开靠连接的 `close` 事件。readline 关闭后会暂停读取，请求行之后的字节会留在读缓冲里，EOF 就读不到。所以登记订阅后调用 `resume()`，丢掉这些字节。
+  - `createActions` 的 `onText` 多收一个副作用编号 `n`（`job.effect.n`）。start、send 的观察者收到的 `text` 也带进程和编号。
+  - CLI 照样只打印 `text` 的 `delta`，不看编号。它收到 `message`、`end`、`update` 时报“无法识别的回复”，因为它从不发 `history` 和 `watch`。
+  - 退出：先断开全部订阅，再 `server.close()`。退出开始以后才读到的 `watch` 回 `error`（“服务正在退出，不接受订阅。”）。
+  - 服务内部原来叫 `watch` 的函数改名 `awaitFinal`。
+- 理由：见设计稿 5.9。
 
 ## 未确认的默认值
 

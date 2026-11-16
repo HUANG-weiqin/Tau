@@ -161,11 +161,15 @@ function formatSelf(v: Projection): string {
   const lines = [
     `现在：${new Date(v.now).toLocaleString("zh-CN", { hour12: false })}（${Intl.DateTimeFormat().resolvedOptions().timeZone}）`,
     `进程：${s.id}，预设 ${s.preset}，模型 ${s.model}，已运行 ${duration(s.age)}`,
+    ...(s.parent === undefined ? [] : [`父进程：${s.parent}`]),
     `阶段：${phaseText(s.phase)}`,
-    `工作段：第 ${s.segment} 段${s.segmentAge === null ? "" : `，开始于 ${duration(s.segmentAge)}前`}`,
+    `工作段：第 ${s.segment} 段${s.segmentAge === null ? "" : `，开始于 ${duration(s.segmentAge)}前`}，共 ${s.messages} 条消息`,
     `上下文：已用约 ${s.context.used} token，窗口 ${s.context.window} token`,
+    `累计用量：输入 ${s.usage.input}，输出 ${s.usage.output}，缓存读 ${s.usage.cacheRead}，缓存写 ${s.usage.cacheWrite}（token）`,
     v.siblings.length === 0 ? "同一个预设下没有其他运行中的进程。" : "同一个预设下运行中的其他进程：",
     ...v.siblings.map((x) => `- ${x.id}：${phaseText(x.phase)}，已运行 ${duration(x.age)}`),
+    ...(v.children.length === 0 ? [] : ["运行中的子进程：", ...v.children.map((x) => `- ${x.id}：预设 ${x.preset}，${phaseText(x.phase)}，已运行 ${duration(x.age)}`)]),
+    ...(v.idleChildren === 0 ? [] : [`空闲的子进程：${v.idleChildren} 个`]),
   ];
   return lines.join("\n");
 }

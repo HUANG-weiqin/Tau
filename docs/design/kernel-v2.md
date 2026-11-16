@@ -121,22 +121,6 @@ interface ToolDef {
   command: string; timeout: number; output: "text" | "content";
 }
 
-interface ProcessView { /* v1 的字段 */ parent?: ProcessId }
-
-interface Projection {
-  now: Instant;
-  self: ProcessView & {
-    segment: number;
-    messages: number;                    // 当前段的消息条数
-    segmentAge: number | null;
-    context: { used: number; window: number };
-    usage: Usage;
-  };
-  siblings: ProcessView[];               // 同一个预设下运行中的其他进程，同 v1
-  children: ProcessView[];               // 运行中的子进程
-  idleChildren: number;                  // 空闲的子进程个数
-}
-
 function decide(p, seg, input, env): {
   process: Process;
   append: Message[];
@@ -146,7 +130,7 @@ function decide(p, seg, input, env): {
 
 - 阶段还是 3 个，`Phase` 的形状不变，只有 `Turn` 多了字段。只在运行中有意义的新数据，都放在 `turn` 里。
 - `Env` 不变。
-- 投影里出错的原因用 5.1 的结束原因函数截短。
+- 投影（`parent`、`messages`、`usage`、`children`、`idleChildren`，出错的原因截短）：第 5 步已实现，字段和规则见 [kb-kernel 的投影与命令](../../.knowledge/kb-kernel.md#投影与命令)。
 
 ## 5. 原语
 
@@ -223,7 +207,7 @@ function decide(p, seg, input, env): {
 模型和人：
 
 - 寄信方从工具结果知道寄出了。收信方看到带头的信，从头知道要不要回信。
-- 投影和 `self`：每个进程带 `parent`；运行中的子进程各一行，空闲的只给个数。空闲子进程的 ID，从协议 `ps` 的投影里按 `parent` 找（第 8 节“列出会话”）。
+- 投影和 `self`：每个进程带 `parent`；运行中的子进程各一行，空闲的只给个数。空闲子进程的 ID，从协议 `ps` 的投影里按 `parent` 找（第 8 节“列出会话”）。已实现（第 5 步），文字格式见 [kb-store 的 self](../../.knowledge/kb-store.md#self)。
 
 测试：已实现（第 4 步第二部分），见 `test/store/agents.test.ts`、`test/store/replies.test.ts`、`test/kernel/replies.test.ts`、`test/store/crash.test.ts` 和 `test/server/e2e.test.ts`。还没做的：`spawn` 的启动检查不通过（第 6 步补）。
 
@@ -444,7 +428,7 @@ function decide(p, seg, input, env): {
 
 状态放在哪：进程记录。它跨段累计，从工作段算不出来（[kb-extending 原则 3](../../.knowledge/kb-extending.md#核心原则)）。
 
-模型和人：投影和 `self` 多一行累计用量。人用上层的命令行看（第 8 节）。
+模型和人：投影和 `self` 多一行累计用量。人用上层的命令行看（第 8 节）。已实现（第 5 步）。
 
 测试：每种回复都累加；重复的结果、编号对不上的结果不加。
 
@@ -455,10 +439,7 @@ function decide(p, seg, input, env): {
 - 管道名是 `\\.\pipe\tau`。CLI 有 `TAU_PIPE` 时用它（5.3）。
 - 一个连接一行请求。服务回若干行，每行一个 JSON，以 `\n` 结束。
 - 回完由服务关闭连接。`watch` 例外：由客户端断开。
-- 客户端发完请求，不能半关闭（不调用 `end` 或 `shutdown`）。
-  - Windows 命名管道不支持半关闭：客户端一半关，连接就整个关了，之后服务写的都丢。两端都设 `allowHalfOpen` 也一样。
-  - 同步写出的回执、快照和 `history` 能到，后来的最终回复和 `watch` 的增量都丢。所以简单的测试发现不了。
-  - 这条写进 kb-service 的坑点。
+- 客户端发完请求，不能半关闭（不调用 `end` 或 `shutdown`）。已实现（第 5 步），原因见 [kb-service 的坑点](../../.knowledge/kb-service.md#坑点)。
 - 客户端可以在回执之后直接断开（`destroy`）：服务照常处理，不再给它写。v1 已经这样处理 `tau send` 被 Ctrl+C 的情形。
 
 v2 的请求和回复（`src/protocol.ts`）：
@@ -491,36 +472,13 @@ type Reply =
 |---|---|---|
 | `start`、`send` | 同 v1，可以带图片（5.6 的入口检查） | 同 v1 |
 | `stop`、`ps` | 同 v1。投影是第 4 节的 v2 投影 | 同 v1 |
-| `history` | 读一段的消息，从段内序号 `from` 起。段默认是当前段，`from` 默认是 0 | 每条一行 `message`，最后一行 `end`，然后关闭 |
+| `history` | 读一段的消息。已实现（第 5 步），见 [kb-service 的历史和订阅](../../.knowledge/kb-service.md#历史和订阅) | 每条一行 `message`，最后一行 `end`，然后关闭 |
 | `blob` | 读一张图片。`hash` 不带 `blob:` 前缀 | 一行 `blob`，然后关闭。`hash` 不存在回 `error` |
-| `watch` | 订阅变化 | 一直推送，直到客户端断开 |
+| `watch` | 订阅变化。已实现（第 5 步），见 [kb-service 的历史和订阅](../../.knowledge/kb-service.md#历史和订阅) | 一直推送，直到客户端断开 |
 
 - 没有单独的“寄信不等回复”的请求。它就是 `send` 收到回执后断开。
 
-`history`：
-
-- 每行带段号和段内序号。
-- 读完发一行 `end`：段号和这一段的消息条数。客户端从它知道读完了、读的是哪一段、段尾在哪。没收到 `end` 连接就关了，就是没读完。
-- 进程不存在、段号越界，回 `error`。`from` 超过段尾时只发 `end`。
-- 每行的 `message` 是 pi-ai 1.0.0 的消息 JSON，图片的 `data` 是 `blob:<hash>`。这个格式是契约。升级 pi-ai 时消息 JSON 有变化，算契约变更。
-- 客户端看到投影里的消息条数变了，就用 `from` 读新增的部分。
-
-`watch`：
-
-- 订阅时先推一次快照：带 `process` 时推它的 `update`，不带时推每个进程的 `update`。之后只推增量，所以先 `ps` 再 `watch` 也不会漏。
-- 之后每次 `handleNext` 处理了某个进程的输入，就给订阅它的连接推这个进程的 `update`。
-  - `update` 只有 `self` 部分，不带兄弟和子进程。
-  - 它由 `handleNext` 返回的新记录和新段算出，不再读库。
-- 流式文本照样推，带进程 ID 和副作用编号。客户端用编号丢掉过时的文本。
-- 不推“最终回复”。客户端看到进程回到 `idle`，自己用 `history` 读。
-- 订阅表和 `start`、`send` 的观察者表分开。`settle` 不变。
-- 写缓冲有上限，推完快照就开始查：
-  - 推完快照时，记下连接的 `writableLength`，记作 S。之后 `writableLength` 超过 S + `WATCH_BUFFER_MAX`（暂定 1 MiB），就断开这个订阅。
-  - `writableLength` 对字符串按字符计，不按字节。上限也按它的单位算，不另算字节。
-  - 快照先写先排出，所以推完快照时不会误断。内存有上界。
-  - 不能等快照排空再查：订阅方一直不读、快照又大于管道的缓冲时，快照永远排不空，上限就永远不生效。
-- 订阅不存在的进程，回 `error`。
-- 服务正常退出时，先断开所有 `watch` 连接，再等别的连接结束。退出开始以后才读到的 `watch` 请求，回 `error` 并关闭。
+`history` 和 `watch` 的行为已实现（第 5 步），见 [kb-service 的历史和订阅](../../.knowledge/kb-service.md#历史和订阅)。还没实现的契约：`history` 每行的 `message` 是 pi-ai 1.0.0 的消息 JSON，图片的 `data` 是 `blob:<hash>`（第 6 步）。这个格式是契约。升级 pi-ai 时消息 JSON 有变化，算契约变更。
 
 CLI：
 
@@ -546,7 +504,7 @@ MSYS_NO_PATHCONV=1 exec node "$(cygpath -w "$(dirname "$0")")/src/main.ts" "$@"
 
 事务和崩溃：和 v1 一样。回执在提交之后才发。读的请求不开写事务。
 
-测试：每个新请求的成功和失败；`history` 的 `from`、越界、`end` 行；`watch` 的快照、增量、断开后不再推送、写缓冲上限（含一直不读、快照大于管道缓冲的订阅）、服务退出时断开、退出时才到的 `watch`；CLI 经 `TAU_PIPE` 连测试服务；`bash()` 在环境带 `MSYS_NO_PATHCONV` 时，命令看不到它，msys 路径照常转换。
+测试：`history` 和 `watch` 的测试已写（第 5 步，见 kb-service 的测试表）；CLI 经 `TAU_PIPE` 连测试服务；`bash()` 在环境带 `MSYS_NO_PATHCONV` 时，命令看不到它，msys 路径照常转换。
 
 ## 6. v2 也不做的
 
@@ -647,23 +605,7 @@ MSYS_NO_PATHCONV=1 exec node "$(cygpath -w "$(dirname "$0")")/src/main.ts" "$@"
 - 第三部分已做（环境变量、`TAU_PIPE`、`tau` 脚本）：kb-executor 运行工具第 3 条、kb-tools 的接口表、“工具不读库，不写库”、bash 的环境、坑点“bash 继承服务的全部环境变量”、kb-tools 的测试表；kb-service 的 `TAU_PIPE`、`tau` 脚本、入口表、测试表和两条坑点；D37。已做的条目已从下面的清单里删掉。
 - 第二部分已做（`post`、`spawn`、`stop_process` 的执行）：AGENTS.md 副作用的库内副作用、上下文与记忆的两个例外；kb-overview 的“处理一条输入只读这两样”和“库内工具只碰库”；kb-extending 的“只碰库的是库内工具”（两处）；kb-store 的库内工具清单和表、`processes` 表、信箱写入方、`handleNext` 的步骤、“处理一条输入读什么”、`readPreset`；kb-executor、kb-tools 的库内工具清单；kb-service 的三个新工具；D36 写两处例外。
 
-第 5 步：
-
-- kb-service：
-  - “CLI 是它唯一的客户端。”（:7）；“CLI 是唯一的客户端，不需要 HTTP 的路由和 SSE 分帧”（:236）。
-  - `history`、`watch`；分帧不能半关闭。
-  - 请求校验“字段都是字符串”（:134）加上 `history` 的数字字段。
-  - 流式文本“转发给这个进程此刻的全部观察者”（:144）加上 `watch` 的订阅。
-  - “投影里有、`ps` 没显示的”（:163）加上父进程、子进程、累计用量、消息条数。
-  - “服务内存里只有执行器的中止开关和观察者表”（:243–244）加上订阅表。
-  - 越界信号“服务在内存里记住别的状态”（:252）除去订阅表。
-  - “观察者不持久，也没有读回复的命令”（:309）：协议有 `history`，CLI 没有。
-  - 退出（:219）：先断开 `watch`，再等其余连接。
-  - 服务的内部函数 `watch`（:63、:124、:128、:266，代码在 `src/server/serve.ts`）改名，免得和新请求同名。
-- kb-overview：状态分层的观察者一行（:50）的“CLI 连接”改成“连接和 `watch` 订阅”。
-- kb-extending 推导顺序第 7 步（:33）：加进投影，`self` 和协议的 `ps` 看同一份。`tau ps` 冻结在 v1 的字段，人用上层的命令行看新字段。
-- D16（kb-decisions :153，“CLI 是唯一的客户端，不需要 HTTP 的路由、状态码和 SSE 分帧”）就地改正。
-- mvp.md 第 9 节的自省表（:156–158）：加上父进程、子进程、累计用量、消息条数。
+第 5 步已做（投影、`self`、协议的 `history` 和 `watch`、`text` 的进程和编号）：kb-service 的开头、协议、校验、流式文本、退出、认知模型、坑点和测试表；kb-overview 状态分层的观察者一行；kb-kernel 的投影；kb-store 的 `self`；kb-extending 推导顺序第 7 步；mvp.md 第 9 节的自省表；D16 就地改正；D38、D39。
 
 第 6 步：
 

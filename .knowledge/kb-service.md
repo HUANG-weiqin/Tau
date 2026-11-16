@@ -1,10 +1,10 @@
 # 服务与 CLI
 
-`updated: 2026-11-15`
+`updated: 2026-11-16`
 
 ## 这个模块是干什么的
 
-服务是 `tau serve` 这个常驻进程。它持有单实例锁，打开库，做启动恢复，再用一个同步的 `pump` 推进全部进程。CLI 是它唯一的客户端。
+服务是 `tau serve` 这个常驻进程。它持有单实例锁，打开库，做启动恢复，再用一个同步的 `pump` 推进全部进程。CLI 是它自己的客户端；协议还有 `history` 和 `watch`，给上层用。
 
 它负责：
 
@@ -12,6 +12,7 @@
 - `pump`：什么时候处理信箱、中止动作、开始副作用。
 - 线协议：请求和回复的类型、请求的校验、回执什么时候发。
 - 观察者：哪些连接在等哪个进程，最终回复什么时候发、内容怎么算。
+- `history` 和 `watch`：读历史，订阅变化，订阅的写缓冲上限。
 - CLI 的命令、输出、退出码，以及“结果未知”。
 - `tau ps` 的文字格式。
 - 启动脚本 `tau.cmd`、入口 `src/main.ts`、正常退出。
@@ -48,6 +49,7 @@
 pump()
   循环 handleNext 直到信箱空：
     返回 abort 时 exec.abort(进程, n)
+    有订阅时 push(进程, update)            （见“历史和订阅”）
     settle(进程)                          （见“观察者和最终回复”）
   循环 exec.startNext 直到 null：
     动作结束 → pump；动作的 promise 被拒绝 → fatal
@@ -60,7 +62,7 @@ pump()
 | 输入从哪来 | 之后的 `pump` |
 |---|---|
 | 启动恢复 | `serve()` 末尾 |
-| `start`、`send` | `watch` 发完回执、登记观察者之后 |
+| `start`、`send` | `awaitFinal` 发完回执、登记观察者之后 |
 | `stop` | 发完回执之后 |
 | 动作结束（`complete`） | `run.then(pump)` |
 | 库内工具的结果 | 同一个 `handleNext` 循环接着处理 |
@@ -88,6 +90,32 @@ pump()
 
 最终回复由纯函数层的 `finalReply` 算，算法见 [kb-kernel.md](kb-kernel.md#最终回复)。`settle` 在提交之后的当前段上调用它。
 
+### 历史和订阅
+
+`history` 是读请求，`watch` 是订阅。两个都不开写事务，不调用 `pump`。
+
+`history`（`process`、可选的 `segment` 和 `from`）：
+
+- 段默认是当前段，`from` 默认是 0。段号从 1 起。
+- 每条消息一行 `message`（段号、段内序号、消息），最后一行 `end`（段号、这一段的消息条数），然后服务关闭连接。没收到 `end` 就断开，是没读完。
+- 进程不存在、段号小于 1 或大于当前段，回 `error`。`from` 超过段尾只发 `end`。
+- 消息是库里存的 JSON，不做转换。读整段进内存再写出，不分批。
+- 客户端看到投影里的消息条数变了，就用 `from` 读新增的部分。
+
+`watch`（可选的 `process`）：
+
+- 订阅表 `Set<{ socket, process, limit }>`，只在内存里，和观察者表分开。`settle` 不看它。
+- 订阅时先推快照：带 `process` 时推它的一条 `update`，不带时按进程 ID 推每个进程的 `update`。快照和登记在同一个同步调用里，所以先 `ps` 再 `watch` 不会漏。
+- `update` 只有 `self` 部分，不带兄弟和子进程。它由 `observe(新记录, 新段, [新记录], now)` 算出，用的是 `handleNext` 返回的 `process` 和 `segment`，不再读库。
+- 每次 `handleNext` 处理了某个进程的输入，`pump` 给订阅它的连接（或订阅全部的连接）推这个进程的 `update`。没有订阅时不算。
+- 流式文本照样推：`text`，带进程 ID 和副作用编号。不推最终回复：客户端看到进程回到 `idle`，自己用 `history` 读。
+- 订阅不存在的进程回 `error`，然后关闭。订阅由客户端断开结束。服务登记订阅后恢复读取，请求行之后的字节丢掉，所以多发的字节不会挡住断开。
+- 写缓冲上限：推完快照时记下连接的 `writableLength`，记作 S。之后每次推送完，`writableLength` 超过 S + `WATCH_BUFFER_MAX`（1 MiB）就断开这个订阅。
+  - `writableLength` 对字符串按字符计，上限也按字符。
+  - 不能等快照排空再查：订阅方一直不读、快照又大于管道的缓冲时，快照永远排不空，上限就永远不生效。
+  - 一次推送突发超过 1 MiB 字符的快速订阅方也会被断开。真实的模型流式输出远没有这么快。
+- 退出：见[退出](#退出)。
+
 ### 线协议（`src/protocol.ts`）
 
 每个连接：客户端发一行 JSON 请求，服务回若干行 JSON，然后关闭连接。
@@ -97,13 +125,18 @@ type Request =
   | { op: "start"; preset: string; text: string }
   | { op: "send"; process: string; text: string }
   | { op: "stop"; process: string }
-  | { op: "ps" };
+  | { op: "ps" }
+  | { op: "history"; process: string; segment?: number; from?: number }
+  | { op: "watch"; process?: string };
 
 type Reply =
   | { type: "receipt"; process: string }                    // 命令的事务提交之后
-  | { type: "text"; delta: string }                         // 流式文本，只是预览
+  | { type: "text"; process: string; n: number; delta: string } // 流式文本，只是预览；n 是副作用编号
   | { type: "final"; reply: string; ended: Ended | null }   // 从库里取
   | { type: "ps"; processes: Projection[] }
+  | { type: "message"; segment: number; seq: number; message: Message }
+  | { type: "end"; segment: number; messages: number }      // history 读完
+  | { type: "update"; self: Projection["self"] }            // watch 的快照和增量
   | { type: "error"; message: string };
 ```
 
@@ -113,19 +146,21 @@ type Reply =
 | `send` | `send` 放进一封用户的信；进程不存在就抛出 | 同上 |
 | `stop` | `send` 放进一条 `stop` | `receipt` |
 | `ps` | 读全部进程记录；每个进程 `observe(p, 当前段, 全部进程, now)` | 一行 `ps` |
+| `history` | 读一段的消息 | 若干 `message`，一行 `end`，然后关闭 |
+| `watch` | 推快照，登记订阅 | 一直推 `update` 和 `text`，直到客户端断开 |
 | 处理时抛出 | — | 一行 `error`，然后关闭 |
 
-- `start` 和 `send` 走同一条路径：提交，然后 `watch`（发回执、登记观察者、`pump`）。
+- `start` 和 `send` 走同一条路径：提交，然后 `awaitFinal`（发回执、登记观察者、`pump`）。
 - 回执在事务提交之后才发。库是 `synchronous = FULL`，所以回执表示已经落盘。
 - `stop` 的回执只表示停止进了信箱。随后的 `pump` 同步处理它，并中止正在运行的动作。进程已经 `idle` 时停止什么都不做，回执照发。
 - `ps` 的进程按 ID 排序，包括 `idle` 的。每个投影带自己的 `now` 和 `siblings`。
-- `error` 可能跟在回执后面：`watch` 里的 `pump` 抛出时（见[坑点](#坑点)）。
+- `error` 可能跟在回执后面：`awaitFinal` 里的 `pump` 抛出时（见[坑点](#坑点)）。
 
 ### 请求的校验（`parseRequest`）
 
 - 每个连接只读第一行。`\r\n` 算一个换行。
 - 不是合法 JSON：`error`，内容是 `JSON.parse` 的错误信息。
-- 必须是带 `op` 的对象，字段都是字符串：`start` 要 `preset`、`text`；`send` 要 `process`、`text`；`stop` 要 `process`。否则 `error`：“无法识别的请求：<原文>”。
+- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`；`stop` 要字符串 `process`；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`watch` 的 `process` 可以没有，有就要是字符串。否则 `error`：“无法识别的请求：<原文>”。
 - 只查类型。空串能通过，多余的字段被忽略。空预设 ID 由 `loadPreset` 拒绝；空消息会成为一条用户消息。CLI 不发空消息。
 - 预设读不出、进程不存在、进程 ID 冲突，都回 `error`。这些情况下库里什么都没写。
 
@@ -135,9 +170,9 @@ type Reply =
 
 ### 流式文本
 
-- 执行器把模型的 `text_delta` 交给服务（[kb-executor.md](kb-executor.md#调用模型actionsts)）。服务转发给这个进程此刻的全部观察者，一段一行 `text`。
-- 不进库，不进投影。`ps`、`stop` 的连接收不到。
-- 观察者从登记那一刻起收，直到最终回复。中途加入的连接从半句开始收。
+- 执行器把模型的 `text_delta` 交给服务（[kb-executor.md](kb-executor.md#调用模型actionsts)）。服务转发给这个进程此刻的全部观察者和订阅（订阅它或订阅全部的 `watch`），一段一行 `text`，带进程 ID 和副作用编号 `n`。客户端用编号丢掉过时的文本。
+- 不进库，不进投影。`ps`、`stop`、`history` 的连接收不到。
+- 观察者从登记那一刻起收，直到最终回复；订阅从订阅那一刻起收，直到断开。中途加入的连接从半句开始收。
 - 转发不看用途：交接调用写的交接说明，以及之后被丢弃的回复（`length`、`error`）的文字，都会发出去。
 
 ### `tau ps` 的文字格式
@@ -154,7 +189,7 @@ type Reply =
 - 用量不小于 1000 时写成 `<x.x>k`。
 - 运行多久只用一个单位：`<n>秒`、`<n>分`、`<x.x>时`、`<x.x>天`。和 `self` 一样向下取整，所以 `ps` 不会比 `self` 显示得更久。时钟被往回拨、算出负数时，显示 0 秒。
 - 没有进程时，第二行是 `没有进程。`。
-- 投影里有、`ps` 没显示的：模型、排队消息数、本段开始多久、兄弟进程、出错的原因。
+- 投影里有、`ps` 没显示的：模型、排队消息数、本段开始多久、兄弟进程、出错的原因、父进程、子进程、累计用量、消息条数。`tau ps` 冻结在 v1 的字段，人用上层的命令行看新字段。
 
 ### CLI（`src/cli/main.ts`）
 
@@ -212,8 +247,9 @@ tau stop <进程>
 - `main.ts` 用 `process.once` 接第一次 `SIGINT` 和 `SIGTERM`，调用 `service.close()`，完成后退出码 0。
 - `close()`：
   1. 标记 `closing`。之后动作的 promise 被拒绝，不再让进程退出。
-  2. `server.close()`：不再接受新连接，并等现有连接全部结束。这期间 `pump` 照常工作。
-  3. 关库。随后 `process.exit(0)`。
+  2. 断开全部 `watch` 订阅。之后才读到的 `watch` 请求回 `error`（“服务正在退出，不接受订阅。”）并关闭。
+  3. `server.close()`：不再接受新连接，并等现有连接全部结束。这期间 `pump` 照常工作。
+  4. 关库。随后 `process.exit(0)`。
 - 不中止正在运行的动作，它们不会上报。效果和崩溃一样（[kb-executor.md](kb-executor.md#崩溃窗口)）。bash 和它的子孙进程继续运行（[kb-tools.md](kb-tools.md#坑点)）。
 - Windows 不会送 `SIGTERM`，能触发正常退出的只有 Ctrl+C。监听器只接一次，第二次 Ctrl+C 按 Node 的默认处理直接结束进程。
 
@@ -229,15 +265,17 @@ tau stop <进程>
 | 发最终回复前查信箱 | 新消息还在排队时，不把上一轮的回复发给它 |
 | 观察者不持久 | 它是连接，不是状态（[kb-overview.md](kb-overview.md#状态分三层)） |
 | CLI 不重试 | 重发可能让同一条消息进库两次 |
-| 协议是 JSON 行 | CLI 是唯一的客户端，不需要 HTTP 的路由和 SSE 分帧（D16、D18 第 17 条） |
+| 协议是 JSON 行 | 客户端只有 CLI 和上层的薄封装，不需要 HTTP 的路由和 SSE 分帧（D16、D18 第 17 条） |
+| 订阅表和观察者表分开；`update` 由 `handleNext` 的返回值算出 | `settle` 不变；推送不读库，不增加每条输入的成本 |
+| `watch` 的写缓冲有上限，推完快照就开始查 | 订阅方卡住时服务的内存有上界；断开比无限排队好，订阅方重连再拿快照（D39） |
 | 进程 ID 是 8 个十六进制字符；撞上就回 `error`，不重试 | 短，好敲 |
 | CLI 打印流式文本；没收到流式文本时，才打印最终回复 | 同一段文字不打印两次。代价：屏幕上的字不一定是库里的最终回复（见[坑点](#坑点)） |
 | `main.ts` 走 CLI 时不加载服务的模块 | CLI 只依赖协议（[设计稿第 3 节](../docs/design/mvp.md#3-总体结构)） |
 
 ## 认知模型
 
-- 服务 = 一把锁（管道）+ 一个库 + 一个执行器 + 一个同步的 `pump` + 一张观察者表。
-- 状态全在库里。服务内存里只有执行器的中止开关和观察者表，崩溃后两者都可以丢。
+- 服务 = 一把锁（管道）+ 一个库 + 一个执行器 + 一个同步的 `pump` + 一张观察者表和一张订阅表。
+- 状态全在库里。服务内存里只有执行器的中止开关、观察者表和订阅表，崩溃后都可以丢。
 - 一个命令 = 一个事务 + 一次 `pump`。回执是服务对客户端唯一的承诺：它说的是“已提交”，不是“已处理”。
 - 从零重建：`listen`、`openDb`、`createExecutor`、`pump`、`settle`、`parseRequest`，加一个只懂协议的 CLI。
 - 一次修改越界的信号：
@@ -245,7 +283,8 @@ tau stop <进程>
   - 回执在提交之前发。
   - 往信箱放输入之后不跟一次 `pump`。
   - 最终回复来自流式文本。
-  - 观察者表写进库，或者服务在内存里记住别的状态。
+  - 观察者表或订阅表写进库，或者服务在内存里记住别的状态。
+  - `update` 为了算出来去读库，或者 `watch` 的写缓冲没有上限。
   - CLI 导入 `protocol.ts` 以外的 tau 模块，或者自动重发。
   - 在拿到管道之前开库。
 
@@ -259,10 +298,11 @@ tau stop <进程>
 
 | 路径 | 内容 |
 |---|---|
-| `src/server/serve.ts` | `serve`：启动顺序、`pump`、`settle`、`watch`、`handle`、`parseRequest`、`close` |
+| `src/server/serve.ts` | `serve`：启动顺序、`pump`、`settle`、`push`、`awaitFinal`、`handle`、`parseRequest`、`close`；`WATCH_BUFFER_MAX` |
 | `src/server/listen.ts` | `listen`：在命名管道上监听；`EADDRINUSE` 变成“已经有一个 tau 服务” |
 | `src/server/credentials.ts` | `piCredentials`：只读 pi 的凭据文件，只交出 `api_key` 条目 |
 | `src/protocol.ts` | `PIPE`、`Request`、`Reply` |
+| `test/server/protocol.test.ts` | `history`、`watch`、`text` 的进程和编号 |
 | `src/cli/main.ts` | `main`（命令和退出码）、`request`（连接、发一行、逐行交出回复）、`formatPs`、`ago` |
 | `src/main.ts` | 入口：`serve` 或 CLI；`~/.tau` 的位置；信号处理 |
 | `tau.cmd` | 启动脚本（cmd.exe） |
@@ -294,6 +334,11 @@ tau stop <进程>
 | cli：两个进程同时运行 | 经 `main` 启动带记忆和不带记忆的两个预设；`ps` 显示两个都在运行；带记忆的 `memory_set` 后 `memory_get` 读回；不带记忆的看不到记忆工具；`stop` 一个，另一个照常，迟到的回复被丢弃 |
 | cli：`self` 和 `ps` 一致 | 同一个预设的两个进程，一个被拦住；另一个的 `self` 显示用量、窗口、时间、时区和运行中的兄弟；`ps` 的投影在 ID、预设、模型、段号、窗口和兄弟上一致 |
 | cli：流式文本 | 流式片段拼起来等于最终回复；CLI 只打印一次 |
+| protocol：`history` | 默认读当前段，`from` 起读，段尾之后只有 `end`；旧段；越界和不存在回 `error`；数字字段的校验；读请求不写库 |
+| protocol：`text` | `start`、`send` 的观察者收到的 `text` 带进程和编号 |
+| protocol：`watch` 快照和增量 | 带不带 `process` 的快照；每次处理输入一条 `update`，消息条数和用量与库一致；不推 `final`；只推订阅的进程；订阅不存在的进程回 `error` |
+| protocol：`watch` 断开和退出 | 客户端断开后连接被释放，其余订阅照常；服务退出时断开订阅；退出开始以后才到的 `watch` 回 `error`，等最终回复的连接照常收到 |
+| protocol：`watch` 写缓冲上限 | 快照大于管道缓冲、订阅方一直不读：到上限才断开，读的订阅不受影响；快照很小、订阅方不读：少量推送不断开，超过上限才断开 |
 | cli：模型不在目录里 | 本轮以“模型目录里没有”的错误结束，回复不入段；模型放回后进程照常可用 |
 
 ## 坑点
@@ -302,11 +347,13 @@ tau stop <进程>
 - **`MSYS_NO_PATHCONV` 会留在服务的环境里。** `tau` 脚本只为 `exec node` 设它，但它在 node 的环境里。在 Git Bash 里运行 `tau serve`，服务就带着它。所以 bash 工具构造命令环境时去掉它（[kb-tools](kb-tools.md#包装脚本)）；服务自己的环境不动。
 - **在 `pump` 之外推进状态。** `pump` 的同步是服务里“没有并发”的唯一来源。验证：pairing 的停止用例（中止及时到达）、kill 测试。
 - **pi 正在写凭据文件。** pi 在锁里原地截断再写，tau 读时不拿锁。读到空文件或半个文件时，这次模型调用以“不是合法的 JSON”结束，重发即可。窗口很小，但服务要跑很多年。
+- **客户端发完请求不能半关闭。** 不要调用 `end` 或 `shutdown`。Windows 命名管道不支持半关闭：客户端一半关，连接就整个关了，之后服务写的都丢。两端都设 `allowHalfOpen` 也一样。同步写出的回执、快照和 `history` 还能到，后来的最终回复和 `watch` 的增量都丢，所以简单的测试发现不了。测试里的客户端也不要半关闭。
+- **`watch` 订阅方卡住就被断开。** 订阅方读得比服务推得慢，写缓冲涨过上限，连接就被服务关掉。订阅方重连、重新拿快照，再用 `history` 补读。
 - **回执提前发。** 回执必须在事务提交之后。kill 测试断言有回执的消息一条不丢。
 - **`settle` 不查信箱。** 进程 `idle` 而新消息还在排队时，新连接会拿到上一轮的回复。这一条没有专门的测试。
 - **`pump` 抛出。** `handleNext` 或 `claim` 抛出，说明库或代码坏了（[kb-store.md](kb-store.md#坑点)）。在请求里抛出时，已经发了回执的连接再收到一行 `error`，CLI 退出码 1，服务继续跑，信箱卡住。在动作结束后的 `pump` 里抛出时，没有人接住，Node 按未处理的拒绝让进程以码 1 退出，不经过 `fatal`。重启后第一次 `pump` 再抛出，服务起不来。
-- **关闭要等连接。** 有连接在等最终回复时，Ctrl+C 之后服务继续工作，直到这些回复发完。要立刻停，再按一次 Ctrl+C。
-- **断开之后拿不回回复。** 观察者不持久，也没有读回复的命令。`tau ps` 只给阶段。
+- **关闭要等连接。** 有连接在等最终回复时，Ctrl+C 之后服务继续工作，直到这些回复发完。要立刻停，再按一次 Ctrl+C。`watch` 订阅不算：它们一开始就被断开。
+- **断开之后拿不回回复。** 观察者不持久，CLI 也没有读回复的命令。协议有 `history`，上层可以读；`tau ps` 只给阶段。
 - **“结果未知”时 `tau ps` 只能间接判断。** `start` 看有没有多出一个进程；`send` 看不出消息进没进库，`ps` 不显示消息。
 - **屏幕上的文字不一定在库里。** CLI 收到过流式文本，就不打印 `final.reply`。流式文本包括交接说明和被丢弃的回复，多次模型调用的文字直接连在一起。
 - **Agent 对自己运行 `tau send`。** CLI 等这个进程回到 `idle`，进程在等这次 bash，只能等 bash 超时。消息已经提交，会作为排队的消息，在下一个安全点或本轮结束时处理。

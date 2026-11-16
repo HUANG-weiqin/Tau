@@ -83,7 +83,7 @@ abort(id, n)
 
 1. 按第一个 `/` 把快照里的模型 ID 拆成 provider 和模型 ID，用 `models.getModel` 现查。查不到就抛出 `模型目录里没有 <ID>`，执行器把它变成 `error` 回复。
 2. `models.streamSimple({ ...model, maxTokens: cap }, buildContext(process, segment), { signal, sessionId: process.id, maxTokens: cap, maxRetries: MODEL_RETRIES, reasoning? })`。`cap` = `min(model.maxTokens, outputMax(preset))`，`outputMax` 是窗口的 1/8。快照有 `thinking` 才传 `reasoning`，没有就连键都不传。不传 `thinkingBudgets`。轮次调用和交接调用一样。
-3. 只把 `text_delta` 事件交给 `onText`。服务怎样转发，见 [kb-service.md](kb-service.md#流式文本)。
+3. 只把 `text_delta` 事件连同进程 ID 和副作用编号交给 `onText`。服务怎样转发，见 [kb-service.md](kb-service.md#流式文本)。
 4. 返回 `stream.result()`，也就是最终的助手消息。
 
 - 服务的模型目录来自 `@earendil-works/pi-ai/providers/all` 的 `builtinModels`，怎样创建见 [kb-service.md](kb-service.md#启动脚本和入口)。`createModels()` 返回空目录，测试用它装 faux provider。

@@ -20,7 +20,7 @@ import { sqliteMemory } from "../../src/memory/kv.ts";
 import type { Reply, Request } from "../../src/protocol.ts";
 import { serve } from "../../src/server/serve.ts";
 import type { Service } from "../../src/server/serve.ts";
-import { loadProcess, loadSegment } from "../../src/store/db.ts";
+import { loadProcess, loadSegment, saveProcess } from "../../src/store/db.ts";
 import { effectRows, mailbox } from "../store/fixtures.ts";
 import { assertStoreInvariants } from "../store/invariants.ts";
 
@@ -421,7 +421,37 @@ test("self 显示上下文用量、时间和运行中的兄弟进程；tau ps �
   assertQuiet(e.svc);
 });
 
-const FIRST_REPLY = "第一段回复：分成好几块流式发出，拼起来就是最终回复。";
+test("tau ps 的文字不随 v2 的投影变：有父进程、累计用量时，每一行和以前一样", { timeout: 10_000 }, async (t) => {
+  const e = await setup(t, { dev: "read" });
+  script(e.faux, () => fauxAssistantMessage("好。"));
+  const cap = capture(t);
+  assert.equal(await main(["start", "dev", "一"], e.pipe), 0);
+  assert.equal(await main(["start", "dev", "二"], e.pipe), 0);
+  const [parent = "", kid = ""] = startedIds(cap);
+  const before = await cliPs(e.pipe, cap);
+  assert.equal(before.rows.size, 2);
+  for (const row of before.rows.values()) assert.equal(row.length, 6, row.join("|"));
+
+  // 把第二个进程改成第一个的子进程，并给它累计用量。两个进程都空闲，没有别的写库的人。
+  const k = loadProcess(e.svc.db, kid);
+  assert.ok(k);
+  saveProcess(e.svc.db, { ...k, parent, usage: { input: 10, output: 20, cacheRead: 30, cacheWrite: 40 } });
+  const after = await cliPs(e.pipe, cap);
+  assert.deepEqual([...after.rows].map(([id, cols]) => [id, ...cols.slice(1, 5)]), [...before.rows].map(([id, cols]) => [id, ...cols.slice(1, 5)]));
+  for (const row of after.rows.values()) assert.equal(row.length, 6, row.join("|"));
+
+  // 协议里的投影是 v2 的形状。
+  const all = await projections(e.pipe);
+  const mine = all.find((p) => p.self.id === parent);
+  const theirs = all.find((p) => p.self.id === kid);
+  assert.ok(mine && theirs);
+  assert.deepEqual([mine.children, mine.idleChildren], [[], 1]);
+  assert.equal(theirs.self.parent, parent);
+  assert.deepEqual(theirs.self.usage, { input: 10, output: 20, cacheRead: 30, cacheWrite: 40 });
+  assert.equal(theirs.self.messages, segmentOf(e.svc, kid).length);
+});
+
+const FIRST_REPLY ="第一段回复：分成好几块流式发出，拼起来就是最终回复。";
 const SECOND_REPLY = "第二段回复：CLI 把流式文本原样打印，只打印一次。";
 
 test("流式文本到达连接：各块拼起来等于最终回复；CLI 只打印一次", { timeout: 10_000 }, async (t) => {

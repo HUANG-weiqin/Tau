@@ -93,6 +93,16 @@ export function loadSegment(db: DatabaseSync, p: Process): Message[] {
     .map((r) => JSON.parse(r.message_json as string) as Message);
 }
 
+/** 读一段的消息（不限当前段），段内序号不小于 `from`，按序号排。`count` 是这一段的消息条数。只读，不开事务。 */
+export function readSegment(db: DatabaseSync, id: ProcessId, segment: number, from: number): { rows: { seq: number; message: Message }[]; count: number } {
+  const rows = db
+    .prepare("SELECT seq, message_json FROM segment_messages WHERE process_id = ? AND segment_seq = ? AND seq >= ? ORDER BY seq")
+    .all(id, segment, from)
+    .map((r) => ({ seq: r.seq as number, message: JSON.parse(r.message_json as string) as Message }));
+  const count = db.prepare("SELECT COUNT(*) AS n FROM segment_messages WHERE process_id = ? AND segment_seq = ?").get(id, segment)?.n as number;
+  return { rows, count };
+}
+
 /** 把消息追加到 `p.segment.seq` 那一段，段内序号从 `from` 开始。 */
 export function appendMessages(db: DatabaseSync, p: Process, from: number, messages: readonly Message[]): void {
   const insert = db.prepare("INSERT INTO segment_messages (process_id, segment_seq, seq, message_json) VALUES (?, ?, ?, ?)");
