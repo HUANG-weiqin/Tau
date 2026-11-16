@@ -10,7 +10,7 @@ const USAGE = `用法：
   tau ps
   tau stop <进程>`;
 
-export async function main(argv: readonly string[], pipe: string = PIPE): Promise<number> {
+export async function main(argv: readonly string[], pipe: string = process.env.TAU_PIPE || PIPE): Promise<number> {
   const [cmd, target, ...rest] = argv;
   const text = rest.join(" ");
   if ((cmd === "start" || cmd === "send") && target && text) {

@@ -1,0 +1,2 @@
+#!/bin/sh
+MSYS_NO_PATHCONV=1 exec node "$(cygpath -w "$(dirname "$0")")/src/main.ts" "$@"

@@ -1,14 +1,34 @@
-// 库内副作用：记忆工具、`self` 和 `handoff`，在处理输入的事务里执行，恰好一次（见 .knowledge/kb-store.md、kb-memory.md；设计稿第 9 节）。
-import { endedText } from "../kernel/derive.ts";
+// 库内副作用：记忆工具、`self`、`handoff` 和 `post`、`spawn`、`stop_process`，在处理输入的事务里执行，恰好一次（见 .knowledge/kb-store.md、kb-memory.md；设计稿第 5.3、9 节）。
+// 永不抛错：抛错会让事务回滚，这条输入留在信箱队头，所有进程都卡住。所有失败都是 isError 的结果。
+import { createHash } from "node:crypto";
+import { start } from "../kernel/decide.ts";
+import { endedText, HOPS_MAX } from "../kernel/derive.ts";
 import { observe } from "../kernel/observe.ts";
 import { MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
 import { textContent, unreachable } from "../kernel/types.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { PhaseView, Projection } from "../kernel/observe.ts";
-import type { Instant, Memory, Message, Process, ToolCall, ToolResultContent, Versioned } from "../kernel/types.ts";
-import { loadProcesses } from "./db.ts";
+import type { Env, Instant, Memory, Message, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Versioned } from "../kernel/types.ts";
+import { loadProcess, loadProcesses, putMail } from "./db.ts";
 
-export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment: readonly Message[], call: ToolCall, now: Instant): ToolResultContent {
+/** 读预设的函数，由服务传进来；测试传假的。读不出时抛出，原因是错误信息。 */
+export type ReadPreset = (id: string) => PresetSnapshot;
+
+const noPresets: ReadPreset = (id) => {
+  throw new Error(`找不到预设：${id}`);
+};
+
+/** 一个进程的 `Env`：记忆视图按它自己的预设算。 */
+export function envFor(memory: Memory, preset: PresetSnapshot, now: Instant): Env {
+  return { now, memoryView: preset.tools.includes("memory") ? memory.view(preset.id) : "" };
+}
+
+/** `spawn` 的新进程 ID：父进程 ID、这次调用的副作用编号、尝试次数的 sha256 的前 8 个十六进制字符。 */
+export function spawnId(parent: ProcessId, n: number, attempt: number): ProcessId {
+  return createHash("sha256").update(`${parent}\n${n}\n${attempt}`).digest("hex").slice(0, 8);
+}
+
+export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment: readonly Message[], call: ToolCall, now: Instant, readPreset: ReadPreset = noPresets): ToolResultContent {
   // 参数来自模型：pi-ai 把流式 JSON 'null' 解析成 null，所以不能直接解构。
   const args: Record<string, unknown> = typeof call.arguments === "object" && call.arguments !== null ? call.arguments : {};
   const { key, value, version } = args;
@@ -19,6 +39,45 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
     case "handoff":
       // 换段由 `decide` 在安全点发起：它看这个结果不是错误。
       return ok("将在这批工具结果之后换段。");
+    case "post": {
+      const { to, text, reply } = args;
+      if (typeof to !== "string" || typeof text !== "string") return bad("to 和 text 必须是字符串。");
+      if (reply != null && typeof reply !== "boolean") return bad("reply 必须是布尔值，或者省略。");
+      if (to === p.id) return fail("不能给自己寄信。");
+      if (!loadProcess(db, to)) return noProcess(to);
+      const hops = nextHops(p);
+      if (hops > HOPS_MAX) return hopsFail();
+      putMail(db, to, { kind: "letter", letter: { from: sender(p), content: textContent(text), hops, ...(reply === true ? { replyTo: p.id } : {}) } });
+      return ok(`已寄给 ${to}。${reply === true ? POST_REPLY : ""}`);
+    }
+    case "spawn": {
+      const { preset, text } = args;
+      if (typeof preset !== "string" || typeof text !== "string") return bad("preset 和 text 必须是字符串。");
+      const hops = nextHops(p);
+      if (hops > HOPS_MAX) return hopsFail();
+      let snapshot: PresetSnapshot;
+      try {
+        snapshot = readPreset(preset);
+      } catch (e) {
+        return fail(`预设 ${preset} 读不出：${e instanceof Error ? e.message : String(e)}`);
+      }
+      let attempt = 0;
+      let id = spawnId(p.id, p.lastEffect, attempt);
+      while (loadProcess(db, id)) id = spawnId(p.id, p.lastEffect, ++attempt);
+      // 不调用 startProcess：事务不能嵌套。
+      const child: Process = { ...start(id, snapshot, envFor(memory, snapshot, now)), parent: p.id };
+      db.prepare("INSERT INTO processes (id, state_json) VALUES (?, ?)").run(id, JSON.stringify(child));
+      putMail(db, id, { kind: "letter", letter: { from: sender(p), content: textContent(text), hops, replyTo: p.id } });
+      return ok(`已建进程 ${id}，预设 ${preset}。${SPAWN_REPLY}`);
+    }
+    case "stop_process": {
+      const { process: target } = args;
+      if (typeof target !== "string") return bad("process 必须是字符串。");
+      if (target === p.id) return fail("不能停止自己。要结束这一轮，直接回复，不再调用工具。");
+      if (!loadProcess(db, target)) return noProcess(target);
+      putMail(db, target, { kind: "stop" });
+      return ok(`已给 ${target} 发出停止。`);
+    }
     case "memory_get": {
       if (typeof key !== "string") return bad("key 必须是字符串。");
       const cur = memory.get(ns, key);
@@ -45,6 +104,27 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
 function isInt(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v);
 }
+
+const AFTER_REPLY = "，之后的几轮不会。";
+const POST_REPLY = "它处理这封信的那一轮结束时会给你回信" + AFTER_REPLY;
+const SPAWN_REPLY = "它这一轮结束时会给你回信" + AFTER_REPLY;
+
+/** 这一轮寄出的信的跳数。库内工具只在 awaitingTool 里执行。 */
+function nextHops(p: Process): number {
+  return (p.phase.tag === "awaitingTool" ? p.phase.turn.hops : 0) + 1;
+}
+
+function sender(p: Process): { kind: "process"; id: ProcessId; preset: string } {
+  return { kind: "process", id: p.id, preset: p.preset.id };
+}
+
+function fail(text: string): ToolResultContent {
+  return { content: textContent(text), isError: true };
+}
+
+const noProcess = (id: string): ToolResultContent => fail(`没有进程 ${id}。`);
+
+const hopsFail = (): ToolResultContent => fail(`跳数到上限（${HOPS_MAX}）：这封信是被进程之间的信一路引出来的。结束本轮，等用户的下一封信。`);
 
 function ok(text: string): ToolResultContent {
   return { content: textContent(text), isError: false };

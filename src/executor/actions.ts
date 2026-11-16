@@ -12,8 +12,8 @@ import type { Actions } from "./executor.ts";
 /** 模型请求在拿到成功的响应之前的重试次数，交给 pi-ai（设计稿 5.7）。 */
 export const MODEL_RETRIES = 5;
 
-/** `onText` 收到模型的流式文本；它只是预览，不进库。 */
-export function createActions(models: Models, onText: (id: ProcessId, delta: string) => void): Actions {
+/** `onText` 收到模型的流式文本；它只是预览，不进库。`pipe` 是服务实际监听的管道名，bash 工具把它交给命令（TAU_PIPE）。 */
+export function createActions(models: Models, onText: (id: ProcessId, delta: string) => void, pipe: string): Actions {
   return {
     async callModel(job, signal) {
       const name = job.process.preset.model;
@@ -52,7 +52,7 @@ export function createActions(models: Models, onText: (id: ProcessId, delta: str
         case "edit":
           return edit(args, workdir);
         case "bash":
-          return bash(args, workdir, signal);
+          return bash(args, workdir, signal, { process: job.process.id, pipe });
         default:
           return { content: textContent(`工具 ${call.name} 不由执行器运行。`), isError: true };
       }

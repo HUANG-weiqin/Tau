@@ -231,7 +231,7 @@ test("调用模型时 maxTokens 取模型的上限和窗口的 1/8 中较小的�
   const faux = fauxProvider({ models: cases.map(([w, m]) => ({ id: `m${w}`, contextWindow: w, maxTokens: m })) });
   const models = createModels();
   models.setProvider(faux.provider);
-  const actions = createActions(models, () => {});
+  const actions = createActions(models, () => {}, "test-pipe");
   const segment: Message[] = [{ role: "user", content: "你好", timestamp: 0 }];
   for (const [w, m] of cases) {
     for (const purpose of ["turn", "handoff"] as const) {

@@ -10,6 +10,7 @@ import type { AssistantMessage, Input, Memory, Message, PresetSnapshot, ToolCall
 import { openDb } from "../../src/store/db.ts";
 import { res } from "../plain.ts";
 import { handleNext } from "../../src/store/inputs.ts";
+import type { ReadPreset } from "../../src/store/instore.ts";
 
 export const PRESET: PresetSnapshot = {
   id: "helper",
@@ -145,9 +146,9 @@ export function gated(model: (job: Job) => AssistantMessage, tool: (job: Job, ca
 }
 
 /** 处理所有输入、执行所有副作用，直到没有事可做。给了 `gates` 时，每开始一个动作就让它完成。 */
-export async function settle(db: DatabaseSync, memory: Memory, exec: Executor, gates?: Gate[]): Promise<void> {
+export async function settle(db: DatabaseSync, memory: Memory, exec: Executor, gates?: Gate[], readPreset?: ReadPreset): Promise<void> {
   for (;;) {
-    const h = handleNext(db, memory, 0);
+    const h = handleNext(db, memory, 0, readPreset);
     if (h) {
       if (h.abort !== null) exec.abort(h.process.id, h.abort);
       continue;

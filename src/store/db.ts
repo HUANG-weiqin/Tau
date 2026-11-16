@@ -99,7 +99,7 @@ export function appendMessages(db: DatabaseSync, p: Process, from: number, messa
   messages.forEach((m, i) => insert.run(p.id, p.segment.seq, from + i, JSON.stringify(m)));
 }
 
-/** 把一条输入放进信箱。 */
-export function post(db: DatabaseSync, id: ProcessId, input: Input): void {
+/** 把一条输入放进一个进程的信箱。 */
+export function putMail(db: DatabaseSync, id: ProcessId, input: Input): void {
   db.prepare("INSERT INTO mailbox (process_id, input_json) VALUES (?, ?)").run(id, JSON.stringify(input));
 }

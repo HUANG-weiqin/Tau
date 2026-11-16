@@ -32,9 +32,9 @@ import type { World } from "./helpers.ts";
 // 设计稿里写明的文本。
 const INTERRUPTED = "被中断，结果未知";
 const SKIPPED = "未执行";
-const STOPPED = "（用户停止了上一轮。上面还没回复的消息都已取消：不要回应它们，只回应下面这条消息。）";
-const STEP_LIMIT = "（上一轮的步数用完了，停在中途。）";
-const failed = (reason: string) => `（上一轮出错，没有做完：${reason}）`;
+const STOPPED = "（上一轮被停止。上面还没回复的消息都已取消：不要回应它们，只回应下面的信。）";
+const STEP_LIMIT = "（上一轮的步数用完了，停在中途。如果有进程在等你回信，它们已经收到上一轮的结束通知，之后的回复不会寄给它们。）";
+const failed = (reason: string) => `（上一轮出错，没有做完：${reason}。如果有进程在等你回信，它们已经收到上一轮的结束通知，之后的回复不会寄给它们。）`;
 
 const W = 100_000;
 const P = preset({ contextWindow: W });
@@ -723,7 +723,7 @@ describe("上一轮没有正常结束：下一条用户消息前面加一句说�
     reply(w, assistant({ usage: 0, stopReason: "error", errorMessage: reason }));
     const big = codeText(100 * 1024);
     const text = textOf(feed(w, userInput(big)).append[0]!);
-    assert.ok(text.startsWith(`（上一轮出错，没有做完：${clip(reason, 1024).replace(/[\r\n]/g, " ")}）`), text.slice(0, 200));
+    assert.ok(text.startsWith(`（上一轮出错，没有做完：${clip(reason, 1024).replace(/[\r\n]/g, " ")}。如果有进程在等你回信`), text.slice(0, 200));
     assert.ok(utf8Bytes(text) <= MESSAGE_MAX_BYTES);
   });
 });

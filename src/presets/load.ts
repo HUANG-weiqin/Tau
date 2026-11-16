@@ -4,7 +4,7 @@ import path from "node:path";
 import type { Models, ThinkingLevel } from "@earendil-works/pi-ai";
 import type { PresetSnapshot, PresetTool } from "../kernel/types.ts";
 
-const TOOLS: readonly PresetTool[] = ["read", "write", "edit", "bash", "memory"];
+const TOOLS: readonly PresetTool[] = ["read", "write", "edit", "bash", "memory", "agents"];
 const REQUIRED = ["workdir", "model", "tools"];
 const KEYS = [...REQUIRED, "thinking"];
 const THINKING: readonly ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];

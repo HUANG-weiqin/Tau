@@ -88,3 +88,64 @@ test("连不上服务：CLI 提示先运行 tau serve", async () => {
     console.error = orig;
   }
 });
+
+test("服务把预设读取函数交给 handleNext：模型 spawn 一个预设，子进程跑完，回信唤醒父进程", async () => {
+  const t = setup();
+  const head = (tools: string) => `---\nworkdir: ${t.work}\nmodel: ${t.faux.getModel().provider}/m\ntools: ${tools}\n---\n`;
+  writeFileSync(join(t.presets, "boss.md"), `${head("agents")}老板。\n`);
+  writeFileSync(join(t.presets, "kid.md"), `${head("read")}孩子。\n`);
+  // 一个工厂按最后一条消息决定回复；回复按调用顺序消耗，所以放足够多份。
+  const brain = (ctx: { messages: { role: string; content: unknown }[] }) => {
+    const last = ctx.messages.at(-1);
+    const lastText = JSON.stringify(last?.content);
+    if (lastText.includes("去做")) return fauxAssistantMessage(fauxText("孩子做完了"));
+    if (last?.role === "toolResult") return fauxAssistantMessage(fauxText("派出了"));
+    if (lastText.includes("的回信，")) return fauxAssistantMessage(fauxText("收到回信"));
+    return fauxAssistantMessage([fauxToolCall("spawn", { preset: "kid", text: "去做" })], { stopReason: "toolUse" });
+  };
+  t.faux.setResponses(Array.from({ length: 6 }, () => brain));
+  const svc = await serve({ pipe: t.pipe, dbPath: join(t.dir, "tau.db"), presetsDir: t.presets, models: t.models, memory: sqliteMemory });
+  try {
+    const replies = await collect(t.pipe, { op: "start", preset: "boss", text: "开工" });
+    assert.equal(replies.at(-1)?.type, "final");
+    const deadline = Date.now() + 5000;
+    const state = () => svc.db.prepare("SELECT state_json FROM processes").all().map((r) => JSON.parse(r.state_json as string) as { id: string; parent?: string; preset: { id: string }; phase: { tag: string } });
+    while (Date.now() < deadline && !(state().length === 2 && state().every((p) => p.phase.tag === "idle") && !svc.db.prepare("SELECT 1 FROM mailbox").get())) await new Promise((r) => setTimeout(r, 20));
+    const [boss, kid] = [state().find((p) => p.preset.id === "boss"), state().find((p) => p.preset.id === "kid")];
+    assert.ok(boss && kid);
+    assert.equal(kid.parent, boss.id);
+    const said = svc.db.prepare("SELECT message_json FROM segment_messages WHERE process_id = ? ORDER BY seq").all(boss.id).map((r) => JSON.stringify(JSON.parse(r.message_json as string)));
+    assert.ok(said.some((m) => m.includes("孩子做完了")), "父进程应当收到孩子的回信");
+    assert.ok(said.some((m) => m.includes("收到回信")));
+  } finally {
+    await svc.close();
+    rmSync(t.dir, { recursive: true, force: true });
+  }
+});
+
+// 第 4 步验收：bash 工具真的运行仓库的 tau 脚本，经 TAU_PIPE 连到测试服务（不是正式管道），看得到测试进程。
+test("bash 工具运行 tau ps，经 TAU_PIPE 连到测试服务", async () => {
+  for (const k of Object.keys(process.env)) if (k.toUpperCase().startsWith("TAU_")) delete process.env[k];
+  const t = setup();
+  const script = join(import.meta.dirname, "..", "..", "tau").replaceAll("\\", "/");
+  writeFileSync(join(t.presets, "dev.md"), `---\nworkdir: ${t.work}\nmodel: ${t.faux.getModel().provider}/m\ntools: bash\n---\n你是测试助手。\n`);
+  t.faux.setResponses([
+    fauxAssistantMessage([fauxToolCall("bash", { command: `'${script}' ps; echo "$TAU_PROCESS"` })], { stopReason: "toolUse" }),
+    fauxAssistantMessage(fauxText("看过了。")),
+  ]);
+  const svc = await serve({ pipe: t.pipe, dbPath: join(t.dir, "tau.db"), presetsDir: t.presets, models: t.models, memory: sqliteMemory });
+  try {
+    const replies = await collect(t.pipe, { op: "start", preset: "dev", text: "看看进程" });
+    const id = replies[0]?.type === "receipt" ? replies[0].process : "";
+    assert.ok(id);
+    const rows = svc.db.prepare("SELECT message_json FROM segment_messages WHERE process_id = ? ORDER BY seq").all(id);
+    const results = rows.map((r) => JSON.parse(r.message_json as string)).filter((m) => m.role === "toolResult");
+    const text: string = results[0].content[0].text;
+    assert.equal(results[0].isError, false, text);
+    assert.match(text, new RegExp(`${id}  dev  `), "ps 的输出里有测试进程");
+    assert.ok(text.endsWith(`\n${id}\n[退出码 0]`), "TAU_PROCESS 是这个进程");
+  } finally {
+    await svc.close();
+    rmSync(t.dir, { recursive: true, force: true });
+  }
+});

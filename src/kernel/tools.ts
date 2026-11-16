@@ -76,6 +76,35 @@ const MEMORY: ToolSpec[] = [
   },
 ];
 
+/** 回信的三件事（设计稿 5.3）：`post` 和 `spawn` 的说明共用。 */
+const REPLY_NOTES =
+  "对方只在处理这封信的那一轮结束时回信一次，之后的几轮不回。" +
+  "对方在同一轮里处理了你的几封信时，只回一封。" +
+  "你自己结束本轮去等别的事时，等你回信的进程会立刻收到你这时的回复。";
+
+const AGENTS: ToolSpec[] = [
+  {
+    name: "post",
+    description: `往另一个进程的信箱寄一封信。reply 为真时，对方处理这封信的那一轮结束时，会把最终回复作为回信寄给你。${REPLY_NOTES}`,
+    parameters: object({ to: str("收件进程的 ID"), text: str("信的正文"), reply: { type: "boolean", description: "要对方回信" } }, ["to", "text"]),
+    inStore: true,
+  },
+  {
+    name: "spawn",
+    description: `用一个预设建新进程，你是它的父进程。text 是它收到的第一封信，它这一轮结束时会给你回信。${REPLY_NOTES}`,
+    parameters: object({ preset: str("预设 ID"), text: str("第一封信的正文") }, ["preset", "text"]),
+    inStore: true,
+  },
+  {
+    name: "stop_process",
+    description:
+      "停止另一个进程此刻正在跑的这一轮。它不认是哪一轮：发出之前对方已经开了新一轮，停掉的就是新的那一轮。对方空闲时什么都不发生。" +
+      "被停止的一轮照样给等回信的进程寄回信。",
+    parameters: object({ process: str("进程 ID") }, ["process"]),
+    inStore: true,
+  },
+];
+
 const SELF: ToolSpec = {
   name: "self",
   description: "查看自己：进程、阶段、工作段、上下文用量、时间，以及同一个预设下正在运行的其他进程。只读。",
@@ -92,11 +121,12 @@ const HANDOFF: ToolSpec = {
   inStore: true,
 };
 
-/** 预设能用的工具，按固定顺序；`self` 和 `handoff` 总在。 */
+/** 预设能用的工具，按固定顺序：read、write、edit、bash，memory 组，agents 组；`self` 和 `handoff` 总在。 */
 export function toolsFor(preset: PresetSnapshot): ToolSpec[] {
   const out: ToolSpec[] = [];
   for (const t of [READ, WRITE, EDIT, BASH]) if (preset.tools.includes(t.name as PresetSnapshot["tools"][number])) out.push(t);
   if (preset.tools.includes("memory")) out.push(...MEMORY);
+  if (preset.tools.includes("agents")) out.push(...AGENTS);
   out.push(SELF, HANDOFF);
   return out;
 }

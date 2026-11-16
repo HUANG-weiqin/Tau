@@ -199,3 +199,8 @@ for (const bad of ["", "off", "none", "High", "ultra"]) {
 test("duplicate thinking is an error", () => {
   assert.throws(() => loadPreset(write("dupthink", valid(["thinking: low", "thinking: high"])), "dupthink", models), /thinking/);
 });
+
+test("agents is a known tool, kept in order", () => {
+  const dir = write("agents", front([`workdir: ${work}`, `model: ${modelStr}`, "tools: read, agents, memory"]));
+  assert.deepEqual(loadPreset(dir, "agents", models).tools, ["read", "agents", "memory"]);
+});

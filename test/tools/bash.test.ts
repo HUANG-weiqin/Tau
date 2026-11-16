@@ -10,6 +10,7 @@ import { MESSAGE_MAX_BYTES, utf8Bytes } from "../../src/kernel/derive.ts";
 import { bash } from "../../src/tools/bash.ts";
 import { plain } from "../plain.ts";
 
+const CTX = { process: "p-test", pipe: "\\\\.\\pipe\\tau-ctx-test" };
 let dir = "";
 let tmp = "";
 
@@ -38,6 +39,8 @@ function probe(name: string): Probe {
 }
 
 before(async () => {
+  // 从外面继承来的 TAU_ 变量会让环境断言不确定。
+  for (const k of Object.keys(process.env)) if (k.toUpperCase().startsWith("TAU_")) delete process.env[k];
   dir = await mkdtemp(path.join(os.tmpdir(), "tau-bash-"));
   // 别的测试文件在别的进程里同时运行 bash，也在系统临时目录里建删 pgid 文件。这个文件的 bash 用自己的临时目录。
   tmp = await mkdtemp(path.join(os.tmpdir(), "tau-bash-tmp-"));
@@ -56,7 +59,7 @@ after(async () => {
 });
 
 async function run(command: string, timeout?: number, signal: AbortSignal = new AbortController().signal) {
-  return plain(await bash({ command, timeout }, dir, signal));
+  return plain(await bash({ command, timeout }, dir, signal, CTX));
 }
 
 const exists = (name: string): boolean => existsSync(path.join(dir, name));
@@ -104,8 +107,33 @@ test("反斜杠和引号原样交给 bash", async () => {
   assert.equal(r.text, String.raw`\\server\share` + '\na"b\n[退出码 0]');
 });
 
-test("命令的子进程看不到传命令用的环境变量", async () => {
-  assert.equal((await run("env | grep '^TAU_' || echo none")).text, "none\n[退出码 0]");
+test("命令的子进程看不到传命令用的环境变量，只看得到 TAU_PROCESS 和 TAU_PIPE", async () => {
+  const r = await run("env | grep '^TAU_' | sort");
+  assert.equal(r.text, `TAU_PIPE=${CTX.pipe}\nTAU_PROCESS=${CTX.process}\n[退出码 0]`);
+});
+
+test("服务从外面继承来的 TAU_PROCESS 和 TAU_PIPE 被换成这次的", async () => {
+  process.env.TAU_PROCESS = "outer";
+  process.env.TAU_PIPE = "outer-pipe";
+  try {
+    const r = await run('echo "$TAU_PROCESS $TAU_PIPE"');
+    assert.equal(r.text, `${CTX.process} ${CTX.pipe}\n[退出码 0]`);
+  } finally {
+    delete process.env.TAU_PROCESS;
+    delete process.env.TAU_PIPE;
+  }
+});
+
+// node 是 Windows 程序：msys 默认把 /usr 这样的参数改成 Windows 路径；服务带着 MSYS_NO_PATHCONV 时，命令也应照常转换。
+test("服务的环境带 MSYS_NO_PATHCONV：命令看不到它，msys 路径照常转换", async () => {
+  process.env.MSYS_NO_PATHCONV = "1";
+  try {
+    assert.equal((await run("env | grep '^MSYS_NO_PATHCONV' || echo none")).text, "none\n[退出码 0]");
+    const r = await run(`node -p "process.argv[1]" /usr`);
+    assert.match(r.text, /^[A-Za-z]:[\\/].*usr\n\[退出码 0\]$/);
+  } finally {
+    delete process.env.MSYS_NO_PATHCONV;
+  }
 });
 
 test("stderr 也收进输出", async () => {

@@ -196,6 +196,8 @@ tau stop <进程>
 - 启动脚本和测试都不加 `--disable-warning`，原因见 [D11](kb-decisions.md#d11-sqlite-驱动)。
 - `src/main.ts`：第一个参数是 `serve` 就动态导入服务的模块并启动，其余参数忽略。否则交给 CLI 的 `main`，返回值写进 `process.exitCode`。
 - 管道名、库和预设的位置写死在 `protocol.ts`、`main.ts` 和 `presets/load.ts`。`serve()` 和 CLI 的 `main` 接受别的管道和路径，只给测试用。
+- `TAU_PIPE`：CLI 的 `main` 的管道参数默认取 `process.env.TAU_PIPE`，空或没设就用 `PIPE`。bash 工具给命令设的 `TAU_PIPE` 是服务实际监听的管道（[kb-tools](kb-tools.md#包装脚本)），所以测试服务里的 Agent 运行 `tau`，连的是测试服务。
+- `tau`（不带扩展名，`#!/bin/sh`，git 里是可执行）：给 bash 用的启动脚本，和 `tau.cmd` 放在仓库根目录。`MSYS_NO_PATHCONV=1 exec node "$(cygpath -w "$(dirname "$0")")/src/main.ts" "$@"`。`MSYS_NO_PATHCONV=1` 不让 msys 改写参数，否则以 `/` 开头的消息正文会被改成 Windows 路径；`cygpath -w` 因为 node 要 Windows 路径才找得到 `main.ts`。bash 找不到不带扩展名的 `tau`，所以光有 `tau.cmd` 不够：写全名才行，还经 cmd.exe 解析参数。
 - 服务的模型目录是 `builtinModels({ credentials })`（[kb-executor.md](kb-executor.md#调用模型actionsts)）。`credentials` 只读 `~/.pi/agent/auth.json` 里 `type` 为 `api_key` 的条目，每次调用都重读，从不写入（`src/server/credentials.ts`，理由见 [D23](kb-decisions.md#d23-凭据只读复用-pi-的凭据文件)）。
 - 文件里这个 provider 的 `key` 非空时，API Key 用它。没有这个条目（包括只有 OAuth 条目），或者 `key` 缺失时，pi-ai 从服务进程的环境变量读 API Key（例如 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`）。
 - `key` 是空串时各家不同。多数 provider 照样读环境变量。cloudflare-workers-ai、cloudflare-ai-gateway、google-vertex 把空串当成已有的值，不读环境变量，结果是没有配置。条目的 `env` 字段也是这样逐字段合并。
@@ -251,7 +253,7 @@ tau stop <进程>
 
 - 服务不加投影字段。`ps` 回的是 `observe` 的结果：字段归 [kb-kernel.md](kb-kernel.md#投影与命令)，`self` 的文字归 [kb-store.md](kb-store.md#self)，`tau ps` 的文字在本页。
 - 命令：`tau serve`、`tau start`、`tau send`、`tau ps`、`tau stop`。
-- Agent 的控制命令是库内工具，现在有 `handoff`（换段）。有 `bash` 的进程可以直接运行 `tau`：`self` 只读是接口的范围，不是权限边界（[设计稿第 9 节](../docs/design/mvp.md#9-自省)）。
+- Agent 的控制命令是库内工具：`handoff`（换段），`post`（寄信）、`spawn`（派生）、`stop_process`（停止）。后三个在预设 `tools` 含 `agents` 时才有，服务把读预设的函数传给 `handleNext`（[kb-store](kb-store.md#进程之间的工具)）。有 `bash` 的进程可以直接运行 `tau`：`self` 只读是接口的范围，不是权限边界（[设计稿第 9 节](../docs/design/mvp.md#9-自省)）。
 
 ## 入口
 
@@ -263,7 +265,8 @@ tau stop <进程>
 | `src/protocol.ts` | `PIPE`、`Request`、`Reply` |
 | `src/cli/main.ts` | `main`（命令和退出码）、`request`（连接、发一行、逐行交出回复）、`formatPs`、`ago` |
 | `src/main.ts` | 入口：`serve` 或 CLI；`~/.tau` 的位置；信号处理 |
-| `tau.cmd` | 启动脚本 |
+| `tau.cmd` | 启动脚本（cmd.exe） |
+| `tau` | 启动脚本（bash，git 里可执行） |
 | `test/server/e2e.test.ts` | faux 模型端到端；回执之前断开；连不上 |
 | `test/server/pairing.test.ts` | 服务层的工具调用配对：按顺序、运行中停止、运行中崩溃 |
 | `test/server/kill.test.ts`、`test/server/child.ts` | 子进程里的真服务被随机硬杀 |
@@ -282,6 +285,7 @@ tau stop <进程>
 | e2e：读文件、改一行、跑命令 | 第一行是回执，最后一行是 `{ final, "改好了。", done }`；文件被改；3 个工具结果进了段；`ps` 显示 `idle` |
 | e2e：回执之前断开 | 一个收下连接就断开的假服务：`tau send` 退出码 3，提示“结果未知” |
 | e2e：连不上 | `tau ps` 退出码 2，提示先运行 `tau serve` |
+| e2e：bash 工具运行 `tau ps` | faux 模型调 bash，运行仓库的 `tau` 脚本的 `ps`；`TAU_PIPE` 指着测试管道，输出里有这个测试进程，`$TAU_PROCESS` 是它的 ID |
 | pairing：3 个调用按顺序 | `read`、`bash`、`read` 各一个结果，按调用顺序紧跟助手消息；第 3 个读到第 2 个写的内容；模型的第二次请求里也是这个顺序 |
 | pairing：第 2 个调用运行中停止 | `stop` 只回回执；等着的连接收到 `{ final, "", stopped }`；命令要跑 60 秒，bash 远早于此退出（限 30 秒，留出 `ps` 和 `taskkill` 偶尔卡的约 5 秒）；结果依次是真结果、`INTERRUPTED`、`SKIPPED`；之后 `send` 照常；被中止的命令没有跑完 |
 | pairing：第 2 个调用运行中崩溃 | 进程内模拟崩溃（先关库句柄，再断开连接、停止监听）：客户端只拿到回执；崩溃点是 `running` 行；下一次 `serve()` 返回时已恢复并处理完，本轮以“服务重启”的错误结束；之后 `send` 照常；崩溃前的 bash 跑完了，结果没进库，也没被重做 |
@@ -294,6 +298,8 @@ tau stop <进程>
 
 ## 坑点
 
+- **`tau.cmd` 经 cmd.exe 解析参数，`&` 是命令分隔符。** 正文里的 `&` 会把命令截断。外部程序和系统计划任务寄信，要直接连管道，或者直接运行 `node <仓库>srcmain.ts`，不要经 `tau.cmd`。bash 里用 `tau` 脚本，它不经 cmd.exe。
+- **`MSYS_NO_PATHCONV` 会留在服务的环境里。** `tau` 脚本只为 `exec node` 设它，但它在 node 的环境里。在 Git Bash 里运行 `tau serve`，服务就带着它。所以 bash 工具构造命令环境时去掉它（[kb-tools](kb-tools.md#包装脚本)）；服务自己的环境不动。
 - **在 `pump` 之外推进状态。** `pump` 的同步是服务里“没有并发”的唯一来源。验证：pairing 的停止用例（中止及时到达）、kill 测试。
 - **pi 正在写凭据文件。** pi 在锁里原地截断再写，tau 读时不拿锁。读到空文件或半个文件时，这次模型调用以“不是合法的 JSON”结束，重发即可。窗口很小，但服务要跑很多年。
 - **回执提前发。** 回执必须在事务提交之后。kill 测试断言有回执的消息一条不丢。

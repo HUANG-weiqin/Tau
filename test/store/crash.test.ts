@@ -9,7 +9,7 @@ import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { createExecutor } from "../../src/executor/executor.ts";
 import type { Executor, Job } from "../../src/executor/executor.ts";
-import { unreachable, userLetter } from "../../src/kernel/types.ts";
+import { textContent, unreachable, userLetter } from "../../src/kernel/types.ts";
 import type { AssistantMessage, Input, Message, PresetSnapshot, ToolCall } from "../../src/kernel/types.ts";
 import { loadProcess, loadProcesses, openDb } from "../../src/store/db.ts";
 import { handleNext, send, startProcess } from "../../src/store/inputs.ts";
@@ -76,6 +76,8 @@ interface Run {
   /** 已经提交的用户消息。 */
   users: string[];
   stops: number;
+  /** 寄出的要回信的信。 */
+  asked: number;
   processes: string[];
 }
 
@@ -122,7 +124,13 @@ async function step(run: Run, kind: Kind): Promise<void> {
     }
     case "send": {
       const text = `<u${run.users.length + 1}>`;
-      send(db, pick(run, run.processes), userLetter(text));
+      const to = pick(run, run.processes);
+      const other = run.processes.find((id) => id !== to);
+      // 有两个进程时，一半的信是另一个进程寄来、要回信的：回信的投递也在崩溃注入的范围里。
+      if (other !== undefined && run.rand() < 0.5) {
+        send(db, to, { kind: "letter", letter: { from: { kind: "process", id: other, preset: PRESET.id }, content: textContent(text), hops: 1, replyTo: other } });
+        run.asked++;
+      } else send(db, to, userLetter(text));
       run.users.push(text);
       return;
     }
@@ -206,11 +214,11 @@ function userText(m: Message): string {
 }
 
 /** 从空库开始跑到没有事可做。给了 `crashAt` 时，在第 crashAt 步之后崩溃一次。 */
-async function play(empty: Empty, seed: number, crashAt: number | null): Promise<{ steps: number; crashed: { kind: Kind; window: boolean } | null }> {
+async function play(empty: Empty, seed: number, crashAt: number | null): Promise<{ steps: number; asked: number; backs: number; crashed: { kind: Kind; window: boolean } | null }> {
   const path = join(empty.dir, `${seed}-${crashAt ?? "none"}.db`);
   copyFileSync(empty.path, path);
   const { dbs } = empty;
-  const run: Run = { path, dbs, memory: fakeMemory(), rand: rng(seed), clock: 0, life: boot(path, dbs), started: [], users: [], stops: 0, processes: [] };
+  const run: Run = { path, dbs, memory: fakeMemory(), rand: rng(seed), clock: 0, life: boot(path, dbs), started: [], users: [], stops: 0, asked: 0, processes: [] };
   let steps = 0;
   let crashed: { kind: Kind; window: boolean } | null = null;
   for (let kinds = enabled(run); kinds.length > 0; kinds = enabled(run)) {
@@ -235,6 +243,9 @@ async function play(empty: Empty, seed: number, crashAt: number | null): Promise
   // 换段时，段末的用户消息（安全点并入的信也在其中）原样带进新段的第一条：新段的第一条不算。
   const said = processes.flatMap((p) => allMessages(db, p.id, true)).map(userText).join("\n");
   for (const u of run.users) assert.equal(said.split(u).length - 1, 1, `${u} 应该恰好出现一次`);
+  // 回信：每封要回信的信所在的那一轮结束时都寄了回信，一个也没丢，也没有重复。同一轮里的几封信，同一个发信的只回一封，所以不多于寄出的信数。
+  const backs = said.split("的回信，这一轮").length - 1;
+  assert.ok(run.asked === 0 ? backs === 0 : backs >= 1 && backs <= run.asked, `寄出 ${run.asked} 封要回信的信，收到 ${backs} 封回信`);
   // 库外副作用不会被重做；每个工具调用恰好一个结果；每条助手消息只写入一次。
   assert.equal(new Set(run.started).size, run.started.length, "有动作被开始了两次");
   const calls = messages.flatMap((m) => (m.role === "assistant" ? m.content.flatMap((c) => (c.type === "toolCall" ? [c.id] : [])) : []));
@@ -243,7 +254,7 @@ async function play(empty: Empty, seed: number, crashAt: number | null): Promise
   const replies = messages.filter((m) => m.role === "assistant").map((m) => JSON.stringify(m));
   assert.equal(new Set(replies).size, replies.length);
   db.close();
-  return { steps, crashed };
+  return { steps, asked: run.asked, backs, crashed };
 }
 
 /** 一个空库的模板。新建库要建表、落盘，在 Windows 上比复制文件慢十几倍，几百次重放都从复制它开始。 */
@@ -263,7 +274,14 @@ function emptyDb(t: TestContext): Empty {
 
 test("随机序列：真库上每一步之后不变量都成立，最后全部收敛", async (t) => {
   const empty = emptyDb(t);
-  for (const seed of SEEDS) await play(empty, seed, null);
+  let asked = 0;
+  let backs = 0;
+  for (const seed of SEEDS) {
+    const r = await play(empty, seed, null);
+    asked += r.asked;
+    backs += r.backs;
+  }
+  assert.ok(asked > 0 && backs > 0, `要回信的信 ${asked} 封，回信 ${backs} 封：没有覆盖到回信`);
 });
 
 test("崩溃注入：在每一个事务之后，以及“标记 running 之后、结果写回之前”杀掉服务", async (t) => {

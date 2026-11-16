@@ -59,7 +59,7 @@ type Phase =
 type Ended = "done" | "stepLimit" | "stopped" | { error: string };
 ```
 
-- `PresetSnapshot` 有 `id`、`workdir`、`model`（`<provider>/<model-id>`）、`tools`、`prompt`、`contextWindow`，还有可选的 `thinking`（pi-ai 的思考级别，预设没写就没有这个键）。`tools` 是 `read`、`write`、`edit`、`bash`、`memory` 的子集。预设文件的格式见[设计稿第 2 节](../docs/design/mvp.md#2-预设)。
+- `PresetSnapshot` 有 `id`、`workdir`、`model`（`<provider>/<model-id>`）、`tools`、`prompt`、`contextWindow`，还有可选的 `thinking`（pi-ai 的思考级别，预设没写就没有这个键）。`tools` 是 `read`、`write`、`edit`、`bash`、`memory`、`agents` 的子集：`agents` 是一组工具（`post`、`spawn`、`stop_process`），不是单个工具。预设文件的格式见[设计稿第 2 节](../docs/design/mvp.md#2-预设)。
 - `segment.memoryView` 是开段那一刻的记忆视图。以后算不出来，所以存。
 - `turn.steps` 必须存：一轮可以跨越换段。
 - `turn.queued` 存信件原样，写进段时才渲染。`turn.hops` 是本轮已经写进段的信的最大跳数，`turn.replyTo` 是本轮结束时要寄回信的进程，去重。规则见[设计稿 5.3](../docs/design/kernel-v2.md#53-进程之间寄信派生停止回信跳数)。
@@ -98,7 +98,7 @@ interface Env { now: Instant; memoryView: string }
 | 函数 | 文件 | 做什么 |
 |---|---|---|
 | `start(id, preset, env)` | `decide.ts` | 建一个 `idle` 进程：段号 1，`lastEffect` 为 0，`memoryView` 和 `createdAt` 取自 `env` |
-| `decide(p, seg, input, env)` | `decide.ts` | 返回 `{ process, append }`，不发出副作用 |
+| `decide(p, seg, input, env)` | `decide.ts` | 返回 `{ process, append, out }`，不发出副作用。`out` 是要寄的回信：`{ to, letter }[]` |
 | `effectOf(p, seg)` | `decide.ts` | `idle`：`null`。`awaitingModel`：`callModel(lastEffect, purpose)`。`awaitingTool`：`runTool(lastEffect, 第一个待执行的调用)` |
 | `buildContext(p, seg)`、`tailStart(seg)` | `context.ts` | 模型请求；段末用户消息的起点 |
 | `observe(p, seg, siblings, now)` | `observe.ts` | 投影 |
@@ -112,6 +112,7 @@ interface Env { now: Instant; memoryView: string }
 - 段号最多加一。段号变了，`append` 就是新段的全部消息。
 - 交接回复不写进旧段。换段前已有要追加的消息时，`decide` 抛错。所以一次只写一段。
 - 只有 `enter` 让 `lastEffect` 加一。一次 `decide` 最多进入一次等待阶段。
+- `out` 是要寄出的回信，只在 `endTurn` 里产生，规则见[回信](#回信)。存储层在同一个事务里把它们放进收件人的信箱（[kb-store](kb-store.md#处理一条输入)）。`decide` 自己不碰信箱。
 
 `buildContext`：
 
@@ -135,6 +136,9 @@ interface Env { now: Instant; memoryView: string }
 | `memory_get` | `key` | 是 | `tools` 含 `memory` |
 | `memory_set` | `key`、`value`、`version?` | 是 | `tools` 含 `memory` |
 | `memory_delete` | `key`、`version` | 是 | `tools` 含 `memory` |
+| `post` | `to`、`text`、`reply?` | 是 | `tools` 含 `agents` |
+| `spawn` | `preset`、`text` | 是 | `tools` 含 `agents` |
+| `stop_process` | `process` | 是 | `tools` 含 `agents` |
 | `self` | 无 | 是 | 总在 |
 | `handoff` | 无 | 是 | 总在 |
 
@@ -171,6 +175,7 @@ interface Env { now: Instant; memoryView: string }
 | `MESSAGE_MAX_BYTES` | 32 KiB | 已定 | 每个工具结果和 `decide` 写入的每条用户消息的字节上限，超出时保留头尾 |
 | `MARGIN_TOKENS` | 4096 | 已定 | 阈值之上的余量：交接指令、补的结果、ID、消息框架和估算误差 |
 | `ENDED_REASON_MAX_BYTES` | 1024 | 已定 | 出错的原因经 `clip` 截到这个字节数：D25 的说明、`self` 和回信的头都用 |
+| `HOPS_MAX` | 32 | 暂定 | `post` 和 `spawn` 寄出的信，跳数超过它就失败。回信不受限制。只防库内工具的循环（设计稿 5.3）。检查在存储层 `post`、`spawn` 的执行里（[kb-store](kb-store.md#进程之间的工具)），常量放在 `derive.ts` |
 | `IMAGES_PER_MESSAGE` | 2 | 暂定 | 工具结果和新段第一条消息最多带几张图片（[张数和省略行](#张数和省略行)）。设计稿 5.6 说明暂定的理由 |
 
 已定的值为什么是这样，见 [D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)；`ENDED_REASON_MAX_BYTES` 见 [D25](kb-decisions.md#d25-上一轮没有正常结束时下一条消息加说明)。
@@ -181,9 +186,9 @@ interface Env { now: Instant; memoryView: string }
 | `SKIPPED` | 未执行 | 其余补的结果 |
 | `HANDOFF_HEADER` | （这是你在上一个工作段结束时写的交接说明。）加一个空行 | 新段第一条消息的开头 |
 | `CARRY_HEADER` | （下面是写交接说明时还没处理的用户消息。） | 新段第一条消息里，带过来的用户消息之前的一行 |
-| 上一轮的说明：停止 | （用户停止了上一轮。上面还没回复的消息都已取消：不要回应它们，只回应下面这条消息。） | 上一轮以 `stopped` 结束时，下一条用户消息的开头 |
-| 上一轮的说明：步数用完 | （上一轮的步数用完了，停在中途。） | 以 `stepLimit` 结束时 |
-| 上一轮的说明：出错 | （上一轮出错，没有做完：<原因>） | 以 `error` 结束时 |
+| 上一轮的说明：停止 | （上一轮被停止。上面还没回复的消息都已取消：不要回应它们，只回应下面的信。） | 上一轮以 `stopped` 结束时，下一条用户消息的开头 |
+| 上一轮的说明：步数用完 | （上一轮的步数用完了，停在中途。如果有进程在等你回信，它们已经收到上一轮的结束通知，之后的回复不会寄给它们。） | 以 `stepLimit` 结束时 |
+| 上一轮的说明：出错 | （上一轮出错，没有做完：<原因>。如果有进程在等你回信，它们已经收到上一轮的结束通知，之后的回复不会寄给它们。） | 以 `error` 结束时 |
 | `HANDOFF_INSTRUCTION` | 不调用工具，写交接说明：目标、做了什么和结果、下一步、没完成的事；写清还没回复完的用户请求要什么，最后几条还没处理的用户消息会原样附在后面。468 字节，估成 234 token | `buildContext` 加在末尾，不入库 |
 
 ### 换段阈值
@@ -232,8 +237,8 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 
 - 一条消息的文本：D25 的说明（有的话）在最前面，空一行，然后是信。每封信是头、换行、正文；没有头的信只有正文。信之间空一行。
 - 一批信里有没有进程的信，决定用户的信加不加头。空闲时收到的一封用户的信，没有头；排队的几封用户的信合并，也没有头。
-- 回信同时带 `replyTo` 时，按回信算。回信不该带 `replyTo`（第 4 步保证）。
-- 只有 CLI 寄信，所以现在写进段的信都是用户的信。进程的信和回信的头靠测试直接构造信来检查。
+- 回信同时带 `replyTo` 时，按回信算。回信不带 `replyTo`（`sendReplies` 保证）。
+- 回信由 `decide` 产生，进程的信（`post`、`spawn`）由库内工具产生。CLI 寄的是用户的信。
 
 ### 消息的两种形状
 
@@ -270,7 +275,7 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 
 所以本轮不是正常结束时，回复可能是空串，也可能是带工具调用的那条助手消息的正文。本轮以停止、出错或步数用完结束、又有排队的消息时，排队的消息合并写在段末，回复是空串。
 
-服务的 `settle` 在提交之后的段上调用它（[kb-service.md](kb-service.md#观察者和最终回复)）。`decide` 现在不用它：回信是第 4 步。
+服务的 `settle` 在提交之后的段上调用它（[kb-service.md](kb-service.md#观察者和最终回复)）。`decide` 的 `endTurn` 在合并排队的信之前调用它，算[回信](#回信)的正文。所以停止时如果有排队的信，等着的连接拿到空串（和 v1 一样），回信拿到的是合并之前的最终回复。
 
 ### 累计用量
 
@@ -297,9 +302,21 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 **`endTurn(turn, ended)`**
 
 1. 给每个待执行的调用补一条结果，`isError` 为 `true`。阶段是 `awaitingTool` 时，第一个写 `INTERRUPTED`，其余写 `SKIPPED`。其它阶段全部写 `SKIPPED`。
-2. `turn.queued` 不空：按[信的头和合并](#信的头和合并)渲染成一条用户消息，时间戳 `env.now`，写入当前段。
-3. `ended` 是 `done` 且 `turn.queued` 不空：`continueTurn` 一个新的 `Turn`：`steps` 为 0，`queued` 为空，`hops` 取这批信的最大值，`replyTo` 取这批信的 `replyTo` 去重。
-4. 否则进入 `idle`，带上 `ended`。
+2. 算最终回复（`finalReply`）。这一步在合并排队的信之前。
+3. [寄回信](#回信)：收件人和正文由结束原因、`turn.replyTo`、`turn.queued` 算出，放进 `out`。
+4. `turn.queued` 不空：按[信的头和合并](#信的头和合并)渲染成一条用户消息，时间戳 `env.now`，写入当前段。
+5. `ended` 是 `done` 且 `turn.queued` 不空：`continueTurn` 一个新的 `Turn`：`steps` 为 0，`queued` 为空，`hops` 取这批信的最大值，`replyTo` 取这批信的 `replyTo` 去重。
+6. 否则进入 `idle`，带上 `ended`。排队的信仍在段里，它们的头里还写着“它在等回信”；下一封信前面的[上一轮的说明](#常量)负责纠正。
+
+### 回信
+
+回信是一轮结束时寄给等回信的进程的信（设计稿 5.3 规则 3 到 6）。只有 `endTurn` 产生它们。
+
+- 收件人：`turn.replyTo` 里的每个进程，正文是最终回复，可能为空。结束原因不是 `done` 时，再加排队的信里的 `replyTo`、不在 `turn.replyTo` 里的进程，正文为空。每个进程最多一封，顺序是 `turn.replyTo` 的顺序，再是排队的信出现的顺序。
+- 信件：`from` 是 `{ kind: "process", id: 自己, preset: 自己的预设 ID, reply: { ended } }`。出错时 `ended.error` 已经过 `endedReason`：整页的报错不进收件人的信箱。`hops` 是 `max(turn.hops, 排队的信的 hops) + 1`，不管结束原因是什么。没有 `replyTo`，所以回信永远不会引出新的回信。
+- 内容：没有最终回复时是空数组，不是一个空文本块。
+- 头只写结束原因，不说信处理了没有。收件人看正文为空、结束原因又不是正常结束，就知道没拿到回答。
+- 存储层把它们投进收件人的信箱（[kb-store](kb-store.md#处理一条输入)）。收件人在 `decide` 里不查是否存在：进程不删除，要回信的信是工具寄的，工具已查过收件人。
 
 ### 流程：每种输入
 
@@ -432,7 +449,7 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 测试辅助另外检查：
 
 - `test/kernel/helpers.ts` 的 `feed`：冻结旧状态、输入和环境，`decide` 改动它们就抛错；段号只能不变或加一，且新段之前没有消息。
-- `test/kernel/random.test.ts`：同样的输入给同样的结果；`lastEffect` 每次变 0 或 1；不变时副作用不变，或者回到了 `idle`；被丢弃的输入什么都不改；累计用量只在不丢弃的 `ok` 模型结果上增加，增量等于那条回复的用量。信有四种发送者（用户的信、进程的信、带 `replyTo` 的、回信），信和工具结果随机带图片块（每封信最多 2 张）。
+- `test/kernel/random.test.ts`：同样的输入给同样的结果；`lastEffect` 每次变 0 或 1；不变时副作用不变，或者回到了 `idle`；被丢弃的输入什么都不改；累计用量只在不丢弃的 `ok` 模型结果上增加，增量等于那条回复的用量。信有四种发送者（用户的信、进程的信、带 `replyTo` 的、回信），信和工具结果随机带图片块（每封信最多 2 张）。每条输入之后检查回信：一轮结束时 `out` 的收件人、正文、头和跳数都按规则 4 算出；其余时候 `out` 为空。
 
 ## 投影与命令
 
@@ -466,7 +483,7 @@ type PhaseView =
 | 文件 | 内容 |
 |---|---|
 | `src/kernel/types.ts` | 全部类型、`unreachable` |
-| `src/kernel/decide.ts` | `start`、`decide`、`effectOf`、`continueTurn`、`endTurn`、`endedNote`（上一轮的说明）、`header`、`render`、`fit`、`userMessage`、`toolResult`、`addUsage`、`INTERRUPTED`、`SKIPPED` |
+| `src/kernel/decide.ts` | `start`、`decide`、`effectOf`、`continueTurn`、`endTurn`、`sendReplies`（回信）、`endedNote`（上一轮的说明）、`header`、`render`、`fit`、`userMessage`、`toolResult`、`addUsage`、`INTERRUPTED`、`SKIPPED` |
 | `src/kernel/derive.ts` | 派生值、`clip`、`utf8Bytes`、`finalReply`、`endedText`、`endedReason`、常量 |
 | `src/kernel/context.ts` | `buildContext`、`tailStart`、`systemPrompt`、`toolDefinitions`、交接文本 |
 | `src/kernel/observe.ts` | `observe` |
@@ -480,7 +497,8 @@ type PhaseView =
 | `test/kernel/usage.test.ts` | 累计用量：每种回复都加，丢弃的和被中断的不加 |
 | `test/kernel/context.test.ts` | 系统提示词、工具描述、交接请求去掉段末用户消息 |
 | `test/kernel/acceptance.test.ts` | 换段不会无限循环；5 种窗口下，主路径和三条角落路径的交接请求加交接说明放得进窗口；工具调用太多的回复不写入 |
-| `test/kernel/random.test.ts` | 带种子的随机序列 |
+| `test/kernel/replies.test.ts` | 回信：每种结束原因、最终回复在合并之前算、排队的信里的 `replyTo`、每个进程一封、跳数 |
+| `test/kernel/random.test.ts` | 带种子的随机序列；每轮结束时 `out` 的收件人、正文、头和跳数都按规则 4 检查 |
 | `test/kernel/longrun.test.ts` | 长跑：进程记录和当前段有上界 |
 | `test/kernel/regressions.test.ts` | 审查发现的缺陷的最小反例 |
 | `test/kernel-imports.test.ts` | import 和纯度扫描 |
@@ -492,6 +510,7 @@ type PhaseView =
 - **按 ID 配对。** 重复或为空的 ID 会让进程永远等一个“已有结果”的调用。`pendingCalls` 和 `endTurn` 都按位置算。验证：`regressions.test.ts` 的重复 ID 用例，`assertInvariants` 的配对检查。
 - **过时的结果。** 编号不对、进程 `idle`、种类不对的结果一律丢弃。每个工具都有新编号，所以上一个工具迟到的结果不会被当成下一个的。验证：`flow.test.ts` 的“4.2 丢弃过时和重复的结果”。
 - **安全点并入的信，这一轮可能随后异常结束。** 信已经在段里，模型还没写出回复，这一轮就被停止、出错、`length`、工具调用太多、交接失败，或者交接以后步数用完。最终回复是空串，寄信方收到正文为空的回信。下一封信前面的 D25 说明会告诉模型这一点。
+- **回信的最终回复要在合并排队的信之前算。** 顺序是补工具结果、算最终回复、寄回信、再合并。先合并，段末就是用户消息，最终回复成了空串，等回信的进程拿不到这一轮的答案。验证：`replies.test.ts` 的“最终回复在合并排队的信之前算”。
 - **并入的信会在新旧两段里各有一份。** 换段时它在旧段末尾，也原样带进新段的第一条。数“这条信出现几次”的测试要跳过新段的第一条。
 - **步数用完时安全点不合并。** 先查步数，再合并。合并以后再 `continueTurn` 会让发起这一轮的进程拿到空串，而不合并时它拿到最后一条助手消息的正文。
 - **换段循环靠步数收住。** 新段一开始就超过阈值时（例如系统提示词和工具描述已经超过），每次换段都成功，又立即再换段，直到 `stepLimit`。每条消息最多调用 `STEPS_PER_TURN` 次模型。不要让交接调用不计步。验证：`acceptance.test.ts`。

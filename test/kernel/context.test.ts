@@ -105,3 +105,26 @@ test("idle 和 awaitingTool 时也不加交接指令", () => {
   assert.deepEqual(buildContext(proc(["read"], { tag: "idle", ended: "done" }), seg).messages, seg);
   assert.deepEqual(buildContext(proc(["read"], { tag: "awaitingTool", turn: { steps: 1, queued: [], hops: 0, replyTo: [] } }), seg).messages, seg);
 });
+
+test("agents 组：post、spawn、stop_process 在库内，参数照设计稿 5.3，预设里没有 agents 就没有它们", () => {
+  assert.deepEqual(names(proc(["agents"])), ["handoff", "post", "self", "spawn", "stop_process"]);
+  const p = preset({ tools: ["agents"] });
+  const params = (name: string) => {
+    const spec = findTool(p, name)!;
+    assert.equal(spec.inStore, true, `${name} 是库内工具`);
+    const schema = spec.parameters as unknown as { properties: Record<string, { type: string }>; required: string[]; additionalProperties: boolean };
+    assert.equal(schema.additionalProperties, false);
+    return { properties: Object.fromEntries(Object.entries(schema.properties).map(([k, v]) => [k, v.type])), required: schema.required };
+  };
+  assert.deepEqual(params("post"), { properties: { to: "string", text: "string", reply: "boolean" }, required: ["to", "text"] });
+  assert.deepEqual(params("spawn"), { properties: { preset: "string", text: "string" }, required: ["preset", "text"] });
+  assert.deepEqual(params("stop_process"), { properties: { process: "string" }, required: ["process"] });
+  // post 和 spawn 的说明写明回信的三件事。
+  for (const name of ["post", "spawn"]) {
+    const d = findTool(p, name)!.description;
+    assert.ok(d.includes("只在处理这封信的那一轮结束时回信一次，之后的几轮不回"), `${name}：只回一轮`);
+    assert.ok(d.includes("同一轮里处理了你的几封信时，只回一封"), `${name}：同一轮只回一封`);
+    assert.ok(d.includes("结束本轮去等别的事时，等你回信的进程会立刻收到你这时的回复"), `${name}：结束本轮去等别的事`);
+  }
+  assert.equal(findTool(preset({ tools: ["read"] }), "post"), undefined);
+});

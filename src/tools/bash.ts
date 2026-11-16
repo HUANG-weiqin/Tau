@@ -78,7 +78,22 @@ async function killAll(exe: string, pid: number | undefined, pgidFile: string): 
   await killTrees(await group());
 }
 
-export async function bash(args: { command: string; timeout?: number }, workdir: string, signal: AbortSignal): Promise<ToolResultContent> {
+/** 命令的环境：服务的环境，加上进程 ID 和服务实际监听的管道名；去掉 MSYS_NO_PATHCONV。 */
+export interface BashContext {
+  process: string;
+  pipe: string;
+}
+
+// MSYS_NO_PATHCONV 是 tau 脚本为 exec node 设的，会留在服务的环境里（kb-service 坑点）。命令要照常转换路径，所以去掉。
+// Windows 的环境变量名不分大小写，所以按大写比较；TAU_PROCESS、TAU_PIPE 也先去掉再加，免得继承来的值留下。
+const OWN_VARS = new Set(["MSYS_NO_PATHCONV", "TAU_PROCESS", "TAU_PIPE"]);
+const commandEnv = (ctx: BashContext): NodeJS.ProcessEnv => ({
+  ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !OWN_VARS.has(k.toUpperCase()))),
+  TAU_PROCESS: ctx.process,
+  TAU_PIPE: ctx.pipe,
+});
+
+export async function bash(args: { command: string; timeout?: number }, workdir: string, signal: AbortSignal, ctx: BashContext): Promise<ToolResultContent> {
   const seconds = Math.min(args.timeout ?? DEFAULT_SECONDS, MAX_SECONDS);
   if (!(seconds > 0)) return fail(`timeout 必须是正数（秒）：${args.timeout}`);
   if (signal.aborted) return fail("已中止，命令没有运行");
@@ -87,7 +102,7 @@ export async function bash(args: { command: string; timeout?: number }, workdir:
   const out = output();
   const pgidFile = path.join(os.tmpdir(), `tau-bash-${randomUUID()}.pgid`);
   return new Promise((resolve) => {
-    const env = { ...process.env, TAU_PGID: pgidFile, TAU_COMMAND: args.command };
+    const env = { ...commandEnv(ctx), TAU_PGID: pgidFile, TAU_COMMAND: args.command };
     const child = spawn(exe, ["-c", WRAPPER], { cwd: workdir, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     let code: number | null = null;
     // 正在结束进程时，它完成后给出结束的原因。

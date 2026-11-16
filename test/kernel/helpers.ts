@@ -103,11 +103,14 @@ export function current(w: World): readonly Message[] {
   return w.segments.get(w.p.segment.seq) ?? [];
 }
 
+export type Out = ReturnType<typeof decide>["out"][number];
+
 export interface Step {
   prev: Process;
   before: Effect | null;
   after: Effect | null;
   append: Message[];
+  out: Out[];
 }
 
 /**
@@ -128,7 +131,7 @@ export function feed(w: World, input: Input, e: Env = env(0)): Step {
   w.segments.set(seq, next);
   w.p = r.process;
   assertInvariants(w.p, next);
-  return { prev, before, after: effectOf(w.p, next), append: r.append };
+  return { prev, before, after: effectOf(w.p, next), append: r.append, out: r.out };
 }
 
 /** 回复进程正在等的模型调用。 */

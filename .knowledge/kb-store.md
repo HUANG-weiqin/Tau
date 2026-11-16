@@ -11,7 +11,7 @@
 - `~/.tau/tau.db` 的位置、表结构和 PRAGMA。
 - 三个事务：启动进程、收一条命令、处理一条输入。
 - 处理输入时同步待办副作用表（`effects`）。
-- 在事务里执行库内工具：`self`、`handoff` 和 `memory_*`。
+- 在事务里执行库内工具：`self`、`handoff`、`memory_*`，以及预设含 `agents` 时的 `post`、`spawn`、`stop_process`。
 
 它不负责：
 
@@ -79,7 +79,7 @@ CREATE TABLE blobs (
 
 | 表 | 一行是什么 | 谁写 |
 |---|---|---|
-| `processes` | 一个进程记录。`state_json` 是 `Process` 的 JSON | `startProcess` 插入，`handleNext` 整行更新 |
+| `processes` | 一个进程记录。`state_json` 是 `Process` 的 JSON | `startProcess` 插入；`spawn` 在 `handleNext` 里插；`handleNext` 整行更新 |
 | `segment_messages` | 一条工作段消息。`message_json` 是 pi-ai 的消息，原样存 | `handleNext` 追加 |
 | `mailbox` | 一条输入。`input_json` 是 `Input` 的 JSON | 见下 |
 | `effects` | 进程正在等的库外副作用：编号 `n` 和状态 | `handleNext` 和执行器 |
@@ -97,7 +97,9 @@ CREATE TABLE blobs (
 |---|---|
 | 信件（CLI 寄来的是用户的信） | `startProcess`、`send` |
 | `stop` | `send` |
+| 回信 | `handleNext`：处理一条输入的 `decide` 给出 `out`，投进收件人的信箱 |
 | 库内工具的结果、工具不存在的错误结果 | `handleNext` 的同步步骤 |
+| `post` 的信、`spawn` 的第一封信、`stop_process` 的 `stop` | `handleNext` 的同步步骤：库内工具执行时，放进别的进程的信箱 |
 | 库外副作用的 `modelResult`、`toolResult` | 执行器完成动作时 |
 | `interrupted` 结果 | 执行器的启动恢复 |
 
@@ -118,7 +120,7 @@ CREATE TABLE blobs (
 
 `tx(db, f)`：`BEGIN IMMEDIATE`，执行 `f`，`COMMIT`。`f` 抛出时，如果库还开着并且还在事务里，就 `ROLLBACK`，再把错误抛出去。
 
-行的读写函数都在 `db.ts`：`loadProcess`、`loadProcesses`（按 ID 排序）、`saveProcess`、`loadSegment`、`appendMessages`、`post`。它们不开事务。写入都由调用方放进 `tx`。
+行的读写函数都在 `db.ts`：`loadProcess`、`loadProcesses`（按 ID 排序）、`saveProcess`、`loadSegment`、`appendMessages`、`putMail`（把一条输入放进一个进程的信箱）。它们不开事务。写入都由调用方放进 `tx`。
 
 ### 三个事务
 
@@ -128,7 +130,7 @@ CREATE TABLE blobs (
 |---|---|---|
 | `startProcess(db, memory, id, preset, text, now)` | 用 `start` 建 `idle` 进程记录并插入；第一条消息作为用户的信进信箱 | ID 重复：主键冲突，什么都不写 |
 | `send(db, id, input)` | 把信件或 `stop` 放进已有进程的信箱 | 进程不存在：抛出“没有这个进程”，什么都不写 |
-| `handleNext(db, memory, now)` | 处理信箱里最早的一条输入 | 抛出时整个事务回滚，这条输入留在队头 |
+| `handleNext(db, memory, now, readPreset?)` | 处理信箱里最早的一条输入。`readPreset` 给 `spawn` 读预设用，服务传 `loadPreset` | 抛出时整个事务回滚，这条输入留在队头 |
 
 `Env` 怎样算：`now` 由调用方传入；预设 `tools` 含 `memory` 时，`memoryView` 是 `memory.view(preset.id)`，否则是空串，不碰记忆。
 
@@ -139,11 +141,12 @@ CREATE TABLE blobs (
 1. 取信箱里 `seq` 最小的一行。不分进程，取全局最早的。信箱空就返回 `null`。
 2. 读这一行所属进程的进程记录。不存在就抛出。
 3. 读当前段：`segment_seq` 等于记录里段号的全部消息，按 `seq` 排序。
-4. 算 `Env`，调用 `decide(旧记录, 当前段, 输入, env)`，得到新记录和要追加的消息。
+4. 算 `Env`，调用 `decide(旧记录, 当前段, 输入, env)`，得到新记录、要追加的消息和要寄的回信。
 5. 写回进程记录。把追加的消息写进新记录的段：没换段时序号接着当前段，换段时从 0 开始。一次 `decide` 只写一段（[kb-kernel.md](kb-kernel.md)）。
-6. 删除这条信箱行。
-7. 同步副作用，见下一节。
-8. 提交，返回 `{ process: 新记录, abort }`。
+6. 投递回信：`decide` 给出的 `out` 里每封回信，放进收件人的信箱。收件人是别的进程，它的记录和段这里不读不写。
+7. 删除这条信箱行。
+8. 同步副作用，见下一节。库内工具在这一步执行：它们可能写别的进程的信箱，`spawn` 还插进程行。
+9. 提交，返回 `{ process: 新记录, abort }`。
 
 `abort` 不为 `null` 时，是这个事务删掉的 `running` 行的编号。调用方在提交之后中止执行器里的这个动作。
 
@@ -160,7 +163,7 @@ CREATE TABLE blobs (
 | 没有 | 结束 |
 | `callModel` | 插入一行 `pending` |
 | `runTool`，库外工具 | 插入一行 `pending` |
-| `runTool`，库内工具 | 在这个事务里执行，结果作为 `toolResult` 放进信箱 |
+| `runTool`，库内工具 | 在这个事务里执行（`post`、`spawn`、`stop_process` 还写别的进程的信箱，`spawn` 还插进程行），结果作为 `toolResult` 放进信箱 |
 | `runTool`，不认识的工具或预设里没有的工具 | 把内容为这句文本的错误结果（`工具 <name> 不存在，或者预设里没有它。`）作为 `toolResult` 放进信箱 |
 
 - 库内还是库外，按进程快照里的预设判断：`findTool(p.preset, name)` 的 `inStore`。
@@ -179,6 +182,9 @@ CREATE TABLE blobs (
 | 被删掉的 `effects` 行 | 在等的编号变了，并且 `before` 存在 |
 | 一个记忆键 | 库内工具是 `memory_*` 时 |
 | 全部进程记录 | 库内工具是 `self` 时 |
+| 收件人或目标的进程记录（只查存不存在） | 库内工具是 `post`、`stop_process` 时 |
+| 预设文件，和子进程的记忆视图 | 库内工具是 `spawn` 时（通过 `readPreset` 和 `Memory`） |
+| 已有的进程 ID | `spawn` 算新 ID 时，每次尝试一次 |
 
 不读旧段，也不读别的进程的工作段。
 
@@ -211,7 +217,7 @@ CREATE TABLE blobs (
 | 开不了 WAL 就拒绝打开 | 不降级运行。测试因此用临时文件，不用 `:memory:` |
 | 建表和写 `user_version` 在一个事务里 | 建到一半崩溃时版本仍是 0，下次打开重新建 |
 | 不认识的工具和预设里没有的工具，回同一条错误 | 对这个进程是同一件事：它用不了这个工具 |
-| 库内工具只依赖 `Memory` 接口 | 实现由服务传入；测试换成假记忆库 |
+| 库内工具只依赖 `Memory` 接口和 `readPreset` | 实现由服务传入；测试换成假的 |
 
 ## 认知模型
 
@@ -256,6 +262,7 @@ CREATE TABLE blobs (
 | `self` | 总有 |
 | `handoff` | 总有 |
 | `memory_get`、`memory_set`、`memory_delete` | 预设 `tools` 含 `memory` 时 |
+| `post`、`spawn`、`stop_process` | 预设 `tools` 含 `agents` 时 |
 
 共同规则（`src/store/instore.ts` 的 `runInStore`）：
 
@@ -317,20 +324,72 @@ CREATE TABLE blobs (
 
 没有参数。结果是 `将在这批工具结果之后换段。`，`isError` 为假。它什么都不改：换段由 `decide` 发起，条件和时机见 [kb-kernel.md](kb-kernel.md#主动换段handoff)。
 
+### 进程之间的工具
+
+预设 `tools` 含 `agents` 时才有。参数和说明在 `src/kernel/tools.ts`（[kb-kernel](kb-kernel.md#工具描述)）。执行在 `runInStore`，在处理输入的事务里，和工具结果一起提交：崩溃时要么都发生，要么都没发生。
+
+| 工具 | 参数 | 做什么 |
+|---|---|---|
+| `post` | `to`、`text`、`reply?` | 往 `to` 的信箱放一封信。`reply` 为真时，信带 `replyTo` = 自己 |
+| `spawn` | `preset`、`text` | 读预设，建新进程（`parent` = 自己），第一封信带 `replyTo` = 自己 |
+| `stop_process` | `process` | 往目标的信箱放一个 `stop` |
+
+信的 `from` 是 `{ kind: "process", id: 自己, preset: 自己的预设 ID }`，内容是一个文本块，`hops` = `turn.hops + 1`。
+
+结果：
+
+| 情形 | 结果 | `isError` |
+|---|---|---|
+| `post` 成功 | `已寄给 <id>。`；`reply` 为真时再加 `它处理这封信的那一轮结束时会给你回信，之后的几轮不会。` | 否 |
+| `spawn` 成功 | `已建进程 <id>，预设 <preset>。它这一轮结束时会给你回信，之后的几轮不会。` | 否 |
+| `stop_process` 成功 | `已给 <id> 发出停止。` | 否 |
+| 收件人或目标不存在 | `没有进程 <id>。` | 是 |
+| `post` 给自己 | `不能给自己寄信。` | 是 |
+| `stop_process` 停自己 | `不能停止自己。要结束这一轮，直接回复，不再调用工具。` | 是 |
+| 预设读不出 | `预设 <preset> 读不出：<原因>`，原因是读预设抛出的错误信息 | 是 |
+| 跳数到上限 | `跳数到上限（32）：这封信是被进程之间的信一路引出来的。结束本轮，等用户的下一封信。` | 是 |
+| 参数不对 | `参数错误：<说明>` | 是 |
+
+- 永不抛错：抛错会让事务回滚，这条输入留在队头，所有进程都卡住（见[坑点](#坑点)）。所有失败都是 `isError` 的结果，什么都不写。
+- 检查顺序：参数，对象是不是自己，对象存不存在，跳数，（`spawn`）读预设。`spawn` 没有“对象”这两步。
+- 跳数：用户的信 `hops` 为 0；`post`、`spawn` 寄出的信 `hops` = `turn.hops + 1`，超过 `HOPS_MAX`（32）就失败；回信不受这个限制。跳数只保证进程之间的信不会无限循环，不限制花费，也不是边界：从 bash 寄的信都是用户的信，`hops` 为 0。
+- 顺序委派（子进程不再委派，父进程每次等到回信再派下一个）：每派一个、收一封回信，`turn.hops` 加 2。第 k 次寄出的信跳数是 2k − 1，所以一封用户的信引出的顺序委派最多 16 次，第 17 次是 33，报跳数到上限。每多一层嵌套，约减半。安全点并入的旧回信，也会把用户新开的一轮的跳数抬高。真不够用时放宽 `HOPS_MAX`，放宽它不算改契约。
+
+`spawn`：
+
+- 不调用 `startProcess`，因为事务不能嵌套。它用 `start` 建记录，加上 `parent`，插入 `processes`，再把第一封信放进新进程的信箱。
+- `start` 的 `Env` 按子进程的预设算：记忆视图是子进程的，不是父进程的（`envFor`）。
+- 预设用 `handleNext` 收到的 `readPreset` 读（服务传的是 `loadPreset`，测试传假的）。读出的是快照，读不出（抛出）就是错误结果，什么都不建。不传时，任何预设都读不出。
+- 新 ID：`spawnId(父进程 ID, 这次调用的副作用编号, 尝试次数)`，取 sha256 的前 8 个十六进制字符，尝试次数从 0 开始。已有这个 ID 的进程，就把尝试次数加一再算。副作用编号是 `p.lastEffect`：进程在等的就是这次调用。所以崩溃后重放得到同一个 ID。
+- 第一封信带 `replyTo` = 自己：子进程这一轮结束时回信一次，之后的几轮不回。
+
+`stop_process`：
+
+- `stop` 结束目标此刻正在跑的这一轮。它不认是哪一轮：发出之前目标已经开了新一轮，停掉的就是新的那一轮。目标空闲时什么都不发生。
+- 被停止的一轮照样寄回信，所以停一个子进程，会唤醒在等它的父进程。
+- 要停一棵进程树：先停全部子孙，再停祖先，直到 `ps` 里都空闲。这不原子，只能尽力而为：被回信唤醒的祖先，在停止到达之前可能又建了新的子进程，要再停一遍；每个被回信唤醒的祖先，多一次被中止的模型调用；能运行命令的进程用 `tau start` 建的进程没有 `parent`，按 `parent` 找不到。
+
+两处规则的例外（理由和别的做法见 [D36](kb-decisions.md#d36-第-4-步第二部分进程之间的工具的执行和两处例外)）：
+
+- “库内工具只碰库”：`spawn` 还读预设文件（以后还有工具定义文件），查工作目录。
+- “处理一条输入只读进程记录和当前工作段”：`post`、`stop_process` 读收件人的进程记录，`spawn` 读文件。
+
 ## 入口
 
 | 文件 | 内容 |
 |---|---|
 | `src/store/db.ts` | `SCHEMA`、`SCHEMA_VERSION`、`openDb`、`tx`、行的读写 |
 | `src/store/inputs.ts` | `startProcess`、`send`、`handleNext`、同步副作用 |
-| `src/store/instore.ts` | `runInStore`：`self`、`handoff` 和 `memory_*` |
+| `src/store/instore.ts` | `runInStore`：`self`、`handoff`、`memory_*`、`post`、`spawn`、`stop_process`；`spawnId`、`envFor`、`ReadPreset` |
 | `src/memory/kv.ts` | `Memory` 的 SQLite 实现，服务用它；规则见 [kb-memory.md](kb-memory.md) |
 | `test/store/db.test.ts` | 表、PRAGMA、表结构版本、主键和 `CHECK`、编号不复用、回滚 |
 | `test/store/inputs.test.ts` | 三个事务、同步规则、库内工具、只读当前段（读取行数和查询计划） |
 | `test/store/invariants.ts` | 存储层不变量 |
 | `test/store/regressions.test.ts` | 审查发现的缺陷的最小反例 |
-| `test/store/crash.test.ts` | 真库上的随机序列；在每个事务之后崩溃 |
+| `test/store/crash.test.ts` | 真库上的随机序列（含要回信的信和回信）；在每个事务之后崩溃 |
 | `test/store/longrun.test.ts` | 多次换段后，处理一条输入读取的行数不增长 |
+| `test/store/replies.test.ts` | 回信在处理那条输入的事务里投递（回滚时一起撤销）；同一轮合并的几封信只回一封 |
+| `test/store/agents.test.ts` | `post`、`spawn`、`stop_process` 的结果和失败；A 问 B、B 被停止；互相寄信停在 `HOPS_MAX`；顺序委派 16 次；`spawn` 的 ID 和记忆视图；回滚；在每一步之后崩溃，结果和不崩溃时一样 |
 | `test/store/executor.test.ts` | 执行器和竞态（见 [kb-executor.md](kb-executor.md)） |
 | `test/store/fixtures.ts` | 临时库、假记忆库、`countReads`、带种子的随机数 |
 
@@ -338,7 +397,7 @@ CREATE TABLE blobs (
 
 ## 坑点
 
-- **一条抛错的输入会卡住所有进程。** `handleNext` 取全局最早的一行。事务抛出就回滚，这一行留在队头，以后每次都在它这里抛出。所以库内工具不能因为模型给的参数抛出：参数为 `null` 时按空对象处理。验证：`regressions.test.ts`。
+- **一条抛错的输入会卡住所有进程。** `handleNext` 取全局最早的一行。事务抛出就回滚，这一行留在队头，以后每次都在它这里抛出。所以库内工具不能因为模型给的参数抛出：参数为 `null` 时按空对象处理。`post`、`spawn`、`stop_process` 也不抛：收件人不存在、跳数到上限、预设读不出，都是 `isError` 的结果。验证：`regressions.test.ts`、`agents.test.ts`。
 - **`tx` 只接同步函数。** `f` 返回 promise 时，`COMMIT` 会在 promise 完成之前执行。库内工具和 `Memory` 的实现都必须同步。
 - **`tx` 不能嵌套。** 库内工具和 `Memory` 已经在 `handleNext` 的事务里。里面再调用 `tx`，`BEGIN` 会抛出，整个外层事务回滚。
 - **同步要比较编号，不能只看新阶段在等什么。** 结果还在信箱里排队时，先处理一条用户消息，编号不变，副作用不能再插入或再执行一次。验证：`executor.test.ts` 的两个“结果还在信箱里排队”竞态。

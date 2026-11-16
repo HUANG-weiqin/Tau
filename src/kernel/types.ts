@@ -13,7 +13,7 @@ export type ProcessId = string;
 /** 毫秒时间戳。 */
 export type Instant = number;
 
-export type PresetTool = "read" | "write" | "edit" | "bash" | "memory";
+export type PresetTool = "read" | "write" | "edit" | "bash" | "memory" | "agents";
 
 /** 启动时冻结的预设。 */
 export interface PresetSnapshot {

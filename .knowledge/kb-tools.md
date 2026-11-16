@@ -17,7 +17,7 @@
 - 工具描述：名称、参数、哪些预设有。那是 [kb-kernel](kb-kernel.md#工具描述)。
 - 参数校验和按名字分派。那是执行器（[kb-executor](kb-executor.md#运行工具actionsts)）。
 - 结果的统一裁剪。那是 `decide`（[kb-kernel](kb-kernel.md#决策)）。
-- 库内工具 `memory_*`、`self` 和 `handoff`。见 [kb-store](kb-store.md#投影与命令)。
+- 库内工具 `memory_*`、`self`、`handoff`、`post`、`spawn` 和 `stop_process`。见 [kb-store](kb-store.md#投影与命令)。
 - 权限和沙箱。没有（[D7](kb-decisions.md#d7-第一版不做沙箱)）。
 
 本页接管[设计稿第 10 节](../docs/design/mvp.md#10-工具)里 `read`、`write`、`edit`、`bash` 的细节和路径规则。
@@ -31,12 +31,12 @@
 | `read(args, workdir)` | `path`、`offset?`、`limit?` | 否 |
 | `write(args, workdir)` | `path`、`content` | 否 |
 | `edit(args, workdir)` | `path`、`old`、`new`、`replaceAll?` | 否 |
-| `bash(args, workdir, signal)` | `command`、`timeout?` | 是 |
+| `bash(args, workdir, signal, ctx)` | `command`、`timeout?`；`ctx` 是 `{ process, pipe }`：进程 ID 和服务实际监听的管道名 | 是 |
 
 - 都返回 `Promise<ToolResultContent>`，失败写成结果。
 - 一个例外：`bash` 的命令含 NUL 字符时，`spawn` 同步抛出，promise 被拒绝。执行器把它变成 `工具执行失败：<信息>`（[kb-executor](kb-executor.md#失败怎样变成结果)）。
 - `workdir` 是预设快照的工作目录，一定是绝对路径。
-- 工具不读库，不写库，不知道进程。唯一的模块状态是 `bash.ts` 缓存的 shell 路径。
+- 工具不读库，不写库。`bash` 只从执行器拿到进程 ID 和管道名，交给命令的环境，不用它们做别的。唯一的模块状态是 `bash.ts` 缓存的 shell 路径。
 
 ### 参数从哪来
 
@@ -110,14 +110,17 @@
 ```text
 spawn(<根>\bin\bash.exe, ["-c", WRAPPER])
   cwd = workdir；stdin 是空设备；stdout、stderr 是管道；不弹窗口
-  env = 服务的全部环境变量 + TAU_PGID（pgid 文件路径）+ TAU_COMMAND（命令原文）
+  env = 服务的环境变量（去掉 MSYS_NO_PATHCONV）+ TAU_PROCESS（进程 ID）+ TAU_PIPE（管道名）
+        + TAU_PGID（pgid 文件路径）+ TAU_COMMAND（命令原文）
 WRAPPER = echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMMAND"
 ```
 
 - 命令经环境变量传入，不拼进命令行。反斜杠和引号原样到达 bash。直接用 `-c <命令>` 时，Windows 命令行会把 `\\` 压成 `\`。
 - 先写 pgid 文件，再执行命令。`$$` 是 bash 的 msys pid，也是它的进程组号。
 - 写不进 pgid 文件（例如临时目录不存在）就不执行命令。bash 报错，退出码 1。否则超时或中止时，没人按进程组去找命令启动的 msys 进程。`LANG` 也可能让它写不进（见坑点“临时目录和 `LANG`”）。
-- `export -n` 之后，命令启动的子进程看不到这两个变量。命令自己的 shell 里仍能读到。
+- `export -n` 之后，命令启动的子进程看不到 `TAU_PGID` 和 `TAU_COMMAND`。命令自己的 shell 里仍能读到。
+- `TAU_PROCESS` 和 `TAU_PIPE` 是给命令用的：命令里运行 `tau` 时，CLI 读 `TAU_PIPE` 连到这个服务，不连正式管道（[kb-service](kb-service.md#启动脚本和入口)）。它们不导出为 `-n`，子进程也看得到。服务环境里继承来的同名变量先去掉再设，所以命令看到的一定是这次的值。
+- `MSYS_NO_PATHCONV` 去掉：`tau` 脚本为 `exec node` 设了它，会留在服务的环境里；不去掉，bash 的每条命令都不再转换路径（[kb-service 的坑点](kb-service.md#坑点)）。环境变量名在 Windows 上不分大小写，所以按大写比较。
 - bash 的退出码就是命令的退出码。命令里的 `exit N` 结束整个 bash。
 
 `eval` 和直接 `-c` 可见的差别：
@@ -275,7 +278,7 @@ WRAPPER = echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$
 
 | 测试 | 证明 |
 |---|---|
-| 基本 | 输出和退出码；`timeout` 超过 600 照常运行；非零退出码是错误；多行命令和 `set -e`；反斜杠和引号原样；子进程看不到 `TAU_` 变量；stderr 收进输出；补换行；在工作目录里运行 |
+| 基本 | 输出和退出码；`timeout` 超过 600 照常运行；非零退出码是错误；多行命令和 `set -e`；反斜杠和引号原样；命令只看得到 `TAU_PROCESS`、`TAU_PIPE` 两个 `TAU_` 变量（传命令用的看不到；服务继承来的同名值被换掉）；服务的环境带 `MSYS_NO_PATHCONV` 时，命令看不到它，msys 路径照常转换；stderr 收进输出；补换行；在工作目录里运行 |
 | 不运行 | `timeout` 不是正数；调用前已中止；pgid 文件写不进 |
 | 超时 | 1 秒超时：远早于 60 秒的命令返回，是错误，pgid 文件已删。bash 启动卡住时没有超时前的输出，所以这里不要求有 `before` |
 | 结束孙进程 | 超时和中止各两种孙进程：探针在 Windows 父进程链上（原生），或是 bash fork 后 exec 的 `sh` 的子进程（msys，只有按进程组才找得到）。探针启动过，后来断开。原生的超时测试还查超时前的输出保留，探针在第 8 到 15 秒之间断开 |
@@ -305,7 +308,7 @@ WRAPPER = echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$
 - **临时目录和 `LANG`。** msys 按 `LANG` 的字符集把 pgid 文件路径转成 Windows 路径。`LANG` 不设或是 UTF-8 时没问题。临时目录路径有非 ASCII 字符、`LANG` 又是别的字符集时，会出两种错，都实测过：
   - `zh_CN.GBK`：pgid 文件写不进。每条命令都不运行，结果是 bash 的报错和 `[退出码 1]`。
   - `ja_JP.SJIS`：文件写到乱码路径上，在临时目录的上一级。命令照常运行，但 pgid 读到空，超时或中止时不按进程组找。那个文件也没人删。
-- **bash 继承服务的全部环境变量。** 服务环境里的 API Key，命令都能读到。bash 和服务以同一个用户运行，所以也能读 pi 的凭据文件（[D23](kb-decisions.md#d23-凭据只读复用-pi-的凭据文件)）。这符合“没有沙箱”（D7）。
+- **bash 继承服务的全部环境变量，`MSYS_NO_PATHCONV` 除外。** 服务环境里的 API Key，命令都能读到。bash 和服务以同一个用户运行，所以也能读 pi 的凭据文件（[D23](kb-decisions.md#d23-凭据只读复用-pi-的凭据文件)）。这符合“没有沙箱”（D7）。
 - **shell 路径缓存了“找不到”。** 服务启动之后才装 Git，要重启服务。
 - **结束不了就不返回。** bash 启动之后，调用只在它的 `exit` 或 `close` 之后返回。`ps` 和 `taskkill` 没有超时。它们挂住，或者结束不了 bash 时，调用一直不返回。停止进程只让执行器丢弃结果（[kb-executor](kb-executor.md#控制流)）。
 - **服务退出时不结束 bash。** 崩溃时没有人调用 `killAll`；正常退出也不中止动作（[kb-executor](kb-executor.md#崩溃窗口)）。手动核实过：硬杀运行 `bash()` 的 Node 进程后，`usr\bin\bash.exe`、原生孙进程和 msys 孙进程都继续运行到结束，pgid 文件留下。它们之后的输出无处可去。仓库里没有测试覆盖这一点（设计稿[风险](../docs/design/mvp.md#风险)）。
@@ -320,6 +323,6 @@ WRAPPER = echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$
 
 - [kb-kernel.md](kb-kernel.md)：工具描述、`clip` 和字节上限、结果在 `decide` 里的统一裁剪。
 - [kb-executor.md](kb-executor.md)：参数校验、按名字分派、中止信号、失败怎样变成结果、崩溃后的“被中断”。
-- [kb-store.md](kb-store.md)：库内工具 `memory_*`、`self` 和 `handoff` 的参数和结果。
+- [kb-store.md](kb-store.md)：库内工具 `memory_*`、`self`、`handoff`、`post`、`spawn` 和 `stop_process` 的参数和结果。
 - [kb-decisions.md](kb-decisions.md)：D7（不做沙箱）、D14（不限制路径）、D19（`read` 没有自己的上限）、D20（编码和 CRLF 的缺陷）、D21（shell 的选择，和原设计稿的差异）。
 - [kb-service.md](kb-service.md)：服务层用真工具的测试；服务正常退出。

@@ -40,11 +40,13 @@ export async function serve(opts: ServeOptions): Promise<Service> {
   let closing = false;
   const exec = createExecutor(
     db,
-    createActions(opts.models, (id, delta) => watchers.get(id)?.forEach((s) => reply(s, { type: "text", delta }))),
+    createActions(opts.models, (id, delta) => watchers.get(id)?.forEach((s) => reply(s, { type: "text", delta })), opts.pipe),
   );
 
+  const readPreset = (id: string) => loadPreset(opts.presetsDir, id, opts.models);
+
   function pump(): void {
-    for (let h = handleNext(db, memory, Date.now()); h; h = handleNext(db, memory, Date.now())) {
+    for (let h = handleNext(db, memory, Date.now(), readPreset); h; h = handleNext(db, memory, Date.now(), readPreset)) {
       if (h.abort !== null) exec.abort(h.process.id, h.abort);
       settle(h.process);
     }
@@ -79,7 +81,7 @@ export async function serve(opts: ServeOptions): Promise<Service> {
     const now = Date.now();
     switch (req.op) {
       case "start": {
-        const preset = loadPreset(opts.presetsDir, req.preset, opts.models);
+        const preset = readPreset(req.preset);
         const id = randomBytes(4).toString("hex");
         startProcess(db, memory, id, preset, req.text, now);
         return watch(s, id);

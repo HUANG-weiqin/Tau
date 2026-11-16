@@ -3,7 +3,7 @@ import { effectOf } from "../kernel/decide.ts";
 import { textContent, unreachable } from "../kernel/types.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { AssistantMessage, Effect, Input, Message, Process, ProcessId, ToolCall, ToolResultContent } from "../kernel/types.ts";
-import { loadProcess, loadSegment, post, tx } from "../store/db.ts";
+import { loadProcess, loadSegment, putMail, tx } from "../store/db.ts";
 
 export interface Job {
   process: Process;
@@ -56,10 +56,10 @@ function recover(db: DatabaseSync): void {
       const phase = loadProcess(db, id)?.phase ?? { tag: "idle" };
       switch (phase.tag) {
         case "awaitingModel":
-          post(db, id, { kind: "modelResult", n, outcome: { status: "interrupted" } });
+          putMail(db, id, { kind: "modelResult", n, outcome: { status: "interrupted" } });
           break;
         case "awaitingTool":
-          post(db, id, { kind: "toolResult", n, outcome: { status: "interrupted" } });
+          putMail(db, id, { kind: "toolResult", n, outcome: { status: "interrupted" } });
           break;
         case "idle":
           throw new Error(`待办副作用表里有进程 ${id} 的一行，但它不在等副作用。`);
@@ -88,7 +88,7 @@ function claim(db: DatabaseSync): Job | null {
 function complete(db: DatabaseSync, job: Job, input: Input): void {
   tx(db, () => {
     const gone = db.prepare("DELETE FROM effects WHERE process_id = ? AND n = ?").run(job.process.id, job.effect.n);
-    if (Number(gone.changes) > 0) post(db, job.process.id, input);
+    if (Number(gone.changes) > 0) putMail(db, job.process.id, input);
   });
 }
 

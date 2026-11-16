@@ -17,7 +17,7 @@
 
 - 决定下一步。那是 `decide` 和 `effectOf`（[kb-kernel.md](kb-kernel.md)）。
 - 插入待办副作用表的行，或因为停止而删行。那是处理输入的事务（[kb-store.md](kb-store.md#同步副作用)）。
-- 库内副作用（`memory_*`、`self`、`handoff`）。它们在处理输入的事务里执行。
+- 库内副作用（`memory_*`、`self`、`handoff`、`post`、`spawn`、`stop_process`）。它们在处理输入的事务里执行。
 - 自己重试和超时。执行器自己不重试；模型请求在拿到成功的响应之前的重试，交给 pi-ai（见下“重试”）。模型调用没有超时；bash 的超时在工具里。
 - 工具的实现，包括 bash 怎样结束进程（[kb-tools.md](kb-tools.md)）。
 - 服务怎样调用执行器、怎样把流式文本转给连接（[kb-service.md](kb-service.md)）。
@@ -131,7 +131,7 @@ abort(id, n)
 
 1. 从 `toolDefinitions(preset)` 找到工具描述。
 2. 用 pi-ai 的 `validateToolArguments(tool, call)` 校验参数。它先按 JSON Schema 转换类型（`"5"` 变成 `5`），再检查。参数整体是 `null`、缺必填字段、多出字段都失败。失败时回 `参数错误：<pi-ai 的说明>`，`isError: true`。说明里带收到的参数原文。
-3. 按名字调用 `read`、`write`、`edit`（传工作目录），或 `bash`（传工作目录和中止信号）。
+3. 按名字调用 `read`、`write`、`edit`（传工作目录），或 `bash`（传工作目录、中止信号，以及进程 ID 和管道名）。进程 ID 是 `job.process.id`；管道名是 `createActions` 的第三个参数，服务传它实际监听的管道（`opts.pipe`）。bash 把这两个值放进命令的环境（[kb-tools](kb-tools.md#包装脚本)）。
 
 - 单个字段是 `null` 不一定失败：校验会改写一些值。工具收到的是改写后的值（[kb-tools.md](kb-tools.md#参数从哪来)）。
 - 只有 `bash` 拿到中止信号。`read`、`write`、`edit` 被中止时照样跑完，结果被丢弃。
@@ -193,7 +193,7 @@ abort(id, n)
 | 路径 | 内容 |
 |---|---|
 | `src/executor/executor.ts` | `createExecutor`、`Executor`、`Actions`、`Job`；`claim`、`complete`、`recover` |
-| `src/executor/actions.ts` | `createActions`：调用模型、校验参数、分派工具 |
+| `src/executor/actions.ts` | `createActions(models, onText, pipe)`：调用模型、校验参数、分派工具 |
 | `src/server/serve.ts` | `pump`：把 `handleNext` 的 `abort` 接到 `exec.abort`，循环 `startNext` |
 | `src/main.ts` | 用 `builtinModels()` 建模型目录 |
 | `test/store/executor.test.ts` | 开始、完成、中止、失败上报、启动恢复、竞态 |

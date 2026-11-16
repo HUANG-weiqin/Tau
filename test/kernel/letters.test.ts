@@ -9,7 +9,8 @@ import type { World } from "./helpers.ts";
 
 const P = preset({ contextWindow: 100_000 });
 const HIGH = Math.ceil(handoffThreshold(P));
-const STOPPED = "（用户停止了上一轮。上面还没回复的消息都已取消：不要回应它们，只回应下面这条消息。）";
+const STOPPED = "（上一轮被停止。上面还没回复的消息都已取消：不要回应它们，只回应下面的信。）";
+const WAITED = "如果有进程在等你回信，它们已经收到上一轮的结束通知，之后的回复不会寄给它们。";
 const WAIT = "（来自进程 x，预设 other。它在等回信：你这一轮结束时，最终回复会寄给它，之后的几轮不会。）";
 
 /** 一轮进行中（等模型）。 */
@@ -101,7 +102,7 @@ describe("信的头", () => {
   test("出错原因里的换行换成空格：说明也一样", () => {
     const w = begin();
     reply(w, assistant({ usage: 0, stopReason: "error", errorMessage: "第一行\n第二行" }));
-    assert.equal(textOf(feed(w, userInput("好")).append[0]!), "（上一轮出错，没有做完：第一行 第二行）\n\n好");
+    assert.equal(textOf(feed(w, userInput("好")).append[0]!), `（上一轮出错，没有做完：第一行 第二行。${WAITED}）\n\n好`);
   });
 });
 
@@ -211,7 +212,7 @@ describe("换段带全部段末消息", () => {
     const b = image("b");
     const w = tailWith(userLetterWith("甲"), userLetterWith("乙", [a, b]));
     const s = reply(w, assistant({ usage: 3_000, text: "交接说明" }));
-    const note = "（上一轮出错，没有做完：交接失败：超时）";
+    const note = `（上一轮出错，没有做完：交接失败：超时。${WAITED}）`;
     assert.deepEqual(s.append, [
       { role: "user", content: [{ type: "text", text: `${HANDOFF_HEADER}交接说明\n\n${CARRY_HEADER}\n\n${note}\n\n甲\n\n${note}\n\n乙` }, a, b], timestamp: 0 },
     ]);
@@ -251,7 +252,7 @@ describe("换段带全部段末消息", () => {
     assert.deepEqual(current(w).at(-1), { role: "user", content: [a], timestamp: 0 });
     feed(w, letterInput(userLetterWith("再来")));
     const s = reply(w, assistant({ usage: 3_000, text: "交接说明" }));
-    const note = "（上一轮出错，没有做完：交接失败：超时）";
+    const note = `（上一轮出错，没有做完：交接失败：超时。${WAITED}）`;
     assert.deepEqual(s.append, [{ role: "user", content: [{ type: "text", text: `${HANDOFF_HEADER}交接说明\n\n${CARRY_HEADER}\n\n${note}\n\n再来` }, a], timestamp: 0 }]);
   });
 });

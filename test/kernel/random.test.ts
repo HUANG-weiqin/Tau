@@ -4,12 +4,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { HANDOFF_INSTRUCTION } from "../../src/kernel/context.ts";
 import { decide, effectOf } from "../../src/kernel/decide.ts";
-import { contextUsed, handoffThreshold, MESSAGE_MAX_BYTES, tokens, utf8Bytes } from "../../src/kernel/derive.ts";
+import { contextUsed, endedReason, finalReply, handoffThreshold, MESSAGE_MAX_BYTES, tokens, utf8Bytes } from "../../src/kernel/derive.ts";
 import { unreachable } from "../../src/kernel/types.ts";
 import type { AssistantMessage, Effect, Ended, Env, ImageContent, Input, Letter, Message, PresetTool, Process } from "../../src/kernel/types.ts";
 import { res } from "../plain.ts";
 import { assistant, call, current, feed, image, letterInput, preset, processLetter, textOf, usage, userLetterWith, world } from "./helpers.ts";
-import type { ReplySpec } from "./helpers.ts";
+import type { ReplySpec, Step } from "./helpers.ts";
 
 /** mulberry32：32 位状态的伪随机数生成器。 */
 function mulberry32(seed: number): () => number {
@@ -136,10 +136,52 @@ interface Stats {
   images: number;
   safePoints: number;
   handoffByCall: number;
+  replies: number;
+  emptyReplies: number;
 }
 
 function newStats(): Stats {
-  return { handoffOk: 0, handoffFailed: 0, done: 0, stopped: 0, stepLimit: 0, errors: 0, skipped: 0, interrupted: 0, queuedMerged: 0, dropped: 0, duplicates: 0, usageAdded: 0, processLetters: 0, images: 0, safePoints: 0, handoffByCall: 0 };
+  return { handoffOk: 0, handoffFailed: 0, done: 0, stopped: 0, stepLimit: 0, errors: 0, skipped: 0, interrupted: 0, queuedMerged: 0, dropped: 0, duplicates: 0, usageAdded: 0, processLetters: 0, images: 0, safePoints: 0, handoffByCall: 0, replies: 0, emptyReplies: 0 };
+}
+
+/**
+ * 回信（设计稿 5.3 规则 3、4）：一轮结束时，收件人正好是 turn.replyTo，加上（不是 done 时）排队的信里不在其中的 replyTo；
+ * 每个进程一封；正文是合并之前的最终回复，多出来的收件人正文为空；跳数是 max(turn.hops, 排队的信的 hops) + 1；不带 replyTo。其余时候没有回信。
+ */
+function checkReplies(prev: Process, seg: readonly Message[], input: Input, next: Process, s: Step, stats: Stats): void {
+  const before = prev.phase;
+  // 一轮在这条输入里结束：回到 idle，或者 done 时有排队的信，接着开了新的一轮（新一轮的步数从 1 起，且进入了新的等待阶段；被丢弃的输入不动 lastEffect）。
+  let ended: Ended | undefined;
+  if (before.tag !== "idle") {
+    if (next.phase.tag === "idle") ended = next.phase.ended;
+    else if (before.tag === "awaitingModel" && input.kind === "modelResult" && next.phase.tag === "awaitingModel" && next.lastEffect === prev.lastEffect + 1 && next.phase.turn.steps === 1) ended = "done";
+  }
+  if (ended === undefined || before.tag === "idle") {
+    assert.deepEqual(s.out, [], "一轮没有结束，不该有回信");
+    return;
+  }
+  const { turn } = before;
+  const extra = ended === "done" ? [] : turn.queued.flatMap((l) => (l.replyTo === undefined || turn.replyTo.includes(l.replyTo) ? [] : [l.replyTo]));
+  const to = [...turn.replyTo, ...new Set(extra)];
+  assert.deepEqual(s.out.map((o) => o.to), to);
+  assert.equal(new Set(s.out.map((o) => o.to)).size, s.out.length, "每个进程最多一封");
+  // 合并之前的段：最后追加的那条是合并的信（有排队的信时）。换段时旧段不再算：新段里还没有助手消息。
+  const base = next.segment.seq === prev.segment.seq ? seg : [];
+  const appended = turn.queued.length > 0 ? s.append.slice(0, -1) : s.append;
+  const text = finalReply([...base, ...appended]);
+  const hops = Math.max(turn.hops, ...turn.queued.map((l) => l.hops)) + 1;
+  const reported = typeof ended === "object" ? { error: endedReason(ended.error) } : ended;
+  for (const o of s.out) {
+    assert.deepEqual(o.letter.from, { kind: "process", id: prev.id, preset: prev.preset.id, reply: { ended: reported } });
+    assert.equal(o.letter.hops, hops);
+    assert.ok(!("replyTo" in o.letter), "回信不带 replyTo");
+    const body = o.letter.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+    const expected = turn.replyTo.includes(o.to) ? text : "";
+    assert.equal(body, expected);
+    assert.equal(o.letter.content.length, expected === "" ? 0 : 1);
+    stats.replies++;
+    if (expected === "") stats.emptyReplies++;
+  }
 }
 
 /** 一次模拟：一个进程、一个忠实的环境。 */
@@ -278,7 +320,7 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
     const s = feed(w, input, e); // 包括 assertInvariants
 
     // decide 是纯函数：同样的输入给同样的结果。
-    assert.deepEqual(decide(prev, seg, input, e), { process: w.p, append: s.append });
+    assert.deepEqual(decide(prev, seg, input, e), { process: w.p, append: s.append, out: s.out });
 
     // 每次 decide 最多进入一个等待阶段，lastEffect 最多加一。
     const delta = w.p.lastEffect - prev.lastEffect;
@@ -290,6 +332,8 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
     } else {
       assert.equal(s.after?.n, w.p.lastEffect);
     }
+
+    checkReplies(prev, seg, input, w.p, s, stats);
 
     // 累计用量：只有不丢弃的、正常的模型结果才加。
     const counted = input.kind === "modelResult" && input.outcome.status === "ok" && prev.phase.tag === "awaitingModel" && input.n === prev.lastEffect;
@@ -421,7 +465,7 @@ for (const profile of PROFILES) {
     if (profile.name === "失控") {
       assert.ok(stats.stepLimit > 0, "没有用完步数");
     } else {
-      for (const k of ["handoffFailed", "done", "stopped", "errors", "skipped", "interrupted", "queuedMerged", "duplicates", "usageAdded", "processLetters", "images", "safePoints", "handoffByCall"] as const) {
+      for (const k of ["handoffFailed", "done", "stopped", "errors", "skipped", "interrupted", "queuedMerged", "duplicates", "usageAdded", "processLetters", "images", "safePoints", "handoffByCall", "replies", "emptyReplies"] as const) {
         assert.ok(stats[k] > 0, `没有覆盖到 ${k}`);
       }
     }

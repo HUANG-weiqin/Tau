@@ -1,6 +1,6 @@
 // start、decide、effectOf：纯函数（见 .knowledge/kb-kernel.md）。
 import { CARRY_HEADER, HANDOFF_HEADER, HANDOFF_INSTRUCTION, tailStart } from "./context.ts";
-import { clip, contextUsed, endedReason, endedText, handoffRequested, handoffThreshold, IMAGES_PER_MESSAGE, MARGIN_TOKENS, MESSAGE_MAX_BYTES, pendingCalls, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
+import { clip, contextUsed, endedReason, endedText, finalReply, handoffRequested, handoffThreshold, IMAGES_PER_MESSAGE, MARGIN_TOKENS, MESSAGE_MAX_BYTES, pendingCalls, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
 import { textContent, unreachable } from "./types.ts";
 import type { AssistantMessage, Content, Effect, Ended, Env, ImageContent, Input, Letter, Message, Phase, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Turn, Usage } from "./types.ts";
 
@@ -11,18 +11,25 @@ export function start(id: ProcessId, preset: PresetSnapshot, env: Env): Process 
   return { id, preset, createdAt: env.now, segment: { seq: 1, memoryView: env.memoryView }, lastEffect: 0, phase: { tag: "idle" }, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
 }
 
-/** 处理一条输入时的草稿。`seg` 是当前段的全部消息，`append` 是这次要追加的。 */
+/** 要寄出的回信：收件人和信件。存储层在同一个事务里放进收件人的信箱。 */
+export interface Out {
+  to: ProcessId;
+  letter: Letter;
+}
+
+/** 处理一条输入时的草稿。`seg` 是当前段的全部消息，`append` 是这次要追加的，`out` 是要寄的回信。 */
 interface Draft {
   p: Process;
   seg: Message[];
   append: Message[];
+  out: Out[];
   env: Env;
 }
 
-export function decide(p: Process, segment: readonly Message[], input: Input, env: Env): { process: Process; append: Message[] } {
-  const d: Draft = { p, seg: [...segment], append: [], env };
+export function decide(p: Process, segment: readonly Message[], input: Input, env: Env): { process: Process; append: Message[]; out: Out[] } {
+  const d: Draft = { p, seg: [...segment], append: [], out: [], env };
   step(d, input);
-  return { process: d.p, append: d.append };
+  return { process: d.p, append: d.append, out: d.out };
 }
 
 export function effectOf(p: Process, segment: readonly Message[]): Effect | null {
@@ -158,12 +165,28 @@ function endTurn(d: Draft, turn: Turn, ended: Ended): void {
   // 正在等的就是第一个待执行的调用：它可能已经开始。
   const waiting = d.p.phase.tag === "awaitingTool";
   pendingCalls(d.seg).forEach((c, i) => push(d, toolResult(c, textContent(waiting && i === 0 ? INTERRUPTED : SKIPPED), true, d.env.now)));
+  // 最终回复在合并排队的信之前算（设计稿 5.3 规则 3）。
+  sendReplies(d, turn, ended, finalReply(d.seg));
   if (turn.queued.length > 0) {
     const { text, images } = render(turn.queued);
     push(d, userMessage(text, images, false, d.env.now));
   }
   if (ended === "done" && turn.queued.length > 0) return continueTurn(d, newTurn(turn.queued));
   d.p = { ...d.p, phase: { tag: "idle", ended } };
+}
+
+/**
+ * 回信（设计稿 5.3 规则 4）。收件人：`turn.replyTo` 里的每个进程，正文是最终回复；结束原因不是 done 时，
+ * 再加排队的信里要回信、又不在 `turn.replyTo` 里的进程，正文为空。每个进程最多一封，没有 `replyTo`。
+ * 头里的出错原因先经 `endedReason`：整页的报错不进收件人的信箱。
+ */
+function sendReplies(d: Draft, turn: Turn, ended: Ended, text: string): void {
+  const extra = ended === "done" ? [] : turn.queued.flatMap((l) => (l.replyTo === undefined || turn.replyTo.includes(l.replyTo) ? [] : [l.replyTo]));
+  const hops = Math.max(turn.hops, ...turn.queued.map((l) => l.hops)) + 1;
+  const reply = { ended: typeof ended === "object" ? { error: endedReason(ended.error) } : ended };
+  const from = { kind: "process" as const, id: d.p.id, preset: d.p.preset.id, reply };
+  for (const to of turn.replyTo) d.out.push({ to, letter: { from, content: text === "" ? [] : textContent(text), hops } });
+  for (const to of new Set(extra)) d.out.push({ to, letter: { from, content: [], hops } });
 }
 
 /** 新一轮：`hops` 和 `replyTo` 只取自开这一轮的信（设计稿第 5.3 节规则 2、5）。 */
@@ -228,6 +251,8 @@ function push(d: Draft, m: Message): void {
   d.append.push(m);
 }
 
+const WAITED = "如果有进程在等你回信，它们已经收到上一轮的结束通知，之后的回复不会寄给它们。";
+
 /**
  * 上一轮没有正常结束时，下一条用户消息前面的说明。段里不写失败的回复，也不写停止，模型否则看不出
  * 上一轮没做完，会把旧请求当成还要做的事。合并的排队消息不加：说明只加在之后的第一条消息上。
@@ -238,11 +263,11 @@ function endedNote(ended: Ended | undefined): string {
     case "done":
       return "";
     case "stopped":
-      return "（用户停止了上一轮。上面还没回复的消息都已取消：不要回应它们，只回应下面这条消息。）";
+      return "（上一轮被停止。上面还没回复的消息都已取消：不要回应它们，只回应下面的信。）";
     case "stepLimit":
-      return "（上一轮的步数用完了，停在中途。）";
+      return `（上一轮的步数用完了，停在中途。${WAITED}）`;
     default:
-      return `（上一轮出错，没有做完：${endedReason(ended.error)}）`;
+      return `（上一轮出错，没有做完：${endedReason(ended.error)}。${WAITED}）`;
   }
 }
 

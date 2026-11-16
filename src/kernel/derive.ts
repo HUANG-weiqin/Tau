@@ -13,6 +13,8 @@ export const MESSAGE_MAX_BYTES = 32 * 1024;
 export const IMAGES_PER_MESSAGE = 2;
 /** 结束原因的字节上限。provider 的报错可能很长，原文由 CLI 显示给用户。 */
 export const ENDED_REASON_MAX_BYTES = 1024;
+/** `post` 和 `spawn` 寄出的信，跳数超过它就失败（设计稿 5.3）。回信不受限制。 */
+export const HOPS_MAX = 32;
 /** 阈值之上留给交接指令、补的结果、消息框架和估算误差的 token。 */
 export const MARGIN_TOKENS = 4096;
 

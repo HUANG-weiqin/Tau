@@ -33,7 +33,7 @@ tools: read, write, edit, bash, memory
 ```
 
 - 前置信息有 `workdir`、`model`、`tools` 和可选的 `thinking`，每行一个 `key: value`。`thinking` 只收 `minimal`、`low`、`medium`、`high`、`xhigh`、`max`（pi-ai 的思考级别）；不写就不传给模型，值不对就报错。怎么用见 [kb-executor](../../.knowledge/kb-executor.md#调用模型actionsts)。
-- `tools` 里的 `memory` 表示进程有记忆库。
+- `tools` 里的 `memory` 表示进程有记忆库。`agents` 表示进程能给别的进程寄信、建进程、停进程（`post`、`spawn`、`stop_process`，[v2 设计稿 5.3](kernel-v2.md#53-进程之间寄信派生停止回信跳数)）。
 - 进程启动时，预设被冻结成快照存进进程记录。之后修改预设文件，只影响新启动的进程。
 - 快照里还有一项：从 pi-ai 模型目录查到的这个模型的 `contextWindow`。查不到就启动失败。冻结它，是为了让 `decide` 不做 I/O。调用模型时，执行器仍从模型目录取模型（第 6 节）。
 
