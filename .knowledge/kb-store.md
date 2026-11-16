@@ -9,7 +9,7 @@
 它负责：
 
 - `~/.tau/tau.db` 的位置、表结构和 PRAGMA。
-- 四个事务：启动进程、分叉进程、收一条命令、处理一条输入。图片和引用它的信在同一个事务里写入 `blobs`。
+- 七个存储事务：启动进程、分叉进程、收一条命令、处理一条输入，以及三个删除（删旧段、删进程、清图片）。图片和引用它的信在同一个事务里写入 `blobs`。
 - 处理输入时同步待办副作用表（`effects`）。
 - 在事务里执行库内工具：`self`、`handoff`、`memory_*`，以及预设含 `agents` 时的 `post`、`spawn`、`stop_process`。
 
@@ -80,15 +80,15 @@ CREATE TABLE blobs (
 
 | 表 | 一行是什么 | 谁写 |
 |---|---|---|
-| `processes` | 一个进程记录。`state_json` 是 `Process` 的 JSON | `startProcess` 插入；`spawn` 在 `handleNext` 里插；`handleNext` 整行更新 |
-| `segment_messages` | 一条工作段消息。`message_json` 是 pi-ai 的消息，原样存 | `handleNext` 追加 |
+| `processes` | 一个进程记录。`state_json` 是 `Process` 的 JSON | `startProcess` 插入；`spawn` 在 `handleNext` 里插；`handleNext` 整行更新；`removeProcess` 删 |
+| `segment_messages` | 一条工作段消息。`message_json` 是 pi-ai 的消息，原样存 | `handleNext` 追加；`pruneSegments` 删旧段；`removeProcess` 删全部段 |
 | `mailbox` | 一条输入。`input_json` 是 `Input` 的 JSON | 见下 |
 | `effects` | 进程正在等的库外副作用：编号 `n` 和状态 | `handleNext` 和执行器 |
 | `memory` | 一个键现在的值 | `Memory` 的实现 `src/memory/kv.ts` |
-| `blobs` | 一块图片：哈希和原始字节，只增不删 | `startProcess`、`send` 和引用它的信在同一个事务里插入（`INSERT OR IGNORE`）；带图的工具结果由执行器上报结果的事务写（[kb-executor](kb-executor.md#运行工具actionsts)） |
+| `blobs` | 一块图片：哈希和原始字节；`sweepBlobs` 删没人引用的行 | `startProcess`、`send` 和引用它的信在同一个事务里插入（`INSERT OR IGNORE`）；带图的工具结果由执行器上报结果的事务写（[kb-executor](kb-executor.md#运行工具actionsts)） |
 
 - 段号从 1 开始。段内序号从 0 开始，每段重新计。
-- 没有删除进程或旧段的代码。旧段一直留在库里。
+- 旧段和进程只由 `pruneSegments`、`removeProcess` 删（见[删除](#删除)）。
 - `mailbox.seq` 和 `memory.version` 用 `AUTOINCREMENT`：删掉的最大编号也不复用。
 - 没有外键，也没有另加的索引。`segment_messages` 主键的前缀 `(process_id, segment_seq)` 就是定位当前段的索引。
 
@@ -123,16 +123,19 @@ CREATE TABLE blobs (
 
 行的读写函数都在 `db.ts`：`loadProcess`、`loadProcesses`（按 ID 排序）、`saveProcess`、`loadSegment`、`appendMessages`、`putMail`（把一条输入放进一个进程的信箱）。它们不开事务。写入都由调用方放进 `tx`。
 
-### 四个事务
+### 存储事务
 
-都在 `src/store/inputs.ts`，每个函数恰好一个 `tx`。
+一共七个：`startProcess`、`forkProcess`、`send`、`handleNext`、`pruneSegments`、`removeProcess`、`sweepBlobs`。都在 `src/store/inputs.ts`，每个函数恰好一个 `tx`。
 
 | 函数 | 做什么 | 失败时 |
 |---|---|---|
 | `startProcess(db, memory, id, preset, text, now, images?)` | 用 `start` 建 `idle` 进程记录并插入；第一条消息作为用户的信进信箱。带图片时，信的内容块在同一个事务里生成，图片存进 `blobs`（见[图片](#图片)） | ID 重复：主键冲突，什么都不写，`blobs` 也不留。启动检查不通过（[kb-kernel](kb-kernel.md#启动检查和交接以后的检查)）：抛错，什么都不写 |
-| `forkProcess(db, memory, id, source, before, now, preset?)` | 读源进程记录和当前段，用 `fork` 算出新进程记录和要复制的消息（带 `preset`，是调用方在事务之外读好的新预设快照，记忆视图按它重取，见 [kb-kernel 的 fork](kb-kernel.md#fork)），过启动检查，插入新进程记录，写入复制的消息；返回新记录和复制的段。不寄信，不碰 `effects` 和 `blobs`（图片引用照用，`blobs` 只增不删） | 没有源进程、`fork` 的拒绝（[kb-kernel](kb-kernel.md#fork)）、启动检查不通过、新 ID 已被占用：抛错，整个事务回滚，什么都不留 |
+| `forkProcess(db, memory, id, source, before, now, preset?)` | 读源进程记录和当前段，用 `fork` 算出新进程记录和要复制的消息（带 `preset`，是调用方在事务之外读好的新预设快照，记忆视图按它重取，见 [kb-kernel 的 fork](kb-kernel.md#fork)），过启动检查，插入新进程记录，写入复制的消息；返回新记录和复制的段。不寄信，不碰 `effects` 和 `blobs`（图片引用照用，`blobs` 不动） | 没有源进程、`fork` 的拒绝（[kb-kernel](kb-kernel.md#fork)）、启动检查不通过、新 ID 已被占用：抛错，整个事务回滚，什么都不留 |
 | `send(db, id, input, images?)` | 把信件或 `stop` 放进已有进程的信箱。带图片时和 `startProcess` 一样，按目标进程的快照处理；图片只能跟着信 | 进程不存在：抛出“没有这个进程”，什么都不写，`blobs` 也不留 |
 | `handleNext(db, memory, now, readPreset?)` | 处理信箱里最早的一条输入。`readPreset` 给 `spawn` 读预设用，服务传 `loadPreset` | 抛出时整个事务回滚，这条输入留在队头 |
+| `pruneSegments(db, id, before)` | 删这个进程段号小于 `before` 的全部旧段。`before` ≤ 1 什么都不删，照样成功 | 没有这个进程、`before` 大于当前段号：抛错，什么都不删 |
+| `removeProcess(db, id)` | 删一个空闲、没人引用的进程的记录和全部段。不碰记忆、`blobs`、`effects` | 没有这个进程、不是 `idle`、信箱里有它的输入、有进程的 `parent` 是它、它在任何 `turn.replyTo` 或排队的信的 `replyTo` 里：抛错，什么都不删 |
+| `sweepBlobs(db)` | 删没人引用的 `blobs` 行，返回删掉的行数 | 抛出时整个事务回滚 |
 
 `Env` 怎样算：`now` 由调用方传入；预设 `tools` 含 `memory` 时，`memoryView` 是 `memory.view(preset.id)`，否则是空串，不碰记忆。
 
@@ -161,10 +164,25 @@ CREATE TABLE blobs (
   - 目标进程的快照 `input` 含 `image`：`INSERT OR IGNORE INTO blobs`，每张图一个图片块，`data` 是 `blob:<hash>`，`mimeType` 是魔数算出的类型。文本为空时没有文本块。
   - 不含 `image`：不存图片，每张换成一行 `[图片：模型不支持，已省略]`，和文本合成一个文本块，行之间用换行。所以这种进程的段里永远没有图片。
 - `hash` 是原始字节的 sha256，64 位小写十六进制。同一张图只存一行。
-- 只增不删，和旧段一样。没人引用的行无害（例如已经存下的图片，后来引用它的信被 `decide` 丢掉）。带图的工具结果的行在执行器上报结果的事务里写，结果过时被丢弃时，图片也不写。`putBlobs(db, images)` 是这两处共用的插入。
+- 没人引用的行无害（例如已经存下的图片，后来引用它的信被 `decide` 丢掉），由 `sweepBlobs` 清掉（见[删除](#删除)）。带图的工具结果的行在执行器上报结果的事务里写，结果过时被丢弃时，图片也不写。`putBlobs(db, images)` 是这两处共用的插入。
 - 带引用的只有协议的信和工具结果。`post`、`spawn` 和回信只有文本。
 - `readBlob(db, hash)` 只读，不开事务。服务的 `blob` 请求和执行器都用它。
 - 纯函数层里没有图片的字节：`decide`、`buildContext` 照样处理引用。字节只在执行器调用模型之前换进请求（[kb-executor](kb-executor.md#调用模型actionsts)）。
+
+### 删除
+
+三个删除事务（D59，[决策](kb-decisions.md#d59-删除原语旧段和空闲进程)）。由上层经协议调用，什么时候删由上层定；请求和回执见 [kb-service](kb-service.md#删除)。它们不是处理一条输入，和 `forkProcess` 一样另有读取：
+
+| 事务 | 读什么 |
+|---|---|
+| `pruneSegments` | 这个进程的进程记录（取当前段号） |
+| `removeProcess` | 全部进程记录和信箱，在同一个事务里重新读 |
+| `sweepBlobs` | 全部进程的全部段、信箱、全部进程记录 |
+
+- `pruneSegments`：当前段永不删。进程在运行也可以删，因为处理输入、执行器的 claim、`fork`、`settle` 都只读当前段。按主键前缀 `(process_id, segment_seq)` 删，不随库变慢。
+- 删掉的段是从 1 起连着的一段：总是删“小于 `before`”的全部。旧段要么整段在、不为空，要么整段删掉（[存储层不变量](#存储层不变量)第 9 条）。
+- `removeProcess`：拒绝条件见[存储事务](#存储事务)的表。这样被删的进程不再被任何地方引用，所以不用改回信的投递规则（理由见 D59）。它不碰记忆、`blobs`、`effects`：`idle` 的进程没有 `effects` 行。
+- `sweepBlobs`：引用在三处：全部进程的全部段、信箱、进程记录里的 `turn.queued`。找引用按原文找 `blob:` 加 64 位小写十六进制：多认只会多留，不会多删。它扫全库，期间服务停着不处理别的事，所以和前两个分开：上层批量清理完再调一次。没人引用的图片本来无害，分开不损失原子性。
 
 ### 同步副作用
 
@@ -204,7 +222,9 @@ CREATE TABLE blobs (
 
 `forkProcess` 不是处理一条输入，另有一张读取表：源进程的进程记录和当前段（和 `history` 读当前段一样），不读旧段。带 `preset` 时还读新预设的记忆视图（和 `spawn` 一样）；预设文件和工具定义文件由服务在事务之外读。
 
-不读旧段，也不读别的进程的工作段。
+处理一条输入和 `forkProcess` 不读旧段，也不读别的进程的工作段。
+
+三个删除事务也不是处理一条输入，读什么见[删除](#删除)。
 
 ### 为什么处理输入不会随时间变慢
 
@@ -212,7 +232,7 @@ CREATE TABLE blobs (
 - 当前段的大小被换段阈值限制住（[kb-kernel.md](kb-kernel.md)）。
 - 信箱的行处理完就删。`effects` 每个进程最多一行，只在等库外副作用时存在。
 - 记忆视图每条输入都读。它有上界：`set` 拒绝会让渲染后的视图超过上限的写入（[kb-memory.md](kb-memory.md#上限)）。
-- 例外：`self` 读全部进程记录。进程永不删除，所以它和 `tau ps` 一样会随年头变慢（[设计稿的风险表](../docs/design/mvp.md#风险)）。
+- 例外：`self` 读全部进程记录。进程不删就一直留着，`self` 和 `tau ps` 随进程数变慢；上层用 `remove` 删不用的进程（D59，[设计稿的风险表](../docs/design/mvp.md#风险)）。
 
 ## 决策
 
@@ -249,7 +269,7 @@ CREATE TABLE blobs (
 | 记忆 | `memory` |
 | 图片的字节 | `blobs`；引用在信、`turn.queued` 和段里，写成 `blob:<hash>` |
 
-存储有四个事务：`startProcess`、`forkProcess`、`send`、`handleNext`。`startProcess` 和 `send` 还写 `blobs`。执行器另有三个事务，只写 `effects` 和 `mailbox`；上报结果的事务还插入 `blobs`（带图的工具结果的图片）。记忆的写入发生在 `handleNext` 的事务里。除了 `openDb` 建表，`src/` 里没有别的代码写库。
+存储有七个事务：`startProcess`、`forkProcess`、`send`、`handleNext`、`pruneSegments`、`removeProcess`、`sweepBlobs`。`startProcess` 和 `send` 还写 `blobs`。`pruneSegments`、`removeProcess` 删段和进程，`sweepBlobs` 删 `blobs`。执行器另有三个事务，只写 `effects` 和 `mailbox`；上报结果的事务还插入 `blobs`（带图的工具结果的图片）。记忆的写入发生在 `handleNext` 的事务里。除了 `openDb` 建表，`src/` 里没有别的代码写库。
 
 判断一次修改是否越界：
 
@@ -257,6 +277,7 @@ CREATE TABLE blobs (
 - 处理一条输入时读旧段，或者读别的进程的工作段：越界。
 - 在等的编号没变，`effects` 却被改了：越界。
 - 新存一个能从工作段算出来的值：越界。
+- 删进程、段或图片不经这三个删除事务：越界。
 
 ### 存储层不变量
 
@@ -270,7 +291,8 @@ CREATE TABLE blobs (
 6. 在等库外副作用 n（`callModel`，或 `inStore` 为 false 的工具）：“`effects` 里有 n 这一行”和“信箱里有 n 的结果”，恰好成立一个。
 7. 在等库内副作用 n（库内工具、不认识的工具、预设里没有的工具）：`effects` 里没有行，信箱里恰好有一个 n 的结果。
 
-8. 信箱、`turn.queued` 和段里的每个 blob 引用，`blobs` 里都有对应的行。图片块的 `data` 不是 `blob:<hash>` 也算违反：库里只存引用。检查在 `assertStoreInvariants` 的 `assertBlobRefs`。
+8. 信箱、`turn.queued` 和全部进程的全部段里的每个 blob 引用，`blobs` 里都有对应的行。图片块的 `data` 不是 `blob:<hash>` 也算违反：库里只存引用。检查在 `assertStoreInvariants` 的 `assertBlobRefs`。现在它只读当前段，扩到全部段的检查还没写（D59）。
+9. 旧段（段号小于当前段）要么整段在、不为空，要么整段删掉；删掉的段是从 1 起连着的一段（`pruneSegments` 总是删“小于 `before`”的全部）。`history` 判断一段是否被删，靠这一条。
 
 “n 的结果”指：同一个进程、种类对得上（`callModel` 对 `modelResult`，`runTool` 对 `toolResult`）、编号是 n 的输入。
 
@@ -410,7 +432,7 @@ CREATE TABLE blobs (
 | 文件 | 内容 |
 |---|---|
 | `src/store/db.ts` | `SCHEMA`、`SCHEMA_VERSION`、`openDb`、`tx`、行的读写 |
-| `src/store/inputs.ts` | `startProcess`、`forkProcess`、`send`、`handleNext`、同步副作用 |
+| `src/store/inputs.ts` | `startProcess`、`forkProcess`、`send`、`handleNext`、`pruneSegments`、`removeProcess`、`sweepBlobs`、同步副作用 |
 | `src/store/instore.ts` | `runInStore`：`self`、`handoff`、`memory_*`、`post`、`spawn`、`stop_process`；`spawnId`、`envFor`、`ReadPreset` |
 | `src/store/blobs.ts` | `letterContent`（信的内容块，存图片或换成说明）、`readBlob`、`resolveImages`（请求里的引用换成 base64） |
 | `src/memory/kv.ts` | `Memory` 的 SQLite 实现，服务用它；规则见 [kb-memory.md](kb-memory.md) |
@@ -426,6 +448,16 @@ CREATE TABLE blobs (
 | `test/store/agents.test.ts` | `post`、`spawn`、`stop_process` 的结果和失败；A 问 B、B 被停止；互相寄信停在 `HOPS_MAX`；顺序委派 512 次；`spawn` 的 ID 和记忆视图；回滚；在每一步之后崩溃，结果和不崩溃时一样 |
 | `test/store/executor.test.ts` | 执行器和竞态（见 [kb-executor.md](kb-executor.md)） |
 | `test/store/fixtures.ts` | 临时库、假记忆库、`countReads`、带种子的随机数 |
+
+要有的删除测试（D59，还没写）：
+
+- 运行中的进程有带图的排队信，`sweepBlobs` 之后到安全点，调用模型照常成功。
+- `fork` 共用的图片不被 `sweepBlobs` 清掉。
+- `removeProcess` 的每条拒绝：没有进程、不是 `idle`、信箱里有它的输入、有子进程、在 `turn.replyTo` 里、在排队的信的 `replyTo` 里。
+- `pruneSegments`：当前段不删；`before` 大于当前段号被拒；`before` ≤ 1 成功但什么都不删；进程运行中也能删；不变量第 8、9 条成立。
+- 读已删的段回 `error`（服务层）。
+- `assertStoreInvariants`：`assertBlobRefs` 改成读全部进程的全部段（现在只读当前段）；加第 9 条的检查。
+- 随机序列和崩溃注入测试加上三个请求。
 
 只跑存储测试：`node --test "test/store/*.test.ts"`。完成门槛见 AGENTS.md。
 

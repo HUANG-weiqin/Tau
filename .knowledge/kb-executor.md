@@ -41,7 +41,7 @@
 
 - 执行器的三个函数各是一个 `BEGIN IMMEDIATE` 事务（`store/db.ts` 的 `tx`）。
 - `claim` 读进程记录和当前段，用 `effectOf` 算出副作用，核对编号。对不上（进程不存在、不在等、编号不同）就抛出，事务回滚。这说明库或代码坏了。
-- 同一个进程的编号只增不减，所以 `(process_id, n)` 确定一次副作用。`complete` 按这两列删行。
+- 同一个进程的编号只增不减，所以 `(process_id, n)` 确定一次副作用。`complete` 按这两列删行。进程删了以后 ID 可能被新进程碰上，编号从头算；所以服务删进程之前先查执行器没有它的动作（`busy`，见 [kb-service.md](kb-service.md#删除)），`(process_id, n)` 照样确定一次副作用。
 - `claim` 不排序，取到哪个 `pending` 行不确定。服务每次把 `pending` 行全部开始。
 - 每个进程最多一行，所以同时运行的动作不超过运行中的进程数。没有并发上限。
 
@@ -63,6 +63,8 @@ abort(id, n)
 ### 活状态
 
 执行器内存里只有一张表：`Map<string, AbortController>`，键是 `JSON.stringify([进程 ID, n])`。这是它唯一的活状态。崩溃后它消失，恢复把对应的 `running` 行变成 `interrupted`。
+
+`busy(id)`：只读，看这张表里有没有这个进程的键。服务删进程之前用它（[kb-service.md](kb-service.md#删除)）。
 
 ### 失败怎样变成结果
 

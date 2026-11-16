@@ -41,7 +41,7 @@
 7. 回信只在一轮结束时寄出，每个进程一封（[kb-kernel 的回信](kb-kernel.md#回信)）。信的 `replyTo` 并进哪一轮（并进 `turn` 的规则也在那里），就由那一轮结束时回，之后的几轮不回。信还在排队时这一轮异常结束，也在这一轮结束时回。
 8. 换段是唯一缩短上下文的办法。图片有一个例外（[D40](kb-decisions.md#d40-第-6-步前一半的选择)）。
 9. 处理一条输入不读旧段，也不读别的进程的工作段。`fork` 不是处理一条输入：它是协议请求，读源进程的当前段，和 `history` 一样（[D49](kb-decisions.md#d49-fork-进内核)）。
-10. 数据只增：进程、旧段、图片都不删。
+10. 内核不自己删数据。旧段、进程、图片只经三个删除原语删，由上层调用（[D59](kb-decisions.md#d59-删除原语旧段和空闲进程)）。删除原语不碰记忆（记忆的键只由 `memory_delete` 删）。
 11. 服务只在命名管道上监听。
 
 另外不变的规矩：依赖白名单；代码量预算 3000 行（都在 [AGENTS.md](../AGENTS.md#小而硬规矩)）。
@@ -63,6 +63,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | 累计用量 | [kb-kernel 的累计用量](kb-kernel.md#累计用量) | 丢数据。交接回复和没写进段的回复，用量哪里都没存，上层从段里算不全。上层盯着 `watch` 累加，它没在运行时就漏了 |
 | fork（含换角色） | [kb-kernel 的 fork](kb-kernel.md#fork)、[kb-service 的线协议](kb-service.md#线协议srcprotocolts)、[D49](kb-decisions.md#d49-fork-进内核)、[D52](kb-decisions.md#d52-fork-带-preset给进程换角色) | 做不到。上层只能 `history` 读出再 `start`，第一封信最多 `MESSAGE_MAX_BYTES`（32 KiB），带不过去完整的段。本机的 Pi Web 用过 4 次（[D49](kb-decisions.md#d49-fork-进内核)）。带 `preset` 的换角色：上层只能让新进程按需 `history` 读回旧段，慢而且失真，见 [D52](kb-decisions.md#d52-fork-带-preset给进程换角色) |
 | 协议：`history`、`blob`、`watch` | [kb-service 的线协议](kb-service.md#线协议srcprotocolts)、[历史和订阅](kb-service.md#历史和订阅) | 做不到：上层只能通过协议看内核，读不了历史，就做不了历史检索；拿不到流式文本，页面就看不到实时输出。慢：没有 `watch`，上层只能反复 `ps`，`ps` 读全部进程，随年头变慢 |
+| 删除：`prune`、`remove`、`sweep` | [kb-store 的删除](kb-store.md#删除)、[kb-service 的删除](kb-service.md#删除)、[D59](kb-decisions.md#d59-删除原语旧段和空闲进程) | 做不到。库里的东西只有内核能删；上层停服务直接改库，就绕开了事务和存储层不变量 |
 
 ### 契约清单
 
@@ -75,12 +76,13 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | `decide` 的输出：新记录、追加的消息、回信 | [kb-kernel 的函数](kb-kernel.md#函数) |
 | 行为：回信的时机和正文的算法，`replyTo` 和 `hops` 并进 `turn` 的规则，`endTurn` 的顺序，排队的信的处理（`done` 时合并并开新一轮，只取这批信的 `replyTo` 和 `hops`；不是 `done` 时合并写进段、停在 `idle`） | [kb-kernel 的回信](kb-kernel.md#回信)、[流程：两个辅助步骤](kb-kernel.md#流程两个辅助步骤) |
 | 行为：安全点投递 | [kb-kernel 的安全点投递](kb-kernel.md#安全点投递) |
-| 行为：`fork` 复制什么（预设快照、当前段的前缀或全部、记忆视图；不复制 `parent`、用量、旧段），新进程的阶段，什么时候拒绝（没有进程、`before` 越界或不是用户消息、不带 `before` 而源进程不是 `idle`、启动检查不通过）。带 `preset` 是换角色：快照和记忆视图用新预设的；新模型不收图片时图片换成 `IMAGE_UNSUPPORTED`；不带锚点的估算要低于新预设的换段阈值，否则拒绝（[D52](kb-decisions.md#d52-fork-带-preset给进程换角色)）。事务：读源进程和当前段、建新进程、写消息，一个事务，抛错回滚 | [kb-kernel 的 fork](kb-kernel.md#fork)、[kb-store 的四个事务](kb-store.md#四个事务) |
+| 行为：`fork` 复制什么（预设快照、当前段的前缀或全部、记忆视图；不复制 `parent`、用量、旧段），新进程的阶段，什么时候拒绝（没有进程、`before` 越界或不是用户消息、不带 `before` 而源进程不是 `idle`、启动检查不通过）。带 `preset` 是换角色：快照和记忆视图用新预设的；新模型不收图片时图片换成 `IMAGE_UNSUPPORTED`；不带锚点的估算要低于新预设的换段阈值，否则拒绝（[D52](kb-decisions.md#d52-fork-带-preset给进程换角色)）。事务：读源进程和当前段、建新进程、写消息，一个事务，抛错回滚 | [kb-kernel 的 fork](kb-kernel.md#fork)、[kb-store 的存储事务](kb-store.md#存储事务) |
+| 行为：删除原语。`prune` 删段号小于 `before` 的旧段，当前段永不删，`before` 大于当前段号拒绝。`remove` 在进程不是 `idle`、信箱里有它的输入、有进程的 `parent` 是它、它在 `turn.replyTo` 或排队的信的 `replyTo` 里、执行器还有它的动作没收尾时拒绝，拒绝时什么都不删。`sweep` 的引用收自三处：全部进程的全部段、信箱、进程记录里的 `turn.queued`。`history` 读已删的段回 `error`。`remove` 先推 `removed` 再回执 | [kb-store 的删除](kb-store.md#删除)、[kb-service 的删除](kb-service.md#删除) |
 | 行为：停止的语义、跳数怎样增加 | [kb-kernel 的流程](kb-kernel.md#流程每种输入)、[kb-store 的进程之间的工具](kb-store.md#进程之间的工具) |
 | 行为：bash 工具正常结束时，不结束命令留在后台的进程。上层的配方靠它 | [kb-tools 的退出之后](kb-tools.md#退出之后排空和后台进程) |
-| 事务清单，以及每个事务做什么 | [kb-store 的四个事务](kb-store.md#四个事务)、[处理一条输入](kb-store.md#处理一条输入)、[kb-executor 的一行的一生](kb-executor.md#一行的一生) |
+| 事务清单，以及每个事务做什么 | [kb-store 的存储事务](kb-store.md#存储事务)、[处理一条输入](kb-store.md#处理一条输入)、[kb-executor 的一行的一生](kb-executor.md#一行的一生) |
 | `effects` 和 `mailbox` 的规则 | [kb-store 的同步副作用](kb-store.md#同步副作用)、[存储层不变量](kb-store.md#存储层不变量)、[kb-executor 的一行的一生](kb-executor.md#一行的一生) |
-| 线协议：管道名和分帧，包括“客户端不能半关闭”；`Request`（含 `fork`）、`Reply`；`fork` 的回执在提交之后、订阅的 `update` 之后；`history` 每行的消息格式和结束行；`watch` 的推送规则（先快照后增量；`update` 只带 `self`；流式文本带进程和编号；不推最终回复；写缓冲超限就断开） | [kb-service 的线协议](kb-service.md#线协议srcprotocolts)、[历史和订阅](kb-service.md#历史和订阅)、[坑点](kb-service.md#坑点) |
+| 线协议：管道名和分帧，包括“客户端不能半关闭”；`Request`（含 `fork`、`prune`、`remove`、`sweep`）、`Reply`（含 `removed`、`swept`）；`fork` 的回执在提交之后、订阅的 `update` 之后；`history` 每行的消息格式和结束行；`watch` 的推送规则（先快照后增量；`update` 只带 `self`；流式文本带进程和编号；不推最终回复；写缓冲超限就断开） | [kb-service 的线协议](kb-service.md#线协议srcprotocolts)、[历史和订阅](kb-service.md#历史和订阅)、[坑点](kb-service.md#坑点) |
 | 表结构。索引不算（见[不算改契约](#不算改契约)） | [kb-store 的表](kb-store.md#表) |
 | 文件格式：预设 | [设计稿第 2 节](../docs/design/mvp.md#2-预设) |
 | 文件格式：工具定义 | [kb-tools 的工具定义](kb-tools.md#工具定义) |
@@ -173,6 +175,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 - v2 的来由、六个缺口：[D47](kb-decisions.md#d47-v2-的来由六个缺口和-v1v2-的对照)；文档估算和需求来源：[D48](kb-decisions.md#d48-量-image_tokens-的文档估算和思考级别重试的需求来源)。
 - 为什么冻结，以及冻结的判据是推导测试：[D26](kb-decisions.md#d26-内核-v2-的方向和准入原则)、[D28](kb-decisions.md#d28-v2-的原语)。
 - 推导测试的记录：[D55](kb-decisions.md#d55-推导测试第一次)、[D56](kb-decisions.md#d56-推导测试第二次)没通过，[D57](kb-decisions.md#d57-推导测试第三次)通过，契约从那里起冻结。
+- 删除原语是冻结以后第一次改契约，见 [D59](kb-decisions.md#d59-删除原语旧段和空闲进程)。
 - 常量的状态（已定、暂定）只写在 [kb-kernel 的常量](kb-kernel.md#常量)的表里，这里不重复。
 - 常量的出处：`IMAGE_TOKENS` 见 [D42](kb-decisions.md#d42-第-6-步量-image_tokens核实收图片)；图片的其余常量和 `HOPS_MAX` 见 [kb-kernel 的常量](kb-kernel.md#常量)和 [kb-service 的图片](kb-service.md#图片)；`MESSAGE_MAX_BYTES` 见 [D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)；工具定义的两个上限见 [kb-tools 的工具定义](kb-tools.md#工具定义)。
 - `WATCH_BUFFER_MAX`、`MODEL_RETRIES` 和 OAuth 订阅：[未确认的默认值](kb-decisions.md#未确认的默认值)。
@@ -211,7 +214,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | 风险 | 对策 |
 |---|---|
 | 一次设计多个原语，抽象设计错 | 推导测试；按[执行清单](../docs/plan/kernel-v2-checklist.md)逐个实现 |
-| 库越长越大：图片、旧段、进程都不删 | 记录增长速度。真要删时，作为契约变更单独设计 |
+| 库越长越大：内核不自己删；上层不清理，库照样一直长 | 上层用三个删除原语定清理策略（[D59](kb-decisions.md#d59-删除原语旧段和空闲进程)）。`sweep` 扫全库，期间服务停着。库文件不缩小：删掉的页被新数据复用，要缩小就停服务做 `VACUUM` |
 | 安全点投递改变了模型看到的消息形状 | 第 3 步核实在用的模型（[D34](kb-decisions.md#d34-第-3-步真模型核实)），第 7 步再核实带图的工具结果（[D45](kb-decisions.md#d45-第-7-步带图的工具结果的真模型核实)）。换到没核实过的模型，按 [kb-executor 的坑点](kb-executor.md#坑点)核实 |
 | `spawn` 的扇出没有上限，进程和花费暴涨 | 跳数只挡循环。只给需要的预设 `agents` 和能运行命令的工具。上层用 `watch` 和 `stop` 尽力而为地停，只能数在运行的后代；本机没出现过失控，Pi Web 的上限只触发过 4 次，都挡在一次有意的大扇出上（[kb-extras](kb-extras.md#pi-web-的功能在-v2-上的做法)） |
 | 子预设没有 `agents`，递归也不一定停 | 子预设没有 `agents`，也不能运行它控制的命令时，递归才在它这一层停住。bash、运行模型所给脚本的工具定义（如 codemode）、命令里调用 `tau` 的工具定义、运行它能用 `write` 或 `edit` 改的文件的工具定义（如 `npm test`），都能运行 `tau start`，建出不挂在树上的进程 |

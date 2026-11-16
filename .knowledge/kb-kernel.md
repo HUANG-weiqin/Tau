@@ -126,7 +126,7 @@ interface Env { now: Instant; memoryView: string }
 
 ### fork
 
-`fork(id, source, seg, before, now, to?)` 是纯函数：从源进程当前段分叉出一个新进程。它不是处理一条输入，不经过 `decide`。协议请求和事务见 [kb-service](kb-service.md#线协议srcprotocolts)、[kb-store](kb-store.md#四个事务)，为什么在内核见 [D49](kb-decisions.md#d49-fork-进内核)，换角色见 [D52](kb-decisions.md#d52-fork-带-preset给进程换角色)。
+`fork(id, source, seg, before, now, to?)` 是纯函数：从源进程当前段分叉出一个新进程。它不是处理一条输入，不经过 `decide`。协议请求和事务见 [kb-service](kb-service.md#线协议srcprotocolts)、[kb-store](kb-store.md#存储事务)，为什么在内核见 [D49](kb-decisions.md#d49-fork-进内核)，换角色见 [D52](kb-decisions.md#d52-fork-带-preset给进程换角色)。
 
 新进程：
 
@@ -402,7 +402,7 @@ W 是 `preset.contextWindow`。快照里只冻结它和 `input`，不冻结模�
 - 信件：`from` 是 `{ kind: "process", id: 自己, preset: 自己的预设 ID, reply: { ended } }`。出错时 `ended.error` 已经过 `endedReason`：整页的报错不进收件人的信箱。`hops` 是 `max(turn.hops, 排队的信的 hops) + 1`，不管结束原因是什么。没有 `replyTo`，所以回信永远不会引出新的回信。
 - 内容：没有最终回复时是空数组，不是一个空文本块。
 - 头只写结束原因，不说信处理了没有。收件人看正文为空、结束原因又不是正常结束，就知道没拿到回答。
-- 存储层把它们投进收件人的信箱（[kb-store](kb-store.md#处理一条输入)）。收件人在 `decide` 里不查是否存在：进程不删除，要回信的信是工具寄的，工具已查过收件人。
+- 存储层把它们投进收件人的信箱（[kb-store](kb-store.md#处理一条输入)）。`decide` 不查收件人是否存在：要回信的信是工具寄的，工具已查过收件人；进程只有在没有任何地方引用它时才能删（[kb-service](kb-service.md#删除)），所以回信的收件人一直在。
 
 ### 流程：每种输入
 

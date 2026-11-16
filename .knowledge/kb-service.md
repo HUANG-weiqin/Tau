@@ -4,7 +4,7 @@
 
 ## 这个模块是干什么的
 
-服务是 `tau serve` 这个常驻进程。它持有单实例锁，打开库，做启动恢复，再用一个同步的 `pump` 推进全部进程。CLI 是它自己的客户端；协议还有 `history`、`watch` 和 `fork`，给上层用。
+服务是 `tau serve` 这个常驻进程。它持有单实例锁，打开库，做启动恢复，再用一个同步的 `pump` 推进全部进程。CLI 是它自己的客户端；协议还有 `history`、`watch`、`fork` 和三个删除（`prune`、`remove`、`sweep`），给上层用。
 
 它负责：
 
@@ -15,13 +15,14 @@
 - `history` 和 `watch`：读历史，订阅变化，订阅的写缓冲上限。
 - 图片：`start`、`send` 的入口检查，`blob` 请求。
 - `fork`：请求的参数、什么时候拒绝、回执和订阅的推送。复制什么在[纯函数层](kb-kernel.md#fork)。
+- 删除：`prune`、`remove`、`sweep` 的请求、拒绝、回执和 `removed` 推送。
 - CLI 的命令、输出、退出码，以及“结果未知”。
 - `tau ps` 的文字格式。
 - 启动脚本 `tau.cmd`、入口 `src/main.ts`、正常退出。
 
 它不负责：
 
-- 四个存储事务，以及回执承诺的落盘：[kb-store.md](kb-store.md#四个事务)。
+- 存储事务，以及回执承诺的落盘：[kb-store.md](kb-store.md#存储事务)。
 - 执行器的开始、中止、上报和启动恢复：[kb-executor.md](kb-executor.md)。
 - 投影的字段：[kb-kernel.md](kb-kernel.md#投影与命令)。`self` 的文字：[kb-store.md](kb-store.md#self)。
 - 预设文件的格式：[设计稿第 2 节](../docs/design/mvp.md#2-预设)。工具，包括 bash 怎样结束进程：[kb-tools.md](kb-tools.md)。
@@ -69,7 +70,7 @@ pump()
 | 动作结束（`complete`） | `run.then(pump)` |
 | 库内工具的结果 | 同一个 `handleNext` 循环接着处理 |
 
-- `ps` 不调用 `pump`。
+- `ps` 不调用 `pump`。`prune`、`remove`、`sweep` 也不调用：不放输入。
 - `fatal`：动作的 promise 被拒绝（例如 `complete` 写库失败）时，打印“tau 服务遇到无法继续的错误，退出。重启时会恢复。”，退出码 1。服务正在关闭时忽略。
 
 ### 观察者和最终回复
@@ -100,7 +101,7 @@ pump()
 
 - 段默认是当前段，`from` 默认是 0。段号从 1 起。
 - 每条消息一行 `message`（段号、段内序号、消息），最后一行 `end`（段号、这一段的消息条数），然后服务关闭连接。没收到 `end` 就断开，是没读完。
-- 进程不存在、段号小于 1 或大于当前段，回 `error`。`from` 超过段尾只发 `end`。
+- 进程不存在、段号小于 1 或大于当前段，回 `error`。段号小于当前段而这一段 0 条消息（已被 `prune` 删掉），也回 `error`；当前段 0 条照常回 `end`。`from` 超过段尾只发 `end`。
 - 消息是库里存的 JSON，不做转换。读整段进内存再写出，不分批。
 - 客户端看到投影里的消息条数变了，就用 `from` 读新增的部分。
 
@@ -111,6 +112,7 @@ pump()
 - `update` 只有 `self` 部分，不带兄弟和子进程。它由 `observe(新记录, 新段, [新记录], now)` 算出，用的是 `handleNext` 返回的 `process` 和 `segment`，不再读库。
 - 每次 `handleNext` 处理了某个进程的输入，`pump` 给订阅它的连接（或订阅全部的连接）推这个进程的 `update`。没有订阅时不算。
 - 流式文本照样推：`text`，带进程 ID 和副作用编号。不推最终回复：客户端看到进程回到 `idle`，自己用 `history` 读。
+- 删进程时推 `removed`：订阅这个进程的连接和订阅全部的连接都先收到它；订阅这个进程的随后关闭，订阅全部的照常订阅（见[删除](#删除)）。
 - 订阅不存在的进程回 `error`，然后关闭。订阅由客户端断开结束。服务登记订阅后恢复读取，请求行之后的字节丢掉，所以多发的字节不会挡住断开。
 - 写缓冲上限：推完快照时记下连接的 `writableLength`，记作 S。之后每次推送完，`writableLength` 超过 S + `WATCH_BUFFER_MAX`（1 MiB）就断开这个订阅。
   - `writableLength` 对字符串按字符计，上限也按字符。
@@ -131,7 +133,10 @@ type Request =
   | { op: "fork"; process: string; before?: number; preset?: string } // before 是当前段里一条用户消息的段内序号；preset 是换角色
   | { op: "history"; process: string; segment?: number; from?: number }
   | { op: "blob"; hash: string }                            // hash 不带 blob: 前缀
-  | { op: "watch"; process?: string };
+  | { op: "watch"; process?: string }
+  | { op: "prune"; process: string; before: number }   // 删段号小于 before 的旧段
+  | { op: "remove"; process: string }                  // 删一个空闲、没人引用的进程
+  | { op: "sweep" };                                   // 清掉没人引用的图片
 
 type Reply =
   | { type: "receipt"; process: string }                    // 命令的事务提交之后；fork 的回执带新进程的 ID
@@ -142,6 +147,8 @@ type Reply =
   | { type: "end"; segment: number; messages: number }      // history 读完
   | { type: "blob"; mimeType: string; data: string }        // data 是 base64
   | { type: "update"; self: Projection["self"] }            // watch 的快照和增量
+  | { type: "removed"; process: string }                    // watch 推送：这个进程已删
+  | { type: "swept"; blobs: number }                        // sweep 删掉的图片行数
   | { type: "error"; message: string };
 ```
 
@@ -155,6 +162,9 @@ type Reply =
 | `history` | 读一段的消息 | 若干 `message`，一行 `end`，然后关闭 |
 | `blob` | 读一张图片：`hash` 不带 `blob:` 前缀。不开写事务 | 一行 `blob`，然后关闭。`hash` 不存在回 `error` |
 | `watch` | 推快照，登记订阅 | 一直推 `update` 和 `text`，直到客户端断开 |
+| `prune` | `pruneSegments`（见[删除](#删除)） | `receipt`，然后关闭；拒绝回 `error` |
+| `remove` | 查执行器 `busy`，再 `removeProcess`；提交之后推 `removed`，再回执 | `receipt`，然后关闭；拒绝回 `error` |
+| `sweep` | `sweepBlobs` | 一行 `swept`，然后关闭；拒绝回 `error` |
 | 处理时抛出 | — | 一行 `error`，然后关闭 |
 
 - `start` 和 `send` 走同一条路径：提交，然后 `awaitFinal`（发回执、登记观察者、`pump`）。
@@ -171,9 +181,22 @@ type Reply =
 
 - 每个连接只读第一行。`\r\n` 算一个换行。
 - 不是合法 JSON：`error`，内容是 `JSON.parse` 的错误信息。
-- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`；`stop` 要字符串 `process`；`fork` 要字符串 `process`，可选的 `before` 要是非负整数，可选的 `preset` 要是字符串；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`blob` 要字符串 `hash`；`start`、`send` 的 `images` 可以没有，有就要是字符串数组；`watch` 的 `process` 可以没有，有就要是字符串。否则 `error`：“无法识别的请求：<原文>”。
+- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`；`stop` 要字符串 `process`；`fork` 要字符串 `process`，可选的 `before` 要是非负整数，可选的 `preset` 要是字符串；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`blob` 要字符串 `hash`；`start`、`send` 的 `images` 可以没有，有就要是字符串数组；`watch` 的 `process` 可以没有，有就要是字符串；`prune` 要字符串 `process`、非负整数 `before`；`remove` 要字符串 `process`；`sweep` 不要字段。否则 `error`：“无法识别的请求：<原文>”。
 - 只查类型。空串能通过，多余的字段被忽略。空预设 ID 由 `loadPreset` 拒绝；空消息会成为一条用户消息。CLI 不发空消息。
 - 预设读不出、进程不存在、进程 ID 冲突，都回 `error`。这些情况下库里什么都没写。
+
+### 删除
+
+三个请求（D59，[决策](kb-decisions.md#d59-删除原语旧段和空闲进程)）。事务做什么、读什么、为什么，见 [kb-store](kb-store.md#删除)。什么时候删由上层定。三个请求都不放输入，不调用 `pump`。
+
+- `prune`（`process`、`before`）：提交之后回 `receipt`（`process` 是请求里的进程 ID），然后关闭。没有这个进程、`before` 大于当前段号，回 `error`，库里什么都不改。
+- `remove`（`process`）：
+  - 调用 `removeProcess` 之前多查一条，这条不在库里：执行器里还有这个进程的动作没收尾（停止以后，被中止的动作还没结束），就回 `error`。理由：动作收尾（`complete`）按 `(进程 ID, n)` 找行；进程删了、ID 又被新进程碰上，旧动作的结果会落进新进程。执行器为此给只读的 `busy(id)`（[kb-executor](kb-executor.md#活状态)）。崩溃以后没有这样的动作，所以只有服务活着时才有这一条。
+  - 事务的拒绝（不是 `idle`、信箱里有它的输入、有子进程、被引用，见 [kb-store](kb-store.md#存储事务)）都回 `error`，库里什么都不改。
+  - 提交之后，先给两种订阅都推一行 `removed`：订阅这个进程的连接和订阅全部的连接都收到；订阅这个进程的随后关闭，订阅全部的照常订阅。然后回 `receipt`，然后关闭。先推后回执，和 `fork` 一样。
+  - 删的时候没有观察者在等它：它是 `idle`，信箱里没有它的输入，`settle` 已经发过最终回复。
+- `sweep`：提交之后回一行 `swept`（`blobs` 是删掉的行数），然后关闭。它扫全库，期间服务停着不处理别的事。上层批量清理完再调一次。
+- ID 复用：`remove` 以后，这个 ID 可能被新进程碰上。无害：删之前已经确认没有任何地方引用它，执行器也没有它的动作（D59）。
 
 ### 图片
 
@@ -377,6 +400,7 @@ tau stop <进程>
 | protocol：`watch` 写缓冲上限 | 快照大于管道缓冲、订阅方一直不读：到上限才断开，读的订阅不受影响；快照很小、订阅方不读：少量推送不断开，超过上限才断开 |
 | protocol：图片 | `start`、`send` 带图：段里是引用，`blob` 取回原字节和类型，`history` 不带字节；`images` 的校验；不合格回 `error`、什么都不建；不收图片的模型先检查、再换说明；执行器发给模型的是真数据；`blob` 不存在、带前缀回 `error`，读请求不写库 |
 | protocol：`fork` | 回执带新 ID 并关闭；带 `preset`：新进程用新预设，之后 `send` 模型收到新系统提示词和工具描述；读不出的预设、放不进的预设回 `error`；`history` 读新进程等于源进程的前缀；之后对新进程 `send`，模型收到复制的消息，系统提示词和源进程一样；各种 `error`（没有进程、越界、不是用户消息、运行中不带 `before`、启动检查、请求校验）；订阅在回执之前收到新进程的 `update`；带图片引用的段 |
+| protocol：删除（要有，还没写） | `prune`：回执，旧段读不到，当前段在，`before` 越界回 `error`；`history` 读已删的段回 `error`，当前段 0 条回 `end`。`remove`：每条拒绝回 `error` 且库不变；执行器还有该进程的动作时回 `error`；成功时订阅这个进程的连接和订阅全部的连接都先收到 `removed`（断言两种都收到），订阅这个进程的随后关闭，订阅全部的照常订阅，回执在 `removed` 之后。`sweep`：回 `swept`，数目对。请求校验。三个请求不调用 `pump` |
 | cli：模型不在目录里 | 本轮以“模型目录里没有”的错误结束，回复不入段；模型放回后进程照常可用 |
 
 ## 坑点
@@ -397,7 +421,7 @@ tau stop <进程>
 - **Agent 对自己运行 `tau send`。** CLI 等这个进程回到 `idle`，进程在等这次 bash，只能等 bash 超时。消息已经提交，会作为排队的消息，在下一个安全点或本轮结束时处理。
 - **服务运行时别的程序写库。** `openDb` 没设忙等超时。另一个连接持有写锁时，服务的事务立刻报 `database is locked`：请求得到 `error`；动作结束时写库失败则 `fatal` 退出。备份要先停服务（[kb-store.md](kb-store.md#位置)）。
 - **进程内的“崩溃”不是真崩溃。** pairing 测试关掉库句柄来模拟，运行中的 bash 不会跟着死。真崩溃只在 kill 测试里：子进程被 `taskkill /T /F`，不跑任何退出处理。
-- **`tau ps` 随年头变慢。** 它为每个进程读一次当前段，进程永不删除（[设计稿的风险](../docs/design/mvp.md#风险)）。
+- **`tau ps` 随进程数变慢。** 它为每个进程读一次当前段。进程要上层用 `remove` 删（[删除](#删除)，[设计稿的风险](../docs/design/mvp.md#风险)）。
 
 ## 关联模块
 

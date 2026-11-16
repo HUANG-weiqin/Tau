@@ -19,7 +19,7 @@
 | 改存储：表、处理输入的事务、库内工具的结果 | [kb-store.md](kb-store.md) |
 | 改执行器、启动恢复、崩溃注入测试 | [kb-executor.md](kb-executor.md) |
 | 改 `read`、`write`、`edit`、`bash`：路径、编码、shell、结束进程、输出；改工具定义的格式、读取和运行（标准输入、text 和 content 输出、带图的结果，契约原文） | [kb-tools.md](kb-tools.md) |
-| 改服务、线协议（含 `fork`）、CLI、`tau ps` 的文字、正常退出 | [kb-service.md](kb-service.md) |
+| 改服务、线协议（含 `fork`、`prune`、`remove`、`sweep`）、CLI、`tau ps` 的文字、正常退出 | [kb-service.md](kb-service.md) |
 | 改记忆：接口、上限、视图格式、版本号 | [kb-memory.md](kb-memory.md) |
 | 改内核契约、判断一个改动算不算改契约 | [kb-contract.md](kb-contract.md) |
 | 做上层建筑（`extras/`） | [kb-extras.md](kb-extras.md) |
@@ -40,11 +40,11 @@
 | [MVP 执行清单](../docs/plan/mvp-checklist.md) | 已完成，留作记录 |
 | [kb-overview.md](kb-overview.md) | 产品边界、运行循环、状态分层、最小心智模型（含模型知道事情的三个入口）、源码入口 |
 | [kb-kernel.md](kb-kernel.md) | 纯函数层的类型、`start`、`fork`、`decide`、`effectOf`、`buildContext`、`observe` 和投影的字段、派生值、常量、工具描述、第 5 节的流程、纯函数层不变量 |
-| [kb-store.md](kb-store.md) | 库的位置、表结构和 PRAGMA、四个存储事务（含 fork 的事务）、图片（`blobs`）的存取、待办副作用表的同步、处理一条输入读什么、存储层不变量、库内工具的参数、结果和文字格式 |
+| [kb-store.md](kb-store.md) | 库的位置、表结构和 PRAGMA、七个存储事务（含 fork 和三个删除的事务）、图片（`blobs`）的存取、待办副作用表的同步、处理一条输入读什么、存储层不变量、库内工具的参数、结果和文字格式 |
 | [kb-executor.md](kb-executor.md) | 待办副作用表一行的一生、执行器的三个事务、中止、失败怎样变成结果、模型和库外工具的调用、启动恢复、崩溃窗口、崩溃注入和竞态测试 |
 | [kb-memory.md](kb-memory.md) | `Memory` 接口的语义和契约、谁有记忆库、三个上限和 `set` 的检查顺序、视图的格式、版本号、键和值的编码 |
 | [kb-tools.md](kb-tools.md) | 工具定义（`~/.tau/tools/`）的格式、读取、大小上限和运行（标准输入、text 和 content 输出、带图的结果，契约原文）；`read`、`write`、`edit`、`bash` 的接口、行为和结果文本；参数被 pi-ai 改写的方式；路径解析；编码和换行；bash 用哪个 shell、包装脚本、超时、中止、怎样结束进程、输出上限、后台进程 |
-| [kb-service.md](kb-service.md) | 服务的启动顺序、`pump`、观察者和最终回复、线协议和请求校验、`fork` 请求（参数、拒绝的情形、回执）、历史和订阅、图片的入口检查和 `blob` 请求、进程 ID、流式文本、CLI 的命令、输出和退出码、`tau ps` 的文字格式、启动脚本、正常退出 |
+| [kb-service.md](kb-service.md) | 服务的启动顺序、`pump`、观察者和最终回复、线协议和请求校验、`fork` 请求（参数、拒绝的情形、回执）、删除请求（`prune`、`remove`、`sweep`）、历史和订阅、图片的入口检查和 `blob` 请求、进程 ID、流式文本、CLI 的命令、输出和退出码、`tau ps` 的文字格式、启动脚本、正常退出 |
 | [kb-decisions.md](kb-decisions.md) | 决定的理由、核实过的事实、放弃的方案、未确认的默认值；v2 的来由和六个缺口（D47）、核实时对照的文档估算和需求来源（D48）；v2 也不做的三张表（D46） |
 | [kb-piweb-lessons.md](kb-piweb-lessons.md) | Pi Web 的实测问题，以及 tau 对应的规则 |
 | [kb-contract.md](kb-contract.md) | 冻结的内核契约清单、目标和不变量、每个原语为什么在内核、参与启动检查的量、改契约的程序、不算改契约的事、推导测试的做法、风险表 |
