@@ -172,6 +172,7 @@ type Reply =
 - `fork` 的拒绝（都回 `error`，库里什么都没写）：没有这个进程；带 `before` 时，`before` 超出当前段，或那条消息不是用户消息；不带 `before` 时源进程不是 `idle`；带 `preset` 时，预设读不出，或复制来的段放不进新预设的换段阈值；新进程通不过启动检查。复制什么、为什么这样拒绝，见 [kb-kernel 的 fork](kb-kernel.md#fork)。源进程在运行时，带 `before` 的 `fork` 照常可以。
 - `fork` 的回执在事务提交之后才发，之前先推 `update`：订阅的客户端收到回执时，已经见过新进程。`update` 由 `observe` 用 `forkProcess` 返回的记录和段算出，不读库。
 - `stop` 的回执只表示停止进了信箱。随后的 `pump` 同步处理它，并中止正在运行的动作。进程已经 `idle` 时停止什么都不做，回执照发。
+- 停止救不了的卡住：信箱队头的一条输入抛错，`handleNext` 每次都在它这里抛出，全部进程都卡住，后来的停止也排在它后面。这是代码的缺陷：修代码再重启，这条输入重新处理（[kb-store 的坑点](kb-store.md#坑点)）。
 - `ps` 的进程按 ID 排序，包括 `idle` 的。每个投影带自己的 `now` 和 `siblings`。
 - `error` 可能跟在回执后面：`awaitFinal` 里的 `pump` 抛出时（见[坑点](#坑点)）。
 - 客户端可以在回执之后直接断开（`destroy`）：服务照常处理，不再给它写。`tau send` 被 Ctrl+C 就是这样。

@@ -174,7 +174,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 - 契约的范围、不变量合成一张表：[D26](kb-decisions.md#d26-内核-v2-的方向和准入原则)。
 - v2 的来由、六个缺口：[D47](kb-decisions.md#d47-v2-的来由六个缺口和-v1v2-的对照)；文档估算和需求来源：[D48](kb-decisions.md#d48-量-image_tokens-的文档估算和思考级别重试的需求来源)。
 - 为什么冻结，以及冻结的判据是推导测试：[D26](kb-decisions.md#d26-内核-v2-的方向和准入原则)、[D28](kb-decisions.md#d28-v2-的原语)。
-- 推导测试的记录：[D55](kb-decisions.md#d55-推导测试第一次)、[D56](kb-decisions.md#d56-推导测试第二次)没通过，[D57](kb-decisions.md#d57-推导测试第三次)通过，契约从那里起冻结。
+- 推导测试的记录：[D55](kb-decisions.md#d55-推导测试第一次)、[D56](kb-decisions.md#d56-推导测试第二次)没通过，[D57](kb-decisions.md#d57-推导测试第三次)通过，契约从那里起冻结。为 D59 改契约做的：[D60](kb-decisions.md#d60-推导测试第四次)没通过。
 - 删除原语是冻结以后第一次改契约，见 [D59](kb-decisions.md#d59-删除原语旧段和空闲进程)。
 - 常量的状态（已定、暂定）只写在 [kb-kernel 的常量](kb-kernel.md#常量)的表里，这里不重复。
 - 常量的出处：`IMAGE_TOKENS` 见 [D42](kb-decisions.md#d42-第-6-步量-image_tokens核实收图片)；图片的其余常量和 `HOPS_MAX` 见 [kb-kernel 的常量](kb-kernel.md#常量)和 [kb-service 的图片](kb-service.md#图片)；`MESSAGE_MAX_BYTES` 见 [D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)；工具定义的两个上限见 [kb-tools 的工具定义](kb-tools.md#工具定义)。
