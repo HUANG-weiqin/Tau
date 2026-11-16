@@ -86,13 +86,7 @@ pump()
 - 移出这个进程的全部观察者。每个连接发一行 `final`，然后关闭。
 - 等同一个进程的连接收到同一条最终回复。运行中发来的消息排队到本轮结束（[kb-kernel.md](kb-kernel.md#流程每种输入)），所以先发的连接也要等排队的消息回答完。
 
-最终回复（`finalReply`）只看当前段，从末尾往前找：
-
-- 先遇到用户消息：空串。
-- 先遇到助手消息：它所有 `text` 块直接连接，不加分隔。
-- 工具结果跳过。
-
-所以本轮不是正常结束时，回复可能是空串，也可能是带工具调用的那条助手消息的正文。本轮以停止、出错或步数用完结束、又有排队的消息时，排队的消息合并写在段末（[kb-kernel.md](kb-kernel.md#流程两个辅助步骤)），回复是空串。
+最终回复由纯函数层的 `finalReply` 算，算法见 [kb-kernel.md](kb-kernel.md#最终回复)。`settle` 在提交之后的当前段上调用它。
 
 ### 线协议（`src/protocol.ts`）
 
@@ -263,7 +257,7 @@ tau stop <进程>
 
 | 路径 | 内容 |
 |---|---|
-| `src/server/serve.ts` | `serve`：启动顺序、`pump`、`settle`、`watch`、`handle`、`finalReply`、`parseRequest`、`close` |
+| `src/server/serve.ts` | `serve`：启动顺序、`pump`、`settle`、`watch`、`handle`、`parseRequest`、`close` |
 | `src/server/listen.ts` | `listen`：在命名管道上监听；`EADDRINUSE` 变成“已经有一个 tau 服务” |
 | `src/server/credentials.ts` | `piCredentials`：只读 pi 的凭据文件，只交出 `api_key` 条目 |
 | `src/protocol.ts` | `PIPE`、`Request`、`Reply` |

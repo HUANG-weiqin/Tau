@@ -2,9 +2,9 @@
 // 存储层的不变量在第 2 步另加，并复用这个函数。
 import { isDeepStrictEqual } from "node:util";
 import { effectOf } from "../src/kernel/decide.ts";
-import { contextUsed, handoffThreshold, STEPS_PER_TURN } from "../src/kernel/derive.ts";
+import { contextUsed, handoffThreshold, IMAGES_PER_MESSAGE, STEPS_PER_TURN } from "../src/kernel/derive.ts";
 import { unreachable } from "../src/kernel/types.ts";
-import type { Ended, Letter, Message, Process, ToolCall, Turn } from "../src/kernel/types.ts";
+import type { Content, Ended, Letter, Message, Process, ToolCall, Turn } from "../src/kernel/types.ts";
 
 type Bad = (what: string) => Error;
 
@@ -23,6 +23,7 @@ export function assertInvariants(p: Process, segment: readonly Message[]): void 
   const first = segment[0];
   if (first !== undefined && first.role !== "user") throw bad(`工作段的第一条是 ${first.role}，应为用户消息`);
 
+  checkShapes(segment, p.segment.seq, bad);
   const missing = pairing(segment, bad);
   const effect = effectOf(p, segment);
   const threshold = handoffThreshold(p.preset);
@@ -69,6 +70,23 @@ export function assertInvariants(p: Process, segment: readonly Message[]): void 
     default:
       unreachable(phase);
   }
+}
+
+/**
+ * 写进段的用户消息只有两种形状：字符串，或者一个可有可无的文本块后面接至少一张图片。
+ * 工具结果最多一个文本块，在最前，后面是图片。工具结果和 seq 大于 1 的段的第一条，图片不超过 IMAGES_PER_MESSAGE。
+ */
+function checkShapes(segment: readonly Message[], seq: number, bad: Bad): void {
+  segment.forEach((m, i) => {
+    if (m.role === "assistant" || typeof m.content === "string") return;
+    const blocks: readonly Content[] = m.content;
+    const images = blocks.filter((c) => c.type === "image").length;
+    const texts = blocks.filter((c) => c.type === "text").length;
+    if (texts + images !== blocks.length) throw bad(`第 ${i} 条的内容块有别的类型`);
+    if (texts > 1 || (texts === 1 && blocks[0]?.type !== "text")) throw bad(`第 ${i} 条应当最多一个文本块，并且在最前`);
+    if (m.role === "user" && images === 0) throw bad(`第 ${i} 条用户消息是内容块，却没有图片：没有图片时正文应当是字符串`);
+    if ((m.role === "toolResult" || (i === 0 && seq > 1)) && images > IMAGES_PER_MESSAGE) throw bad(`第 ${i} 条有 ${images} 张图片，超过 ${IMAGES_PER_MESSAGE}`);
+  });
 }
 
 /**

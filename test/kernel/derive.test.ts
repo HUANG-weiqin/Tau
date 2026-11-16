@@ -7,6 +7,10 @@ import {
   BYTES_PER_TOKEN,
   clip,
   contextUsed,
+  ENDED_REASON_MAX_BYTES,
+  endedReason,
+  endedText,
+  finalReply,
   handoffThreshold,
   MESSAGE_MAX_BYTES,
   messageBytes,
@@ -115,4 +119,34 @@ test("消息的字节上限：不超时原样返回，超出时保留头尾", ()
   const out = clip(long);
   assert.ok(utf8Bytes(out) <= MESSAGE_MAX_BYTES);
   assert.ok(out.startsWith("头中") && out.endsWith("中尾"));
+});
+
+test("finalReply：从段尾往前，先遇到用户消息是空串，先遇到助手消息是它的正文", () => {
+  const user = (text: string): Message => ({ role: "user", content: text, timestamp: 0 });
+  const result: Message = { role: "toolResult", toolCallId: "c1", toolName: "read", content: [{ type: "text", text: "结果" }], isError: false, timestamp: 0 };
+  const a = (text: string, calls = false) => assistant({ usage: 1, thinking: "想", text, ...(calls ? { calls: [call("c1")] } : {}) });
+  assert.equal(finalReply([]), "");
+  assert.equal(finalReply([user("问")]), "");
+  assert.equal(finalReply([user("问"), a("答")]), "答");
+  assert.equal(finalReply([user("问"), a("答"), user("又问")]), "");
+  assert.equal(finalReply([user("问"), a("先看看", true), result]), "先看看", "工具结果跳过，取带工具调用的那条的正文");
+  assert.equal(finalReply([user("问"), a("答一"), user("追问"), a("答二")]), "答二");
+  const two: Message = { ...assistant({ usage: 1, text: "甲" }), content: [{ type: "text", text: "甲" }, { type: "text", text: "乙" }] };
+  assert.equal(finalReply([user("问"), two]), "甲乙", "文本块直接连接，不加分隔");
+  assert.equal(finalReply([user("问"), assistant({ usage: 1, calls: [call("c1")] }), result]), "", "没有文本块是空串");
+});
+
+test("endedText：四种结束原因；出错原因先 clip 再把回车换行换成空格", () => {
+  assert.equal(endedText("done"), "正常结束");
+  assert.equal(endedText("stepLimit"), "步数用完");
+  assert.equal(endedText("stopped"), "被停止");
+  assert.equal(endedText({ error: "529 过载" }), "出错：529 过载");
+  assert.equal(endedText({ error: "a\r\nb\nc\rd" }), "出错：a  b c d");
+  const long = `${"头".repeat(2_000)}\n${"尾".repeat(2_000)}`;
+  const text = endedText({ error: long });
+  assert.ok(!/[\r\n]/.test(text), "一行");
+  assert.equal(text, `出错：${clip(long, ENDED_REASON_MAX_BYTES).replace(/[\r\n]/g, " ")}`);
+  assert.ok(text.includes("中间省略"), "省略标记还在，它的换行也换成了空格");
+  assert.ok(utf8Bytes(text) <= ENDED_REASON_MAX_BYTES + utf8Bytes("出错："));
+  assert.equal(endedReason(endedReason(long)), endedReason(long), "处理过的原因再处理一次不变");
 });

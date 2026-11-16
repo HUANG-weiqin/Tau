@@ -6,9 +6,10 @@ import type { DatabaseSync } from "node:sqlite";
 import type { Models } from "@earendil-works/pi-ai";
 import { createActions } from "../executor/actions.ts";
 import { createExecutor } from "../executor/executor.ts";
+import { finalReply } from "../kernel/derive.ts";
 import { observe } from "../kernel/observe.ts";
 import { unreachable, userLetter } from "../kernel/types.ts";
-import type { Memory, Message, Process, ProcessId } from "../kernel/types.ts";
+import type { Memory, Process, ProcessId } from "../kernel/types.ts";
 import { loadPreset } from "../presets/load.ts";
 import type { Reply, Request } from "../protocol.ts";
 import { loadProcesses, loadSegment, openDb } from "../store/db.ts";
@@ -129,16 +130,6 @@ export async function serve(opts: ServeOptions): Promise<Service> {
 function reply(s: Socket, r: Reply): Socket {
   if (!s.destroyed) s.write(`${JSON.stringify(r)}\n`);
   return s;
-}
-
-/** 最终回复：从段尾往前，遇到用户消息之前的最后一条助手消息的正文。 */
-function finalReply(segment: readonly Message[]): string {
-  for (let i = segment.length - 1; i >= 0; i--) {
-    const m = segment[i]!;
-    if (m.role === "user") return "";
-    if (m.role === "assistant") return m.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("");
-  }
-  return "";
 }
 
 function parseRequest(line: string): Request {

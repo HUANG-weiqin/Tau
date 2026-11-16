@@ -1,10 +1,11 @@
 // 库内副作用：记忆工具和 `self`，在处理输入的事务里执行，恰好一次（见 .knowledge/kb-store.md、kb-memory.md；设计稿第 9 节）。
+import { endedText } from "../kernel/derive.ts";
 import { observe } from "../kernel/observe.ts";
 import { MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
 import { textContent, unreachable } from "../kernel/types.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { PhaseView, Projection } from "../kernel/observe.ts";
-import type { Ended, Instant, Memory, Message, Process, ToolCall, ToolResultContent, Versioned } from "../kernel/types.ts";
+import type { Instant, Memory, Message, Process, ToolCall, ToolResultContent, Versioned } from "../kernel/types.ts";
 import { loadProcesses } from "./db.ts";
 
 export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment: readonly Message[], call: ToolCall, now: Instant): ToolResultContent {
@@ -96,20 +97,6 @@ function phaseText(ph: PhaseView): string {
       return `等工具结果，本轮第 ${ph.steps} 步，排队消息 ${ph.queued} 条`;
     default:
       return unreachable(ph);
-  }
-}
-
-function endedText(e: Ended): string {
-  if (typeof e === "object") return `出错：${e.error}`;
-  switch (e) {
-    case "done":
-      return "正常结束";
-    case "stepLimit":
-      return "步数用完";
-    case "stopped":
-      return "被停止";
-    default:
-      return unreachable(e);
   }
 }
 

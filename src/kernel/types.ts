@@ -1,7 +1,7 @@
 // 内核的全部类型。外部类型只能 import type（见 .knowledge/kb-kernel.md）。
 import type { AssistantMessage, Context, ImageContent, TextContent, ToolCall, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 
-export type { AssistantMessage, ToolCall, ToolResultMessage, UserMessage };
+export type { AssistantMessage, ImageContent, ToolCall, ToolResultMessage, UserMessage };
 
 /** 信件和工具结果的内容块。图片的 data 将写成 `blob:<hash>`（设计稿第 5.6 节）；现在还没有代码产生图片。 */
 export type Content = TextContent | ImageContent;

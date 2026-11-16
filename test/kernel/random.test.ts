@@ -6,9 +6,9 @@ import { HANDOFF_INSTRUCTION } from "../../src/kernel/context.ts";
 import { decide, effectOf } from "../../src/kernel/decide.ts";
 import { contextUsed, handoffThreshold, MESSAGE_MAX_BYTES, tokens, utf8Bytes } from "../../src/kernel/derive.ts";
 import { unreachable } from "../../src/kernel/types.ts";
-import type { AssistantMessage, Effect, Env, Input, Message, PresetTool, Process } from "../../src/kernel/types.ts";
+import type { AssistantMessage, Effect, Ended, Env, ImageContent, Input, Letter, Message, PresetTool, Process } from "../../src/kernel/types.ts";
 import { res } from "../plain.ts";
-import { assistant, call, current, feed, preset, textOf, usage, userInput, world } from "./helpers.ts";
+import { assistant, call, current, feed, image, letterInput, preset, processLetter, textOf, usage, userLetterWith, world } from "./helpers.ts";
 import type { ReplySpec } from "./helpers.ts";
 
 /** mulberry32：32 位状态的伪随机数生成器。 */
@@ -131,10 +131,13 @@ interface Stats {
   queuedMerged: number;
   dropped: number;
   duplicates: number;
+  usageAdded: number;
+  processLetters: number;
+  images: number;
 }
 
 function newStats(): Stats {
-  return { handoffOk: 0, handoffFailed: 0, done: 0, stopped: 0, stepLimit: 0, errors: 0, skipped: 0, interrupted: 0, queuedMerged: 0, dropped: 0, duplicates: 0 };
+  return { handoffOk: 0, handoffFailed: 0, done: 0, stopped: 0, stepLimit: 0, errors: 0, skipped: 0, interrupted: 0, queuedMerged: 0, dropped: 0, duplicates: 0, usageAdded: 0, processLetters: 0, images: 0 };
 }
 
 /** 一次模拟：一个进程、一个忠实的环境。 */
@@ -164,6 +167,25 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
     if (roll < 0.14) return usage(0);
     if (roll < 0.18) return usage(Math.floor(window * (0.7 + 0.5 * r.float())));
     return usage(base + out, { input: base, output: out });
+  };
+
+  /** 一封随机的信：用户的信、进程的信、要回信的信、回信；四分之一带 1 到 2 张图片，可能只有图片。 */
+  const randomLetter = (): Letter => {
+    const images: ImageContent[] = r.chance(0.25) ? Array.from({ length: r.int(1, 2) }, () => image(`d${r.int(0, 99)}`)) : [];
+    const body = images.length > 0 && r.chance(0.3) ? "" : text(r, r.chance(0.05) ? r.int(2_000, 20_000) : r.int(1, 200));
+    const id = `q${r.int(1, 3)}`;
+    switch (r.weighted({ user: 55, process: 15, wait: 15, reply: 15 })) {
+      case "user":
+        return userLetterWith(body, images);
+      case "process":
+        return processLetter(body, { id, hops: r.int(1, 5), images });
+      case "wait":
+        return processLetter(body, { id, replyTo: id, hops: r.int(1, 5), images });
+      default: {
+        const ended: Ended = r.pick<Ended>(["done", "stepLimit", "stopped", { error: text(r, r.int(1, 3_000)) }]);
+        return processLetter(body, { id, reply: ended, hops: r.int(1, 5), images });
+      }
+    }
   };
 
   const calls = (k: number) => Array.from({ length: k }, () => call(`c${ids++}`, r.pick(TOOL_NAMES), { path: `f${ids}.ts` }));
@@ -233,7 +255,9 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
       case "runTool": {
         if (r.chance(profile.toolInterrupted)) return { kind: "toolResult", n: e.n, outcome: { status: "interrupted" } };
         const size = r.chance(profile.hugeResult) ? MESSAGE_MAX_BYTES + r.int(1, 30_000) : r.chance(0.3) ? r.int(1_000, 8_000) : r.int(0, 300);
-        return { kind: "toolResult", n: e.n, outcome: { status: "ok", content: res(text(r, size), r.chance(0.1)) } };
+        const out = res(text(r, size), r.chance(0.1));
+        const images = r.chance(0.15) ? Array.from({ length: r.int(1, 5) }, () => image(`t${r.int(0, 99)}`)) : [];
+        return { kind: "toolResult", n: e.n, outcome: { status: "ok", content: { ...out, content: [...out.content, ...images] } } };
       }
       default:
         return unreachable(e);
@@ -265,6 +289,17 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
       assert.equal(s.after?.n, w.p.lastEffect);
     }
 
+    // 累计用量：只有不丢弃的、正常的模型结果才加。
+    const counted = input.kind === "modelResult" && input.outcome.status === "ok" && prev.phase.tag === "awaitingModel" && input.n === prev.lastEffect;
+    if (counted && input.outcome.status === "ok") {
+      const m = input.outcome.message.usage;
+      const u = prev.usage;
+      assert.deepEqual(w.p.usage, { input: u.input + m.input, output: u.output + m.output, cacheRead: u.cacheRead + m.cacheRead, cacheWrite: u.cacheWrite + m.cacheWrite });
+      stats.usageAdded++;
+    } else {
+      assert.deepEqual(w.p.usage, prev.usage);
+    }
+
     const dropped = (isResult(input) && (prev.phase.tag === "idle" || input.n !== prev.lastEffect)) || (input.kind === "stop" && prev.phase.tag === "idle");
     const duplicate = origin === "duplicate";
     if (dropped || duplicate) {
@@ -282,6 +317,8 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
     if (history.length > 50) history.shift();
 
     // 统计覆盖面。
+    if (input.kind === "letter" && input.letter.from.kind === "process") stats.processLetters++;
+    if (s.append.some((m) => typeof m.content !== "string" && m.content.some((c) => c.type === "image"))) stats.images++;
     if (w.p.segment.seq !== prev.segment.seq) stats.handoffOk++;
     for (const m of s.append) {
       if (m.role === "toolResult" && textOf(m) === "未执行") stats.skipped++;
@@ -304,7 +341,7 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
     const eff = effectOf(w.p, current(w));
     switch (a) {
       case "user":
-        run(userInput(text(r, r.chance(0.05) ? r.int(2_000, 20_000) : r.int(1, 200))));
+        run(letterInput(randomLetter()));
         return true;
       case "stop":
         run({ kind: "stop" });
@@ -371,7 +408,7 @@ for (const profile of PROFILES) {
     if (profile.name === "失控") {
       assert.ok(stats.stepLimit > 0, "没有用完步数");
     } else {
-      for (const k of ["handoffFailed", "done", "stopped", "errors", "skipped", "interrupted", "queuedMerged", "duplicates"] as const) {
+      for (const k of ["handoffFailed", "done", "stopped", "errors", "skipped", "interrupted", "queuedMerged", "duplicates", "usageAdded", "processLetters", "images"] as const) {
         assert.ok(stats[k] > 0, `没有覆盖到 ${k}`);
       }
     }

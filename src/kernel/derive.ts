@@ -1,7 +1,7 @@
 // 能从工作段算出来的值都在这里算，不存（见 .knowledge/kb-kernel.md）。
 import { systemPrompt, toolDefinitions } from "./context.ts";
 import { unreachable } from "./types.ts";
-import type { AssistantMessage, Instant, Message, PresetSnapshot, Process, ToolCall } from "./types.ts";
+import type { AssistantMessage, Ended, Instant, Message, PresetSnapshot, Process, ToolCall } from "./types.ts";
 
 /** 每轮最多调用多少次模型。 */
 export const STEPS_PER_TURN = 100;
@@ -9,6 +9,10 @@ export const STEPS_PER_TURN = 100;
 export const BYTES_PER_TOKEN = 2;
 /** 工具结果和 decide 写入的用户消息共用的字节上限，超出时保留头尾。 */
 export const MESSAGE_MAX_BYTES = 32 * 1024;
+/** 工具结果和新段的第一条消息，最多带多少张图片。 */
+export const IMAGES_PER_MESSAGE = 2;
+/** 结束原因的字节上限。provider 的报错可能很长，原文由 CLI 显示给用户。 */
+export const ENDED_REASON_MAX_BYTES = 1024;
 /** 阈值之上留给交接指令、补的结果、消息框架和估算误差的 token。 */
 export const MARGIN_TOKENS = 4096;
 
@@ -99,6 +103,36 @@ export function pendingCalls(segment: readonly Message[]): ToolCall[] {
   // 按位置配对，不按 ID：结果总是按调用的顺序写入，而 ID 来自模型，可能重复或为空。
   const answered = segment.slice(i + 1).filter((m) => m.role === "toolResult").length;
   return last.content.filter((c): c is ToolCall => c.type === "toolCall").slice(answered);
+}
+
+/** 最终回复：从段尾往前，遇到用户消息之前的最后一条助手消息的正文。 */
+export function finalReply(segment: readonly Message[]): string {
+  for (let i = segment.length - 1; i >= 0; i--) {
+    const m = segment[i]!;
+    if (m.role === "user") return "";
+    if (m.role === "assistant") return m.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("");
+  }
+  return "";
+}
+
+/** 出错原因：先 clip，再把回车和换行换成空格。顺序不能反：clip 插进去的省略标记也带换行。 */
+export function endedReason(error: string): string {
+  return clip(error, ENDED_REASON_MAX_BYTES).replace(/[\r\n]/g, " ");
+}
+
+/** 结束原因的文字，`self` 和回信的头共用。永远只有一行。 */
+export function endedText(e: Ended): string {
+  if (typeof e === "object") return `出错：${endedReason(e.error)}`;
+  switch (e) {
+    case "done":
+      return "正常结束";
+    case "stepLimit":
+      return "步数用完";
+    case "stopped":
+      return "被停止";
+    default:
+      return unreachable(e);
+  }
 }
 
 /** 超出字节上限时保留头尾，中间换成一行说明。只扫描保留的部分和一次全长计数，不拷贝整串。 */

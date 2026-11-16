@@ -253,7 +253,8 @@ describe("5.2 每种输入", () => {
     feed(w, { kind: "letter", letter: { from, content: text("丙"), hops: 2, replyTo: "y" } });
     feed(w, userInput("丁"));
     reply(w, assistant({ usage: LOW, text: "完成了" }));
-    assert.equal(textOf(current(w).at(-1)!), "乙\n\n丙\n\n丁", "合并的正文和 v1 一样，用空行连起来");
+    const wait = "（来自进程 x，预设 other。它在等回信：你这一轮结束时，最终回复会寄给它，之后的几轮不会。）";
+    assert.equal(textOf(current(w).at(-1)!), `${wait}\n乙\n\n${wait}\n丙\n\n（来自用户）\n丁`, "合并时进程的信带头，用户的信加“来自用户”");
     assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 5, replyTo: ["y"] }, purpose: "turn" });
   });
 
@@ -721,7 +722,7 @@ describe("上一轮没有正常结束：下一条用户消息前面加一句说�
     reply(w, assistant({ usage: 0, stopReason: "error", errorMessage: reason }));
     const big = codeText(100 * 1024);
     const text = textOf(feed(w, userInput(big)).append[0]!);
-    assert.ok(text.startsWith(`（上一轮出错，没有做完：${clip(reason, 1024)}）`), text.slice(0, 200));
+    assert.ok(text.startsWith(`（上一轮出错，没有做完：${clip(reason, 1024).replace(/[\r\n]/g, " ")}）`), text.slice(0, 200));
     assert.ok(utf8Bytes(text) <= MESSAGE_MAX_BYTES);
   });
 });

@@ -2,7 +2,7 @@
 import type { AssistantMessage, StopReason, ToolCall, Usage } from "@earendil-works/pi-ai";
 import { decide, effectOf, start } from "../../src/kernel/decide.ts";
 import { textContent, unreachable, userLetter } from "../../src/kernel/types.ts";
-import type { Effect, Env, Input, Letter, Message, PresetSnapshot, Process } from "../../src/kernel/types.ts";
+import type { Content, Effect, Ended, Env, ImageContent, Input, Letter, Message, PresetSnapshot, Process } from "../../src/kernel/types.ts";
 import { assertInvariants } from "../invariants.ts";
 
 export function preset(over: Partial<PresetSnapshot> = {}): PresetSnapshot {
@@ -72,10 +72,21 @@ export function assistant(s: ReplySpec): AssistantMessage {
 export const userInput = (text: string): Input => userLetter(text);
 /** 排队里的一封用户的信。 */
 export const letter = (text: string): Letter => userLetter(text).letter;
+/** 一张图片块，`data` 用来区分。 */
+export const image = (data = "aGk="): ImageContent => ({ type: "image", data, mimeType: "image/png" });
+/** 用户的信，可以带图片。 */
+export const userLetterWith = (text: string, images: ImageContent[] = []): Letter => ({ from: { kind: "user" }, content: [...(text === "" ? [] : textContent(text)), ...images], hops: 0 });
+/** 进程的信：回信（`reply`）、要回信的信（`replyTo`）或者普通的信。 */
+export function processLetter(text: string, over: { id?: string; preset?: string; replyTo?: string; reply?: Ended; hops?: number; images?: ImageContent[] } = {}): Letter {
+  const from = { kind: "process" as const, id: over.id ?? "x", preset: over.preset ?? "other", ...(over.reply === undefined ? {} : { reply: { ended: over.reply } }) };
+  return { from, content: [...textContent(text), ...(over.images ?? [])], hops: over.hops ?? 1, ...(over.replyTo === undefined ? {} : { replyTo: over.replyTo }) };
+}
+export const letterInput = (l: Letter): Input => ({ kind: "letter", letter: l });
 export const stopInput = (): Input => ({ kind: "stop" });
 export const modelOk = (n: number, message: AssistantMessage): Input => ({ kind: "modelResult", n, outcome: { status: "ok", message } });
 export const modelInterrupted = (n: number): Input => ({ kind: "modelResult", n, outcome: { status: "interrupted" } });
 export const toolOk = (n: number, text: string, isError = false): Input => ({ kind: "toolResult", n, outcome: { status: "ok", content: { content: textContent(text), isError } } });
+export const toolOkContent = (n: number, content: Content[], isError = false): Input => ({ kind: "toolResult", n, outcome: { status: "ok", content: { content, isError } } });
 export const toolInterrupted = (n: number): Input => ({ kind: "toolResult", n, outcome: { status: "interrupted" } });
 
 /** 内存里的状态：进程记录，加上每一段的消息。 */
