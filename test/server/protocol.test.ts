@@ -18,7 +18,10 @@ import type { Reply, Request } from "../../src/protocol.ts";
 import { WATCH_BUFFER_MAX, serve } from "../../src/server/serve.ts";
 import type { Service } from "../../src/server/serve.ts";
 import { gif, jpeg, png } from "../images.ts";
-import { appendMessages, loadProcess, loadSegment, saveProcess } from "../../src/store/db.ts";
+import { appendMessages, loadProcess, loadSegment, putMail, saveProcess } from "../../src/store/db.ts";
+import { putBlobs } from "../../src/store/blobs.ts";
+import { checkImages } from "../../src/images.ts";
+import type { Turn } from "../../src/kernel/types.ts";
 
 interface Env {
   pipe: string;
@@ -821,4 +824,208 @@ test("fork 带 preset：读不出的预设、放不进的预设、类型不对�
   for (const bad of [{ preset: 1 }, { preset: null }]) assert.match(await errors({ op: "fork", process: a, ...bad }), /^无法识别的请求/);
   const ps = await collect(e.pipe, { op: "ps" });
   assert.equal(ps[0]?.type === "ps" ? ps[0].processes.length : 0, 1);
+});
+
+// prune、remove、sweep（D59）
+
+/** 整个库，拒绝以后必须和之前逐字节相同。 */
+const dumpDb = (e: Env): string =>
+  JSON.stringify(["SELECT * FROM processes ORDER BY id", "SELECT * FROM segment_messages ORDER BY process_id, segment_seq, seq", "SELECT * FROM mailbox ORDER BY seq", "SELECT * FROM effects", "SELECT hash FROM blobs ORDER BY hash", "SELECT * FROM memory ORDER BY version"].map((q) => e.svc.db.prepare(q).all()));
+
+/** 把空闲进程改成第 `current` 段：旧段 1 保留，2 到 current-1 各放一条消息，当前段 0 条。 */
+function riseTo(e: Env, id: string, current: number): void {
+  const p = loadProcess(e.svc.db, id)!;
+  saveProcess(e.svc.db, { ...p, segment: { ...p.segment, seq: current } });
+  for (let seq = 2; seq < current; seq++) appendMessages(e.svc.db, { ...p, segment: { ...p.segment, seq } }, 0, [{ role: "user", content: `第 ${seq} 段`, timestamp: 1 }]);
+}
+
+function withTurn(e: Env, id: string, patch: Partial<Turn>): void {
+  const p = loadProcess(e.svc.db, id)!;
+  const turn: Turn = { steps: 1, queued: [], hops: 0, replyTo: [], ...patch };
+  saveProcess(e.svc.db, { ...p, lastEffect: p.lastEffect + 1, phase: { tag: "awaitingModel", turn, purpose: "turn" } });
+}
+
+test("prune：回执，然后关闭；旧段 history 回 error，当前段照读，当前段 0 条回 end；before 越界回 error", async (t) => {
+  const e = await setup(t);
+  const id = await startIdle(e);
+  const old = segmentOf(e, id);
+  riseTo(e, id, 3);
+  assert.equal((await collect(e.pipe, { op: "history", process: id, segment: 2 })).at(-1)?.type, "end");
+
+  const c = open(e.pipe, { op: "prune", process: id, before: 3 });
+  await c.closed;
+  assert.deepEqual(c.replies, [{ type: "receipt", process: id }]);
+  for (const segment of [1, 2]) assert.match(errorOf(await collect(e.pipe, { op: "history", process: id, segment })), /已经被删掉/);
+  assert.deepEqual(await collect(e.pipe, { op: "history", process: id }), [{ type: "end", segment: 3, messages: 0 }]);
+  assert.equal(old.length, 2);
+
+  // 当前段有消息时照读。
+  const p = loadProcess(e.svc.db, id)!;
+  const fresh: Message = { role: "user", content: "新段", timestamp: 2 };
+  appendMessages(e.svc.db, p, 0, [fresh]);
+  assert.deepEqual(await collect(e.pipe, { op: "history", process: id }), [{ type: "message", segment: 3, seq: 0, message: fresh }, { type: "end", segment: 3, messages: 1 }]);
+
+  const before = dumpDb(e);
+  assert.match(errorOf(await collect(e.pipe, { op: "prune", process: id, before: 4 })), /当前段/);
+  assert.match(errorOf(await collect(e.pipe, { op: "prune", process: "nope", before: 1 })), /没有这个进程/);
+  assert.equal(dumpDb(e), before);
+  // before 不大于 1 成功，什么都不删。
+  assert.deepEqual(await collect(e.pipe, { op: "prune", process: id, before: 0 }), [{ type: "receipt", process: id }]);
+  assert.equal(dumpDb(e), before);
+});
+
+test("remove：成功时两种订阅都先收到 removed，订阅这个进程的随后关闭，订阅全部的照常收到之后的推送；回执在 removed 之后", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  const b = await startIdle(e);
+  const all = open(e.pipe, { op: "watch" });
+  const mine = open(e.pipe, { op: "watch", process: a });
+  const other = open(e.pipe, { op: "watch", process: b });
+  await until(() => updates(all).length === 2 && updates(mine).length === 1 && updates(other).length === 1, "快照");
+
+  const order: string[] = [];
+  all.socket.on("data", () => order.push("all"));
+  mine.socket.on("data", () => order.push("mine"));
+  const rm = open(e.pipe, { op: "remove", process: a });
+  rm.socket.on("data", () => order.push("receipt"));
+  await rm.closed;
+  assert.deepEqual(rm.replies, [{ type: "receipt", process: a }]);
+  await mine.closed;
+  assert.deepEqual(mine.replies.at(-1), { type: "removed", process: a });
+  assert.deepEqual(all.replies.filter((r) => r.type === "removed"), [{ type: "removed", process: a }]);
+  assert.equal(order.at(-1), "receipt", `回执在 removed 之后：${order.join(",")}`);
+  assert.ok(order.indexOf("all") < order.indexOf("receipt") && order.indexOf("mine") < order.indexOf("receipt"));
+  assert.ok(!other.replies.some((r) => r.type === "removed"), "订阅别的进程的不收 removed");
+
+  // 记录和段都没了。
+  assert.equal(loadProcess(e.svc.db, a), undefined);
+  assert.match(errorOf(await collect(e.pipe, { op: "history", process: a })), /没有这个进程/);
+  const ps = await collect(e.pipe, { op: "ps" });
+  assert.deepEqual(ps[0]?.type === "ps" ? ps[0].processes.map((p) => p.self.id) : [], [b]);
+
+  // 订阅全部的照常订阅：b 之后的推送还能收到。
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("再答"))]);
+  const n = updates(all).length;
+  assert.equal((await collect(e.pipe, { op: "send", process: b, text: "再来" })).at(-1)?.type, "final");
+  await until(() => updates(all).length > n, "removed 之后的 update");
+  assert.ok(updates(other).length > 1);
+  for (const c of [all, other]) c.socket.destroy();
+});
+
+test("remove：每条拒绝回 error，库不变", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  const b = await startIdle(e);
+  const refused = async (id: string, why: RegExp): Promise<void> => {
+    const before = dumpDb(e);
+    assert.match(errorOf(await collect(e.pipe, { op: "remove", process: id })), why);
+    assert.equal(dumpDb(e), before);
+  };
+  await refused("nope", /没有这个进程/);
+
+  // 信箱里有它的输入。服务不处理它：没有请求调用 pump。
+  putMail(e.svc.db, a, { kind: "letter", letter: { from: { kind: "user" }, content: [{ type: "text", text: "x" }], hops: 0 } });
+  await refused(a, /信箱/);
+  e.svc.db.exec("DELETE FROM mailbox");
+
+  // 有进程的 parent 是它。
+  saveProcess(e.svc.db, { ...loadProcess(e.svc.db, b)!, parent: a });
+  await refused(a, /父进程/);
+  saveProcess(e.svc.db, { ...loadProcess(e.svc.db, b)!, parent: undefined });
+
+  // 它在别的进程的 turn.replyTo 里；在排队的信的 replyTo 里；在信箱里的信的 replyTo 里。
+  const idleB = loadProcess(e.svc.db, b)!;
+  withTurn(e, b, { replyTo: [a] });
+  await refused(a, /回信/);
+  withTurn(e, b, { queued: [{ from: { kind: "user" }, content: [{ type: "text", text: "x" }], hops: 0, replyTo: a }] });
+  await refused(a, /回信/);
+  saveProcess(e.svc.db, idleB);
+  putMail(e.svc.db, b, { kind: "letter", letter: { from: { kind: "user" }, content: [{ type: "text", text: "x" }], hops: 0, replyTo: a } });
+  await refused(a, /回信/);
+  e.svc.db.exec("DELETE FROM mailbox");
+
+  // 不是空闲。
+  withTurn(e, a, {});
+  await refused(a, /不是空闲/);
+});
+
+test("remove：执行器里还有这个进程的动作没收尾时回 error；收尾以后可以删", async (t) => {
+  const e = await setup(t);
+  const gate = Promise.withResolvers<void>();
+  let started = false;
+  e.faux.appendResponses([
+    async () => {
+      started = true;
+      await gate.promise;
+      return fauxAssistantMessage(fauxText("晚到的回复"));
+    },
+  ]);
+  const first = open(e.pipe, { op: "start", preset: "p", text: "慢" });
+  await until(() => started && first.replies.length > 0, "模型调用开始");
+  const id = receiptOf(first.replies);
+  // 停止：进程回到 idle，信箱空，但被中止的动作还没结束。
+  await collect(e.pipe, { op: "stop", process: id });
+  await until(() => loadProcess(e.svc.db, id)?.phase.tag === "idle" && e.svc.db.prepare("SELECT 1 FROM mailbox").get() === undefined, "停止处理完");
+  const before = dumpDb(e);
+  assert.match(errorOf(await collect(e.pipe, { op: "remove", process: id })), /动作/);
+  assert.equal(dumpDb(e), before);
+
+  gate.resolve();
+  await first.closed;
+  await until(() => !e.svc.db.prepare("SELECT 1 FROM effects").get(), "动作收尾");
+  await sleep(50);
+  assert.deepEqual(await collect(e.pipe, { op: "remove", process: id }), [{ type: "receipt", process: id }]);
+  assert.equal(loadProcess(e.svc.db, id), undefined);
+});
+
+test("sweep：回一行 swept，数目对；引用的图片留下，blob 请求还能读到", async (t) => {
+  const e = await setup(t);
+  const kept = png(16, 16, 1);
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("看到了"))]);
+  const replies = await collect(e.pipe, { op: "start", preset: "p", text: "看图", images: [b64(kept)] });
+  assert.equal(replies.at(-1)?.type, "final");
+  const orphans = checkImages([png(16, 16, 2), png(16, 16, 3)].map(b64));
+  putBlobs(e.svc.db, orphans);
+  assert.equal(blobRows(e), 3);
+
+  const c = open(e.pipe, { op: "sweep" });
+  await c.closed;
+  assert.deepEqual(c.replies, [{ type: "swept", blobs: 2 }]);
+  assert.equal(blobRows(e), 1);
+  assert.deepEqual(await collect(e.pipe, { op: "sweep" }), [{ type: "swept", blobs: 0 }]);
+  const hash = checkImages([b64(kept)])[0]!.hash;
+  assert.equal((await collect(e.pipe, { op: "blob", hash }))[0]?.type, "blob");
+});
+
+test("prune、remove、sweep 不调用 pump：信箱里的信不被处理", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  const b = await startIdle(e);
+  putMail(e.svc.db, a, { kind: "letter", letter: { from: { kind: "user" }, content: [{ type: "text", text: "留着" }], hops: 0 } });
+  const mail = () => e.svc.db.prepare("SELECT COUNT(*) AS n FROM mailbox").get()?.n;
+  assert.equal((await collect(e.pipe, { op: "prune", process: a, before: 1 }))[0]?.type, "receipt");
+  assert.equal((await collect(e.pipe, { op: "sweep" }))[0]?.type, "swept");
+  assert.equal((await collect(e.pipe, { op: "remove", process: b }))[0]?.type, "receipt");
+  await sleep(100);
+  assert.equal(mail(), 1);
+});
+
+test("prune、remove、sweep 的请求校验：缺字段、类型不对都回无法识别的请求", async (t) => {
+  const e = await setup(t);
+  const id = await startIdle(e);
+  const bad: unknown[] = [
+    { op: "prune", process: id },
+    { op: "prune", process: id, before: -1 },
+    { op: "prune", process: id, before: 1.5 },
+    { op: "prune", process: id, before: "1" },
+    { op: "prune", process: id, before: null },
+    { op: "prune", before: 1 },
+    { op: "prune", process: 1, before: 1 },
+    { op: "remove" },
+    { op: "remove", process: 1 },
+    { op: "remove", process: null },
+  ];
+  const before = dumpDb(e);
+  for (const req of bad) assert.match(errorOf(await collect(e.pipe, req as Request)), /^无法识别的请求/, JSON.stringify(req));
+  assert.equal(dumpDb(e), before);
 });

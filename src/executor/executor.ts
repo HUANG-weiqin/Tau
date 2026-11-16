@@ -27,6 +27,8 @@ export interface Executor {
   startNext(): Promise<void> | null;
   /** 中止一个正在运行的副作用；它不在运行时什么都不做。 */
   abort(id: ProcessId, n: number): void;
+  /** 这个进程在执行器里还有没收尾的动作（包括已被中止、还没结束的）。只读。服务删进程之前用它。 */
+  busy(id: ProcessId): boolean;
 }
 
 /** 启动执行器。先做启动恢复，所以每次服务启动只能建一个。 */
@@ -48,6 +50,10 @@ export function createExecutor(db: DatabaseSync, actions: Actions): Executor {
     },
     abort(id, n) {
       running.get(key(id, n))?.abort();
+    },
+    busy(id) {
+      const prefix = `${JSON.stringify([id]).slice(0, -1)},`;
+      return [...running.keys()].some((k) => k.startsWith(prefix));
     },
   };
 }

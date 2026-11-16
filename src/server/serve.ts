@@ -15,7 +15,7 @@ import { loadPreset } from "../presets/load.ts";
 import type { Reply, Request } from "../protocol.ts";
 import { loadProcess, loadProcesses, loadSegment, openDb, readSegment } from "../store/db.ts";
 import { readBlob } from "../store/blobs.ts";
-import { forkProcess, handleNext, send, startProcess } from "../store/inputs.ts";
+import { forkProcess, handleNext, pruneSegments, removeProcess, send, startProcess, sweepBlobs } from "../store/inputs.ts";
 import type { Handled } from "../store/inputs.ts";
 import { listen } from "./listen.ts";
 
@@ -156,10 +156,33 @@ export async function serve(opts: ServeOptions): Promise<Service> {
         const segment = req.segment ?? p.segment.seq;
         if (segment < 1 || segment > p.segment.seq) throw new Error(`进程 ${p.id} 没有第 ${segment} 段，现在是第 ${p.segment.seq} 段。`);
         const { rows, count } = readSegment(db, p.id, segment, req.from ?? 0);
+        if (count === 0 && segment < p.segment.seq) throw new Error(`进程 ${p.id} 的第 ${segment} 段已经被删掉。`);
         for (const r of rows) reply(s, { type: "message", segment, seq: r.seq, message: r.message });
         reply(s, { type: "end", segment, messages: count }).end();
         return;
       }
+      case "prune":
+        pruneSegments(db, req.process, req.before);
+        reply(s, { type: "receipt", process: req.process }).end();
+        return;
+      case "remove": {
+        if (exec.busy(req.process)) throw new Error(`进程 ${req.process} 在执行器里还有动作没收尾，稍后再删。`);
+        removeProcess(db, req.process);
+        const removed: Reply = { type: "removed", process: req.process };
+        for (const sub of subscriptions) {
+          if (sub.process !== undefined && sub.process !== req.process) continue;
+          reply(sub.socket, removed);
+          if (sub.process !== undefined) {
+            subscriptions.delete(sub);
+            sub.socket.end();
+          }
+        }
+        reply(s, { type: "receipt", process: req.process }).end();
+        return;
+      }
+      case "sweep":
+        reply(s, { type: "swept", blobs: sweepBlobs(db) }).end();
+        return;
       case "blob": {
         const data = readBlob(db, req.hash);
         const mimeType = data && imageType(data);
@@ -234,6 +257,9 @@ function parseRequest(line: string): Request {
       return v === undefined || (typeof v === "number" && Number.isSafeInteger(v) && v >= 0);
     };
     if (r.op === "ps") return { op: "ps" };
+    if (r.op === "sweep") return { op: "sweep" };
+    if (r.op === "remove" && str(r, "process")) return r as Request;
+    if (r.op === "prune" && str(r, "process") && "before" in r && num("before")) return r as Request;
     if (r.op === "history" && str(r, "process") && num("segment") && num("from")) return r as Request;
     if (r.op === "watch" && (!("process" in r) || str(r, "process"))) return r as Request;
     if (r.op === "stop" && str(r, "process")) return r as Request;

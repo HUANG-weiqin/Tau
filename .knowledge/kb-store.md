@@ -291,7 +291,7 @@ CREATE TABLE blobs (
 6. 在等库外副作用 n（`callModel`，或 `inStore` 为 false 的工具）：“`effects` 里有 n 这一行”和“信箱里有 n 的结果”，恰好成立一个。
 7. 在等库内副作用 n（库内工具、不认识的工具、预设里没有的工具）：`effects` 里没有行，信箱里恰好有一个 n 的结果。
 
-8. 信箱、`turn.queued` 和全部进程的全部段里的每个 blob 引用，`blobs` 里都有对应的行。图片块的 `data` 不是 `blob:<hash>` 也算违反：库里只存引用。检查在 `assertStoreInvariants` 的 `assertBlobRefs`。现在它只读当前段，扩到全部段的检查还没写（D59）。
+8. 信箱、`turn.queued` 和全部进程的全部段里的每个 blob 引用，`blobs` 里都有对应的行。图片块的 `data` 不是 `blob:<hash>` 也算违反：库里只存引用。检查在 `assertStoreInvariants` 的 `assertBlobRefs`，读全部进程的全部段。
 9. 旧段（段号小于当前段）要么整段在、不为空，要么整段删掉；删掉的段是从 1 起连着的一段（`pruneSegments` 总是删“小于 `before`”的全部）。`history` 判断一段是否被删，靠这一条。
 
 “n 的结果”指：同一个进程、种类对得上（`callModel` 对 `modelResult`，`runTool` 对 `toolResult`）、编号是 n 的输入。
@@ -441,23 +441,24 @@ CREATE TABLE blobs (
 | `test/store/blobs.test.ts` | 图片：存字节和引用、同一事务（反例：进程不存在、启动检查不过、ID 重复时不留 `blobs`）、不收图片的模型换说明、`resolveImages`、执行器调用模型前换成真数据、不变量能抓到缺行 |
 | `test/store/invariants.ts` | 存储层不变量（含 blob 引用完整性） |
 | `test/store/fork.test.ts` | `forkProcess`：新进程和复制的消息、源进程和库里别的东西不变；运行中带 `before` 可以、不带被拒；各种拒绝和启动检查不通过什么都不建；新 ID 被占用或写到一半失败时回滚；带图片引用的段不变量成立、`blobs` 不增；带 `preset`：快照和记忆视图来自新预设，图片按新模型处理，放不进什么都不建 |
+| `test/store/delete.test.ts` | 三个删除事务（D59）：`pruneSegments`（当前段不删、`before` 越界被拒、`before` ≤ 1 什么都不删、运行中也能删、没有进程被拒）；`removeProcess` 的每条拒绝（没有进程、不是 `idle`、信箱里有它的输入、有子进程、在 `turn.replyTo` 里、在排队的信和信箱里的信的 `replyTo` 里）各一个最小反例，拒绝后库不变，成功时记忆和 `blobs` 不动；`sweepBlobs`（只在 `turn.queued` 里引用的图片留下，到安全点调用模型拿得到真字节；`fork` 共用的图片、旧段的图片）；不变量第 8、9 条能抓到违反 |
 | `test/store/regressions.test.ts` | 审查发现的缺陷的最小反例 |
-| `test/store/crash.test.ts` | 真库上的随机序列（含要回信的信和回信、带图片的信）；在每个事务之后崩溃 |
+| `test/store/crash.test.ts` | 真库上的随机序列（含要回信的信和回信、带图片的信、三个删除事务，`removeProcess` 被拒绝也是正常结果）；在每个事务之后崩溃 |
 | `test/store/longrun.test.ts` | 多次换段后，处理一条输入读取的行数不增长 |
 | `test/store/replies.test.ts` | 回信在处理那条输入的事务里投递（回滚时一起撤销）；同一轮合并的几封信只回一封 |
 | `test/store/agents.test.ts` | `post`、`spawn`、`stop_process` 的结果和失败；A 问 B、B 被停止；互相寄信停在 `HOPS_MAX`；顺序委派 512 次；`spawn` 的 ID 和记忆视图；回滚；在每一步之后崩溃，结果和不崩溃时一样 |
 | `test/store/executor.test.ts` | 执行器和竞态（见 [kb-executor.md](kb-executor.md)） |
 | `test/store/fixtures.ts` | 临时库、假记忆库、`countReads`、带种子的随机数 |
 
-要有的删除测试（D59，还没写）：
+删除测试（D59，`delete.test.ts`，服务层在 `test/server/protocol.test.ts`）：
 
 - 运行中的进程有带图的排队信，`sweepBlobs` 之后到安全点，调用模型照常成功。
 - `fork` 共用的图片不被 `sweepBlobs` 清掉。
 - `removeProcess` 的每条拒绝：没有进程、不是 `idle`、信箱里有它的输入、有子进程、在 `turn.replyTo` 里、在排队的信的 `replyTo` 里。
 - `pruneSegments`：当前段不删；`before` 大于当前段号被拒；`before` ≤ 1 成功但什么都不删；进程运行中也能删；不变量第 8、9 条成立。
 - 读已删的段回 `error`（服务层）。
-- `assertStoreInvariants`：`assertBlobRefs` 改成读全部进程的全部段（现在只读当前段）；加第 9 条的检查。
-- 随机序列和崩溃注入测试加上三个请求。
+- `assertStoreInvariants`：`assertBlobRefs` 读全部进程的全部段；第 9 条的检查（`assertSegmentRows`，另查没有属于不存在进程的消息）。
+- 随机序列和崩溃注入测试含三个请求。
 
 只跑存储测试：`node --test "test/store/*.test.ts"`。完成门槛见 AGENTS.md。
 

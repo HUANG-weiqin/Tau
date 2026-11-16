@@ -1,4 +1,4 @@
-// blobs 表的读写：图片的原始字节，按内容寻址，只增不删（见 .knowledge/kb-store.md、设计稿 5.6）。
+// blobs 表的读写：图片的原始字节，按内容寻址；没人引用的行由 `sweepBlobs` 清（见 .knowledge/kb-store.md、设计稿 5.6）。
 // 纯函数层只见到引用 `blob:<hash>`；字节只在这里和执行器调用模型之前出现。
 import type { DatabaseSync } from "node:sqlite";
 import type { Image } from "../images.ts";

@@ -17,7 +17,13 @@ export type Request =
   /** 读一张图片。`hash` 不带 `blob:` 前缀。 */
   | { op: "blob"; hash: string }
   /** 订阅变化，直到客户端断开。不带 process 时订阅全部进程。 */
-  | { op: "watch"; process?: string };
+  | { op: "watch"; process?: string }
+  /** 删这个进程段号小于 `before` 的旧段。当前段不删；`before` 大于当前段号回 `error`。回执。 */
+  | { op: "prune"; process: string; before: number }
+  /** 删一个空闲、没人引用的进程的记录和全部段。拒绝回 `error`。成功时先给订阅推 `removed`，再回执。 */
+  | { op: "remove"; process: string }
+  /** 清掉没人引用的图片，回 `swept`。 */
+  | { op: "sweep" };
 
 export type Reply =
   /** 命令写进库的事务提交之后才发。 */
@@ -34,4 +40,8 @@ export type Reply =
   /** blob 的回复：类型由魔数现算，data 是 base64。 */
   | { type: "blob"; mimeType: string; data: string }
   | { type: "update"; self: Projection["self"] }
+  /** watch 推送：这个进程已删。订阅这个进程的连接随后关闭。 */
+  | { type: "removed"; process: string }
+  /** sweep 的回复：删掉的图片行数。 */
+  | { type: "swept"; blobs: number }
   | { type: "error"; message: string };

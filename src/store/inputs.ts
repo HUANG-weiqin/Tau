@@ -1,4 +1,4 @@
-// 进程的事务：启动、收一条命令、处理一条输入（见 .knowledge/kb-store.md）。每个函数恰好一个事务。
+// 进程的事务：启动、分叉、收一条命令、处理一条输入、三个删除（见 .knowledge/kb-store.md）。每个函数恰好一个事务。
 import { decide, effectOf, fork, start } from "../kernel/decide.ts";
 import { startError } from "../kernel/derive.ts";
 import { findTool } from "../kernel/tools.ts";
@@ -7,7 +7,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { Effect, Input, Instant, Memory, Message, PresetSnapshot, Process, ProcessId, ToolResultContent } from "../kernel/types.ts";
 import type { Image } from "../images.ts";
 import { letterContent } from "./blobs.ts";
-import { appendMessages, loadProcess, loadSegment, putMail, saveProcess, tx } from "./db.ts";
+import { appendMessages, loadProcess, loadProcesses, loadSegment, putMail, saveProcess, tx } from "./db.ts";
 import { envFor, runInStore } from "./instore.ts";
 import type { ReadPreset } from "./instore.ts";
 
@@ -27,7 +27,7 @@ export function startProcess(db: DatabaseSync, memory: Memory, id: ProcessId, pr
 
 /**
  * 从源进程的当前段分叉出新进程 `id`：读源进程记录和当前段、写新进程记录和复制的消息，在一个事务里。拒绝的情形见 `fork`，加上启动检查；抛错就什么都不写。
- * 不寄信：没有输入要处理。图片的 `blob:` 引用照用，`blobs` 只增不删。
+ * 不寄信：没有输入要处理。图片的 `blob:` 引用照用，`blobs` 不动（没人引用以后由 `sweepBlobs` 清）。
  * 带 `preset`（调用方在事务之外读好的）是换角色：记忆视图按它重取，和 `spawn` 一样。
  */
 export function forkProcess(db: DatabaseSync, memory: Memory, id: ProcessId, source: ProcessId, before: number | undefined, now: Instant, preset?: PresetSnapshot): { process: Process; segment: Message[] } {
@@ -52,6 +52,53 @@ export function send(db: DatabaseSync, id: ProcessId, input: Extract<Input, { ki
     if (input.kind !== "letter") throw new Error("图片只能跟着信。");
     const text = input.letter.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("");
     putMail(db, id, { kind: "letter", letter: { ...input.letter, content: letterContent(db, text, images, p.preset.input.includes("image")) } });
+  });
+}
+
+/** 删这个进程段号小于 `before` 的旧段。当前段不删，进程在运行也行；`before` ≤ 1 什么都不删。没有这个进程、`before` 大于当前段号就抛错。 */
+export function pruneSegments(db: DatabaseSync, id: ProcessId, before: number): void {
+  tx(db, () => {
+    const p = loadProcess(db, id);
+    if (!p) throw new Error(`没有这个进程：${id}`);
+    if (before > p.segment.seq) throw new Error(`进程 ${id} 的当前段是第 ${p.segment.seq} 段，before ${before} 超出了当前段。`);
+    db.prepare("DELETE FROM segment_messages WHERE process_id = ? AND segment_seq < ?").run(id, before);
+  });
+}
+
+/**
+ * 删一个进程的记录和全部段。不碰记忆、`blobs`、`effects`（空闲的进程没有 `effects` 行）。
+ * 拒绝（抛错，什么都不删）：没有这个进程、不是空闲、信箱里有它的输入、有进程的 `parent` 是它、它在任何 `turn.replyTo` 或排队的信的 `replyTo` 里。
+ * 这样被删的进程不再被任何地方引用。执行器里还有它的动作没收尾，这里看不到，由服务在调用之前查。
+ */
+export function removeProcess(db: DatabaseSync, id: ProcessId): void {
+  tx(db, () => {
+    const all = loadProcesses(db);
+    const p = all.find((x) => x.id === id);
+    if (!p) throw new Error(`没有这个进程：${id}`);
+    if (p.phase.tag !== "idle") throw new Error(`进程 ${id} 不是空闲，不能删。`);
+    const mail = db.prepare("SELECT process_id, input_json FROM mailbox").all().map((r) => ({ id: r.process_id as string, input: JSON.parse(r.input_json as string) as Input }));
+    if (mail.some((m) => m.id === id)) throw new Error(`信箱里还有进程 ${id} 的输入，不能删。`);
+    const child = all.find((x) => x.parent === id);
+    if (child) throw new Error(`进程 ${child.id} 的父进程是 ${id}，不能删。先删子进程。`);
+    const waiting = all.find((x) => x.phase.tag !== "idle" && (x.phase.turn.replyTo.includes(id) || x.phase.turn.queued.some((l) => l.replyTo === id)));
+    if (waiting) throw new Error(`进程 ${waiting.id} 还要给 ${id} 回信，不能删。`);
+    if (mail.some((m) => m.input.kind === "letter" && m.input.letter.replyTo === id)) throw new Error(`信箱里有要回信给 ${id} 的信，不能删。`);
+    db.prepare("DELETE FROM segment_messages WHERE process_id = ?").run(id);
+    db.prepare("DELETE FROM processes WHERE id = ?").run(id);
+  });
+}
+
+/** 清掉没人引用的图片，返回删掉的行数。引用在全部进程的全部段、信箱、进程记录（`turn.queued`）里，按原文找 `blob:` 加 64 位十六进制：多认只会多留。 */
+export function sweepBlobs(db: DatabaseSync): number {
+  return tx(db, () => {
+    const used = new Set<string>();
+    for (const sql of ["SELECT message_json AS j FROM segment_messages", "SELECT input_json AS j FROM mailbox", "SELECT state_json AS j FROM processes"]) {
+      for (const row of db.prepare(sql).all()) for (const m of (row.j as string).matchAll(/blob:([0-9a-f]{64})/g)) used.add(m[1]!);
+    }
+    const drop = db.prepare("DELETE FROM blobs WHERE hash = ?");
+    let swept = 0;
+    for (const row of db.prepare("SELECT hash FROM blobs").all()) if (!used.has(row.hash as string)) swept += Number(drop.run(row.hash as string).changes);
+    return swept;
   });
 }
 

@@ -1,4 +1,4 @@
-// 崩溃注入（设计稿第 6 节）：用带种子的随机数排出一串步骤，每一步恰好提交一个事务；在第 k 步之后杀掉服务，k 取遍每一个位置。
+// 崩溃注入（设计稿第 6 节）：用带种子的随机数排出一串步骤，每一步提交一个事务（removeProcess 被拒绝时不提交）；在第 k 步之后杀掉服务，k 取遍每一个位置。
 // 在“开始动作”之后、“完成动作”之前崩溃，就是“标记 running 的事务提交之后、结果写回之前”的窗口。
 // 不崩溃的那一次就是真库上的随机序列测试。
 import { test } from "node:test";
@@ -13,7 +13,7 @@ import { textContent, unreachable, userLetter } from "../../src/kernel/types.ts"
 import type { AssistantMessage, Input, Message, PresetSnapshot, ToolCall } from "../../src/kernel/types.ts";
 import { BLOB_PREFIX } from "../../src/store/blobs.ts";
 import { loadProcess, loadProcesses, openDb } from "../../src/store/db.ts";
-import { handleNext, send, startProcess } from "../../src/store/inputs.ts";
+import { handleNext, pruneSegments, removeProcess, send, startProcess, sweepBlobs } from "../../src/store/inputs.ts";
 import { allMessages, effectRows, fakeMemory, gated, hash, mailbox, PRESET, reply, rng, tempDir, toolCall } from "./fixtures.ts";
 import type { FakeMemory, Gate } from "./fixtures.ts";
 import type { Image } from "../../src/images.ts";
@@ -25,12 +25,17 @@ import { assertStoreInvariants } from "./invariants.ts";
 const SEEDS = [1, 2, 3, 4];
 const USER_MESSAGES = 8;
 const STOPS = 2;
+/** 删除类的操作每种最多做这么多次（removeProcess 被拒绝也算一次）。 */
+const PRUNES = 4;
+const REMOVES = 4;
+const SWEEPS = 2;
+const DELETE_FROM = 14;
 /** 窗口小一些，让换段也会发生。 */
-const CRASH_PRESET: PresetSnapshot = { ...PRESET, contextWindow: 60_000, input: ["text", "image"] };
+const CRASH_PRESET: PresetSnapshot = { ...PRESET, contextWindow: 60_000, handoff: 10_000, input: ["text", "image"] };
 /** read 是库外工具；memory_*、self、handoff 是库内工具；bash 不在预设里；nope 不存在。 */
 const TOOLS = ["read", "read", "read", "memory_get", "memory_set", "self", "handoff", "bash", "nope"];
 
-type Kind = "start" | "send" | "stop" | "handle" | "claim" | "complete";
+type Kind = "start" | "send" | "stop" | "handle" | "claim" | "complete" | "prune" | "remove" | "sweep";
 
 /** 假模型：回复只由进程 ID 和副作用编号决定，所以重放时完全一样。 */
 function model(job: Job): AssistantMessage {
@@ -41,7 +46,7 @@ function model(job: Job): AssistantMessage {
     return r() < 0.8 ? reply("stop", [{ type: "text", text: `交接说明 ${id}#${e.n}` }]) : { ...reply("error", []), errorMessage: "交接时出错" };
   }
   const x = r();
-  const usage = Math.floor(r() * 6000);
+  const usage = Math.floor(r() * 12_000);
   if (x < 0.35) return reply("stop", [{ type: "text", text: `回复 ${id}#${e.n}` }], usage);
   if (x < 0.95) {
     const calls: ToolCall[] = [];
@@ -93,6 +98,15 @@ interface Run {
   /** 寄出的要回信的信。 */
   asked: number;
   processes: string[];
+  /** 起过的进程数，新进程 ID 由它算：删掉的 ID 不复用。 */
+  spawned: number;
+  /** 被删掉的消息里的用户消息（不含换段时带进新段的副本）：它们在删除之前已经提交，仍然算“恰好出现一次”。 */
+  archive: string[];
+  prunes: number;
+  removes: number;
+  sweeps: number;
+  /** 真的删掉了东西的次数。 */
+  did: { pruned: number; removed: number; swept: number; toolImages: number };
 }
 
 const jobKey = (job: Job) => `${job.process.id}#${job.effect.n}`;
@@ -113,6 +127,12 @@ function enabled(run: Run): Kind[] {
   if (run.users.length < USER_MESSAGES && run.processes.length < 2) out.push("start");
   if (run.users.length < USER_MESSAGES && run.processes.length > 0) out.push("send");
   if (run.stops < STOPS && run.processes.length > 0) out.push("stop");
+  // 删除类的操作到后面才开始：先让进程换几段、结束几轮，删的才有东西可删。
+  if (run.clock >= DELETE_FROM) {
+    if (run.prunes < PRUNES && withOldSegments(run).length > 0) out.push("prune");
+    if (run.removes < REMOVES && idleIds(run).length > 0) out.push("remove");
+    if (run.sweeps < SWEEPS) out.push("sweep");
+  }
   if (db.prepare("SELECT 1 FROM mailbox LIMIT 1").get()) out.push("handle");
   if (db.prepare("SELECT 1 FROM effects WHERE status = 'pending' LIMIT 1").get()) out.push("claim");
   if (inflight.length > 0) out.push("complete");
@@ -134,7 +154,7 @@ async function step(run: Run, kind: Kind): Promise<void> {
   const now = ++run.clock * 1000;
   switch (kind) {
     case "start": {
-      const id = `p${run.processes.length + 1}`;
+      const id = `p${++run.spawned}`;
       const text = `<u${run.users.length + 1}>`;
       startProcess(db, run.memory, id, CRASH_PRESET, text, now, maybeImages(run));
       run.processes.push(id);
@@ -183,10 +203,61 @@ async function step(run: Run, kind: Kind): Promise<void> {
       await f.done;
       return;
     }
+    case "prune": {
+      const id = pick(run, withOldSegments(run));
+      const seq = loadProcess(db, id)!.segment.seq;
+      const before = run.rand() < 0.5 ? seq : 1 + Math.floor(run.rand() * seq);
+      const gone = deletedMessages(db, id, before);
+      pruneSegments(db, id, before);
+      run.prunes++;
+      if (gone.length > 0) run.did.pruned++;
+      run.archive.push(...gone.map(userText));
+      run.did.toolImages += gone.filter(hasToolImage).length;
+      return;
+    }
+    case "remove": {
+      const id = pick(run, idleIds(run));
+      const gone = deletedMessages(db, id, Infinity);
+      run.removes++;
+      try {
+        removeProcess(db, id);
+      } catch {
+        return; // 被拒绝是正常结果：空闲、没人引用才能删。
+      }
+      run.processes.splice(run.processes.indexOf(id), 1);
+      run.archive.push(...gone.map(userText));
+      run.did.toolImages += gone.filter(hasToolImage).length;
+      run.did.removed++;
+      return;
+    }
+    case "sweep":
+      run.sweeps++;
+      run.did.swept += sweepBlobs(db);
+      return;
     default:
       return unreachable(kind);
   }
 }
+
+/** 换过段的进程：有旧段可删。 */
+function withOldSegments(run: Run): string[] {
+  return run.processes.filter((id) => loadProcess(run.life.db, id)!.segment.seq > 1);
+}
+
+/** 现在空闲的进程。removeProcess 只删它们（别的条件拒绝与否，由事务判断）。 */
+function idleIds(run: Run): string[] {
+  return run.processes.filter((id) => loadProcess(run.life.db, id)?.phase.tag === "idle");
+}
+
+/** 一个进程段号小于 `before` 的消息（不含换段带进新段的副本），删之前先记下：用户消息算进“恰好出现一次”，带图的工具结果算进覆盖。 */
+function deletedMessages(db: DatabaseSync, id: string, before: number): Message[] {
+  return db
+    .prepare("SELECT message_json FROM segment_messages WHERE process_id = ? AND segment_seq < ? AND NOT (segment_seq > 1 AND seq = 0) ORDER BY segment_seq, seq")
+    .all(id, before)
+    .map((r) => JSON.parse(r.message_json as string) as Message);
+}
+
+const hasToolImage = (m: Message): boolean => m.role === "toolResult" && m.content.some((c) => c.type === "image");
 
 function interrupted(db: DatabaseSync, id: string, n: number): { id: string; input: Input } {
   const tag = loadProcess(db, id)?.phase.tag;
@@ -236,11 +307,11 @@ function userText(m: Message): string {
 }
 
 /** 从空库开始跑到没有事可做。给了 `crashAt` 时，在第 crashAt 步之后崩溃一次。 */
-async function play(empty: Empty, seed: number, crashAt: number | null): Promise<{ steps: number; asked: number; backs: number; blobs: number; toolImages: number; crashed: { kind: Kind; window: boolean } | null }> {
+async function play(empty: Empty, seed: number, crashAt: number | null): Promise<{ steps: number; asked: number; backs: number; blobs: number; toolImages: number; did: Run["did"]; crashed: { kind: Kind; window: boolean } | null }> {
   const path = join(empty.dir, `${seed}-${crashAt ?? "none"}.db`);
   copyFileSync(empty.path, path);
   const { dbs } = empty;
-  const run: Run = { path, dbs, memory: fakeMemory(), rand: rng(seed), clock: 0, life: boot(path, dbs), started: [], users: [], stops: 0, asked: 0, processes: [] };
+  const run: Run = { path, dbs, memory: fakeMemory(), rand: rng(seed), clock: 0, life: boot(path, dbs), started: [], users: [], stops: 0, asked: 0, processes: [], spawned: 0, archive: [], prunes: 0, removes: 0, sweeps: 0, did: { pruned: 0, removed: 0, swept: 0, toolImages: 0 } };
   let steps = 0;
   let crashed: { kind: Kind; window: boolean } | null = null;
   for (let kinds = enabled(run); kinds.length > 0; kinds = enabled(run)) {
@@ -263,7 +334,7 @@ async function play(empty: Empty, seed: number, crashAt: number | null): Promise
   const messages = processes.flatMap((p) => allMessages(db, p.id));
   // 没有输入丢失，也没有输入被处理两次：每条用户消息恰好出现一次。
   // 换段时，段末的用户消息（安全点并入的信也在其中）原样带进新段的第一条：新段的第一条不算。
-  const said = processes.flatMap((p) => allMessages(db, p.id, true)).map(userText).join("\n");
+  const said = [...run.archive, ...processes.flatMap((p) => allMessages(db, p.id, true)).map(userText)].join("\n");
   for (const u of run.users) assert.equal(said.split(u).length - 1, 1, `${u} 应该恰好出现一次`);
   // 回信：每封要回信的信所在的那一轮结束时都寄了回信，一个也没丢，也没有重复。同一轮里的几封信，同一个发信的只回一封，所以不多于寄出的信数。
   const backs = said.split("的回信，这一轮").length - 1;
@@ -278,7 +349,7 @@ async function play(empty: Empty, seed: number, crashAt: number | null): Promise
   const blobs = blobCount(db);
   const toolImages = messages.filter((m) => m.role === "toolResult" && m.content.some((c) => c.type === "image")).length;
   db.close();
-  return { steps, asked: run.asked, backs, blobs, toolImages, crashed };
+  return { steps, asked: run.asked, backs, blobs, toolImages, did: run.did, crashed };
 }
 
 /** 一个空库的模板。新建库要建表、落盘，在 Windows 上比复制文件慢十几倍，几百次重放都从复制它开始。 */
@@ -302,15 +373,23 @@ test("随机序列：真库上每一步之后不变量都成立，最后全部�
   let backs = 0;
   let blobs = 0;
   let toolImages = 0;
+  const did = { pruned: 0, removed: 0, swept: 0, toolImages: 0 };
   for (const seed of SEEDS) {
     const r = await play(empty, seed, null);
     asked += r.asked;
     backs += r.backs;
     blobs += r.blobs;
     toolImages += r.toolImages;
+    did.pruned += r.did.pruned;
+    did.removed += r.did.removed;
+    did.swept += r.did.swept;
+    did.toolImages += r.did.toolImages;
   }
   assert.ok(blobs > 0, "没有覆盖到带图片的信");
-  assert.ok(toolImages > 0, "没有覆盖到带图的工具结果");
+  assert.ok(toolImages + did.toolImages > 0, "没有覆盖到带图的工具结果");
+  assert.ok(did.pruned > 0, "没有覆盖到真的删掉旧段的 pruneSegments");
+  assert.ok(did.removed > 0, "没有覆盖到成功的 removeProcess");
+  assert.ok(did.swept > 0, "没有覆盖到真的删掉图片的 sweepBlobs");
   assert.ok(asked > 0 && backs > 0, `要回信的信 ${asked} 封，回信 ${backs} 封：没有覆盖到回信`);
 });
 
@@ -326,6 +405,6 @@ test("崩溃注入：在每一个事务之后，以及“标记 running 之后�
       if (crashed.window) covered.add("window");
     }
   }
-  // 每一种事务之后都崩溃过，running 的窗口也崩溃过；启动恢复之后的崩溃每次 crash 里都有。
-  assert.deepEqual([...covered].sort(), ["claim", "complete", "handle", "send", "start", "stop", "window"]);
+  // 每一种事务（含三个删除）之后都崩溃过，running 的窗口也崩溃过；启动恢复之后的崩溃每次 crash 里都有。
+  assert.deepEqual([...covered].sort(), ["claim", "complete", "handle", "prune", "remove", "send", "start", "stop", "sweep", "window"]);
 });
