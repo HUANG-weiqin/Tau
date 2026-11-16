@@ -1,6 +1,6 @@
 # tau 内核 v2 执行清单
 
-`updated: 2026-11-16` · **当前：第 8 步：文档和扫描测试已完成，待推导测试**
+`updated: 2026-11-16` · **当前：全部完成，内核 v2 的契约已冻结（推导测试第三次通过，D57）**
 
 按顺序做。每一步结束时，测试全部通过。设计的来由见 [D47](../../.knowledge/kb-decisions.md#d47-v2-的来由六个缺口和-v1v2-的对照)，冻结的契约见 [kb-contract](../../.knowledge/kb-contract.md)，[设计稿](../design/kernel-v2.md)只留链接。本清单只列任务和验收，不复述设计。
 
@@ -126,6 +126,6 @@ MVP 清单还留着一项没核实：GPT-5 的 400K 条目的输入上限（[MVP
 - [x] `extras/` 的 import 扫描测试。
 - [x] fork 进内核（用户决定，冻结之前）：协议请求、纯函数 `fork`、事务 `forkProcess`、测试和文档，见 [D49](../../.knowledge/kb-decisions.md#d49-fork-进内核)。
 - [x] fork 加可选的 `preset`，带着完整上下文换角色（用户决定，冻结之前）：协议字段、纯函数 `fork` 的 `to`、事务、测试和文档，见 [D52](../../.knowledge/kb-decisions.md#d52-fork-带-preset给进程换角色)。
-- [ ] 推导测试：文档提交后再出题，Sonnet 和 Haiku 各答一次。
+- [x] 推导测试：文档提交后再出题，Sonnet 和 Haiku 各答一次。（第三次通过，两人都 5 题全对，见 [D57](../../.knowledge/kb-decisions.md#d57-推导测试第三次)；前两次没通过，见 [D55](../../.knowledge/kb-decisions.md#d55-推导测试第一次)、[D56](../../.knowledge/kb-decisions.md#d56-推导测试第二次)。）
 
-**验收**：推导测试按事先写定的题目和标准通过。
+**验收**：推导测试按事先写定的题目和标准通过。（已通过，内核 v2 的契约已冻结。）
