@@ -1,6 +1,6 @@
 # tau 内核 v2 执行清单
 
-`updated: 2026-11-16` · **当前：第 9 步，删除原语（D59，冻结以后第一次改契约）。推导测试第四次没通过（D60），文档已补，下一步重新出题。**
+`updated: 2026-11-16` · **当前：第 9 步，删除原语（D59，冻结以后第一次改契约）。推导测试第四次（D60）、第五次（D61）没通过，文档已补，下一步重新出题。**
 
 按顺序做。每一步结束时，测试全部通过。设计的来由见 [D47](../../.knowledge/kb-decisions.md#d47-v2-的来由六个缺口和-v1v2-的对照)，冻结的契约见 [kb-contract](../../.knowledge/kb-contract.md)，[设计稿](../design/kernel-v2.md)只留链接。本清单只列任务和验收，不复述设计。
 
@@ -133,7 +133,7 @@ MVP 清单还留着一项没核实：GPT-5 的 400K 条目的输入上限（[MVP
 ## 第 9 步：删除原语（D59，改契约）
 
 - [x] 文档：不变量 10、线协议、存储事务、`history`、`watch`、D46 第二张表那一行移出。
-- [ ] 推导测试：文档提交后出新题，Sonnet 和 Haiku 都要 5 题全对。（第四次没通过，见 [D60](../../.knowledge/kb-decisions.md#d60-推导测试第四次)。）
+- [ ] 推导测试：文档提交后出新题，Sonnet 和 Haiku 都要 5 题全对。（第四次、第五次没通过，见 [D60](../../.knowledge/kb-decisions.md#d60-推导测试第四次)、[D61](../../.knowledge/kb-decisions.md#d61-推导测试第五次)。）
 - [ ] 先写最小反例测试（[D59 步骤 3](../../.knowledge/kb-decisions.md#d59-删除原语旧段和空闲进程)列的那几个，加执行器没收尾时 `remove` 被拒），再实现 `prune`、`remove`、`sweep`。`assertStoreInvariants` 也要改：`assertBlobRefs` 读全部进程的全部段，加第 9 条的检查。
 - [ ] 随机序列和崩溃注入测试加上三个请求。
 - [ ] Opus 审阅。
