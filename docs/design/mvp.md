@@ -32,7 +32,7 @@ tools: read, write, edit, bash, memory
 你是……（角色提示词）
 ```
 
-- 前置信息只有这 3 个字段，每行一个 `key: value`。
+- 前置信息有 `workdir`、`model`、`tools` 和可选的 `thinking`，每行一个 `key: value`。`thinking` 只收 `minimal`、`low`、`medium`、`high`、`xhigh`、`max`（pi-ai 的思考级别）；不写就不传给模型，值不对就报错。怎么用见 [kb-executor](../../.knowledge/kb-executor.md#调用模型actionsts)。
 - `tools` 里的 `memory` 表示进程有记忆库。
 - 进程启动时，预设被冻结成快照存进进程记录。之后修改预设文件，只影响新启动的进程。
 - 快照里还有一项：从 pi-ai 模型目录查到的这个模型的 `contextWindow`。查不到就启动失败。冻结它，是为了让 `decide` 不做 I/O。调用模型时，执行器仍从模型目录取模型（第 6 节）。
@@ -44,11 +44,11 @@ tools: read, write, edit, bash, memory
 - 文件开头的 UTF-8 BOM 被忽略。行尾可以是 LF，也可以是 CRLF。
 - 第一行必须是 `---`。前置信息到下一行 `---` 为止。
 - 每行在第一个 `:` 处拆成键和值，两边去掉空白。空行跳过。
-- 没有 `:` 的行、未知字段、重复字段、缺少的字段，都报错。
+- 没有 `:` 的行、未知字段、重复字段、缺少的字段，都报错。`thinking` 可以不写，其余字段缺了报错。
 - `workdir` 必须是绝对路径，而且是一个存在的目录。绝对路径只认两种：盘符开头（`E:/x`、`E:\x`）和 UNC（`\\server\share`）。不带盘符的 `/foo` 会落在服务当前目录所在的盘上，所以拒绝。
 - `model` 在第一个 `/` 处拆成 provider 和模型 ID，两边都不能为空。模型 ID 里可以再有 `/`。
 - `tools` 按逗号拆开，去掉空白，跳过空项。未知工具报错。重复的去掉，保留第一次出现的顺序。
-- `tools` 可以为空。这时进程只有 `self`。
+- `tools` 可以为空。这时进程只有 `self` 和 `handoff`。
 - 第二个 `---` 之后的正文去掉首尾空白，就是角色提示词。它可以为空。
 - 任何一条不满足，启动就失败，库里什么都不写（[kb-service](../../.knowledge/kb-service.md#请求的校验parserequest)）。
 

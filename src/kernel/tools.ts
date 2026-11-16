@@ -83,12 +83,21 @@ const SELF: ToolSpec = {
   inStore: true,
 };
 
-/** 预设能用的工具，按固定顺序；`self` 总在。 */
+const HANDOFF: ToolSpec = {
+  name: "handoff",
+  description:
+    "主动换到一个新的工作段，例如一个阶段做完、上下文里堆了太多不再需要的内容时。它在这批工具结果之后生效：" +
+    "之后会让你不调用工具，写一份交接说明，写完才换段，旧段的内容你之后看不到。所以换段前要先把该存的存好。同一批里的其他工具照常执行。",
+  parameters: object({}, []),
+  inStore: true,
+};
+
+/** 预设能用的工具，按固定顺序；`self` 和 `handoff` 总在。 */
 export function toolsFor(preset: PresetSnapshot): ToolSpec[] {
   const out: ToolSpec[] = [];
   for (const t of [READ, WRITE, EDIT, BASH]) if (preset.tools.includes(t.name as PresetSnapshot["tools"][number])) out.push(t);
   if (preset.tools.includes("memory")) out.push(...MEMORY);
-  out.push(SELF);
+  out.push(SELF, HANDOFF);
   return out;
 }
 

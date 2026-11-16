@@ -117,7 +117,7 @@ const PROFILES: Profile[] = [
   },
 ];
 
-const TOOL_NAMES = ["read", "write", "edit", "bash", "memory_get", "memory_set", "memory_delete", "self", "grep"];
+const TOOL_NAMES = ["read", "write", "edit", "bash", "memory_get", "memory_set", "memory_delete", "self", "handoff", "handoff", "grep"];
 
 interface Stats {
   handoffOk: number;
@@ -134,10 +134,12 @@ interface Stats {
   usageAdded: number;
   processLetters: number;
   images: number;
+  safePoints: number;
+  handoffByCall: number;
 }
 
 function newStats(): Stats {
-  return { handoffOk: 0, handoffFailed: 0, done: 0, stopped: 0, stepLimit: 0, errors: 0, skipped: 0, interrupted: 0, queuedMerged: 0, dropped: 0, duplicates: 0, usageAdded: 0, processLetters: 0, images: 0 };
+  return { handoffOk: 0, handoffFailed: 0, done: 0, stopped: 0, stepLimit: 0, errors: 0, skipped: 0, interrupted: 0, queuedMerged: 0, dropped: 0, duplicates: 0, usageAdded: 0, processLetters: 0, images: 0, safePoints: 0, handoffByCall: 0 };
 }
 
 /** 一次模拟：一个进程、一个忠实的环境。 */
@@ -316,6 +318,17 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
     if (isResult(input) && origin === "normal") history.push(input);
     if (history.length > 50) history.shift();
 
+    // 安全点（设计稿 5.2）：工具结果写入后批做完，排队的信并成一条用户消息，replyTo 和 hops 并进本轮，不计步。
+    if (input.kind === "toolResult" && prev.phase.tag === "awaitingTool" && prev.phase.turn.queued.length > 0 && w.p.phase.tag === "awaitingModel" && w.p.phase.turn.queued.length === 0) {
+      const { queued, steps, hops, replyTo } = prev.phase.turn;
+      const turn = w.p.phase.turn;
+      assert.equal(turn.steps, steps + 1, "安全点写入不计步，下一次调用模型才计");
+      assert.equal(turn.hops, Math.max(hops, ...queued.map((l) => l.hops)));
+      assert.deepEqual(turn.replyTo, [...new Set([...replyTo, ...queued.flatMap((l) => (l.replyTo === undefined ? [] : [l.replyTo]))])]);
+      stats.safePoints++;
+    }
+    if (input.kind === "toolResult" && prev.phase.tag === "awaitingTool" && w.p.phase.tag === "awaitingModel" && w.p.phase.purpose === "handoff" && contextUsed(w.p, current(w)) < handoffThreshold(w.p.preset)) stats.handoffByCall++;
+
     // 统计覆盖面。
     if (input.kind === "letter" && input.letter.from.kind === "process") stats.processLetters++;
     if (s.append.some((m) => typeof m.content !== "string" && m.content.some((c) => c.type === "image"))) stats.images++;
@@ -408,7 +421,7 @@ for (const profile of PROFILES) {
     if (profile.name === "失控") {
       assert.ok(stats.stepLimit > 0, "没有用完步数");
     } else {
-      for (const k of ["handoffFailed", "done", "stopped", "errors", "skipped", "interrupted", "queuedMerged", "duplicates", "usageAdded", "processLetters", "images"] as const) {
+      for (const k of ["handoffFailed", "done", "stopped", "errors", "skipped", "interrupted", "queuedMerged", "duplicates", "usageAdded", "processLetters", "images", "safePoints", "handoffByCall"] as const) {
         assert.ok(stats[k] > 0, `没有覆盖到 ${k}`);
       }
     }

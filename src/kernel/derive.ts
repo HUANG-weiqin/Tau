@@ -105,6 +105,17 @@ export function pendingCalls(segment: readonly Message[]): ToolCall[] {
   return last.content.filter((c): c is ToolCall => c.type === "toolCall").slice(answered);
 }
 
+/** 主动换段：最后一条助手消息里有 `handoff` 调用，并且它的结果不是错误。补的结果都是错误，所以没执行的 `handoff` 不算。不存状态，从段算。 */
+export function handoffRequested(segment: readonly Message[]): boolean {
+  let i = segment.length - 1;
+  while (i >= 0 && segment[i]!.role !== "assistant") i--;
+  const last = segment[i];
+  if (last?.role !== "assistant") return false;
+  const results = segment.slice(i + 1).filter((m) => m.role === "toolResult");
+  // 按位置配对，同 pendingCalls。
+  return last.content.filter((c): c is ToolCall => c.type === "toolCall").some((c, k) => c.name === "handoff" && results[k]?.role === "toolResult" && !results[k].isError);
+}
+
 /** 最终回复：从段尾往前，遇到用户消息之前的最后一条助手消息的正文。 */
 export function finalReply(segment: readonly Message[]): string {
   for (let i = segment.length - 1; i >= 0; i--) {

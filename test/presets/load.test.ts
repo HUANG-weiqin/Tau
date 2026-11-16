@@ -176,3 +176,26 @@ test("missing closing --- is an error", () => {
   const dir = write("noclose", `---\nworkdir: ${work}\nmodel: ${modelStr}\ntools:\n正文`);
   assert.throws(() => loadPreset(dir, "noclose", models), /结束的 ---/);
 });
+
+test("thinking is optional: absent means the snapshot has no thinking key", () => {
+  const snap = loadPreset(write("nothink", valid()), "nothink", models);
+  assert.equal("thinking" in snap, false);
+});
+
+for (const level of ["minimal", "low", "medium", "high", "xhigh", "max"] as const) {
+  test(`thinking ${level} is frozen into the snapshot`, () => {
+    const snap = loadPreset(write(`think-${level}`, valid([`thinking: ${level}`])), `think-${level}`, models);
+    assert.equal(snap.thinking, level);
+  });
+}
+
+for (const bad of ["", "off", "none", "High", "ultra"]) {
+  test(`thinking "${bad}" is an error that names the allowed values`, () => {
+    const id = `badthink-${bad || "empty"}`;
+    assert.throws(() => loadPreset(write(id, valid([`thinking: ${bad}`])), id, models), /thinking.*minimal, low, medium, high, xhigh, max/);
+  });
+}
+
+test("duplicate thinking is an error", () => {
+  assert.throws(() => loadPreset(write("dupthink", valid(["thinking: low", "thinking: high"])), "dupthink", models), /thinking/);
+});

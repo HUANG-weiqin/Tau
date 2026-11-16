@@ -104,7 +104,7 @@ describe("4.3 start", () => {
 });
 
 describe("5.1 continueTurn", () => {
-  test("步数达到 STEPS_PER_TURN 时以 stepLimit 结束本轮；排队的消息写入，但不再继续", () => {
+  test("步数达到 STEPS_PER_TURN 时以 stepLimit 结束本轮；运行中到的信在安全点并入", () => {
     const w = begin();
     let calls = 1; // begin 已经发出第一次模型调用
     for (let id = 0; ; id++) {
@@ -112,8 +112,9 @@ describe("5.1 continueTurn", () => {
       reply(w, assistant({ usage: LOW, calls: [call(`c${id}`)] }));
       if (id === 2) feed(w, userInput("排队的消息"));
       const s = toolDone(w, "好");
+      if (id === 2) assert.deepEqual(brief(s.append), ["c2=好", "user:排队的消息"], "第 3 步的安全点：并入");
       if (w.p.phase.tag === "idle") {
-        assert.deepEqual(brief(s.append), [`c${id}=好`, "user:排队的消息"]);
+        assert.deepEqual(brief(s.append), [`c${id}=好`]);
         break;
       }
       calls++;

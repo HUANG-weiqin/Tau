@@ -59,7 +59,7 @@ type Phase =
 type Ended = "done" | "stepLimit" | "stopped" | { error: string };
 ```
 
-- `PresetSnapshot` 有 `id`、`workdir`、`model`（`<provider>/<model-id>`）、`tools`、`prompt`、`contextWindow`。`tools` 是 `read`、`write`、`edit`、`bash`、`memory` 的子集。预设文件的格式见[设计稿第 2 节](../docs/design/mvp.md#2-预设)。
+- `PresetSnapshot` 有 `id`、`workdir`、`model`（`<provider>/<model-id>`）、`tools`、`prompt`、`contextWindow`，还有可选的 `thinking`（pi-ai 的思考级别，预设没写就没有这个键）。`tools` 是 `read`、`write`、`edit`、`bash`、`memory` 的子集。预设文件的格式见[设计稿第 2 节](../docs/design/mvp.md#2-预设)。
 - `segment.memoryView` 是开段那一刻的记忆视图。以后算不出来，所以存。
 - `turn.steps` 必须存：一轮可以跨越换段。
 - `turn.queued` 存信件原样，写进段时才渲染。`turn.hops` 是本轮已经写进段的信的最大跳数，`turn.replyTo` 是本轮结束时要寄回信的进程，去重。规则见[设计稿 5.3](../docs/design/kernel-v2.md#53-进程之间寄信派生停止回信跳数)。
@@ -103,7 +103,7 @@ interface Env { now: Instant; memoryView: string }
 | `buildContext(p, seg)`、`tailStart(seg)` | `context.ts` | 模型请求；段末用户消息的起点 |
 | `observe(p, seg, siblings, now)` | `observe.ts` | 投影 |
 | `toolsFor(preset)`、`findTool(preset, name)` | `tools.ts` | 工具描述 |
-| `contextUsed`、`messageBytes`、`tokens`、`outputMax`、`handoffThreshold`、`pendingCalls`、`segmentStartedAt`、`usageOf`、`clip`、`utf8Bytes` | `derive.ts` | 派生值和字节工具 |
+| `contextUsed`、`messageBytes`、`tokens`、`outputMax`、`handoffThreshold`、`pendingCalls`、`handoffRequested`、`segmentStartedAt`、`usageOf`、`clip`、`utf8Bytes` | `derive.ts` | 派生值和字节工具 |
 | `finalReply(seg)`、`endedText(ended)`、`endedReason(error)` | `derive.ts` | [最终回复](#最终回复)；[结束原因的文字](#结束原因的文字) |
 
 `decide` 的输出约定：
@@ -136,6 +136,7 @@ interface Env { now: Instant; memoryView: string }
 | `memory_set` | `key`、`value`、`version?` | 是 | `tools` 含 `memory` |
 | `memory_delete` | `key`、`version` | 是 | `tools` 含 `memory` |
 | `self` | 无 | 是 | 总在 |
+| `handoff` | 无 | 是 | 总在 |
 
 - 参数都是 `additionalProperties: false` 的对象。
 - 顺序固定，按上表。
@@ -208,10 +209,10 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 
 | W | OUT | T（占 W） | 交接请求上界 T + OUT + R + I（不含 S） | 加交接说明 | 余下 | 提示词空间 |
 |---|---|---|---|---|---|---|
-| 65,536 | 8,192 | 28,672（43.8%） | 53,482 | 61,674 | 3,862 | 约 4.9 KB |
-| 64,000 | 8,000 | 27,520（43.0%） | 52,138 | 60,138 | 3,862 | 约 2.6 KB |
-| 128,000 | 16,000 | 75,520（59.0%） | 108,138 | 124,138 | 3,862 | 约 99 KB |
-| 200,000 | 25,000 | 129,520（64.8%） | 171,138 | 196,138 | 3,862 | 约 207 KB |
+| 65,536 | 8,192 | 28,672（43.8%） | 53,482 | 61,674 | 3,862 | 约 4.4 KB |
+| 64,000 | 8,000 | 27,520（43.0%） | 52,138 | 60,138 | 3,862 | 约 2.1 KB |
+| 128,000 | 16,000 | 75,520（59.0%） | 108,138 | 124,138 | 3,862 | 约 98 KB |
+| 200,000 | 25,000 | 129,520（64.8%） | 171,138 | 196,138 | 3,862 | 约 206 KB |
 | 1,000,000 | 125,000 | 729,520（73.0%） | 871,138 | 996,138 | 3,862 | 约 1.4 MB |
 
 - 余下总是 `MARGIN_TOKENS` − I = 3,862，先给 S。S 用不完的部分留给消息框架和估算误差。
@@ -288,7 +289,7 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 **`continueTurn(turn)`**
 
 1. `turn.steps >= STEPS_PER_TURN`：`endTurn(turn, "stepLimit")`。
-2. 否则步数加一。到阈值：进入 `awaitingModel(handoff)`。
+2. 否则步数加一。到阈值，或者[最后一条助手消息里有成功的 `handoff` 调用](#主动换段handoff)：进入 `awaitingModel(handoff)`。
 3. 否则进入 `awaitingModel(turn)`。
 
 每次调用模型都计一步，交接调用也算。
@@ -305,7 +306,7 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 | 输入 | 条件 | 处理 |
 |---|---|---|
 | `letter` | `idle` | 按[信的头和合并](#信的头和合并)渲染这一封信。上一轮没有正常结束（`ended` 是 `stopped`、`stepLimit` 或 `error`）时，正文前面加上一轮的说明和一个空行。写入工作段，时间戳 `env.now`；`continueTurn` 一个新的 `Turn`，`hops` 和 `replyTo` 只取自这封信 |
-| `letter` | 运行中 | 追加到 `turn.queued`。不写段，副作用不变 |
+| `letter` | 运行中 | 追加到 `turn.queued`。不写段，副作用不变。写进段在下一个安全点或本轮结束时 |
 | `stop` | 运行中 | `endTurn(turn, "stopped")` |
 | `stop` | `idle` | 什么都不做 |
 | `modelResult`、`toolResult` | `idle`，或 `n` 不是 `lastEffect`，或种类和阶段对不上 | 丢弃：进程记录和工作段都不变 |
@@ -319,7 +320,7 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 
 1. 内容块按[张数和省略行](#张数和省略行)整理，作为第一个待执行调用的结果写入。`toolCallId`、`toolName` 取自调用，`isError` 原样保留。
 2. 还有待执行的调用，并且没到阈值：进入下一个 `awaitingTool`。`lastEffect` 加一，步数不变。
-3. 否则给剩下的调用补 `SKIPPED`（没有就不补），然后 `continueTurn`。
+3. 否则给剩下的调用补 `SKIPPED`（没有就不补），然后到[安全点](#安全点投递)，由它调用 `continueTurn`。
 
 工具按顺序执行，一次一个。没有自动重试。
 
@@ -342,9 +343,32 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 - ID 算两次：它由服务端分配，不在回复的用量里；之后的请求里调用和结果各带一次。
 - 上限和窗口无关。以 `read` 为例：2 字节的 ID 约 454 个，Anthropic 的 ID（30 字节）约 105 个，openai-responses 的 ID（81 字节）约 44 个。
 
+### 安全点投递
+
+安全点只有一个：当前这条助手消息的工具结果全部写完或补完、调用 `continueTurn` 之前，也就是 `onToolResult` 的末尾。到了安全点，按顺序做：
+
+1. 先查步数。`turn.steps >= STEPS_PER_TURN`：不合并，信留在 `queued`，由 `continueTurn` 里的 `endTurn(stepLimit)` 按[结束一轮](#流程两个辅助步骤)处理。发起这一轮的进程拿到的最终回复，和这时没有信一样。
+2. `queued` 不空：经 `userMessage` 合并成一条用户消息写进段（头和形状见[信的头和合并](#信的头和合并)，不限张数），时间戳 `env.now`。这批信的 `replyTo` 并进 `turn.replyTo`（去重），`hops` 取 `turn.hops` 和这批信的最大值，`queued` 清空。
+3. `continueTurn`。
+
+- 写入不计步，下一次调用模型才计。
+- 换段成功以后、等模型回复时到的信，都等下一个安全点或者本轮结束；`turn.queued` 到那时才写进段。
+- 工具被中断、停止、`length` 等不经过安全点：信由 `endTurn` 写入。
+- 阈值证明不变：写入的信在段末，交接请求不带段末的用户消息（[证明](#换段阈值)第 4 步）；写入之后 `continueTurn` 照样先查阈值；换段时这条信原样带到新段。
+- 在用的模型都接受“工具结果后面紧跟一条用户消息”，已在第 3 步核实（[D34](kb-decisions.md#d34-第-3-步真模型核实)）。
+
+### 主动换段（`handoff`）
+
+- 库内工具，没有参数，总是有。结果 `将在这批工具结果之后换段。`，`isError` 为假（[kb-store.md](kb-store.md#handoff)）。
+- `continueTurn` 发现最后一条助手消息里有 `handoff` 调用、并且它的结果不是错误，就进入 `awaitingModel(handoff)`，不看阈值。算法是 `derive.ts` 的 `handoffRequested`：调用和结果按位置配对。
+- 补的结果（`INTERRUPTED`、`SKIPPED`）都是错误，所以没执行的 `handoff` 不触发换段。
+- 同一批里的其他工具照常执行，批做完才到安全点。
+- 不存状态：从最后一条助手消息和它的结果算出来。换段成功以后新段里没有助手消息，不会再换。
+- 交接失败以后，下一封信一来又会立即换段。这和到阈值时一样，是有意的。
+
 ### 流程：换段
 
-1. `continueTurn` 发现到阈值，进入 `awaitingModel(handoff)`。`buildContext` 在末尾加交接指令。
+1. `continueTurn` 发现到阈值或者有成功的 `handoff` 调用，进入 `awaitingModel(handoff)`。`buildContext` 在末尾加交接指令。
 2. 交接说明 = 回复里所有 `text` 块用换行连接，再去掉首尾空白。思考块不算。
 3. 接受的条件：`stopReason` 是 `stop` 或 `length`，并且交接说明不为空。接受时：
    - `segment` 变成 `{ seq: seq + 1, memoryView: env.memoryView }`。
@@ -398,7 +422,7 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 | 阶段 | 不变量 |
 |---|---|
 | `idle` | 结果齐全；`effectOf` 为 `null`。`ended` 缺省，当且仅当刚建好：`lastEffect` 为 0、段号 1、段空。有 `ended` 时：取值合法、`lastEffect >= 1`、段不空 |
-| `awaitingModel` | 运行中的通用约束；结果齐全；最后一条不是助手消息；`effectOf` 是 `callModel(lastEffect, purpose)`；`purpose` 是 `handoff` 当且仅当用量到阈值 |
+| `awaitingModel` | 运行中的通用约束；结果齐全；最后一条不是助手消息；`effectOf` 是 `callModel(lastEffect, purpose)`；`purpose` 是 `handoff` 当且仅当用量到阈值，或者最后一条助手消息里有成功的 `handoff` 调用 |
 | `awaitingTool` | 运行中的通用约束；有缺结果的调用；`effectOf` 是 `runTool(lastEffect, 第一个缺结果的调用)`；已经写过至少一个结果时，用量没到阈值 |
 
 消息形状（总是成立）：用户消息的 `content` 是字符串，或者一个可有可无的文本块加至少一张图片；工具结果最多一个文本块，在最前；工具结果和段号大于 1 的段的第一条，图片不超过 `IMAGES_PER_MESSAGE`。
@@ -451,6 +475,7 @@ type PhaseView =
 | `test/kernel/helpers.ts` | 内存里的 `World`、`feed`、`reply`、`toolDone` |
 | `test/kernel/flow.test.ts` | 第 5 节每一行流程和丢弃规则 |
 | `test/kernel/derive.test.ts` | 字节估算、只取整一次、输出上限和阈值、`clip`、`finalReply`、`endedText` |
+| `test/kernel/safepoint.test.ts` | 安全点投递和 `handoff` |
 | `test/kernel/letters.test.ts` | 信的头和合并、两种形状、工具结果和新段第一条的张数、换段带全部段末消息 |
 | `test/kernel/usage.test.ts` | 累计用量：每种回复都加，丢弃的和被中断的不加 |
 | `test/kernel/context.test.ts` | 系统提示词、工具描述、交接请求去掉段末用户消息 |
@@ -466,12 +491,15 @@ type PhaseView =
 
 - **按 ID 配对。** 重复或为空的 ID 会让进程永远等一个“已有结果”的调用。`pendingCalls` 和 `endTurn` 都按位置算。验证：`regressions.test.ts` 的重复 ID 用例，`assertInvariants` 的配对检查。
 - **过时的结果。** 编号不对、进程 `idle`、种类不对的结果一律丢弃。每个工具都有新编号，所以上一个工具迟到的结果不会被当成下一个的。验证：`flow.test.ts` 的“4.2 丢弃过时和重复的结果”。
+- **安全点并入的信，这一轮可能随后异常结束。** 信已经在段里，模型还没写出回复，这一轮就被停止、出错、`length`、工具调用太多、交接失败，或者交接以后步数用完。最终回复是空串，寄信方收到正文为空的回信。下一封信前面的 D25 说明会告诉模型这一点。
+- **并入的信会在新旧两段里各有一份。** 换段时它在旧段末尾，也原样带进新段的第一条。数“这条信出现几次”的测试要跳过新段的第一条。
+- **步数用完时安全点不合并。** 先查步数，再合并。合并以后再 `continueTurn` 会让发起这一轮的进程拿到空串，而不合并时它拿到最后一条助手消息的正文。
 - **换段循环靠步数收住。** 新段一开始就超过阈值时（例如系统提示词和工具描述已经超过），每次换段都成功，又立即再换段，直到 `stepLimit`。每条消息最多调用 `STEPS_PER_TURN` 次模型。不要让交接调用不计步。验证：`acceptance.test.ts`。
-- **小窗口。** 窗口小于 27,307 时阈值不大于 0，每次调用都是交接。空记忆、交接说明不超过 8 KiB 时，约从 36K 起能用。最坏的新段要约 63K 以上；64K 窗口只给预设提示词留约 2.6 到 4.9 KB（见[换段阈值](#换段阈值)）。加载预设时不检查。
+- **小窗口。** 窗口小于 27,307 时阈值不大于 0，每次调用都是交接。空记忆、交接说明不超过 8 KiB 时，约从 36K 起能用。最坏的新段要约 63K 以上；64K 窗口只给预设提示词留约 2.1 到 4.4 KB（见[换段阈值](#换段阈值)）。加载预设时不检查。
 - **2 字节一个 token 是证明的前提。** 阈值检查只看估算。真实分词低于它时，误差按字节累加。误差只在两次真实用量之间累加。一次回复读回多个结果时，每个都少算。最后一次 `turn` 调用之前少算的部分，会让那次回复的用量超过 T + OUT。所以第 2、5、6、8 步都可能不成立，`turn` 调用本身也可能超过窗口。补的结果（S）里随机的 ID 也会被少算：在用的 opencode-go 的 ID 是 `call_` 加 24 个十六进制字符。超过窗口时，同一个请求每次重试都同样失败。量过的数见 [D24](kb-decisions.md#d24-真模型验收)，风险和应对见设计稿的[风险](../docs/design/mvp.md#风险)。
 - **在等模型时停止或失败，只靠下一条消息里的说明告诉模型。** 这时段里不写回复，也不写标记。排队的消息照常合并写入。段末是那条用户消息、合并的排队消息，或者最后的工具结果。不加说明时，模型可能把没做完的请求当成还要做的事（[D24](kb-decisions.md#d24-真模型验收)）。在工具运行中停止或被中断时，模型另外还能看到“被中断，结果未知”。
 - **说明只加在空闲时收到的消息上。** 合并的排队消息不加，一轮只说一次。停止的说明把排队的消息也一并取消。说明是消息正文，存进段，换段时跟着带过去。不要改成假的助手消息，理由见 [D25](kb-decisions.md#d25-上一轮没有正常结束时下一条消息加说明)。验证：`flow.test.ts` 的“上一轮没有正常结束”。
-- **不要在 CLI 或服务的边上截断消息。** 上限只在 `decide` 的 `userMessage` 里检查。边上再截一次是第二个来源，也管不到合并的排队消息和带过来的消息。`turn.queued` 在本轮结束前保持原样。服务不另设上限；经 CLI 发来的消息受 Windows 命令行（32,767 个 UTF-16 单元）限制。
+- **不要在 CLI 或服务的边上截断消息。** 上限只在 `decide` 的 `userMessage` 里检查。边上再截一次是第二个来源，也管不到合并的排队消息和带过来的消息。`turn.queued` 保持原样，直到在安全点或本轮结束时写进段。服务不另设上限；经 CLI 发来的消息受 Windows 命令行（32,767 个 UTF-16 单元）限制。
 - **交接请求不能带段末的用户消息。** 它们可能在阈值之后才到，大小不受阈值约束。带上它们，停止、步数用完或交接失败之后再发的大消息会让交接请求超过窗口。验证：`acceptance.test.ts` 的三条角落路径。
 - **换段失败时旧段也会变。** “旧段不变”只指没有交接说明、没有新段。排队的消息照样合并写进旧段。
 - **失败的回复不能写进段。** 写进去会让最后一条助手消息的用量变成 0，上下文用量退回字节估算。

@@ -1,14 +1,20 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Models } from "@earendil-works/pi-ai";
+import type { Models, ThinkingLevel } from "@earendil-works/pi-ai";
 import type { PresetSnapshot, PresetTool } from "../kernel/types.ts";
 
 const TOOLS: readonly PresetTool[] = ["read", "write", "edit", "bash", "memory"];
-const KEYS = ["workdir", "model", "tools"];
+const REQUIRED = ["workdir", "model", "tools"];
+const KEYS = [...REQUIRED, "thinking"];
+const THINKING: readonly ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
 export function presetsDir(): string {
   return path.join(os.homedir(), ".tau", "presets");
+}
+
+function isThinking(s: string): s is ThinkingLevel {
+  return (THINKING as readonly string[]).includes(s);
 }
 
 function isTool(s: string): s is PresetTool {
@@ -42,7 +48,7 @@ export function loadPreset(dir: string, id: string, models: Models): PresetSnaps
     if (fields.has(key)) throw new Error(`预设 ${id} 重复的字段：${key}`);
     fields.set(key, line.slice(at + 1).trim());
   }
-  for (const key of KEYS) {
+  for (const key of REQUIRED) {
     if (!fields.has(key)) throw new Error(`预设 ${id} 缺少字段：${key}`);
   }
 
@@ -73,6 +79,9 @@ export function loadPreset(dir: string, id: string, models: Models): PresetSnaps
     if (!tools.includes(item)) tools.push(item);
   }
 
+  const thinking = fields.get("thinking");
+  if (thinking !== undefined && !isThinking(thinking)) throw new Error(`预设 ${id} 的 thinking 只能是 ${THINKING.join(", ")}：${thinking}`);
+
   return {
     id,
     workdir,
@@ -80,5 +89,6 @@ export function loadPreset(dir: string, id: string, models: Models): PresetSnaps
     tools,
     prompt: lines.slice(end + 1).join("\n").trim(),
     contextWindow: found.contextWindow,
+    ...(thinking === undefined ? {} : { thinking }),
   };
 }

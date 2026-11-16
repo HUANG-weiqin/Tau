@@ -33,18 +33,18 @@ test("系统提示词 = 预设提示词 + 开段时的记忆视图", () => {
   assert.ok(without.startsWith("你是写代码的助手。"), without);
 });
 
-test("工具按预设的 tools 选出，self 总在", () => {
-  assert.deepEqual(names(proc([])), ["self"]);
-  assert.deepEqual(names(proc(["read"])), ["read", "self"]);
-  assert.deepEqual(names(proc(["bash", "edit", "read", "write"])), ["bash", "edit", "read", "self", "write"]);
-  assert.deepEqual(names(proc(["memory"])), ["memory_delete", "memory_get", "memory_set", "self"]);
-  assert.deepEqual(names(proc(["read", "write", "edit", "bash", "memory"])), ["bash", "edit", "memory_delete", "memory_get", "memory_set", "read", "self", "write"]);
+test("工具按预设的 tools 选出，self 和 handoff 总在", () => {
+  assert.deepEqual(names(proc([])), ["handoff", "self"]);
+  assert.deepEqual(names(proc(["read"])), ["handoff", "read", "self"]);
+  assert.deepEqual(names(proc(["bash", "edit", "read", "write"])), ["bash", "edit", "handoff", "read", "self", "write"]);
+  assert.deepEqual(names(proc(["memory"])), ["handoff", "memory_delete", "memory_get", "memory_set", "self"]);
+  assert.deepEqual(names(proc(["read", "write", "edit", "bash", "memory"])), ["bash", "edit", "handoff", "memory_delete", "memory_get", "memory_set", "read", "self", "write"]);
   for (const t of buildContext(proc(["read", "memory"]), seg).tools ?? []) {
     assert.deepEqual(Object.keys(t).sort(), ["description", "name", "parameters"], "请求里只放 pi-ai 的工具定义");
   }
 });
 
-test("工具描述标明库内还是库外：记忆工具和 self 在库内，其余在库外", () => {
+test("工具描述标明库内还是库外：记忆工具、self 和 handoff 在库内，其余在库外", () => {
   const all = toolsFor(preset({ tools: ["read", "write", "edit", "bash", "memory"] }));
   assert.deepEqual(Object.fromEntries(all.map((t) => [t.name, t.inStore])), {
     read: false,
@@ -55,10 +55,12 @@ test("工具描述标明库内还是库外：记忆工具和 self 在库内，�
     memory_set: true,
     memory_delete: true,
     self: true,
+    handoff: true,
   });
   const bare = preset({ tools: ["read"] });
   assert.equal(findTool(bare, "read")?.name, "read");
   assert.equal(findTool(bare, "self")?.name, "self");
+  assert.equal(findTool(bare, "handoff")?.name, "handoff");
   assert.equal(findTool(bare, "bash"), undefined, "预设里没有的工具");
   assert.equal(findTool(bare, "memory_get"), undefined, "没有记忆库就没有记忆工具");
   assert.equal(findTool(bare, "grep"), undefined, "不认识的工具");

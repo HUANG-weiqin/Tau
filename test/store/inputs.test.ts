@@ -167,6 +167,37 @@ test("self：投影写成文字，带本地时间、时区和运行中的兄弟�
   assert.match(text, /- p1：等模型回复，本轮第 1 步，排队消息 0 条，已运行 1 小时 2 分/);
 });
 
+test("handoff：在处理输入的事务里执行，结果不是错误；安全点并入排队的信，换段把它带到新段", async (t) => {
+  const db = tempDb(t);
+  const memory = fakeMemory();
+  const exec = createExecutor(db, scripted([use(toolCall("h1", "handoff")), say("交接说明"), say("好")]));
+  startProcess(db, memory, "p1", PRESET, "开始", 0);
+  handleNext(db, memory, 0);
+  await exec.startNext(); // 模型回复：调用 handoff
+  send(db, "p1", userLetter("插话"));
+  // 处理模型回复的事务里就执行了 handoff：不经执行器，没有 effects 行，结果已经在信箱里。
+  handleNext(db, memory, 1);
+  assert.deepEqual(effectRows(db), []);
+  const [result, ...rest] = mailbox(db);
+  assert.ok(result?.input.kind === "letter", "信在前");
+  const toolResult = rest[0]?.input;
+  assert.ok(toolResult?.kind === "toolResult" && toolResult.outcome.status === "ok");
+  assert.deepEqual(plain(toolResult.outcome.content), { text: "将在这批工具结果之后换段。", isError: false });
+  handleNext(db, memory, 2); // 信：排队
+  const h = handleNext(db, memory, 3); // 工具结果：安全点并入，换段
+  assert.ok(h?.process.phase.tag === "awaitingModel" && h.process.phase.purpose === "handoff");
+  assert.deepEqual(loadSegment(db, h.process).slice(-2).map((m) => m.role), ["toolResult", "user"]);
+  assert.deepEqual(effectRows(db), [{ id: "p1", n: h.process.lastEffect, status: "pending" }]);
+  assertStoreInvariants(db);
+  await settle(db, memory, exec);
+  const p = loadProcess(db, "p1");
+  assert.equal(p?.segment.seq, 2);
+  assert.deepEqual(p?.phase, { tag: "idle", ended: "done" });
+  const first = loadSegment(db, p!)[0];
+  assert.ok(first?.role === "user" && typeof first.content === "string" && first.content.endsWith("插话"));
+  assertStoreInvariants(db);
+});
+
 test("记忆工具：读、写、冲突时带最新值、删除、参数错误", (t) => {
   const db = tempDb(t);
   const memory = fakeMemory();

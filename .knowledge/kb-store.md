@@ -11,7 +11,7 @@
 - `~/.tau/tau.db` 的位置、表结构和 PRAGMA。
 - 三个事务：启动进程、收一条命令、处理一条输入。
 - 处理输入时同步待办副作用表（`effects`）。
-- 在事务里执行库内工具：`self` 和 `memory_*`。
+- 在事务里执行库内工具：`self`、`handoff` 和 `memory_*`。
 
 它不负责：
 
@@ -254,6 +254,7 @@ CREATE TABLE blobs (
 | 工具 | 什么时候有 |
 |---|---|
 | `self` | 总有 |
+| `handoff` | 总有 |
 | `memory_get`、`memory_set`、`memory_delete` | 预设 `tools` 含 `memory` 时 |
 
 共同规则（`src/store/instore.ts` 的 `runInStore`）：
@@ -312,13 +313,17 @@ CREATE TABLE blobs (
 
 投影里有哪些字段见 [kb-kernel.md](kb-kernel.md)。
 
+### `handoff`
+
+没有参数。结果是 `将在这批工具结果之后换段。`，`isError` 为假。它什么都不改：换段由 `decide` 发起，条件和时机见 [kb-kernel.md](kb-kernel.md#主动换段handoff)。
+
 ## 入口
 
 | 文件 | 内容 |
 |---|---|
 | `src/store/db.ts` | `SCHEMA`、`SCHEMA_VERSION`、`openDb`、`tx`、行的读写 |
 | `src/store/inputs.ts` | `startProcess`、`send`、`handleNext`、同步副作用 |
-| `src/store/instore.ts` | `runInStore`：`self` 和 `memory_*` |
+| `src/store/instore.ts` | `runInStore`：`self`、`handoff` 和 `memory_*` |
 | `src/memory/kv.ts` | `Memory` 的 SQLite 实现，服务用它；规则见 [kb-memory.md](kb-memory.md) |
 | `test/store/db.test.ts` | 表、PRAGMA、表结构版本、主键和 `CHECK`、编号不复用、回滚 |
 | `test/store/inputs.test.ts` | 三个事务、同步规则、库内工具、只读当前段（读取行数和查询计划） |

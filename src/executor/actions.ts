@@ -9,6 +9,9 @@ import { bash } from "../tools/bash.ts";
 import { edit, read, write } from "../tools/files.ts";
 import type { Actions } from "./executor.ts";
 
+/** 模型请求在拿到成功的响应之前的重试次数，交给 pi-ai（设计稿 5.7）。 */
+export const MODEL_RETRIES = 5;
+
 /** `onText` 收到模型的流式文本；它只是预览，不进库。 */
 export function createActions(models: Models, onText: (id: ProcessId, delta: string) => void): Actions {
   return {
@@ -17,9 +20,17 @@ export function createActions(models: Models, onText: (id: ProcessId, delta: str
       const slash = name.indexOf("/");
       const model = models.getModel(name.slice(0, slash), name.slice(slash + 1));
       if (!model) throw new Error(`模型目录里没有 ${name}`);
-      // 输出上限不超过窗口的 1/8：换段阈值按这个数留空间（kernel/derive.ts）。
-      const maxTokens = Math.min(model.maxTokens, outputMax(job.process.preset));
-      const stream = models.streamSimple(model, buildContext(job.process, job.segment), { signal, sessionId: job.process.id, maxTokens });
+      // 一次回复的总输出（含思考）不超过 cap：窗口的 1/8，换段阈值按这个数留空间（kernel/derive.ts）。
+      // 模型的 maxTokens 也换成 cap：按预算思考的路径把预算加到 maxTokens 上，再按模型的 maxTokens 截。
+      const { thinking } = job.process.preset;
+      const cap = Math.min(model.maxTokens, outputMax(job.process.preset));
+      const stream = models.streamSimple({ ...model, maxTokens: cap }, buildContext(job.process, job.segment), {
+        signal,
+        sessionId: job.process.id,
+        maxTokens: cap,
+        maxRetries: MODEL_RETRIES,
+        ...(thinking === undefined ? {} : { reasoning: thinking }),
+      });
       for await (const e of stream) if (e.type === "text_delta") onText(job.process.id, e.delta);
       return stream.result();
     },

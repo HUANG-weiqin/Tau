@@ -1,5 +1,5 @@
 // 内核的全部类型。外部类型只能 import type（见 .knowledge/kb-kernel.md）。
-import type { AssistantMessage, Context, ImageContent, TextContent, ToolCall, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Context, ImageContent, TextContent, ThinkingLevel, ToolCall, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 
 export type { AssistantMessage, ImageContent, ToolCall, ToolResultMessage, UserMessage };
 
@@ -24,6 +24,8 @@ export interface PresetSnapshot {
   tools: PresetTool[];
   prompt: string;
   contextWindow: number;
+  /** pi-ai 的思考级别。预设没写就没有这个键，调用模型时不传 `reasoning`。 */
+  thinking?: ThinkingLevel;
 }
 
 /** 累计用量：这个进程所有模型调用的 token 之和（设计稿第 5.8 节）。 */

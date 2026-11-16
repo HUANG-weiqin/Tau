@@ -23,8 +23,8 @@ const USER_MESSAGES = 8;
 const STOPS = 2;
 /** 窗口小一些，让换段也会发生。 */
 const CRASH_PRESET: PresetSnapshot = { ...PRESET, contextWindow: 33_000 };
-/** read 是库外工具；memory_*、self 是库内工具；bash 不在预设里；nope 不存在。 */
-const TOOLS = ["read", "read", "read", "memory_get", "memory_set", "self", "bash", "nope"];
+/** read 是库外工具；memory_*、self、handoff 是库内工具；bash 不在预设里；nope 不存在。 */
+const TOOLS = ["read", "read", "read", "memory_get", "memory_set", "self", "handoff", "bash", "nope"];
 
 type Kind = "start" | "send" | "stop" | "handle" | "claim" | "complete";
 
@@ -232,7 +232,8 @@ async function play(empty: Empty, seed: number, crashAt: number | null): Promise
   for (const p of processes) assert.equal(p.phase.tag, "idle");
   const messages = processes.flatMap((p) => allMessages(db, p.id));
   // 没有输入丢失，也没有输入被处理两次：每条用户消息恰好出现一次。
-  const said = messages.map(userText).join("\n");
+  // 换段时，段末的用户消息（安全点并入的信也在其中）原样带进新段的第一条：新段的第一条不算。
+  const said = processes.flatMap((p) => allMessages(db, p.id, true)).map(userText).join("\n");
   for (const u of run.users) assert.equal(said.split(u).length - 1, 1, `${u} 应该恰好出现一次`);
   // 库外副作用不会被重做；每个工具调用恰好一个结果；每条助手消息只写入一次。
   assert.equal(new Set(run.started).size, run.started.length, "有动作被开始了两次");

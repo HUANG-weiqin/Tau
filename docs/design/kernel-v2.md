@@ -176,46 +176,13 @@ function decide(p, seg, input, env): {
 
 ### 5.2 安全点投递
 
-做法：
-
-- 运行中到的信照旧进 `turn.queued`。
-- **安全点**：当前这条助手消息的工具结果全部写完或补完、调用 `continueTurn` 之前。
-- 到了安全点，按顺序做：
-  1. 先查步数。`turn.steps` 已到 `STEPS_PER_TURN`，就按步数用完结束本轮，不合并。信留在 `queued`，由 `endTurn` 按 5.3 的规则 4、6 处理。这样发起这一轮的进程拿到的是最后一条助手消息的正文（可能为空），不会因为合并变成空串。
-  2. `queued` 不空：经 5.1 的构造函数合并成一条用户消息写进段，按 5.3 的规则并入 `replyTo` 和 `hops`，清空 `queued`。
-  3. 调用 `continueTurn`。
-- 只有这一个安全点。换段成功以后、等模型回复时到的信，都等下一个安全点或者本轮结束。
-- 本轮结束时 `queued` 还不空：由 `endTurn` 处理（5.3 的规则 5、6）。
-- 写入不计步。下一次调用模型才计步。
-- 用户在运行中用 `tau send` 发的信，因此在本轮里就被看到。连接仍等到本轮结束才收到最终回复。
-
-坑点，写进 kb-kernel：
-
-- 信在安全点并入以后，模型还没写出回复，这一轮就结束了：被停止、出错、`length`、工具调用太多、交接失败，或者交接以后步数用完。
-- 这时最终回复是空串，寄信方收到正文为空的回信。
-- 下一封信前面的 D25 说明会告诉模型这一点（5.3 规则 6）。
-
-换段阈值的证明不变：
-
-- 安全点写入的信在段末。交接请求不带段末的用户消息（[证明](../../.knowledge/kb-kernel.md#换段阈值)第 4 步）。
-- 写入以后，`continueTurn` 照样先检查阈值。
-- 换段时，这条信原样带到新段，张数按 5.1 限制。
+第 3 步已实现：做法、步数先查、写入不计步、阈值证明不变、坑点，见 [kb-kernel](../../.knowledge/kb-kernel.md#安全点投递)（坑点在[坑点一节](../../.knowledge/kb-kernel.md#坑点)）。选定的细节见 [D32](../../.knowledge/kb-decisions.md#d32-第-3-步前一半安全点投递和-handoff)。
 
 上层做的代价：做不到。什么时候把信写进段，只有 `decide` 能决定。
 
-状态放在哪：没有新状态。
+状态放在哪：没有新状态。事务和崩溃：在处理那条工具结果的事务里。模型和人：模型在下一次调用时看到；用户在运行中用 `tau send` 发的信，因此在本轮里就被看到，连接仍等到本轮结束才收到最终回复。
 
-事务和崩溃：在处理那条工具结果的事务里。
-
-模型和人：模型在下一次调用时看到。
-
-要核实：
-
-- 工具结果后面紧跟一条用户消息，在用的每条模型路径都要接受。
-- tau 在停止之后已经会产生这种形状。pi-ai 的 Anthropic 转换器会把它变成两条相邻的 `user`。
-- 第 3 步按 5.7 的核实表核实在用的模型。结论只对核实过的模型成立：消息形状被不被接受由后端决定，路径相同、后端不同也要重核。
-
-测试：纯函数层的随机序列；“带工具调用的助手消息后面紧跟它的结果”这条不变量照样成立；步数用完时不合并，回信的正文和不合并时一样。
+已在第 3 步核实，结论见[D34](../../.knowledge/kb-decisions.md#d34-第-3-步真模型核实)：在用的模型都接受“工具结果后面紧跟一条用户消息”。结论只对核实过的模型成立，规则见 [5.7](#57-调用模型思考级别和重试)。
 
 ### 5.3 进程之间：寄信、派生、停止、回信、跳数
 
@@ -341,21 +308,9 @@ function decide(p, seg, input, env): {
 
 ### 5.4 主动换段
 
-做法：
-
-- 库内工具 `handoff`，没有参数，总是有，和 `self` 一样。
-- 结果是 `将在这批工具结果之后换段。`，`isError` 为假。
-- 到了安全点，`continueTurn` 发现最后一条助手消息里有 `handoff` 调用、并且它的结果不是错误，就进入 `awaitingModel(handoff)`，不看阈值。
-- 补的结果（`INTERRUPTED`、`SKIPPED`）都是错误。所以没执行的 `handoff` 不会触发换段。
-- 交接失败以后，下一封信一来又会立即换段。这和到阈值时一样，是有意的。
+第 3 步已实现：工具、结果、触发条件、不存状态、不变量，见 [kb-kernel](../../.knowledge/kb-kernel.md#主动换段handoff)。选定的细节见 [D32](../../.knowledge/kb-decisions.md#d32-第-3-步前一半安全点投递和-handoff)。
 
 上层做的代价：做不到。换段只能由 `decide` 发起。
-
-状态放在哪：不存。从工作段的最后一条助手消息和它的结果算出来。
-
-纯函数层的不变量（kb-kernel 的“不变量”一节，`awaitingModel` 一行）改一句：`purpose` 是 `handoff`，当且仅当用量到阈值，或者最后一条助手消息里有成功的 `handoff` 调用。
-
-测试：纯函数层的单元测试；和阈值同时成立；和安全点投递同时发生；被补成“未执行”的 `handoff` 不触发。
 
 ### 5.5 工具定义
 
@@ -484,7 +439,7 @@ function decide(p, seg, input, env): {
 量 `IMAGE_TOKENS`（第 6 步）：
 
 - 形状：2000 × 2000、2000 × 1000、2000 × 768。按块计价的模型，最坏的不一定是正方形。
-- 模型：在用、收图片、能调到的每个模型。现在是 opencode-go 的 deepseek-v4.1-flash、mimo-v2.6-flash（openai-completions），gpt-6-luna、muse-spark-1.3-contributor（openai-responses），加上 anthropic/claude-haiku-4-5。
+- 模型：在用、收图片、能调到的每个模型。现在是 opencode-go 的 deepseek-v4.1-flash、mimo-v2.6-flash（openai-completions），gpt-6-luna（openai-responses），加上 anthropic/claude-haiku-4-5。muse-spark-1.3-contributor 不支持（D34），不量。
 - claude-opus-5-5 不实测，用文档的上限 4,784。Anthropic 的凭据只许配 Haiku 用，这是用户的限制。要实测，先问用户。
 - 量法照 D24：同一个请求带图和不带图，比 `input + cacheRead + cacheWrite` 的差。
 - 同时核实这些模型真的收图片，四种类型各发一张，含一张动图 GIF。目录写着收、接口却拒绝的模型或类型，图片进段以后每次调用都失败。遇到这种情况，冻结之前定对策，写进决策记录。
@@ -531,55 +486,17 @@ function decide(p, seg, input, env): {
 
 ### 5.7 调用模型：思考级别和重试
 
-思考级别：
+思考级别、输出上限的算法、预算路径上回答的空间，已实现：[kb-executor](../../.knowledge/kb-executor.md#调用模型actionsts)。预设的 `thinking` 见 [mvp.md 第 2 节](mvp.md#2-预设)。
 
-- 预设加可选的 `thinking`，值是 pi-ai 的思考级别：`minimal`、`low`、`medium`、`high`、`xhigh`、`max`。快照冻结它。
-- 执行器按它传 `reasoning`。不写就不传，由 pi-ai 按模型的默认处理。不同模型的默认不一样：有的不思考，有的按 provider 的默认思考。
-- 一次回复的总输出（含思考）不能超过 `outputMax`，这是换段阈值的前提。做法：
-  - `cap = min(model.maxTokens, outputMax)`，和 v1 一样。
-  - 调用时传 `{ ...model, maxTokens: cap }`，`options.maxTokens` 也传 `cap`。不传 `thinkingBudgets`，用 pi-ai 的默认预算。
-  - 按预算思考的路径（anthropic-messages 上没有 `forceAdaptiveThinking` 的模型）：pi-ai 把预算加到 `maxTokens` 上，再按模型的 `maxTokens` 截。模型的 `maxTokens` 已经换成 `cap`，所以总数不超过 `cap`。
-  - 其余路径（自适应思考、openai-completions、openai-responses 等）：思考和回答共用 `max_tokens`，就是 `cap`。这是 provider 的语义，第 3 步实测。
-  - `xhigh` 和 `max` 在预算路径上按 `high` 的预算算（pi-ai 的 `clampReasoning`）。
-- 为什么不从 `maxTokens` 里减预算：只有预算路径会把预算加回去。别的路径上，减掉的部分白白少了。窗口小的模型只剩 1,024，回复以 `length` 结束，本轮出错。
-- 预算路径上回答的空间：
-  - 回答最坏剩 max(`cap` − 预算, 1,024)。`cap` 不大于“预算 + 1,024”时，pi-ai 把预算压到 `cap − 1024`，回答只剩 1,024。
-  - pi-ai 的默认预算：`minimal` 1,024，`low` 2,048，`medium` 8,192，`high` 及以上 16,384。所以回答只剩 1,024 的边界是：`high` 及以上 `cap` ≤ 17,408，`medium` ≤ 9,216，`low` ≤ 3,072，`minimal` ≤ 2,048。
-  - pi-ai 1.0.0 的目录里，落在这里的是 vercel-ai-gateway 经 anthropic-messages 接入的 21 个非 Anthropic 模型，例如 zai/glm-4.5。其中 6 个连 `medium` 也落在范围里（`cap` 5,120 到 8,250）。Anthropic 自己的模型 `cap` 都不小于 25,000。在用的 haiku-4-5 在 `high` 及以上最坏剩 8,616。
-  - 预设换到走预算路径的模型，先按上面的式子算。落在范围里，就把 `thinking` 降到不落在范围里的级别，或者不设 `thinking`，或者换模型。预设没有 `thinkingBudgets`，执行器也不传它。核实表查不出这件事，只能靠算。
-- 思考块照 v1 写进段，按字节算进用量。
+- 要点：`cap = min(model.maxTokens, outputMax)`；调用时传 `{ ...model, maxTokens: cap }` 和 `options.maxTokens = cap`；有 `thinking` 才传 `reasoning`；不传 `thinkingBudgets`。
+- 其余路径上思考和回答共用 `cap`，这是 provider 的语义。
 
-核实（第 3 步）：按 pi-ai 的路径分，每条路径核实在用的模型。查两件事：安全点之后的消息形状被接受（5.2）；请求体里的输出上限不超过 `cap`。
+已在第 3 步核实（消息形状和输出上限），结论见 [D34](../../.knowledge/kb-decisions.md#d34-第-3-步真模型核实)：muse-spark-1.3-contributor 的输出超过上限，不支持。
 
-| 路径 | 模型 | 怎么核实 |
-|---|---|---|
-| anthropic-messages，按预算思考 | anthropic/claude-haiku-4-5 | 真调用 |
-| anthropic-messages，自适应思考，effort 经插入的 system 消息传 | anthropic/claude-opus-5-5 | 只用 `onPayload` 和假的 `fetch` 断言请求体。真调用要先问用户 |
-| openai-completions，deepseek 格式（发 `thinking` 字段） | opencode-go/deepseek-v4.1-flash | 真调用 |
-| openai-completions，openai 格式（只发 `reasoning_effort`） | opencode-go/mimo-v2.6-flash | 真调用，设上 `thinking` |
-| openai-responses | opencode-go 上在用的模型，例如 muse-spark-1.3-contributor | 真调用 |
-
-- openai 兼容的三行再查一件事：思考算不算进 `max_tokens`。
-  - 直接调 pi-ai，思考开到最高，`maxTokens` 设小（例如 1,024），问一个要想很久、答案很短的问题。
-  - `usage.output` 超过 `maxTokens`：这条路径的 `outputMax` 前提不成立，不支持。
-  - 没超过时，要同时满足两条，结论才算数：回复以 `length` 结束；真的思考过（有思考块，或者 `usage.reasoning` 大于 0）。不满足就换个更难的问题，或者调小 `maxTokens`，再测。看不出思考过，算没核实。
-  - 只以 `length` 结束不算通过：思考不算进上限时，回答写满上限也以 `length` 结束。
-- anthropic 的两行不用查这一件：Anthropic 的文档规定 `max_tokens` 含思考。这只对 Anthropic 自己的服务成立，别的后端走这两条路径，也要查。
-- Anthropic 的凭据只许配 Haiku 用，这是用户的限制。
 - openai-codex-responses 的请求不发输出上限，总输出可能超过 `outputMax`。tau 本来也调不了它：它只有 OAuth（D23）。不支持。
 - 结论只对核实过的模型成立。消息形状和输出上限的语义由后端决定，路径相同、后端不同也要重核。预设换到没核实过的模型，先真调用核实一次。只有用户没许真调用的模型（现在是 claude-opus-5-5），才只断言请求体。
 
-重试：
-
-- 执行器调用模型时，传 `maxRetries` = `MODEL_RETRIES`（暂定 5）。
-- pi-ai 只重试拿到成功的响应之前的失败：没有状态码的连接错误，以及 408、409、429 和 5xx 的错误响应，以错误响应的 `x-should-retry` 头为准。重试可以被中止。
-- 等多久：
-  - 错误响应带 `retry-after-ms` 或 `retry-after` 时，按它等。超过 60 秒就直接失败。429 通常带这个头，5 次最坏约 5 分钟。
-  - 不带时，退避从 0.5 秒起翻倍，乘 0.75 到 1 的随机数，单次最多 8 秒。5 次一共约 12 到 16 秒，和 Pi SDK 默认的 3 次（2、4、8 秒）差不多。
-  - 等的时候，进程停在“等模型”。
-- 这不是重做副作用：还是同一个副作用，也还没有任何结果。崩溃后照样报“被中断”，不重做。
-- 流式输出开始以后出的错不重试，本轮出错结束（风险表）。
-- AGENTS.md 的“执行器……也不重试”要改成：执行器自己不重试；模型请求在拿到成功的响应之前的重试，交给 pi-ai。
+重试已实现：[kb-executor](../../.knowledge/kb-executor.md#调用模型actionsts)。执行器传 `maxRetries` = `MODEL_RETRIES`（5）；哪些错误重试、等多久，以 pi-ai 1.0.0 的 `utils/provider-retry.js` 为准，`test/store/model-call.test.ts` 断言。
 
 需求来源：
 
@@ -593,7 +510,7 @@ function decide(p, seg, input, env): {
 
 状态放在哪：思考级别在快照里。重试不存状态。
 
-测试：执行器传给 pi-ai 的参数（用假的 pi-ai）；用 `onPayload` 和假的 `fetch`，对每条在用的路径断言请求体里的输出上限不超过 `cap`，预算路径上预算小于 `max_tokens`；第 3 步的真模型核实。
+测试：已写（`test/store/model-call.test.ts`）：执行器传给 pi-ai 的参数；用 `onPayload` 和假的 `fetch`，对每个在用的模型断言请求体里的输出上限不超过 `cap`，预算路径上预算小于 `max_tokens`。第 3 步的真模型核实见 [D34](../../.knowledge/kb-decisions.md#d34-第-3-步真模型核实)。
 
 ### 5.8 累计用量
 
@@ -800,23 +717,8 @@ MSYS_NO_PATHCONV=1 exec node "$(cygpath -w "$(dirname "$0")")/src/main.ts" "$@"
 
 第 3 步：
 
-- AGENTS.md 上下文与记忆：“运行中收到的用户消息排队到本轮结束。”（:62）改成“运行中收到的信件排队到下一个安全点”。
-- AGENTS.md 提交与执行：“执行器只做开始、中止、上报。它不做决策，也不重试。”（:56）只改“也不重试”：执行器自己不重试；模型请求在拿到成功的响应之前的重试，交给 pi-ai。前半句照旧。
-- kb-executor 里同一件事的三处，只改讲重试的部分，别的照旧：“重试和超时。没有自动重试。”（:21）改成上面那句；决策表“执行器只开始、中止、上报，不决策，不重试”（:135）的“不重试”改成“自己不重试”；越界信号“执行器读结果内容做判断，或者重试”（:152）的“或者重试”改成“或者自己重试”。
-- AGENTS.md 副作用（:35）：库内副作用加上 `handoff`。
-- AGENTS.md 用词：加“安全点”。
-- kb-executor：“tau 从不传 `reasoning`。不传时 Anthropic 和 Bedrock 不加思考预算，`maxTokens` 就是全部输出。”（:100）；“传 `reasoning`：……换段阈值的上界就不成立”（:218）。
-- 库内工具的清单加上 `handoff`：kb-executor（:20）、kb-tools（:20）；kb-store 的“在事务里执行库内工具：`self` 和 `memory_*`。”（:14）；kb-store 的库内工具表（:247–252），`handoff` 总有。
-- INDEX（:19、:38）的“`self` 和记忆工具”改成“库内工具”。
-- kb-kernel：
-  - `awaitingModel` 的不变量“`purpose` 是 `handoff` 当且仅当用量到阈值”（:322）按 5.4 改。
-  - 坑点“`turn.queued` 在本轮结束前保持原样”（:391）改成：保持原样，直到在安全点或本轮结束时写进段。
-  - “`PresetSnapshot` 有 id、workdir、model、tools、prompt、contextWindow”（:54）加上 `thinking`。
-- kb-service：“运行中发来的消息排队到本轮结束”（:87）；“Agent 对自己运行 `tau send`”里“在本轮结束时处理”的说法（:312）；“Agent 没有专门的控制命令”（:260，`handoff` 就是一个）。
-- mvp.md 第 2 节：
-  - “前置信息只有这 3 个字段”（:35）加 `thinking`。
-  - “没有 `:` 的行、未知字段、重复字段、缺少的字段，都报错。”（:47）后面加一句：`thinking` 可以不写，其余字段缺了报错。别的报错规则照旧。
-  - “`tools` 可以为空。这时进程只有 `self`。”（:51）改成 `self` 和 `handoff`。
+- 前一半已做（安全点投递、`handoff`）：AGENTS.md 的排队句、副作用、用词“安全点”；各 kb 页的库内工具清单（kb-executor、kb-tools、kb-store、INDEX）；kb-kernel 的 `awaitingModel` 不变量和 `turn.queued` 的坑点；kb-service 三处；mvp.md 第 2 节的 `tools` 句。
+- 后一半已做（快照的 `thinking`、输出上限的算法、重试）：AGENTS.md 提交与执行的“也不重试”；kb-executor 讲重试的三处、讲 `reasoning` 的两处；kb-kernel 的 `PresetSnapshot`；mvp.md 第 2 节的字段和报错。
 
 第 4 步：
 
@@ -1055,7 +957,7 @@ HTTP 桥要做的检查：
 | 0 | 第 7 节第 0 步的改动；写 v2 的执行清单；INDEX 加本稿 | 第 7 节第 0 步列的每一句，都已改掉或者改成指向本稿的链接 |
 | 1 | 契约类型和 v2 表结构：信件、发送者、内容块、工具结果的内容块、`Turn` 的新字段、`parent`、`usage`、`blobs` 表。快照和投影的新字段，到用它们的那一步再加。行为还和 v1 一样 | 现有测试改名后全过；`SCHEMA_VERSION` 为 2。开发期间 `state_json` 的形状一变，就再加一 |
 | 2 | 信件的头和合并；消息的两种形状；换段带全部段末消息（含图片块）；最终回复和结束原因的文字移进纯函数层；累计用量 | 纯函数层的单元测试和随机序列 |
-| 3 | 安全点投递（先查步数）、`handoff`；快照的 `thinking` 和输出上限的算法；重试 | 纯函数层的测试；`onPayload` 断言；按 5.7 的核实表核实在用的模型 |
+| 3 | 安全点投递（先查步数）、`handoff`；快照的 `thinking` 和输出上限的算法；重试 | 纯函数层的测试；`onPayload` 断言；真模型核实在用的模型（[D34](../../.knowledge/kb-decisions.md#d34-第-3-步真模型核实)） |
 | 4 | `post`、`spawn`、`stop_process`、回信、跳数；D25 的新说明；`TAU_PROCESS`、`TAU_PIPE`；bash 工具的环境去掉 `MSYS_NO_PATHCONV`；`tau` 脚本 | 崩溃测试；互相寄信停在上限；顺序委派第 17 次失败；`spawn` 的 ID 确定、撞上能重算；在测试服务里，bash 工具真的运行一次 `tau ps`，经 `TAU_PIPE` 连到测试服务；`bash()` 的环境测试；重量 D25 的说明 |
 | 5 | 投影的 `parent`、子进程、累计用量、消息条数，出错原因截断；`self` 的文字；协议的 `history`（含 `end` 行）、`watch`；`text` 回复带进程和编号 | 服务测试：`watch` 的快照、增量、断开、写缓冲上限（含一直不读的订阅）、服务退出；`history` 的 `end` 行和越界 |
 | 6 | 图片：入口检查、不收图片的模型、`blobs` 的读写、执行器替换引用、请求里成批省略、两种 R；快照的 `input`；启动检查（`start` 和 `spawn`）和交接以后的检查；协议的 `blob` | 存储层不变量（信箱、`queued`、段）；最坏图片负载下的阈值测试；两种检查的测试；按 5.6 量出 `IMAGE_TOKENS`，核实在用模型收四种图片 |
@@ -1064,7 +966,7 @@ HTTP 桥要做的检查：
 
 第 7 步的真模型核实：
 
-- 按 5.7 的核实表，在用、收图片的每个模型真调用一次。claude-opus-5-5 照旧只断言请求体。
+- 照 [D34](../../.knowledge/kb-decisions.md#d34-第-3-步真模型核实) 的量法，在用、收图片的每个模型真调用一次。claude-opus-5-5 照旧只断言请求体。muse-spark-1.3-contributor 不支持，不测。
 - 请求里有一个带图的工具结果。测两种形状：一种以它结尾；一种在它后面再接安全点并入的一封信。
 - 为什么要测：带图的工具结果在各条路径上是另一种形状。例如 openai-completions 把图拆成一条额外的用户消息，再并入一封信，就是两条相邻的用户消息。
 - 接口拒绝的，冻结之前定对策，写进决策记录，和 5.6 的“目录写着收、接口却拒绝”一样处理。

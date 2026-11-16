@@ -1,4 +1,4 @@
-// 库内副作用：记忆工具和 `self`，在处理输入的事务里执行，恰好一次（见 .knowledge/kb-store.md、kb-memory.md；设计稿第 9 节）。
+// 库内副作用：记忆工具、`self` 和 `handoff`，在处理输入的事务里执行，恰好一次（见 .knowledge/kb-store.md、kb-memory.md；设计稿第 9 节）。
 import { endedText } from "../kernel/derive.ts";
 import { observe } from "../kernel/observe.ts";
 import { MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
@@ -16,6 +16,9 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
   switch (call.name) {
     case "self":
       return ok(formatSelf(observe(p, segment, loadProcesses(db), now)));
+    case "handoff":
+      // 换段由 `decide` 在安全点发起：它看这个结果不是错误。
+      return ok("将在这批工具结果之后换段。");
     case "memory_get": {
       if (typeof key !== "string") return bad("key 必须是字符串。");
       const cur = memory.get(ns, key);

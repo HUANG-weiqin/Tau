@@ -1,6 +1,6 @@
 // start、decide、effectOf：纯函数（见 .knowledge/kb-kernel.md）。
 import { CARRY_HEADER, HANDOFF_HEADER, HANDOFF_INSTRUCTION, tailStart } from "./context.ts";
-import { clip, contextUsed, endedReason, endedText, handoffThreshold, IMAGES_PER_MESSAGE, MARGIN_TOKENS, MESSAGE_MAX_BYTES, pendingCalls, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
+import { clip, contextUsed, endedReason, endedText, handoffRequested, handoffThreshold, IMAGES_PER_MESSAGE, MARGIN_TOKENS, MESSAGE_MAX_BYTES, pendingCalls, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
 import { textContent, unreachable } from "./types.ts";
 import type { AssistantMessage, Content, Effect, Ended, Env, ImageContent, Input, Letter, Message, Phase, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Turn, Usage } from "./types.ts";
 
@@ -132,13 +132,26 @@ function onToolResult(d: Draft, turn: Turn, content: ToolResultContent): void {
   const rest = pendingCalls(d.seg);
   if (rest.length > 0 && !overThreshold(d)) return enter(d, { tag: "awaitingTool", turn });
   for (const c of rest) push(d, toolResult(c, textContent(SKIPPED), true, d.env.now));
-  return continueTurn(d, turn);
+  return atSafePoint(d, turn);
+}
+
+/**
+ * 安全点（设计稿第 5.2 节）：这批工具结果都写完或补完，调用 `continueTurn` 之前。先查步数：步数用完时不合并，
+ * 信留在 `queued`，由 `endTurn` 处理。否则排队的信合并成一条用户消息写进段，`replyTo` 和 `hops` 并进本轮。写入不计步。
+ */
+function atSafePoint(d: Draft, turn: Turn): void {
+  if (turn.steps >= STEPS_PER_TURN || turn.queued.length === 0) return continueTurn(d, turn);
+  const { text, images } = render(turn.queued);
+  push(d, userMessage(text, images, false, d.env.now));
+  const replyTo = [...new Set([...turn.replyTo, ...turn.queued.flatMap((l) => (l.replyTo === undefined ? [] : [l.replyTo]))])];
+  const hops = Math.max(turn.hops, ...turn.queued.map((l) => l.hops));
+  return continueTurn(d, { ...turn, queued: [], hops, replyTo });
 }
 
 function continueTurn(d: Draft, turn: Turn): void {
   if (turn.steps >= STEPS_PER_TURN) return endTurn(d, turn, "stepLimit");
   const next = { ...turn, steps: turn.steps + 1 };
-  return enter(d, { tag: "awaitingModel", turn: next, purpose: overThreshold(d) ? "handoff" : "turn" });
+  return enter(d, { tag: "awaitingModel", turn: next, purpose: overThreshold(d) || handoffRequested(d.seg) ? "handoff" : "turn" });
 }
 
 function endTurn(d: Draft, turn: Turn, ended: Ended): void {

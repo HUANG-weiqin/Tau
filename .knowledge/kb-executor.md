@@ -17,8 +17,8 @@
 
 - 决定下一步。那是 `decide` 和 `effectOf`（[kb-kernel.md](kb-kernel.md)）。
 - 插入待办副作用表的行，或因为停止而删行。那是处理输入的事务（[kb-store.md](kb-store.md#同步副作用)）。
-- 库内副作用（`memory_*`、`self`）。它们在处理输入的事务里执行。
-- 重试和超时。没有自动重试。模型调用没有超时；bash 的超时在工具里。
+- 库内副作用（`memory_*`、`self`、`handoff`）。它们在处理输入的事务里执行。
+- 自己重试和超时。执行器自己不重试；模型请求在拿到成功的响应之前的重试，交给 pi-ai（见下“重试”）。模型调用没有超时；bash 的超时在工具里。
 - 工具的实现，包括 bash 怎样结束进程（[kb-tools.md](kb-tools.md)）。
 - 服务怎样调用执行器、怎样把流式文本转给连接（[kb-service.md](kb-service.md)）。
 
@@ -82,7 +82,7 @@ abort(id, n)
 ### 调用模型（`actions.ts`）
 
 1. 按第一个 `/` 把快照里的模型 ID 拆成 provider 和模型 ID，用 `models.getModel` 现查。查不到就抛出 `模型目录里没有 <ID>`，执行器把它变成 `error` 回复。
-2. `models.streamSimple(model, buildContext(process, segment), { signal, sessionId: process.id, maxTokens })`。`maxTokens` = `min(model.maxTokens, outputMax(preset))`，`outputMax` 是窗口的 1/8。轮次调用和交接调用一样。
+2. `models.streamSimple({ ...model, maxTokens: cap }, buildContext(process, segment), { signal, sessionId: process.id, maxTokens: cap, maxRetries: MODEL_RETRIES, reasoning? })`。`cap` = `min(model.maxTokens, outputMax(preset))`，`outputMax` 是窗口的 1/8。快照有 `thinking` 才传 `reasoning`，没有就连键都不传。不传 `thinkingBudgets`。轮次调用和交接调用一样。
 3. 只把 `text_delta` 事件交给 `onText`。服务怎样转发，见 [kb-service.md](kb-service.md#流式文本)。
 4. 返回 `stream.result()`，也就是最终的助手消息。
 
@@ -97,7 +97,35 @@ abort(id, n)
 - 为什么取较小的：不向模型要它给不了的输出。快照只冻结窗口，`model.maxTokens` 调用时现查（[D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)）。
 - pi-ai 1.0.0 的 `buildBaseOptions` 取 `options.maxTokens ?? model.maxTokens`，再截到 `max(1, 窗口 − 它的估算 − 4096)`。这一步只会调低。
 - pi-ai 的估算是锚点用量加上之后的字符数 / 4，不超过纯函数层的估算（字节数 / 2）。所以轮次调用时这一截不起作用。交接调用时，它最多把交接说明的上限压低“补的结果 + 交接指令”那么多。
-- tau 从不传 `reasoning`。不传时 Anthropic 和 Bedrock 不加思考预算，`maxTokens` 就是全部输出。
+思考级别：
+
+- 预设的 `thinking` 是 pi-ai 的 `ThinkingLevel`：`minimal`、`low`、`medium`、`high`、`xhigh`、`max`。快照冻结它，执行器照传 `reasoning`。
+- 不写就不传，由 pi-ai 按模型的默认处理。不同模型的默认不一样：有的不思考，有的按 provider 的默认思考。
+- 思考块照 v1 写进段，按字节算进用量。
+
+一次回复的总输出（含思考）不超过 `cap`，这是换段阈值的前提：
+
+- 传 `{ ...model, maxTokens: cap }`，`options.maxTokens` 也传 `cap`。
+- 按预算思考的路径（anthropic-messages 上没有 `forceAdaptiveThinking` 的模型）：pi-ai 先把预算加到 `options.maxTokens` 上，再按模型的 `maxTokens` 截。模型的 `maxTokens` 已经是 `cap`，所以总数不超过 `cap`。预算再被压到“上限减 1,024”以内。
+- 其余路径（自适应思考、openai-completions、openai-responses）：思考和回答共用 `max_tokens`（responses 是 `max_output_tokens`），就是 `cap`。这是 provider 的语义，已用真模型核实（[D34](kb-decisions.md#d34-第-3-步真模型核实)）；muse-spark-1.3-contributor 超过上限，不支持。
+- `xhigh` 和 `max` 在预算路径上按 `high` 的预算算（pi-ai 的 `clampReasoning`）。
+- 为什么不从 `maxTokens` 里减预算：只有预算路径会把预算加回去。别的路径上，减掉的部分白白少了。窗口小的模型只剩 1,024，回复以 `length` 结束，本轮出错。
+
+预算路径上回答的空间：
+
+- 回答最坏剩 max(`cap` − 预算, 1,024)。`cap` 不大于“预算 + 1,024”时，pi-ai 把预算压到 `cap − 1,024`，回答只剩 1,024。
+- pi-ai 的默认预算：`minimal` 1,024，`low` 2,048，`medium` 8,192，`high` 及以上 16,384。所以回答只剩 1,024 的边界是：`high` 及以上 `cap` ≤ 17,408，`medium` ≤ 9,216，`low` ≤ 3,072，`minimal` ≤ 2,048。
+- pi-ai 1.0.0 的目录里，落在这里的是 vercel-ai-gateway 经 anthropic-messages 接入的 21 个非 Anthropic 模型，例如 zai/glm-4.5。其中 6 个连 `medium` 也落在范围里（`cap` 5,120 到 8,250）。Anthropic 自己的模型 `cap` 都不小于 25,000。在用的 haiku-4-5 在 `high` 及以上最坏剩 8,616。
+- 预设换到走预算路径的模型，先按上面的式子算。落在范围里，就把 `thinking` 降到不落在范围里的级别，或者不设 `thinking`，或者换模型。预设没有 `thinkingBudgets`，执行器也不传它。测试和核实表查不出这件事，只能靠算。
+
+重试：
+
+- 执行器传 `maxRetries: MODEL_RETRIES`（5）。pi-ai 1.0.0 的 `maxRetries` 默认是 0，所以必须显式传。`maxRetryDelayMs` 的默认就是 60,000，不传。
+- pi-ai 只重试拿到成功的响应之前的失败：没有状态码的连接错误，以及 408、409、429 和 5xx 的错误响应，以错误响应的 `x-should-retry` 头为准。重试可以被中止。
+- 等多久：错误响应带 `retry-after-ms` 或 `retry-after` 时，按它等；超过 60 秒就直接失败，429 通常带这个头，5 次最坏约 5 分钟。不带时，退避从 0.5 秒起翻倍，乘 0.75 到 1 的随机数，单次最多 8 秒，5 次一共约 12 到 16 秒。等的时候，进程停在“等模型”。
+- 这不是重做副作用：还是同一个副作用，也还没有任何结果。崩溃后照样报“被中断”，不重做。
+- 流式输出开始以后出的错不重试，本轮出错结束。这比 Pi SDK 弱：它按最终消息判断要不要重试。
+- 状态：重试不存状态。
 
 ### 运行工具（`actions.ts`）
 
@@ -132,7 +160,7 @@ abort(id, n)
 
 | 决定 | 原因 |
 |---|---|
-| 执行器只开始、中止、上报，不决策，不重试 | 不纯的东西关进执行器（[D4](kb-decisions.md#d4-纯-decide单信箱事务提交)） |
+| 执行器只开始、中止、上报，不决策，自己不重试 | 不纯的东西关进执行器（[D4](kb-decisions.md#d4-纯-decide单信箱事务提交)） |
 | 三个事务的边界写死；登记中止开关和开始动作之间不让出 | 否则崩溃会让行和结果一起消失（[D19](kb-decisions.md#d19-第四轮审查fable-52-复审-d18-之后的文档)） |
 | 停止和删行在同一个处理输入的事务里；`complete` 发现行不在就丢弃 | 执行器不会在停止之后开始或上报副作用（[D18](kb-decisions.md#d18-第三轮审查两个审查者24-项修改) 第 1 条） |
 | 恢复一律送 `interrupted`，不重做 | 崩溃后不猜测外部世界（D18） |
@@ -140,7 +168,7 @@ abort(id, n)
 | `Actions` 是两个有类型的函数，执行器自己构造 `Input` | 动作写不错结果的种类和编号；测试换一组假动作就能测执行器 |
 | 动作抛出也变成结果 | 模型失败和 pi-ai 一样写在助手消息里（D18 第 3 条）；工具失败是结果内容（[kb-kernel.md](kb-kernel.md)） |
 | 调用时才从模型目录取模型 | 快照只冻结 `contextWindow`（D19） |
-| 请求的输出上限取 `min(model.maxTokens, 窗口的 1/8)`，不冻结进快照 | 换段阈值按窗口的 1/8 留输出的空间；正确性不需要模型自己的上限（[D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)） |
+| 请求的输出上限取 `min(model.maxTokens, 窗口的 1/8)`，不冻结进快照；模型的 `maxTokens` 也换成它 | 换段阈值按窗口的 1/8 留输出的空间；正确性不需要模型自己的上限（[D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)） |
 
 ## 认知模型
 
@@ -149,7 +177,7 @@ abort(id, n)
 - 从零重建：三个事务、一张中止开关表、一个两函数的 `Actions` 接口。
 - 一次修改越界的信号：
   - 执行器内存里多了中止开关以外的状态。
-  - 执行器读结果内容做判断，或者重试。
+  - 执行器读结果内容做判断，或者自己重试。
   - `claim` 和开始动作之间出现 `await`。
   - 删行和放结果分到两个事务。
   - 恢复时重做 `running` 的副作用。
@@ -169,6 +197,7 @@ abort(id, n)
 | `src/server/serve.ts` | `pump`：把 `handleNext` 的 `abort` 接到 `exec.abort`，循环 `startNext` |
 | `src/main.ts` | 用 `builtinModels()` 建模型目录 |
 | `test/store/executor.test.ts` | 开始、完成、中止、失败上报、启动恢复、竞态 |
+| `test/store/model-call.test.ts` | 真目录里在用的六个模型：经 `createActions`、真的 pi-ai 适配器和假 fetch，用 `onPayload` 断言请求体的输出上限和思考预算；执行器传给 pi-ai 的参数；重试的种类和 60 秒上限 |
 | `test/store/crash.test.ts` | 真库上的随机序列和崩溃注入 |
 | `test/store/fixtures.ts` | `gated`（测试决定何时完成，中止时拒绝）、`scripted`、`settle` |
 | `test/store/invariants.ts` | 存储层不变量，每个事务之后都查 |
@@ -206,7 +235,7 @@ abort(id, n)
 | 竞态：停止时还是 `pending` | 执行器绝不会再开始它 |
 | 竞态：库外工具结果排在用户消息后面 | 先处理用户消息不会再插行，工具只执行一次 |
 | 竞态：库内工具结果排在用户消息后面 | `memory_set` 只执行一次 |
-| 调用模型的 `maxTokens` | 真的 `createActions` 加 faux 模型，几组接近真实目录的窗口和上限：轮次调用和交接调用都请求 `min(model.maxTokens, floor(W/8))` |
+| 调用模型的 `maxTokens`、`reasoning`、`maxRetries` | `model-call.test.ts` 的六个模型；另有真的 `createActions` 加 faux 模型，几组接近真实目录的窗口和上限：轮次调用和交接调用都请求 `min(model.maxTokens, floor(W/8))` |
 
 ## 坑点
 
@@ -215,7 +244,10 @@ abort(id, n)
 - 把中止当成“外部世界没变”：只有模型和 bash 收到信号，文件工具照样写完。中止只保证结果被丢弃。
 - 一次服务启动建两个执行器：第二个的恢复会把第一个正在跑的副作用当成被中断。
 - 模型调用挂住时，执行器不会超时。进程一直在 `awaitingModel`，只能停止它。
-- 传 `reasoning`：Anthropic 和 Bedrock 会在 `maxTokens` 之上再加思考预算（默认最多 16,384），换段阈值的上界就不成立。升级 pi-ai 时，重查这一点和 `maxTokens` 只会被调低。
+- 传 `reasoning` 时只传 `maxTokens` 不够：按预算思考的路径会在 `maxTokens` 之上再加预算（默认最多 16,384），换段阈值的上界就不成立。所以模型的 `maxTokens` 也要换成 `cap`。升级 pi-ai 时，重跑 `test/store/model-call.test.ts`，并重查 `maxTokens` 只会被调低、`maxRetries` 默认值、`retry-after` 上限。
+- 预算路径上的小窗口模型，回答可能只剩 1,024（算法见上）。
+- 安全点之后的消息形状、思考算不算进输出上限，这两件事由后端决定，结论只对核实过的模型成立（[D34](kb-decisions.md#d34-第-3-步真模型核实)）。预设换到没核实过的模型，先真调用核实一次，再用。muse-spark-1.3-contributor 的输出会超过上限，不支持（[D34](kb-decisions.md#d34-第-3-步真模型核实)）。
+- opencode-go 要求请求带会话 ID（`x-opencode-session`）。执行器把进程 ID 作为 `sessionId` 传给 pi-ai，去掉它会被以 400 拒绝（`MissingSessionID`）。直接调 pi-ai 的脚本也要传。
 - 崩溃测试的库句柄设 `synchronous = OFF`。原因和限制见 [kb-store.md 的坑点](kb-store.md#坑点)。
 
 ## 关联模块

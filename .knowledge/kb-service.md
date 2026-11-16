@@ -84,7 +84,7 @@ pump()
 
 - 读当前段，算出最终回复。`ended` 取 `p.phase.ended`，缺省时为 `null`。
 - 移出这个进程的全部观察者。每个连接发一行 `final`，然后关闭。
-- 等同一个进程的连接收到同一条最终回复。运行中发来的消息排队到本轮结束（[kb-kernel.md](kb-kernel.md#流程每种输入)），所以先发的连接也要等排队的消息回答完。
+- 等同一个进程的连接收到同一条最终回复。运行中发来的消息排队到下一个安全点（[kb-kernel.md](kb-kernel.md#安全点投递)）：模型在下一次调用时就看到它。连接仍要等本轮结束，才收到最终回复。
 
 最终回复由纯函数层的 `finalReply` 算，算法见 [kb-kernel.md](kb-kernel.md#最终回复)。`settle` 在提交之后的当前段上调用它。
 
@@ -251,7 +251,7 @@ tau stop <进程>
 
 - 服务不加投影字段。`ps` 回的是 `observe` 的结果：字段归 [kb-kernel.md](kb-kernel.md#投影与命令)，`self` 的文字归 [kb-store.md](kb-store.md#self)，`tau ps` 的文字在本页。
 - 命令：`tau serve`、`tau start`、`tau send`、`tau ps`、`tau stop`。
-- Agent 没有专门的控制命令。有 `bash` 的进程可以直接运行 `tau`：`self` 只读是接口的范围，不是权限边界（[设计稿第 9 节](../docs/design/mvp.md#9-自省)）。
+- Agent 的控制命令是库内工具，现在有 `handoff`（换段）。有 `bash` 的进程可以直接运行 `tau`：`self` 只读是接口的范围，不是权限边界（[设计稿第 9 节](../docs/design/mvp.md#9-自省)）。
 
 ## 入口
 
@@ -303,7 +303,7 @@ tau stop <进程>
 - **断开之后拿不回回复。** 观察者不持久，也没有读回复的命令。`tau ps` 只给阶段。
 - **“结果未知”时 `tau ps` 只能间接判断。** `start` 看有没有多出一个进程；`send` 看不出消息进没进库，`ps` 不显示消息。
 - **屏幕上的文字不一定在库里。** CLI 收到过流式文本，就不打印 `final.reply`。流式文本包括交接说明和被丢弃的回复，多次模型调用的文字直接连在一起。
-- **Agent 对自己运行 `tau send`。** CLI 等这个进程回到 `idle`，进程在等这次 bash，只能等 bash 超时。消息已经提交，会作为排队的消息在本轮结束时处理。
+- **Agent 对自己运行 `tau send`。** CLI 等这个进程回到 `idle`，进程在等这次 bash，只能等 bash 超时。消息已经提交，会作为排队的消息，在下一个安全点或本轮结束时处理。
 - **服务运行时别的程序写库。** `openDb` 没设忙等超时。另一个连接持有写锁时，服务的事务立刻报 `database is locked`：请求得到 `error`；动作结束时写库失败则 `fatal` 退出。备份要先停服务（[kb-store.md](kb-store.md#位置)）。
 - **进程内的“崩溃”不是真崩溃。** pairing 测试关掉库句柄来模拟，运行中的 bash 不会跟着死。真崩溃只在 kill 测试里：子进程被 `taskkill /T /F`，不跑任何退出处理。
 - **`tau ps` 随年头变慢。** 它为每个进程读一次当前段，进程永不删除（[设计稿的风险](../docs/design/mvp.md#风险)）。

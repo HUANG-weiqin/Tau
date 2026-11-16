@@ -173,10 +173,10 @@ export function effectRows(db: DatabaseSync): { id: string; n: number; status: s
     .map((r) => ({ id: r.process_id as string, n: r.n as number, status: r.status as string }));
 }
 
-/** 一个进程所有段的全部消息，按段和段内序号排序。 */
-export function allMessages(db: DatabaseSync, id: string): Message[] {
+/** 一个进程所有段的全部消息，按段和段内序号排序。`withoutCarried`：不要第二段起的第一条，它带着上一段末尾的用户消息的副本。 */
+export function allMessages(db: DatabaseSync, id: string, withoutCarried = false): Message[] {
   return db
-    .prepare("SELECT message_json FROM segment_messages WHERE process_id = ? ORDER BY segment_seq, seq")
+    .prepare(`SELECT message_json FROM segment_messages WHERE process_id = ? ${withoutCarried ? "AND NOT (segment_seq > 1 AND seq = 0)" : ""} ORDER BY segment_seq, seq`)
     .all(id)
     .map((r) => JSON.parse(r.message_json as string) as Message);
 }

@@ -51,8 +51,9 @@ export function assertInvariants(p: Process, segment: readonly Message[]): void 
       if (!isDeepStrictEqual(effect, expected)) throw bad(`effectOf 是 ${JSON.stringify(effect)}，应为 ${JSON.stringify(expected)}`);
       // 等模型时工作段不变，所以存下的用途和现在重算的一致。
       const used = contextUsed(p, segment);
-      if ((phase.purpose === "handoff") !== used >= threshold) {
-        throw bad(`用途是 ${phase.purpose}，但上下文用量 ${used} ${used >= threshold ? "已经" : "没有"}达到阈值 ${threshold}`);
+      const requested = handoffCalled(segment);
+      if ((phase.purpose === "handoff") !== (used >= threshold || requested)) {
+        throw bad(`用途是 ${phase.purpose}，但上下文用量 ${used} ${used >= threshold ? "已经" : "没有"}达到阈值 ${threshold}，最后一条助手消息里${requested ? "有" : "没有"}成功的 handoff 调用`);
       }
       return;
     }
@@ -70,6 +71,18 @@ export function assertInvariants(p: Process, segment: readonly Message[]): void 
     default:
       unreachable(phase);
   }
+}
+
+/** 最后一条助手消息里有 handoff 调用，并且它的结果不是错误。 */
+function handoffCalled(segment: readonly Message[]): boolean {
+  const at = segment.findLastIndex((m) => m.role === "assistant");
+  const m = segment[at];
+  if (m?.role !== "assistant") return false;
+  const calls = m.content.filter((c): c is ToolCall => c.type === "toolCall");
+  return calls.some((c, k) => {
+    const r = segment[at + 1 + k];
+    return c.name === "handoff" && r?.role === "toolResult" && !r.isError;
+  });
 }
 
 /**

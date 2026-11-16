@@ -17,7 +17,7 @@
 - 工具描述：名称、参数、哪些预设有。那是 [kb-kernel](kb-kernel.md#工具描述)。
 - 参数校验和按名字分派。那是执行器（[kb-executor](kb-executor.md#运行工具actionsts)）。
 - 结果的统一裁剪。那是 `decide`（[kb-kernel](kb-kernel.md#决策)）。
-- 库内工具 `memory_*` 和 `self`。见 [kb-store](kb-store.md#投影与命令)。
+- 库内工具 `memory_*`、`self` 和 `handoff`。见 [kb-store](kb-store.md#投影与命令)。
 - 权限和沙箱。没有（[D7](kb-decisions.md#d7-第一版不做沙箱)）。
 
 本页接管[设计稿第 10 节](../docs/design/mvp.md#10-工具)里 `read`、`write`、`edit`、`bash` 的细节和路径规则。
@@ -320,6 +320,6 @@ WRAPPER = echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$
 
 - [kb-kernel.md](kb-kernel.md)：工具描述、`clip` 和字节上限、结果在 `decide` 里的统一裁剪。
 - [kb-executor.md](kb-executor.md)：参数校验、按名字分派、中止信号、失败怎样变成结果、崩溃后的“被中断”。
-- [kb-store.md](kb-store.md)：库内工具 `memory_*` 和 `self` 的参数和结果。
+- [kb-store.md](kb-store.md)：库内工具 `memory_*`、`self` 和 `handoff` 的参数和结果。
 - [kb-decisions.md](kb-decisions.md)：D7（不做沙箱）、D14（不限制路径）、D19（`read` 没有自己的上限）、D20（编码和 CRLF 的缺陷）、D21（shell 的选择，和原设计稿的差异）。
 - [kb-service.md](kb-service.md)：服务层用真工具的测试；服务正常退出。

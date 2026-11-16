@@ -468,6 +468,71 @@
   - `state_json` 的形状没变（第 1 步已含 `usage`），`SCHEMA_VERSION` 仍是 2。
 - 理由：每条都是设计稿 5.1、5.8 没写死的地方，选最小的做法；规则只在 `decide` 的构造函数里做一次，后面几步（安全点、回信）直接用。
 
+### D32 第 3 步（前一半）：安全点投递和 `handoff`
+
+- 状态：已确认（2026-11-16）。
+- 内容：
+  - 安全点是函数 `atSafePoint`，只在 `onToolResult` 末尾调用，替代那里原来直接调用的 `continueTurn`。它先查步数，再合并。步数用完时不合并，直接交给 `continueTurn`，由它结束本轮。
+  - 合并后的 `hops` 取 `turn.hops` 和这批信的最大值；`replyTo` 并进已有的集合。规则 1 只写“并进 `turn`”，这里按字面做。
+  - `handoffRequested(seg)`（`derive.ts`）：最后一条助手消息里，按位置配对，有名字是 `handoff`、结果存在且不是错误的调用。只看最后一条助手消息，所以换段成功以后（新段没有助手消息）不会再触发；交接失败以后下一封信会再换段，这是设计稿要的。
+  - `handoff` 的结果文字原样用设计稿的 `将在这批工具结果之后换段。`；工具描述写明：在这批工具结果之后生效，之后会让模型写交接说明，换段前把该存的存好，同一批里的其他工具照常执行。工具表里排在 `self` 之后。
+  - `handoff` 不在批中间截断：同一批里它之后的工具照常执行，批做完才到安全点。
+  - 不变量检查（`test/invariants.ts`）用自己独立写的一份“有成功的 handoff 调用”，不调用 `handoffRequested`，免得拿实现检查实现。
+  - 存储层的崩溃测试里，一条用户消息“恰好出现一次”改成不数新段的第一条：换段把段末的用户消息原样带进新段，安全点并入的信常常落在那里。
+- 理由：每条都是设计稿 5.2、5.4 没写死的细节，选最小的做法。`handoff` 不改库、不改状态，崩溃后重做事务结果相同，所以和 `self` 一样放在库内。
+
+### D33 第 3 步（后一半）：思考级别、输出上限、重试
+
+- 状态：已确认（2026-11-16）。
+- 内容：
+  - `thinking` 缺省时，快照里没有这个键，不存 `undefined`；预设里写了不认识的值，加载就报错，错误信息列出六个值。
+  - `state_json` 多了一个可选字段，旧行读出来就是“没有”，含义不变，所以 `SCHEMA_VERSION` 仍是 2。
+  - `MODEL_RETRIES` = 5，写在 `src/executor/actions.ts`，是一个常量，不进预设。
+  - 只传 `maxRetries`。pi-ai 1.0.0 的 `maxRetries` 默认是 0（类型注释写的 2 是 SDK 的默认，不是它的），所以必须显式传。`maxRetryDelayMs` 的默认 60,000 和设计稿一致，不传。退避公式（0.5 秒起翻倍、最多 8 秒、乘 0.75 到 1）和 5.7 一致。
+  - 重试的行为由 pi-ai 负责，tau 的测试用假 fetch 钉住五件事：408、409、429、5xx 和无状态码的连接错误重试；其它 4xx 不重试；`x-should-retry` 优先；`retry-after` 超过 60 秒立刻失败；等待时可中止。升级 pi-ai 时这些测试会报警。
+  - 请求体的断言走真的 pi-ai 适配器和假 fetch（400），不联网；凭据用测试里造的假 key。
+- 理由：每条都是 5.7 没写死的细节，选最小的做法。
+
+### D34 第 3 步：真模型核实
+
+- 状态：核实记录（2026-11-16）。用户还没确认。核实两件事：安全点之后的消息形状被接受（设计稿 5.2）；思考算不算进输出上限（5.7）。
+- 量法：探针脚本直接调 pi-ai，用 tau 的 `piCredentials` 和 pi-ai 的 `builtinModels`。形状检查用 tau 的 `start`、`decide`、`effectOf` 和执行器的 `createActions` 驱动一轮。用 `onPayload` 记请求体，不抓请求头。脚本放在仓库外，没进仓库。没碰 `~/.tau`。
+- 安全点之后的消息形状（5.2）：
+  - 第一次调用让模型用 `read` 读一个临时文件。
+  - 工具结果到之前，往 `queued` 放一封信，要求回答最后一行写 `PINEAPPLE`。
+  - 安全点把信并进段，段尾是工具结果后接用户消息。再调用一次。
+  - 每个模型设 `high`、不设 `thinking` 各走一轮。十轮全部被接口接受，都以 `stop` 正常结束，回复里都有 `PINEAPPLE`。
+- 每个模型的请求体（设 `high` 和不设时上限相同）：
+
+  | 模型 | API | cap | 请求体的上限 | 思考字段 |
+  |---|---|---|---|---|
+  | anthropic/claude-haiku-4-5 | anthropic-messages，按预算思考 | 25,000 | `max_tokens` 25,000 | `high`：`thinking` enabled，`budget_tokens` 16,384，小于 `max_tokens`；不设：`thinking` disabled |
+  | opencode-go/deepseek-v4.1-flash | openai-completions，deepseek 格式 | 125,000 | `max_tokens` 125,000 | `high`：`thinking` enabled 加 `reasoning_effort` high |
+  | opencode-go/mimo-v2.6-flash | openai-completions，openai 格式 | 131,072 | `max_tokens` 131,072 | `high`：`reasoning_effort` high |
+  | opencode-go/gpt-6-luna | openai-responses | 128,000 | `max_output_tokens` 128,000 | `high`：effort high、summary auto；不设：pi-ai 发 effort none |
+  | opencode-go/muse-spark-1.3-contributor | openai-responses | 131,072 | `max_output_tokens` 131,072 | `high`：effort high、summary auto；不设：不发 reasoning，模型照样思考（两次调用的 reasoning 是 85 和 271） |
+
+- anthropic/claude-opus-5-5 没有真调用：Anthropic 的凭据只许配 Haiku 用，这是用户的限制。它只有离线的请求体断言（D33）。
+- 思考算不算进输出上限（5.7，openai 兼容的路径）：直接调 pi-ai，思考开到 `max`（pi-ai 把 mimo 的 `max` 压成 `high`，把 muse-spark 的 `max` 压成 `xhigh`），`maxTokens` 1024，问一个要先算很久、答案很短的题。
+
+  | 模型 | `usage.output` / 上限 | 结束 | 思考 | 结论 |
+  |---|---|---|---|---|
+  | deepseek-v4.1-flash | 1024 / 1024 | length | 有思考块，reasoning 1024 | 算进上限 |
+  | mimo-v2.6-flash | 1024 / 1024 | length | 有思考块，reasoning 1025 | 算进上限 |
+  | gpt-6-luna | 1024 / 1024 | length | 有思考块，reasoning 1024 | 算进上限 |
+  | muse-spark-1.3-contributor | 1054 / 1024 | length | 有思考块，reasoning 1022 | 超过上限 |
+
+  muse-spark 另外量了三次：`max`、上限 512，输出 525（超 13）；`high`、上限 1024，输出 1063（超 39）；`max`、上限 2048，自己答完（`stop`，输出 1749），没碰到上限。
+- Haiku 不查这一项：Anthropic 的文档规定 `max_tokens` 含思考（5.7）。
+- 结论：
+  - haiku-4-5、deepseek-v4.1-flash、mimo-v2.6-flash、gpt-6-luna 两项都通过。
+  - muse-spark-1.3-contributor 的输出超过上限，约为上限的 2.5% 到 4%，随上限变大。按这个比例，cap 131,072 时最坏可能超出四五千 token，超过 `MARGIN_TOKENS`（4,096）。`outputMax` 的前提不成立，按 5.7 不支持。
+  - 同一条路径上的 gpt-6-luna 不超，所以是这个后端的问题。
+  - 它不设思考级别也思考，不能靠不设 `thinking` 绕过。tau 的预设不要用它。真要用，先改契约（例如给 `cap` 留出超出的余量），再重新核实。
+  - 现在 tau 还没有任何预设（`~/.tau` 不存在）。这里的“在用”指 Pi Web 里在用的模型。
+- 调用次数：形状检查 10 轮、20 次调用；上限检查 7 次。另有 4 次请求被 opencode-go 以 400 拒绝（`MissingSessionID`：缺 `x-opencode-session`），因为探针直接调 pi-ai 时没传 `sessionId`；补上以后正常，被拒的请求没有用量。执行器调用模型时一直传进程 ID 作为 `sessionId`，所以 tau 本身不受影响。
+- 没核实的：claude-opus-5-5 的真调用；用真模型换一次段（D24 也没做）；带图的工具结果（第 7 步）。
+
 ## 未确认的默认值
 
 这些都不影响开工，写代码时可以随时改：
