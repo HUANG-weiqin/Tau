@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Models, ThinkingLevel } from "@earendil-works/pi-ai";
 import type { PresetSnapshot, PresetTool } from "../kernel/types.ts";
+import { loadToolDefs } from "./tooldefs.ts";
 
 const TOOLS: readonly PresetTool[] = ["read", "write", "edit", "bash", "memory", "agents"];
 const REQUIRED = ["workdir", "model", "tools"];
@@ -21,7 +22,8 @@ function isTool(s: string): s is PresetTool {
   return (TOOLS as readonly string[]).includes(s);
 }
 
-export function loadPreset(dir: string, id: string, models: Models): PresetSnapshot {
+/** `dir` 是预设目录，`toolsDir` 是工具定义目录；预设的 tools 里不是内置工具的名字，都按工具定义读，一起冻结进快照。 */
+export function loadPreset(dir: string, id: string, models: Models, toolsDir: string): PresetSnapshot {
   if (id === "" || /[/\\:]|\.\./.test(id)) throw new Error(`预设 ID 不合法：${id}`);
   const file = `${id}.md`;
   let text: string;
@@ -73,11 +75,14 @@ export function loadPreset(dir: string, id: string, models: Models): PresetSnaps
   if (!found) throw new Error(`模型目录里没有 ${model}`);
 
   const tools: PresetTool[] = [];
+  const defNames: string[] = [];
   for (const item of (fields.get("tools") ?? "").split(",").map((s) => s.trim())) {
     if (item === "") continue;
-    if (!isTool(item)) throw new Error(`预设 ${id} 有未知工具：${item}`);
-    if (!tools.includes(item)) tools.push(item);
+    if (isTool(item)) {
+      if (!tools.includes(item)) tools.push(item);
+    } else if (!defNames.includes(item)) defNames.push(item);
   }
+  const toolDefs = loadToolDefs(toolsDir, defNames);
 
   const thinking = fields.get("thinking");
   if (thinking !== undefined && !isThinking(thinking)) throw new Error(`预设 ${id} 的 thinking 只能是 ${THINKING.join(", ")}：${thinking}`);
@@ -87,6 +92,7 @@ export function loadPreset(dir: string, id: string, models: Models): PresetSnaps
     workdir,
     model,
     tools,
+    toolDefs,
     prompt: lines.slice(end + 1).join("\n").trim(),
     contextWindow: found.contextWindow,
     input: [...found.input],

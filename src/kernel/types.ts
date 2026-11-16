@@ -1,5 +1,5 @@
 // 内核的全部类型。外部类型只能 import type（见 .knowledge/kb-kernel.md）。
-import type { AssistantMessage, Context, ImageContent, TextContent, ThinkingLevel, ToolCall, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Context, ImageContent, TextContent, ThinkingLevel, Tool, ToolCall, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 
 export type { AssistantMessage, ImageContent, ToolCall, ToolResultMessage, UserMessage };
 
@@ -15,6 +15,17 @@ export type Instant = number;
 
 export type PresetTool = "read" | "write" | "edit" | "bash" | "memory" | "agents";
 
+/** 工具定义（`~/.tau/tools/<name>.json`，设计稿 5.5），默认值已补上。名称、说明和参数给模型看；命令、超时和输出方式给执行器。 */
+export interface ToolDef {
+  name: string;
+  description: string;
+  parameters: Tool["parameters"];
+  command: string;
+  /** 秒，1 到 600。 */
+  timeout: number;
+  output: "text" | "content";
+}
+
 /** 启动时冻结的预设。 */
 export interface PresetSnapshot {
   id: string;
@@ -22,6 +33,8 @@ export interface PresetSnapshot {
   /** `<provider>/<model-id>` */
   model: string;
   tools: PresetTool[];
+  /** 预设 `tools` 里写的工具定义，按写的顺序。启动时冻结，之后改文件不影响这个进程。 */
+  toolDefs: ToolDef[];
   prompt: string;
   contextWindow: number;
   /** 模型能收的输入，从模型目录冻结。含 `image` 才会有图片（设计稿第 5.6 节）。 */

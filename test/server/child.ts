@@ -1,6 +1,7 @@
 // kill.test.ts 的子进程：在命名管道上跑真的服务。模型是 faux，回复只由上下文决定，会调用 read 和 bash。
 // 用法：node test/server/child.ts <pipe> <dbPath> <presetsDir>
 // 父进程用 taskkill /T /F 硬杀它，所以这里没有任何退出处理。
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import type { FauxResponseFactory } from "@earendil-works/pi-ai";
@@ -32,7 +33,7 @@ faux.setResponses(Array.from({ length: 10_000 }, () => reply));
 const models = createModels();
 models.setProvider(faux.provider);
 
-await serve({ pipe, dbPath, presetsDir, models, memory: sqliteMemory });
+await serve({ pipe, dbPath, presetsDir, toolsDir: join(presetsDir, "..", "tools"), models, memory: sqliteMemory });
 
 // 保险：父进程死了（标准输入关闭）就退出，不留下孤儿服务。
 process.stdin.on("close", () => process.exit(0));

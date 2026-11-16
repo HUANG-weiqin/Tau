@@ -1,10 +1,10 @@
 // buildContext 和工具描述（设计稿第 4.3 节、第 10 节）。
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildContext, HANDOFF_INSTRUCTION, tailStart } from "../../src/kernel/context.ts";
+import { buildContext, HANDOFF_INSTRUCTION, tailStart, toolDescriptions } from "../../src/kernel/context.ts";
 import { start } from "../../src/kernel/decide.ts";
 import { findTool, MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES, toolsFor } from "../../src/kernel/tools.ts";
-import type { Message, Phase, PresetTool, Process } from "../../src/kernel/types.ts";
+import type { Message, Phase, PresetTool, Process, ToolDef } from "../../src/kernel/types.ts";
 import { assistant, call, deepFreeze, env, preset } from "./helpers.ts";
 
 const seg: readonly Message[] = deepFreeze([
@@ -127,4 +127,24 @@ test("agents 组：post、spawn、stop_process 在库内，参数照设计稿 5.
     assert.ok(d.includes("结束本轮去等别的事时，等你回信的进程会立刻收到你这时的回复"), `${name}：结束本轮去等别的事`);
   }
   assert.equal(findTool(preset({ tools: ["read"] }), "post"), undefined);
+});
+
+const DEF = (name: string, description = `工具 ${name}`): ToolDef => ({ name, description, parameters: { type: "object", properties: { x: { type: "string" } } }, command: `echo ${name}`, timeout: 30, output: "content" });
+
+test("工具定义排在内置工具之后，按预设 tools 里的顺序；都是库外工具", () => {
+  const p = preset({ tools: ["agents", "read", "memory"], toolDefs: [DEF("zeta"), DEF("alpha")] });
+  const order = toolsFor(p).map((t) => t.name);
+  assert.deepEqual(order, ["read", "memory_get", "memory_set", "memory_delete", "post", "spawn", "stop_process", "self", "handoff", "zeta", "alpha"]);
+  assert.deepEqual(toolsFor(p).slice(-2).map((t) => t.inStore), [false, false]);
+  assert.equal(findTool(p, "zeta")?.inStore, false);
+  assert.equal(findTool(preset({ tools: ["read"] }), "zeta"), undefined, "没写进预设的定义不存在");
+  assert.deepEqual(toolsFor(preset({ tools: [], toolDefs: [DEF("only")] })).map((t) => t.name), ["self", "handoff", "only"]);
+});
+
+test("请求里的工具描述只放名称、说明、参数；command、timeout、output 不给模型", () => {
+  const p: Process = { ...start("p", preset({ tools: ["read"], toolDefs: [DEF("notes", "写笔记")] }), env(0)), lastEffect: 1, phase: { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 0, replyTo: [] }, purpose: "turn" } };
+  const tools = buildContext(p, seg).tools ?? [];
+  assert.deepEqual(tools.at(-1), { name: "notes", description: "写笔记", parameters: DEF("notes").parameters });
+  assert.deepEqual(toolDescriptions(p.preset), tools);
+  assert.equal(JSON.stringify(tools).includes("echo notes"), false);
 });

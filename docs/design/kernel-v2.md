@@ -188,7 +188,7 @@ function decide(p, seg, input, env): {
 
 环境变量：
 
-- 已实现（第 4 步第三部分），见 [kb-tools 的包装脚本](../../.knowledge/kb-tools.md#包装脚本)和 [kb-service 的启动脚本和入口](../../.knowledge/kb-service.md#启动脚本和入口)：bash 的命令拿到 `TAU_PROCESS`、`TAU_PIPE`，CLI 认 `TAU_PIPE`。工具定义（5.5）走同一套机制，到第 7 步自动覆盖。
+- 已实现（第 4 步第三部分），见 [kb-tools 的包装脚本](../../.knowledge/kb-tools.md#包装脚本)和 [kb-service 的启动脚本和入口](../../.knowledge/kb-service.md#启动脚本和入口)：bash 的命令拿到 `TAU_PROCESS`、`TAU_PIPE`，CLI 认 `TAU_PIPE`。工具定义（5.5）走同一套机制，第 7 步后一半已覆盖。
 - 测试要清掉从外面继承来的 `TAU_` 变量。
 
 上层做的代价：
@@ -221,73 +221,26 @@ function decide(p, seg, input, env): {
 
 “工具定义”专指 `~/.tau/tools/` 下的文件。请求里给模型看的工具名、说明和参数，叫“工具描述”（第 7 节第 0 步统一用词）。
 
-格式：
+格式、读取、快照冻结、工具描述里的位置、大小上限：已实现（第 7 步前一半），见 [kb-tools 的工具定义](../../.knowledge/kb-tools.md#工具定义)和 [kb-kernel](../../.knowledge/kb-kernel.md#工具描述)，取舍见 [D43](../../.knowledge/kb-decisions.md#d43-第-7-步前一半工具定义的格式读取和冻结)。
 
-- 工具定义是文件：`~/.tau/tools/<name>.json`。
-
-```json
-{
-  "description": "……",
-  "parameters": { "type": "object", "properties": { }, "additionalProperties": false },
-  "command": "node E:/tau/extras/notes/notes.mjs write",
-  "timeout": 120,
-  "output": "text"
-}
-```
-
-- 名字匹配 `^[A-Za-z0-9_-]{1,64}$`，按目录项精确匹配，和预设一样。
-- 名字不能和内置工具重名（`read`、`write`、`edit`、`bash`、`self`、`handoff`、`post`、`spawn`、`stop_process`、`memory_get`、`memory_set`、`memory_delete`），也不能和工具组重名（`memory`、`agents`）。
-- `description` 必填，是字符串。
-- `parameters` 必填，是 `type` 为 `object` 的 JSON Schema。
-  - 只查顶层。顶层不是 `object` 时，有的 provider 会拒绝每一次请求。
-  - 内层不查，pi-ai 也不查，原样转发。内层写错时，进程第一次调用模型就失败。出路见风险表。
-- `command` 必填，是字符串。
-- `timeout` 可选，是 1 到 600 的整数，单位秒，默认 120。
-- `output` 可选，是 `text` 或 `content`，默认 `text`。
-- 有别的字段就报错，和预设一样。
-- 预设的 `tools` 可以写这些名字。文件读不出、格式不对、重名、超过大小上限：启动失败。`spawn` 时是错误结果。
-- 大小上限：
-  - 一个定义的大小，是 `JSON.stringify({ description, parameters })` 的 UTF-8 字节数，不超过 `TOOL_DEF_MAX_BYTES`（暂定 16 KiB）。
-  - 一个预设用到的全部定义，按冻结进快照的整个 `ToolDef` 算，含 `name`、`command` 和补上的默认值。各自 `JSON.stringify` 的 UTF-8 字节数相加，不超过 `TOOL_DEFS_MAX_BYTES`（暂定 64 KiB）。
-  - 原因：定义冻结进 `state_json`，每条输入整行重写，`self` 和 `ps` 也要解析它。定义还占每次请求的上下文，启动检查要算上它（5.6）。
-- 启动进程时，用到的定义冻结进预设快照。之后改文件，只影响新启动的进程。
-- 工具描述里，工具定义排在内置工具之后，按预设 `tools` 里的顺序。
-- 参数先按 schema 校验（pi-ai 的 `validateToolArguments`），和内置工具一样。
-
-运行（整节是契约，第 10 节）：
-
-- 工具定义都是库外工具，由执行器运行。
-- 它走 bash 的整套机制：用 bash 运行 `command`，工作目录、超时、中止、结束进程树、输出上限、环境变量（5.3）都一样。
-- 参数的 JSON 从标准输入给，写完就关。
-- 命令不读标准输入就退出时，写入会报 `EPIPE`，要忽略它。标准输入的流上要有错误监听器，否则 Node 会按未捕获异常让服务退出。
-- bash 工具不给标准输入，照旧是空设备。
-- `output: text`：和 bash 一样。标准输出和标准错误合在一起是结果。退出码不是 0 就是错误。
-- `output: content`：
-  - 标准输出和标准错误分开收。
-  - 退出码不是 0：结果是错误，文字和 `text` 时一样。
-  - 退出码是 0：丢掉标准错误。标准输出必须是一个 JSON 数组，每项是 `{ "type": "text", "text": … }` 或 `{ "type": "image", "path": … }`。
-  - 先解析 JSON，检查每一项的格式和图片的张数（不超过 `IMAGES_PER_MESSAGE`），再读图片文件。读之前先看大小，超过 `IMAGE_MAX_BYTES` 就不读。
-  - `path` 只认 Windows 的绝对路径：盘符开头或 UNC。msys 的 `/tmp/x.png` 不认，和预设的 `workdir` 一样。
-  - 文本项按顺序用换行连起来，成为结果的文本块。图片按 5.6 检查，存进 `blobs`。
-  - 不合法时，结果是错误：`content 输出不合法：<说明>`。不合法包括：标准输出超过上限被截断、不是合法 JSON、不是数组、项的格式不对、图片超过张数、`path` 不是 Windows 的绝对路径、文件读不出、图片不合格（5.6）。
-- MCP 不进内核（第 6 节）。
+运行：已实现（第 7 步后一半），见 [kb-tools 的运行工具定义](../../.knowledge/kb-tools.md#运行工具定义)，取舍见 [D44](../../.knowledge/kb-decisions.md#d44-第-7-步后一半运行工具定义)。参数先按 schema 校验；用 bash 的整套机制运行 `command`，参数的 JSON 走标准输入；`text` 和 `content` 两种输出；带图的结果在上报结果的事务里存 `blobs`。整节是契约（第 10 节），原文在 kb-tools。MCP 不进内核（第 6 节）。
 
 上层做的代价：做不到。模型能调用哪些工具，只由内核给的工具描述决定。没有工具定义，上层的功能只能让模型自己拼 bash 命令：没有参数说明，没有 bash 的预设也用不了。
 
 状态放在哪：预设快照里。
 
-事务和崩溃：和 bash 一样。被中断就报“被中断”，不重做。带图的 `content` 结果，图片在执行器上报结果的事务里插入 `blobs`（5.6）。
+事务和崩溃：已实现，见 kb-tools 的运行工具定义。
 
-测试：用假的命令测：参数从标准输入来、命令不读标准输入、退出码、超时、中止、输出上限、`content` 输出的每种不合法；快照冻结；格式、名字、重名和大小上限。
+测试：已实现，见 [kb-tools 的工具定义测试](../../.knowledge/kb-tools.md#工具定义测试testtoolstooldeftestts)。
 
 ### 5.6 内容块和图片
 
 入口和存储：协议的 `start`、`send` 已实现（第 6 步），见 [kb-service 的图片](../../.knowledge/kb-service.md#图片)（入口检查：张数、大小、类型、尺寸，按这个顺序）和 [kb-store 的图片](../../.knowledge/kb-store.md#图片)（`blobs` 表、引用、不收图片的模型），取舍见 [D41](../../.knowledge/kb-decisions.md#d41-第-6-步后一半的选择)。
 
-- 图片只从两个入口进来：协议的 `start`、`send`；工具定义的 `content` 输出。后一个入口第 7 步做：它的不合格是错误结果，检查和协议的完全一样，函数是同一个（`checkImages`）。
+- 图片只从两个入口进来：协议的 `start`、`send`；工具定义的 `content` 输出（第 7 步后一半已实现）。后一个入口的不合格是错误结果，检查和协议的完全一样，函数是同一个（`checkImages`）。
 - 为什么入口要查：不合格的图片进了段，每次调用模型都会失败，连交接调用也失败，进程就永远卡住。例如 Anthropic 拒绝边长超过 8000 像素的图。2000 像素和 pi-ai 模型目录给每个收图片的模型定的缩放尺寸一样。截图类的工具定义要自己先缩小。这些条件是契约（第 10 节）。
 - 文件头完好、数据损坏的图片仍可能进段。出路见风险表。
-- 带图的工具结果：`blobs` 的插入和上报结果的事务在同一个事务里（第 7 步）。
+- 带图的工具结果：`blobs` 的插入和上报结果的事务在同一个事务里（已实现，见 [kb-executor](../../.knowledge/kb-executor.md#失败怎样变成结果)）。
 
 请求里的图片：已实现，见 [kb-kernel](../../.knowledge/kb-kernel.md#请求里的图片)，取舍见 [D40](../../.knowledge/kb-decisions.md#d40-第-6-步前一半的选择)。
 
@@ -316,7 +269,7 @@ function decide(p, seg, input, env): {
 - 可能有没人引用的图片：带图的工具结果进了信箱，又因为过时被丢掉。图片按内容寻址、只增不删，这样的图片无害。
 - 带引用的只有协议的信和工具结果。`post`、`spawn` 和回信只有文本。
 
-测试：协议这一半已实现，见 [kb-service 的测试表](../../.knowledge/kb-service.md#服务测试test-server)里的 protocol：图片、`test/images.test.ts`、`test/store/blobs.test.ts`、`test/store/crash.test.ts`。请求里的成批省略、用量估算、两种 R、两种检查、最坏的图片负载已有测试（`test/kernel/images.test.ts`、`test/store/launch.test.ts`、`test/kernel/acceptance.test.ts`）。第 7 步补带图的工具结果的测试。
+测试：协议这一半已实现，见 [kb-service 的测试表](../../.knowledge/kb-service.md#服务测试test-server)里的 protocol：图片、`test/images.test.ts`、`test/store/blobs.test.ts`、`test/store/crash.test.ts`。请求里的成批省略、用量估算、两种 R、两种检查、最坏的图片负载已有测试（`test/kernel/images.test.ts`、`test/store/launch.test.ts`、`test/kernel/acceptance.test.ts`）。带图的工具结果的测试已实现：`test/tools/tooldef.test.ts`、`test/store/toolimages.test.ts`、`test/store/crash.test.ts`、`test/server/protocol.test.ts`。
 
 ### 5.7 调用模型：思考级别和重试
 
@@ -543,27 +496,9 @@ MSYS_NO_PATHCONV=1 exec node "$(cygpath -w "$(dirname "$0")")/src/main.ts" "$@"
 
 第 7 步：
 
-- AGENTS.md 边界与存储（:68）：加上工具定义 `~/.tau/tools/`，以及上层的数据 `~/.tau/extras/<名字>/`。
-- AGENTS.md 副作用（:35）：库外副作用加上工具定义。
-- AGENTS.md 用词：加“工具定义”。
-- kb-store：“执行器另有三个事务，只写 `effects` 和 `mailbox`”（:222）：上报结果的事务还插入 `blobs`；“`tau.db` 预设以外的全部数据”（:31）和它所在的目录图（:29–35）。
-- D8（kb-decisions :74，“预设以外的全部数据放在一个用户级库”）就地改正。
-- mvp.md：
-  - “SQL 不只在 `store/`”（:81）加上 `blobs`。
-  - “未知工具报错”（:50）加上工具定义名。
-  - 启动失败的条件（:53）。
-  - 快照还冻结用到的工具定义（:37–38）。
-  - “工具描述是 kernel 里的纯数据”（:79）加上：工具定义的名称、说明和参数来自快照里冻结的文件。D18 第 9 条（kb-decisions :186）加同样的括注。
-- kb-executor：
-  - “执行器执行库外副作用：调用模型，运行 `read`、`write`、`edit`、`bash`”（:7）加上工具定义。
-  - 运行工具第 3 条（:106）加上工具定义。
-  - “只有 `bash` 拿到中止信号”（:109）和坑点“只有模型和 bash 收到信号，文件工具照样写完”（:215）加上工具定义。D20（kb-decisions :257）的同一句，加括注。
-- kb-tools：
-  - 负责范围扩到工具定义的格式和运行。INDEX 跟着改。
-  - 认知模型“一个工具 = 一个异步函数……变成一段文本和一个错误标记”（:231）加上工具定义和 `content` 输出。
-- kb-kernel：“提示词空间”算上工具定义；`PresetSnapshot` 的字段（:54）加上 `toolDefs`，`tools` 还能写工具定义的名字。
-- kb-extending 原则 5（:17）：“前端只依赖线协议”改成“上层只依赖线协议、CLI、工具定义和预设”。再加一句：上层加工具只走工具定义，它的格式和运行是契约。
-- 代码里的 `toolDefinitions` 改名 `toolDescriptions`。
+- 前一半已做（工具定义的格式和读取、快照的 `toolDefs`、`spawn` 冻结、启动检查、改名）：AGENTS.md 的用词和边界与存储；mvp.md 的快照、`tools`、读取规则、启动失败的条件、“工具描述是 kernel 里的纯数据”；D18 第 9 条的括注；kb-kernel 的快照、工具描述、固定部分和提示词空间；kb-tools 的“工具定义”一节；INDEX；kb-extending 原则 5；D43。已做的条目已从下面的清单里删掉。
+
+- 后一半已做（运行工具定义、带图的结果）：AGENTS.md 副作用；kb-store 的执行器事务、“预设和工具定义以外的全部数据”、目录图、`blobs` 两处；D8 就地改正；mvp.md 的“SQL 不只在 `store/`”；kb-executor 的开头、运行工具、中止信号、坑点、入口和测试表；D20 的括注；kb-tools 的“运行工具定义”、接口、包装脚本、入口、测试表和认知模型；D44。已做的条目已从上面的清单里删掉。
 
 第 8 步：
 
@@ -710,12 +645,7 @@ HTTP 桥要做的检查：
 | 7 | 工具定义：`text` 和 `content` 输出（含图片：上报结果的事务插入 `blobs`）；快照的 `toolDefs`；`spawn` 冻结工具定义；启动检查算上工具定义 | 假命令的测试；带图的工具结果的真模型核实（见下） |
 | 8 | 冻结：先做完第 7 节第 8 步的文档并提交；`extras/` 的 import 扫描测试；然后做推导测试 | 推导测试按事先写定的题目和标准通过 |
 
-第 7 步的真模型核实：
-
-- 照 [D34](../../.knowledge/kb-decisions.md#d34-第-3-步真模型核实) 的量法，在用、收图片的每个模型真调用一次。claude-opus-5-5 照旧只断言请求体。muse-spark-1.3-contributor 不支持，不测。
-- 请求里有一个带图的工具结果。测两种形状：一种以它结尾；一种在它后面再接安全点并入的一封信。
-- 为什么要测：带图的工具结果在各条路径上是另一种形状。例如 openai-completions 把图拆成一条额外的用户消息，再并入一封信，就是两条相邻的用户消息。
-- 接口拒绝的，冻结之前定对策，写进决策记录，和 5.6 的“目录写着收、接口却拒绝”一样处理。
+第 7 步的真模型核实：见 [D45](../../.knowledge/kb-decisions.md#d45-第-7-步带图的工具结果的真模型核实)。测两种形状：请求以带图的工具结果结尾；带图的工具结果后面再接安全点并入的一封信。四个在用的模型全部接受；claude-opus-5-5 只断言请求体。
 
 推导测试：
 
@@ -753,7 +683,7 @@ HTTP 桥要做的检查：
   - `watch` 的推送规则：先快照后增量；`update` 只带 `self`；流式文本带进程和编号；不推最终回复；写缓冲超限就断开。
 - 表结构。索引不算：`openDb` 每次打开时用 `CREATE INDEX IF NOT EXISTS` 补上，不提高 `SCHEMA_VERSION`。对 `state_json` 的表达式索引也一样。
 - 文件格式：预设、工具定义。
-- 5.5 的“运行”整节。
+- 工具定义的运行（原文在 [kb-tools 的运行工具定义](../../.knowledge/kb-tools.md#运行工具定义)，来自本稿 5.5）。
 - 环境变量：`TAU_PROCESS`、`TAU_PIPE`。
 - CLI：v1 的命令、输出和退出码，加上 `TAU_PIPE`。入口是仓库里的 `tau`、`tau.cmd` 和 `node src/main.ts`。
 - `decide` 写进段的固定文字：信的头、结束原因的文字、D25 的说明、`HANDOFF_HEADER`、`CARRY_HEADER`、`INTERRUPTED`、`SKIPPED`、图片的占位行。上层显示“谁说的”，只能解析信的头。

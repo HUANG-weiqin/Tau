@@ -4,7 +4,7 @@
 
 ## 这个模块是干什么的
 
-执行器执行库外副作用：调用模型，运行 `read`、`write`、`edit`、`bash`。它只做三件事：开始、中止、上报。
+执行器执行库外副作用：调用模型，运行 `read`、`write`、`edit`、`bash` 和工具定义。它只做三件事：开始、中止、上报。
 
 它负责：
 
@@ -12,6 +12,7 @@
 - 中止一个正在运行的副作用。
 - 服务启动时，把上次没跑完的副作用作为“被中断”送回。
 - 把动作的失败变成普通的结果。
+- 带图的工具结果：在上报结果的事务里把图片插入 `blobs`。
 
 它不负责：
 
@@ -34,7 +35,7 @@
 |---|---|---|---|
 | 处理输入 | 进程开始等库外副作用 n | 插入 `pending` | 不动 |
 | 执行器 `claim` | `startNext` | `pending` → `running` | 不动 |
-| 执行器 `complete` | 动作结束 | 还在就删 | 行还在才放结果，否则丢弃 |
+| 执行器 `complete` | 动作结束 | 还在就删 | 行还在才放结果，否则丢弃；带图的工具结果，图片同一个事务里插入 `blobs`，丢弃时也不插 |
 | 处理输入 | 进程不再等 n（例如停止） | 删；删的是 `running` 时返回 n | 不动 |
 | 执行器 `recover` | `createExecutor` | 删掉全部 `running` | 每行放一个 `interrupted` |
 
@@ -65,13 +66,13 @@ abort(id, n)
 
 ### 失败怎样变成结果
 
-`Actions` 只返回内容。结果的种类和编号由执行器按 `Job.effect` 填写。
+`Actions` 只返回内容。结果的种类和编号由执行器按 `Job.effect` 填写。`runTool` 返回的 `ToolOutput` 是 `ToolResultContent` 加一个可选的 `images`：内容里的图片块已经是 `blob:<hash>` 引用，`images` 是要存的图片（`Image`：哈希、类型、字节）。执行器取出 `images`，其余放进信箱；`complete` 在行还在时先 `putBlobs`，再放结果，同一个事务。
 
 | 情况 | 放进信箱的输入 |
 |---|---|
 | `callModel` 返回 | `modelResult`，`ok`，助手消息原样 |
 | `callModel` 同步抛出或被拒绝 | `modelResult`，`ok`，一条 `stopReason: "error"` 的助手消息：`errorMessage` 是错误信息，`content` 为空，用量为 0，`api` 是 `unknown`，provider 和 model 从预设的模型 ID 拆出 |
-| `runTool` 返回 | `toolResult`，`ok`，内容原样 |
+| `runTool` 返回 | `toolResult`，`ok`，内容原样（`images` 字段不放进信箱，字节写进 `blobs`） |
 | `runTool` 同步抛出或被拒绝 | `toolResult`，`ok`，`工具执行失败：<信息>`，`isError: true` |
 | 恢复时进程在 `awaitingModel` | `modelResult`，`interrupted` |
 | 恢复时进程在 `awaitingTool` | `toolResult`，`interrupted` |
@@ -130,14 +131,14 @@ abort(id, n)
 
 ### 运行工具（`actions.ts`）
 
-1. 从 `toolDefinitions(preset)` 找到工具描述。
+1. 从 `toolDescriptions(preset)` 找到工具描述。
 2. 用 pi-ai 的 `validateToolArguments(tool, call)` 校验参数。它先按 JSON Schema 转换类型（`"5"` 变成 `5`），再检查。参数整体是 `null`、缺必填字段、多出字段都失败。失败时回 `参数错误：<pi-ai 的说明>`，`isError: true`。说明里带收到的参数原文。
-3. 按名字调用 `read`、`write`、`edit`（传工作目录），或 `bash`（传工作目录、中止信号，以及进程 ID 和管道名）。进程 ID 是 `job.process.id`；管道名是 `createActions` 的第三个参数，服务传它实际监听的管道（`opts.pipe`）。bash 把这两个值放进命令的环境（[kb-tools](kb-tools.md#包装脚本)）。
+3. 按名字调用 `read`、`write`、`edit`（传工作目录），或 `bash`（传工作目录、中止信号，以及进程 ID 和管道名）。进程 ID 是 `job.process.id`；管道名是 `createActions` 的第三个参数，服务传它实际监听的管道（`opts.pipe`）。bash 把这两个值放进命令的环境（[kb-tools](kb-tools.md#包装脚本)）。别的名字，在快照的 `toolDefs` 里找工具定义，用 `runToolDef` 运行：参数、工作目录、中止信号、进程 ID 和管道名同 `bash`，再加快照的 `input` 是否含 `image`（[kb-tools](kb-tools.md#运行工具定义)）。
 
 - 单个字段是 `null` 不一定失败：校验会改写一些值。工具收到的是改写后的值（[kb-tools.md](kb-tools.md#参数从哪来)）。
-- 只有 `bash` 拿到中止信号。`read`、`write`、`edit` 被中止时照样跑完，结果被丢弃。
+- 只有 `bash` 和工具定义拿到中止信号。`read`、`write`、`edit` 被中止时照样跑完，结果被丢弃。
 - 库内工具的参数不经过这里。它们在处理输入的事务里处理，`null` 参数当作空对象。
-- 工具不在预设里、或者名字是库内工具时，`runTool` 也回错误结果。正常流程走不到这两支：只有库外工具会进待办副作用表。
+- 工具不在预设里、或者名字是库内工具时，`runTool` 也回错误结果。正常流程走不到这两支：只有库外工具会进待办副作用表。名字既不是内置库外工具、快照的 `toolDefs` 里也没有时，回 `工具 <name> 不由执行器运行。`。
 
 ### 崩溃窗口
 
@@ -174,7 +175,7 @@ abort(id, n)
 ## 认知模型
 
 - 一行是一份租约：`pending` 表示还没开始，`running` 表示可能已经开始。
-- 对一个库外副作用 n，“表里有 n 这一行”和“信箱里有 n 的结果”恰好一个成立。三个事务都保持这一条：`claim` 不动信箱；`complete` 删行和放结果一起做；`recover` 删行和放 `interrupted` 一起做。
+- 对一个库外副作用 n，“表里有 n 这一行”和“信箱里有 n 的结果”恰好一个成立。三个事务都保持这一条：`claim` 不动信箱；`complete` 删行、存图片和放结果一起做；`recover` 删行和放 `interrupted` 一起做。
 - 从零重建：三个事务、一张中止开关表、一个两函数的 `Actions` 接口。
 - 一次修改越界的信号：
   - 执行器内存里多了中止开关以外的状态。
@@ -193,13 +194,14 @@ abort(id, n)
 
 | 路径 | 内容 |
 |---|---|
-| `src/executor/executor.ts` | `createExecutor`、`Executor`、`Actions`、`Job`；`claim`、`complete`、`recover` |
-| `src/executor/actions.ts` | `createActions(models, onText, pipe, readBlob)`：调用模型、校验参数、分派工具 |
+| `src/executor/executor.ts` | `createExecutor`、`Executor`、`Actions`、`Job`、`ToolOutput`；`claim`、`complete`（含 `putBlobs`）、`recover` |
+| `src/executor/actions.ts` | `createActions(models, onText, pipe, readBlob)`：调用模型、校验参数、分派工具（含工具定义） |
 | `src/server/serve.ts` | `pump`：把 `handleNext` 的 `abort` 接到 `exec.abort`，循环 `startNext` |
 | `src/main.ts` | 用 `builtinModels()` 建模型目录 |
 | `test/store/executor.test.ts` | 开始、完成、中止、失败上报、启动恢复、竞态 |
 | `test/store/model-call.test.ts` | 真目录里在用的六个模型：经 `createActions`、真的 pi-ai 适配器和假 fetch，用 `onPayload` 断言请求体的输出上限和思考预算；执行器传给 pi-ai 的参数；重试的种类和 60 秒上限 |
-| `test/store/crash.test.ts` | 真库上的随机序列和崩溃注入 |
+| `test/store/crash.test.ts` | 真库上的随机序列和崩溃注入；每个 `read` 结果都带一张图片，崩溃前后 `blobs` 和信箱一致 |
+| `test/store/toolimages.test.ts` | 带图的工具结果的最小反例：上报前 `blobs` 没有图片、运行中被杀、上报后被杀、停止后结果丢弃时图片也不写 |
 | `test/store/fixtures.ts` | `gated`（测试决定何时完成，中止时拒绝）、`scripted`、`settle` |
 | `test/store/invariants.ts` | 存储层不变量，每个事务之后都查 |
 | `test/server/e2e.test.ts` | 真的 `createActions` 加 faux 模型，走管道和库 |
@@ -243,7 +245,7 @@ abort(id, n)
 
 - 在 `claim` 和开始动作之间加 `await`：中止可能落在登记之前，动作在停止之后照样跑完。“开始、完成”测试断言 `startNext` 返回时动作已经开始。
 - 让动作自己写库或构造 `Input`：绕过 `complete` 的“行还在才放”。
-- 把中止当成“外部世界没变”：只有模型和 bash 收到信号，文件工具照样写完。中止只保证结果被丢弃。
+- 把中止当成“外部世界没变”：只有模型、bash 和工具定义收到信号，文件工具照样写完。中止只保证结果被丢弃。
 - 一次服务启动建两个执行器：第二个的恢复会把第一个正在跑的副作用当成被中断。
 - 模型调用挂住时，执行器不会超时。进程一直在 `awaitingModel`，只能停止它。
 - 传 `reasoning` 时只传 `maxTokens` 不够：按预算思考的路径会在 `maxTokens` 之上再加预算（默认最多 16,384），换段阈值的上界就不成立。所以模型的 `maxTokens` 也要换成 `cap`。升级 pi-ai 时，重跑 `test/store/model-call.test.ts`，并重查 `maxTokens` 只会被调低、`maxRetries` 默认值、`retry-after` 上限。

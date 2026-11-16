@@ -33,8 +33,9 @@ tools: read, write, edit, bash, memory
 ```
 
 - 前置信息有 `workdir`、`model`、`tools` 和可选的 `thinking`，每行一个 `key: value`。`thinking` 只收 `minimal`、`low`、`medium`、`high`、`xhigh`、`max`（pi-ai 的思考级别）；不写就不传给模型，值不对就报错。怎么用见 [kb-executor](../../.knowledge/kb-executor.md#调用模型actionsts)。
+- `tools` 里除了内置工具和工具组，还能写工具定义的名字（`~/.tau/tools/<name>.json`，格式见 [kb-tools](../../.knowledge/kb-tools.md#工具定义)）。
 - `tools` 里的 `memory` 表示进程有记忆库。`agents` 表示进程能给别的进程寄信、建进程、停进程（`post`、`spawn`、`stop_process`，[v2 设计稿 5.3](kernel-v2.md#53-进程之间寄信派生停止回信跳数)）。
-- 进程启动时，预设被冻结成快照存进进程记录。之后修改预设文件，只影响新启动的进程。
+- 进程启动时，预设被冻结成快照存进进程记录，用到的工具定义也一起冻结（快照的 `toolDefs`）。之后修改预设文件或工具定义文件，只影响新启动的进程。
 - 快照里还有两项：从 pi-ai 模型目录查到的这个模型的 `contextWindow` 和 `input`（模型能收的输入）。查不到就启动失败。冻结它们，是为了让 `decide` 不做 I/O。调用模型时，执行器仍从模型目录取模型（第 6 节）。
 
 读取预设（`src/presets/load.ts`）的规则：
@@ -47,10 +48,10 @@ tools: read, write, edit, bash, memory
 - 没有 `:` 的行、未知字段、重复字段、缺少的字段，都报错。`thinking` 可以不写，其余字段缺了报错。
 - `workdir` 必须是绝对路径，而且是一个存在的目录。绝对路径只认两种：盘符开头（`E:/x`、`E:\x`）和 UNC（`\\server\share`）。不带盘符的 `/foo` 会落在服务当前目录所在的盘上，所以拒绝。
 - `model` 在第一个 `/` 处拆成 provider 和模型 ID，两边都不能为空。模型 ID 里可以再有 `/`。
-- `tools` 按逗号拆开，去掉空白，跳过空项。未知工具报错。重复的去掉，保留第一次出现的顺序。
+- `tools` 按逗号拆开，去掉空白，跳过空项。不是内置工具和工具组的名字，都按工具定义读，读不出就报错（找不到、格式不对、重名、超过大小上限）。重复的去掉，保留第一次出现的顺序。
 - `tools` 可以为空。这时进程只有 `self` 和 `handoff`。
 - 第二个 `---` 之后的正文去掉首尾空白，就是角色提示词。它可以为空。
-- 任何一条不满足，启动就失败，库里什么都不写（[kb-service](../../.knowledge/kb-service.md#请求的校验parserequest)）。
+- 任何一条不满足，启动就失败，库里什么都不写。工具定义读不出和启动检查（[kb-kernel](../../.knowledge/kb-kernel.md#启动检查和交接以后的检查)）不通过也一样（[kb-service](../../.knowledge/kb-service.md#请求的校验parserequest)）。
 
 用户要的三种 Agent 是写预设的三种方式，代码里没有这些类型：
 
@@ -76,9 +77,9 @@ src/
 ```
 
 - `kernel` 只导入 kernel 内部的文件，外部类型只能 `import type`（例如 pi-ai 的消息类型）。
-- 工具描述是 `kernel` 里的纯数据：名称、说明、参数，以及它是库内还是库外的副作用。库外工具的实现在 `tools/`。
+- 工具描述是 `kernel` 里的纯数据：名称、说明、参数，以及它是库内还是库外的副作用。库外工具的实现在 `tools/`。（工具定义的名称、说明和参数来自快照里冻结的文件，读文件在 `presets/tooldefs.ts`，不在 `kernel`。）
 - `memory` 只依赖 `kernel`。`store` 依赖 `kernel`，通过 `kernel` 里的 `Memory` 接口类型使用记忆，实现由 `server` 传入。`executor` 依赖 `kernel`、`store`（`tx` 和行的读写）、`tools` 和 `pi-ai`。`server` 把它们装配起来。`cli` 只依赖 `protocol.ts`。
-- SQL 不只在 `store/`：`memory/kv.ts` 读写 `memory` 表，`executor` 读写 `effects` 表，`server` 查一次 `mailbox`。
+- SQL 不只在 `store/`：`memory/kv.ts` 读写 `memory` 表，`executor` 读写 `effects` 表、插入 `blobs` 表，`server` 查一次 `mailbox`。
 - 依赖和工具链见 AGENTS.md 的“小而硬规矩”。
 
 ## 4. 纯函数层

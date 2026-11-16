@@ -39,7 +39,7 @@ test("faux 模型：读文件、改一行、跑命令，最终回复来自库", 
     fauxAssistantMessage([fauxToolCall("bash", { command: "cat a.txt | wc -l" })], { stopReason: "toolUse" }),
     fauxAssistantMessage(fauxText("改好了。")),
   ]);
-  const svc = await serve({ pipe: t.pipe, dbPath: join(t.dir, "tau.db"), presetsDir: t.presets, models: t.models, memory: sqliteMemory });
+  const svc = await serve({ pipe: t.pipe, dbPath: join(t.dir, "tau.db"), presetsDir: t.presets, toolsDir: join(t.dir, "tools"), models: t.models, memory: sqliteMemory });
   try {
     const replies = await collect(t.pipe, { op: "start", preset: "dev", text: "把 two 改成大写" });
     assert.equal(replies[0]?.type, "receipt");
@@ -104,7 +104,7 @@ test("服务把预设读取函数交给 handleNext：模型 spawn 一个预设�
     return fauxAssistantMessage([fauxToolCall("spawn", { preset: "kid", text: "去做" })], { stopReason: "toolUse" });
   };
   t.faux.setResponses(Array.from({ length: 6 }, () => brain));
-  const svc = await serve({ pipe: t.pipe, dbPath: join(t.dir, "tau.db"), presetsDir: t.presets, models: t.models, memory: sqliteMemory });
+  const svc = await serve({ pipe: t.pipe, dbPath: join(t.dir, "tau.db"), presetsDir: t.presets, toolsDir: join(t.dir, "tools"), models: t.models, memory: sqliteMemory });
   try {
     const replies = await collect(t.pipe, { op: "start", preset: "boss", text: "开工" });
     assert.equal(replies.at(-1)?.type, "final");
@@ -133,7 +133,7 @@ test("bash 工具运行 tau ps，经 TAU_PIPE 连到测试服务", async () => {
     fauxAssistantMessage([fauxToolCall("bash", { command: `'${script}' ps; echo "$TAU_PROCESS"` })], { stopReason: "toolUse" }),
     fauxAssistantMessage(fauxText("看过了。")),
   ]);
-  const svc = await serve({ pipe: t.pipe, dbPath: join(t.dir, "tau.db"), presetsDir: t.presets, models: t.models, memory: sqliteMemory });
+  const svc = await serve({ pipe: t.pipe, dbPath: join(t.dir, "tau.db"), presetsDir: t.presets, toolsDir: join(t.dir, "tools"), models: t.models, memory: sqliteMemory });
   try {
     const replies = await collect(t.pipe, { op: "start", preset: "dev", text: "看看进程" });
     const id = replies[0]?.type === "receipt" ? replies[0].process : "";

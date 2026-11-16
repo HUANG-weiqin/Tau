@@ -34,6 +34,7 @@ export interface ServeOptions {
   pipe: string;
   dbPath: string;
   presetsDir: string;
+  toolsDir: string;
   models: Models;
   memory: (db: DatabaseSync) => Memory;
 }
@@ -68,7 +69,7 @@ export async function serve(opts: ServeOptions): Promise<Service> {
     ),
   );
 
-  const readPreset = (id: string) => loadPreset(opts.presetsDir, id, opts.models);
+  const readPreset = (id: string) => loadPreset(opts.presetsDir, id, opts.models, opts.toolsDir);
 
   function pump(): void {
     for (;;) {

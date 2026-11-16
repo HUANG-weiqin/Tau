@@ -3,6 +3,8 @@ import { effectOf } from "../kernel/decide.ts";
 import { textContent, unreachable } from "../kernel/types.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { AssistantMessage, Effect, Input, Message, Process, ProcessId, ToolCall, ToolResultContent } from "../kernel/types.ts";
+import type { Image } from "../images.ts";
+import { putBlobs } from "../store/blobs.ts";
 import { loadProcess, loadSegment, putMail, tx } from "../store/db.ts";
 
 export interface Job {
@@ -11,10 +13,13 @@ export interface Job {
   effect: Effect;
 }
 
+/** 工具的结果。带图的 `content` 输出还带着要存的图片：内容里是 `blob:<hash>` 引用，字节由执行器在上报结果的事务里插入 `blobs`。 */
+export type ToolOutput = ToolResultContent & { images?: readonly Image[] };
+
 /** 真正的动作。抛出或拒绝时，执行器把它上报为失败的结果。 */
 export interface Actions {
   callModel(job: Job, signal: AbortSignal): Promise<AssistantMessage>;
-  runTool(job: Job, call: ToolCall, signal: AbortSignal): Promise<ToolResultContent>;
+  runTool(job: Job, call: ToolCall, signal: AbortSignal): Promise<ToolOutput>;
 }
 
 export interface Executor {
@@ -38,7 +43,7 @@ export function createExecutor(db: DatabaseSync, actions: Actions): Executor {
       const ac = new AbortController();
       running.set(k, ac);
       return act(actions, job, ac.signal)
-        .then((input) => complete(db, job, input))
+        .then((outcome) => complete(db, job, outcome))
         .finally(() => running.delete(k));
     },
     abort(id, n) {
@@ -84,27 +89,35 @@ function claim(db: DatabaseSync): Job | null {
   });
 }
 
-/** 一个事务：这一行还在，就删掉它并把结果放进信箱；已经不在，就丢弃结果。 */
-function complete(db: DatabaseSync, job: Job, input: Input): void {
+/** 动作的结果：要放进信箱的输入，加上它引用的图片（只有带图的工具结果有）。 */
+interface Outcome {
+  input: Input;
+  images: readonly Image[];
+}
+
+/** 一个事务：这一行还在，就删掉它，把图片存进 `blobs`，把结果放进信箱；已经不在，就丢弃结果和图片。 */
+function complete(db: DatabaseSync, job: Job, { input, images }: Outcome): void {
   tx(db, () => {
     const gone = db.prepare("DELETE FROM effects WHERE process_id = ? AND n = ?").run(job.process.id, job.effect.n);
-    if (Number(gone.changes) > 0) putMail(db, job.process.id, input);
+    if (Number(gone.changes) === 0) return;
+    putBlobs(db, images);
+    putMail(db, job.process.id, input);
   });
 }
 
-/** 同步开始动作，返回它的结果输入。失败也是结果。 */
-function act(actions: Actions, job: Job, signal: AbortSignal): Promise<Input> {
+/** 同步开始动作，返回它的结果。失败也是结果。 */
+function act(actions: Actions, job: Job, signal: AbortSignal): Promise<Outcome> {
   const e = job.effect;
   switch (e.kind) {
     case "callModel":
       return attempt(() => actions.callModel(job, signal)).then(
-        (message): Input => ({ kind: "modelResult", n: e.n, outcome: { status: "ok", message } }),
-        (err: unknown): Input => ({ kind: "modelResult", n: e.n, outcome: { status: "ok", message: failedReply(job.process, err) } }),
+        (message): Outcome => ({ input: { kind: "modelResult", n: e.n, outcome: { status: "ok", message } }, images: [] }),
+        (err: unknown): Outcome => ({ input: { kind: "modelResult", n: e.n, outcome: { status: "ok", message: failedReply(job.process, err) } }, images: [] }),
       );
     case "runTool":
       return attempt(() => actions.runTool(job, e.call, signal)).then(
-        (content): Input => ({ kind: "toolResult", n: e.n, outcome: { status: "ok", content } }),
-        (err: unknown): Input => ({ kind: "toolResult", n: e.n, outcome: { status: "ok", content: { content: textContent(`工具执行失败：${message(err)}`), isError: true } } }),
+        ({ images = [], ...content }): Outcome => ({ input: { kind: "toolResult", n: e.n, outcome: { status: "ok", content } }, images }),
+        (err: unknown): Outcome => ({ input: { kind: "toolResult", n: e.n, outcome: { status: "ok", content: { content: textContent(`工具执行失败：${message(err)}`), isError: true } } }, images: [] }),
       );
     default:
       return unreachable(e);

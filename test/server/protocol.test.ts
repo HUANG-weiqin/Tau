@@ -9,7 +9,7 @@ import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
+import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import type { FauxProviderHandle, RegisterFauxProviderOptions } from "@earendil-works/pi-ai";
 import { request } from "../../src/cli/main.ts";
 import type { Message } from "../../src/kernel/types.ts";
@@ -25,6 +25,7 @@ interface Env {
   faux: FauxProviderHandle;
   svc: Service;
   presetsDir: string;
+  toolsDir: string;
   work: string;
   /** 关服务。可以多次调用；测试结束时也会调。 */
   close(): Promise<void>;
@@ -34,14 +35,16 @@ async function setup(t: TestContext, fauxOptions: RegisterFauxProviderOptions = 
   const dir = mkdtempSync(join(tmpdir(), "tau-proto-"));
   const work = join(dir, "work");
   const presetsDir = join(dir, "presets");
+  const toolsDir = join(dir, "tools");
   mkdirSync(work);
   mkdirSync(presetsDir);
+  mkdirSync(toolsDir);
   const faux = fauxProvider({ models: [{ id: "m", contextWindow: 200_000 }], ...fauxOptions });
   const models = createModels();
   models.setProvider(faux.provider);
   writeFileSync(join(presetsDir, "p.md"), `---\nworkdir: ${work}\nmodel: ${faux.getModel().provider}/m\ntools: read\n---\n你是测试助手。\n`);
   const pipe = `\\\\.\\pipe\\tau-test-proto-${process.pid}-${Math.random().toString(16).slice(2)}`;
-  const svc = await serve({ pipe, dbPath: join(dir, "tau.db"), presetsDir, models, memory: sqliteMemory });
+  const svc = await serve({ pipe, dbPath: join(dir, "tau.db"), presetsDir, toolsDir, models, memory: sqliteMemory });
   const sockets = new Set<Socket>();
   svc.server.on("connection", (s: Socket) => {
     sockets.add(s);
@@ -54,7 +57,7 @@ async function setup(t: TestContext, fauxOptions: RegisterFauxProviderOptions = 
     await close();
     rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
-  return { pipe, faux, svc, presetsDir, work, close };
+  return { pipe, faux, svc, presetsDir, toolsDir, work, close };
 }
 
 async function collect(pipe: string, req: Request): Promise<Reply[]> {
@@ -447,6 +450,29 @@ tools: read, memory
   assert.deepEqual(ps, [{ type: "ps", processes: [] }]);
 });
 
+test("start：预设用到的工具定义冻结进快照；定义读不出或不合格，回 error，什么都不建（设计稿 5.5）", async (t) => {
+  const e = await setup(t);
+  const preset = (id: string, tools: string) => writeFileSync(join(e.presetsDir, `${id}.md`), `---\nworkdir: ${e.work}\nmodel: ${e.faux.getModel().provider}/m\ntools: ${tools}\n---\n你是测试助手。\n`);
+  const def = (name: string, description: unknown) => writeFileSync(join(e.toolsDir, `${name}.json`), JSON.stringify({ description, parameters: { type: "object" }, command: "echo hi" }));
+  preset("withdef", "read, notes");
+  preset("nodef", "read, ghost");
+  preset("baddef", "read, broken");
+  def("notes", "写笔记");
+  def("broken", 7);
+  assert.match(errorOf(await collect(e.pipe, { op: "start", preset: "nodef", text: "你好" })), /找不到工具定义：ghost/);
+  assert.match(errorOf(await collect(e.pipe, { op: "start", preset: "baddef", text: "你好" })), /broken 的 description 必须是字符串/);
+  assert.deepEqual(await collect(e.pipe, { op: "ps" }), [{ type: "ps", processes: [] }]);
+
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("好"))]);
+  const replies = await collect(e.pipe, { op: "start", preset: "withdef", text: "你好" });
+  assert.equal(replies.at(-1)?.type, "final");
+  const first = replies[0];
+  assert.equal(first?.type, "receipt");
+  const id = first.process;
+  def("notes", "改过的说明");
+  assert.deepEqual(loadProcess(e.svc.db, id)?.preset.toolDefs.map((d) => d.description), ["写笔记"]);
+});
+
 // 图片：start、send 带 images，blob 请求（设计稿 5.6、5.9）
 
 const b64 = (b: Buffer) => b.toString("base64");
@@ -573,4 +599,50 @@ test("不收图片的模型：先检查；合格才把每张图换成一行说�
   assert.deepEqual(segmentOf(e, first.process)[0]?.role === "user" ? segmentOf(e, first.process)[0]?.content : null, "看图\n[图片：模型不支持，已省略]\n[图片：模型不支持，已省略]");
   assert.equal(blobRows(e), 0);
   assert.match(errorOf(await collect(e.pipe, { op: "send", process: first.process, text: "y", images: [b64(Buffer.from("x".repeat(40)))] })), /类型不认识/);
+});
+
+test("工具定义：真服务里运行。text 输出拿到标准输入的参数；content 输出的图片进 blobs，模型收到 base64，库里是引用", { timeout: 60_000 }, async (t) => {
+  const e = await setup(t, { models: [{ id: "m", contextWindow: 200_000, input: ["text", "image"] }] });
+  const img = png(20, 20, 4);
+  const shot = join(e.work, "s.png");
+  writeFileSync(shot, img);
+  writeFileSync(join(e.work, "out.json"), JSON.stringify([{ type: "text", text: "截图" }, { type: "image", path: shot }]));
+  const def = (name: string, command: string, output: string) => writeFileSync(join(e.toolsDir, `${name}.json`), JSON.stringify({ description: name, parameters: { type: "object", properties: { q: { type: "string" } } }, command, output }));
+  def("echoargs", "cat", "text");
+  def("shot", "cat out.json", "content");
+  writeFileSync(join(e.presetsDir, "d.md"), `---\nworkdir: ${e.work}\nmodel: ${e.faux.getModel().provider}/m\ntools: echoargs, shot\n---\n你是测试助手。\n`);
+  let seen: { role: string; content: { type: string; data?: string; text?: string }[] }[] = [];
+  e.faux.appendResponses([
+    fauxAssistantMessage([fauxToolCall("echoargs", { q: "问" })], { stopReason: "toolUse" }),
+    fauxAssistantMessage([fauxToolCall("shot", {})], { stopReason: "toolUse" }),
+    (context) => {
+      seen = context.messages as typeof seen;
+      return fauxAssistantMessage(fauxText("看到了"));
+    },
+  ]);
+  const replies = await collect(e.pipe, { op: "start", preset: "d", text: "开始" });
+  assert.equal(replies.at(-1)?.type, "final");
+  const results = seen.filter((m) => m.role === "toolResult");
+  assert.equal(results[0]?.content[0]?.text, '{"q":"问"}\n[退出码 0]');
+  assert.deepEqual(results[1]?.content.map((c) => c.type), ["text", "image"]);
+  assert.equal(results[1]?.content[1]?.data, b64(img));
+  const stored = segmentOf(e, (replies[0] as { process: string }).process).filter((m) => m.role === "toolResult");
+  assert.match(JSON.stringify(stored[1]), /blob:[0-9a-f]{64}/);
+  assert.equal(JSON.stringify(stored).includes(b64(img)), false);
+  assert.equal(blobRows(e), 1);
+});
+
+test("工具定义：模型不收图片时，content 输出的图片不存，在原位置换成一行说明", { timeout: 60_000 }, async (t) => {
+  const e = await setup(t, { models: [{ id: "m", contextWindow: 200_000, input: ["text"] }] });
+  const shot = join(e.work, "s.png");
+  writeFileSync(shot, png(20, 20, 5));
+  writeFileSync(join(e.work, "out.json"), JSON.stringify([{ type: "text", text: "截图" }, { type: "image", path: shot }]));
+  writeFileSync(join(e.toolsDir, "shot.json"), JSON.stringify({ description: "截图", parameters: { type: "object" }, command: "cat out.json", output: "content" }));
+  writeFileSync(join(e.presetsDir, "d.md"), `---\nworkdir: ${e.work}\nmodel: ${e.faux.getModel().provider}/m\ntools: shot\n---\n你是测试助手。\n`);
+  e.faux.appendResponses([fauxAssistantMessage([fauxToolCall("shot", {})], { stopReason: "toolUse" }), fauxAssistantMessage(fauxText("好"))]);
+  const replies = await collect(e.pipe, { op: "start", preset: "d", text: "开始" });
+  assert.equal(replies.at(-1)?.type, "final");
+  const result = segmentOf(e, (replies[0] as { process: string }).process).find((m) => m.role === "toolResult");
+  assert.deepEqual(result?.role === "toolResult" && result.content, [{ type: "text", text: "截图\n[图片：模型不支持，已省略]" }]);
+  assert.equal(blobRows(e), 0);
 });

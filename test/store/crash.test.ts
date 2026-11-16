@@ -8,9 +8,10 @@ import { copyFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { createExecutor } from "../../src/executor/executor.ts";
-import type { Executor, Job } from "../../src/executor/executor.ts";
+import type { Executor, Job, ToolOutput } from "../../src/executor/executor.ts";
 import { textContent, unreachable, userLetter } from "../../src/kernel/types.ts";
 import type { AssistantMessage, Input, Message, PresetSnapshot, ToolCall } from "../../src/kernel/types.ts";
+import { BLOB_PREFIX } from "../../src/store/blobs.ts";
 import { loadProcess, loadProcesses, openDb } from "../../src/store/db.ts";
 import { handleNext, send, startProcess } from "../../src/store/inputs.ts";
 import { allMessages, effectRows, fakeMemory, gated, hash, mailbox, PRESET, reply, rng, tempDir, toolCall } from "./fixtures.ts";
@@ -58,6 +59,16 @@ interface InFlight {
   done: Promise<void>;
 }
 
+/** 每个 read 结果都带一张图片，像带图的 content 输出：内容里是引用，图片的字节由执行器在上报结果的事务里存。 */
+function toolOutput(call: ToolCall): ToolOutput {
+  const r = rng(hash(call.id));
+  if (call.name !== "read") return res(`out:${call.id}`);
+  const [image] = checkImages([png(10, 10, 1000 + Math.floor(r() * 40)).toString("base64")]);
+  return { content: [{ type: "text", text: `out:${call.id}` }, { type: "image", data: BLOB_PREFIX + image!.hash, mimeType: image!.mimeType }], isError: false, images: [image!] };
+}
+
+const blobCount = (db: DatabaseSync): number => db.prepare("SELECT COUNT(*) AS n FROM blobs").get()?.n as number;
+
 /** 服务的一生：一个库句柄、一个执行器、它开始了还没完成的动作。 */
 interface Life {
   db: DatabaseSync;
@@ -92,7 +103,7 @@ function boot(path: string, dbs: DatabaseSync[]): Life {
   dbs.push(db);
   // 这里模拟的崩溃是关掉句柄，不是断电，不需要每次提交都落盘；关掉它让几千次重放快一些。
   db.exec("PRAGMA synchronous = OFF");
-  const actions = gated(model, (_job, call) => (res(`out:${call.id}`)));
+  const actions = gated(model, (_job, call) => toolOutput(call));
   return { db, exec: createExecutor(db, actions), gates: actions.gates, inflight: [] };
 }
 
@@ -188,6 +199,7 @@ async function crash(run: Run): Promise<void> {
   const pending = rows.filter((r) => r.status === "pending");
   const running = rows.filter((r) => r.status === "running");
   const before = mailbox(run.life.db);
+  const blobsBefore = blobCount(run.life.db);
   const abandoned = run.life.inflight;
   run.life.db.close();
   run.life = boot(run.path, run.dbs);
@@ -208,6 +220,8 @@ async function crash(run: Run): Promise<void> {
     await assert.rejects(f.done, /not open/);
   }
   assert.deepEqual(mailbox(db), after);
+  // 没写回的结果，它的图片也没有写进 blobs：恢复和旧动作的失败写入都不动 blobs。
+  assert.equal(blobCount(db), blobsBefore);
 
   // 恢复之后马上再崩溃一次：再恢复什么都不改。
   db.close();
@@ -222,7 +236,7 @@ function userText(m: Message): string {
 }
 
 /** 从空库开始跑到没有事可做。给了 `crashAt` 时，在第 crashAt 步之后崩溃一次。 */
-async function play(empty: Empty, seed: number, crashAt: number | null): Promise<{ steps: number; asked: number; backs: number; blobs: number; crashed: { kind: Kind; window: boolean } | null }> {
+async function play(empty: Empty, seed: number, crashAt: number | null): Promise<{ steps: number; asked: number; backs: number; blobs: number; toolImages: number; crashed: { kind: Kind; window: boolean } | null }> {
   const path = join(empty.dir, `${seed}-${crashAt ?? "none"}.db`);
   copyFileSync(empty.path, path);
   const { dbs } = empty;
@@ -261,9 +275,10 @@ async function play(empty: Empty, seed: number, crashAt: number | null): Promise
   assert.deepEqual([...results].sort(), [...calls].sort());
   const replies = messages.filter((m) => m.role === "assistant").map((m) => JSON.stringify(m));
   assert.equal(new Set(replies).size, replies.length);
-  const blobs = db.prepare("SELECT COUNT(*) AS n FROM blobs").get()?.n as number;
+  const blobs = blobCount(db);
+  const toolImages = messages.filter((m) => m.role === "toolResult" && m.content.some((c) => c.type === "image")).length;
   db.close();
-  return { steps, asked: run.asked, backs, blobs, crashed };
+  return { steps, asked: run.asked, backs, blobs, toolImages, crashed };
 }
 
 /** 一个空库的模板。新建库要建表、落盘，在 Windows 上比复制文件慢十几倍，几百次重放都从复制它开始。 */
@@ -286,13 +301,16 @@ test("随机序列：真库上每一步之后不变量都成立，最后全部�
   let asked = 0;
   let backs = 0;
   let blobs = 0;
+  let toolImages = 0;
   for (const seed of SEEDS) {
     const r = await play(empty, seed, null);
     asked += r.asked;
     backs += r.backs;
     blobs += r.blobs;
+    toolImages += r.toolImages;
   }
   assert.ok(blobs > 0, "没有覆盖到带图片的信");
+  assert.ok(toolImages > 0, "没有覆盖到带图的工具结果");
   assert.ok(asked > 0 && backs > 0, `要回信的信 ${asked} 封，回信 ${backs} 封：没有覆盖到回信`);
 });
 

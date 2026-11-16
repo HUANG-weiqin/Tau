@@ -1,7 +1,7 @@
 // 派生函数（设计稿第 4.1 节的表）：能从工作段算出来的值不存。
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { systemPrompt, toolDefinitions } from "../../src/kernel/context.ts";
+import { systemPrompt, toolDescriptions } from "../../src/kernel/context.ts";
 import { start } from "../../src/kernel/decide.ts";
 import {
   BYTES_PER_TOKEN,
@@ -51,7 +51,7 @@ test("上下文用量：用量为 0 的助手消息被跳过，它本身也按�
 test("上下文用量：没有这样的助手消息时全部按字节估算，含系统提示词、工具定义的 JSON 和记忆视图", () => {
   const seg = [user("u")];
   const bare = contextUsed(p, seg);
-  assert.equal(bare, tokens(utf8Bytes(systemPrompt(p)) + utf8Bytes(JSON.stringify(toolDefinitions(p.preset))) + 1));
+  assert.equal(bare, tokens(utf8Bytes(systemPrompt(p)) + utf8Bytes(JSON.stringify(toolDescriptions(p.preset))) + 1));
   const view = "k: " + "v".repeat(3_000);
   const withView = contextUsed({ ...p, segment: { seq: 1, memoryView: view } }, seg);
   assert.ok(withView - bare >= utf8Bytes(view) / BYTES_PER_TOKEN - 1, `记忆视图只多了 ${withView - bare}`);

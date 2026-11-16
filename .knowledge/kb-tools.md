@@ -1,15 +1,17 @@
 # 工具
 
-`updated: 2026-11-15`
+`updated: 2026-11-16`
 
 ## 这个模块是干什么的
 
-本模块是四个库外工具的实现：`read`、`write`、`edit`（`src/tools/files.ts`）和 `bash`（`src/tools/bash.ts`）。每个工具是一个异步函数：收到参数和工作目录，返回 `{ content, isError }`，`content` 是内容块，现在只有一个文本块。
+本模块是库外工具的实现：`read`、`write`、`edit`（`src/tools/files.ts`）、`bash`（`src/tools/bash.ts`）和工具定义（`src/tools/tooldef.ts`）。每个工具是一个异步函数：收到参数和工作目录，返回 `{ content, isError }`，`content` 是内容块：文件工具和 bash 只有一个文本块，工具定义的 `content` 输出可以有图片块。
+
+它还负责工具定义的格式和读取（`src/presets/tooldefs.ts`，见[工具定义](#工具定义)）。
 
 它负责：
 
 - 解析路径，处理文件的编码和换行。
-- 运行 bash 命令：找 shell、超时、中止、结束进程、限制输出。
+- 运行 bash 命令：找 shell、超时、中止、结束进程、限制输出。工具定义用同一套（`runCommand`）。
 - 把失败写成结果文本，不抛出。
 
 它不负责：
@@ -22,6 +24,74 @@
 
 本页接管[设计稿第 10 节](../docs/design/mvp.md#10-工具)里 `read`、`write`、`edit`、`bash` 的细节和路径规则。
 
+## 工具定义
+
+“工具定义”专指 `~/.tau/tools/<name>.json`。请求里给模型看的叫“工具描述”（[kb-kernel](kb-kernel.md#工具描述)）。上层加工具只走它。格式、读取和大小上限是契约。运行规则见[运行工具定义](#运行工具定义)。
+
+```json
+{
+  "description": "……",
+  "parameters": { "type": "object", "properties": { }, "additionalProperties": false },
+  "command": "node E:/tau/extras/notes/notes.mjs write",
+  "timeout": 120,
+  "output": "text"
+}
+```
+
+| 字段 | 必填 | 规则 |
+|---|---|---|
+| 文件名 | — | 名字匹配 `^[A-Za-z0-9_-]{1,64}$`，按目录项精确匹配（大小写、8.3 短名都不行），和预设一样。开头的 BOM 忽略 |
+| `description` | 是 | 字符串，空串可以 |
+| `parameters` | 是 | 对象，`type` 是 `object`。只查顶层：顶层不是 `object` 时，有的 provider 会拒绝每一次请求。内层不查，pi-ai 也不查，原样转发：内层写错时，进程第一次调用模型就失败（出路见设计稿的风险表） |
+| `command` | 是 | 字符串 |
+| `timeout` | 否 | 1 到 600 的整数，单位秒，默认 120 |
+| `output` | 否 | `text` 或 `content`，默认 `text` |
+
+- 别的字段、不是 JSON 对象、不是合法的 JSON，都报错。
+- 名字不能和内置工具、工具组重名。名字表由 `toolsFor` 算出，不另写一份：`read`、`write`、`edit`、`bash`、`self`、`handoff`、`post`、`spawn`、`stop_process`、`memory_get`、`memory_set`、`memory_delete`，加 `memory`、`agents`。
+- 大小上限，按 UTF-8 字节：一个定义的 `JSON.stringify({ description, parameters })` 不超过 `TOOL_DEF_MAX_BYTES`（16 KiB）；一个预设用到的全部定义，各自 `JSON.stringify(ToolDef)` 相加（含 `name`、`command` 和默认值）不超过 `TOOL_DEFS_MAX_BYTES`（64 KiB）。原因：定义冻结进 `state_json`，每条输入整行重写，`self` 和 `ps` 也要解析它；定义还占每次请求的上下文，启动检查要算上它（[kb-kernel](kb-kernel.md#启动检查和交接以后的检查)）。
+- 函数：`loadToolDef(dir, name)` 读一个，`loadToolDefs(dir, names)` 按顺序读一组并查总大小，`toolsDir()` 是 `~/.tau/tools`。读不出一律抛错，错误信息是原因。
+- 读取在 `loadPreset` 里：预设 `tools` 里不是内置工具和工具组的名字，都按工具定义读，读出的 `ToolDef` 冻结进快照的 `toolDefs`（[D43](kb-decisions.md#d43-第-7-步前一半工具定义的格式读取和冻结)）。读不出：`start` 回 `error`，`spawn` 是错误结果 `预设 <preset> 读不出：<原因>`，都什么都不建。
+- 工具定义目录由服务传进来（`ServeOptions.toolsDir`，`main.ts` 用 `~/.tau/tools/`，测试用临时目录），目录不存在不要紧，只有预设用到定义时才读。
+- 测试：运行见[工具定义测试](#工具定义测试testtoolstooldeftestts)。格式和读取：`test/presets/tooldefs.test.ts`（格式的每条规则、名字、重名、两个上限）、`test/presets/load.test.ts`（预设读定义）、`test/store/tooldefs.test.ts`（`start` 和 `spawn` 冻结、读不出）、`test/store/launch.test.ts`（启动检查算上定义）、`test/server/protocol.test.ts`（`start` 回 `error`）。
+
+### 运行工具定义
+
+整节是契约（[设计稿第 10 节](../docs/design/kernel-v2.md#10-冻结规则)）。
+
+- 参数先按 schema 校验（pi-ai 的 `validateToolArguments`），和内置工具一样。
+
+运行：
+
+- 工具定义都是库外工具，由执行器运行。
+- 它走 bash 的整套机制：用 bash 运行 `command`，工作目录、超时、中止、结束进程树、输出上限、环境变量（5.3）都一样。
+- 参数的 JSON 从标准输入给，写完就关。
+- 命令不读标准输入就退出时，写入会报 `EPIPE`，要忽略它。标准输入的流上要有错误监听器，否则 Node 会按未捕获异常让服务退出。
+- bash 工具不给标准输入，照旧是空设备。
+- `output: text`：和 bash 一样。标准输出和标准错误合在一起是结果。退出码不是 0 就是错误。
+- `output: content`：
+  - 标准输出和标准错误分开收。
+  - 退出码不是 0：结果是错误，文字和 `text` 时一样。
+  - 退出码是 0：丢掉标准错误。标准输出必须是一个 JSON 数组，每项是 `{ "type": "text", "text": … }` 或 `{ "type": "image", "path": … }`。
+  - 先解析 JSON，检查每一项的格式和图片的张数（不超过 `IMAGES_PER_MESSAGE`），再读图片文件。读之前先看大小，超过 `IMAGE_MAX_BYTES` 就不读。
+  - `path` 只认 Windows 的绝对路径：盘符开头或 UNC。msys 的 `/tmp/x.png` 不认，和预设的 `workdir` 一样。
+  - 文本项按顺序用换行连起来，成为结果的文本块。图片按 5.6 检查，存进 `blobs`。
+  - 不合法时，结果是错误：`content 输出不合法：<说明>`。不合法包括：标准输出超过上限被截断、不是合法 JSON、不是数组、项的格式不对、图片超过张数、`path` 不是 Windows 的绝对路径、文件读不出、图片不合格（5.6）。
+- MCP 不进内核（[设计稿第 6 节](../docs/design/kernel-v2.md#6-v2-也不做的)）。
+
+事务和崩溃：和 bash 一样。被中断就报“被中断”，不重做。带图的 `content` 结果，图片在执行器上报结果的事务里插入 `blobs`（[kb-executor](kb-executor.md#失败怎样变成结果)、[kb-store 的图片](kb-store.md#图片)）。
+
+实现和选定的细节（[D44](kb-decisions.md#d44-第-7-步后一半运行工具定义)）：
+
+- `runToolDef(def, args, workdir, signal, ctx, accepts)` 在 `src/tools/tooldef.ts`。它调用 `bash.ts` 的 `runCommand({ command, seconds, stdin?, split? }, …)`，bash 工具调用的是同一个函数，所以超时、中止、结束进程树、输出上限、环境变量只有一份代码。`runCommand` 返回合并的结果，`split` 时另外给出标准输出的原文和“是否被截断”。`args` 是校验之后的参数，`stdin` 是它的 `JSON.stringify`。
+- `timeout` 用定义的值（格式已查过 1 到 600 的整数）。
+- 标准输出的上限就是 bash 的输出上限：内存里头尾各 `KEEP_BYTES`，合起来不到 32 KiB。超过就是“标准输出超过上限，被截断了”。
+- 格式检查按顺序：先是数组，再逐项（`type` 是 `text` 且有字符串 `text`，或 `type` 是 `image` 且有字符串 `path`），再数图片，再查每个 `path`，最后读文件。项里多出的字段不管。
+- 读文件：先 `stat`，不是文件或超过 `IMAGE_MAX_BYTES` 就不读；再 `readFile`；最后整批交给 `checkImages`（和协议同一个函数，张数、base64、大小、类型、尺寸）。说明里的“第 N 张”是图片的序号，不是数组的下标。读不出的写“图片文件读不出：<path>（<原因>）”。
+- 结果：文本项用换行连成一个文本块，没有文本项就没有文本块；图片按顺序跟在后面，`data` 是 `blob:<hash>`，`mimeType` 是魔数算出的类型；字节放在返回值的 `images`，由执行器存。空数组是合法的，结果没有内容块。同一张图片出现两次是两个引用，一行 `blobs`。
+- 进程的模型不收图片（快照的 `input` 不含 `image`）：检查照做，不合格仍是错误；合格时不存图片，每张图在原位置换成 `[图片：模型不支持，已省略]` 一行，和文本项一起用换行连成一个文本块。所以这种进程的段里永远没有图片，和信一样（[kb-store 的图片](kb-store.md#图片)）。
+- `path` 可以用 `/` 或 `\` 分隔；`C:x.png`（盘符相对）、`\x.png`、`/e/x.png` 都不认。
+
 ## 架构
 
 ### 接口
@@ -33,7 +103,7 @@
 | `edit(args, workdir)` | `path`、`old`、`new`、`replaceAll?` | 否 |
 | `bash(args, workdir, signal, ctx)` | `command`、`timeout?`；`ctx` 是 `{ process, pipe }`：进程 ID 和服务实际监听的管道名 | 是 |
 
-- 都返回 `Promise<ToolResultContent>`，失败写成结果。
+- 都返回 `Promise<ToolResultContent>`，失败写成结果。`runToolDef(def, args, workdir, signal, ctx, accepts)` 返回 `ToolOutput`：`ToolResultContent` 加可选的 `images`（[运行工具定义](#运行工具定义)）。
 - 一个例外：`bash` 的命令含 NUL 字符时，`spawn` 同步抛出，promise 被拒绝。执行器把它变成 `工具执行失败：<信息>`（[kb-executor](kb-executor.md#失败怎样变成结果)）。
 - `workdir` 是预设快照的工作目录，一定是绝对路径。
 - 工具不读库，不写库。`bash` 只从执行器拿到进程 ID 和管道名，交给命令的环境，不用它们做别的。唯一的模块状态是 `bash.ts` 缓存的 shell 路径。
@@ -109,7 +179,7 @@
 
 ```text
 spawn(<根>\bin\bash.exe, ["-c", WRAPPER])
-  cwd = workdir；stdin 是空设备；stdout、stderr 是管道；不弹窗口
+  cwd = workdir；stdin 是空设备（工具定义：管道，写入参数的 JSON，写完就关）；stdout、stderr 是管道；不弹窗口
   env = 服务的环境变量（去掉 MSYS_NO_PATHCONV）+ TAU_PROCESS（进程 ID）+ TAU_PIPE（管道名）
         + TAU_PGID（pgid 文件路径）+ TAU_COMMAND（命令原文）
 WRAPPER = echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$TAU_COMMAND"
@@ -231,7 +301,7 @@ WRAPPER = echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$
 
 ## 认知模型
 
-- 一个工具 = 一个异步函数：参数加工作目录，变成一段文本和一个错误标记。
+- 一个工具 = 一个异步函数：参数加工作目录，变成内容块和一个错误标记。文件工具和 bash 的内容块只有一段文本；工具定义是 bash 加标准输入，`content` 输出还可以带图片。
 - 文件工具和模型的约定：`read` 给出的行，去掉行号和 `\t`，可以原样作为 `edit` 的 `old`。BOM 和 CRLF 的处理都是为了守住这一条。
 - bash 的约定：
   - 调用返回时，bash 已经退出。
@@ -255,12 +325,14 @@ WRAPPER = echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$
 | 路径 | 内容 |
 |---|---|
 | `src/tools/files.ts` | `read`、`write`、`edit` |
-| `src/tools/bash.ts` | `bash`：找 shell、包装脚本、输出、`killAll` |
+| `src/tools/bash.ts` | `bash`、`runCommand`：找 shell、包装脚本、输出、`killAll` |
+| `src/tools/tooldef.ts` | `runToolDef`：运行工具定义，解析 `content` 输出 |
 | `src/executor/actions.ts` | 校验参数，按名字调用工具（[kb-executor](kb-executor.md#运行工具actionsts)） |
 | `src/kernel/tools.ts` | 给模型看的工具描述（[kb-kernel](kb-kernel.md#工具描述)） |
 | `src/kernel/derive.ts` | `clip`、`MESSAGE_MAX_BYTES` |
 | `test/tools/files.test.ts` | 文件工具 |
 | `test/tools/bash.test.ts` | bash |
+| `test/tools/tooldef.test.ts` | 运行工具定义，用假命令 |
 
 - 服务层用真工具的测试（`e2e`、`pairing`、`kill`）见 [kb-service 的服务测试](kb-service.md#服务测试testserver)。
 - 命令：`npm test`。bash 的测试要求 `PATH` 上有 Git for Windows。
@@ -297,6 +369,21 @@ WRAPPER = echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$
 - 启动途中中止的测试限 90 秒。`killAll` 没结束启动器时，调用永远不返回，测试就挂住。
 
 改 `killAll` 后必须跑这五个测试。
+
+### 工具定义测试（`test/tools/tooldef.test.ts`）
+
+命令都是假的：`cat`、`echo`、`sleep`、读一个测试写好的 JSON 文件；图片是只有文件头的假图片（`test/images.ts`）。
+
+| 测试 | 证明 |
+|---|---|
+| 标准输入 | 参数的 JSON 从标准输入来，`cat` 读到结尾才退出；bash 工具仍是空设备 |
+| 命令不读标准输入 | 400 万字节的参数，命令 `echo` 立刻退出：写入的 `EPIPE` 被忽略，测试进程没有退出（拿掉错误监听器，这个测试就失败） |
+| 退出码、环境、超时、中止、输出上限 | 和 bash 一样：非零是错误且 stderr 合在输出里；`TAU_PROCESS`、`TAU_PIPE` 在，`MSYS_NO_PATHCONV` 不在；定义的 `timeout`；调用前和运行中中止；巨量输出只留头尾 |
+| `content` 输出 | 文本项连成一个文本块，退出码 0 时丢掉 stderr；退出码不是 0 时和 `text` 的结果完全一样；超时的结果；空数组 |
+| `content` 不合法 | 每一种：被截断、不是 JSON、空输出、不是数组、项不是对象、`type` 不认识和字段缺失或类型不对、图片超过张数（文件不存在也是这个原因：不读文件）、`path` 不是 Windows 的绝对路径（相对、msys、盘符相对、单斜杠）、文件不存在、是目录、UNC 路径读不出、超过 `IMAGE_MAX_BYTES`（不读）、类型不认识、尺寸超限、第二张不合格时说明里的序号、不收图片的模型同样检查 |
+| 图片 | 引用、类型、字节在 `images` 里；只有图片没有文本块；同一张出现两次；`path` 用正斜杠；不收图片的模型在原位置换成说明，没有 `images` |
+
+服务层：`test/server/protocol.test.ts` 的两个测试用真服务和真 bash 跑工具定义（参数走标准输入；图片进 `blobs`、模型收到 base64、库里是引用；不收图片的模型不存图片）。执行器层：`test/store/toolimages.test.ts` 和 `test/store/crash.test.ts` 的带图工具结果（[kb-executor](kb-executor.md#执行器测试teststoreexecutortestts)）。
 
 ## 坑点
 

@@ -28,10 +28,11 @@
 
 ```text
 ~/.tau/
-  tau.db       预设以外的全部数据
+  tau.db       预设和工具定义以外的全部数据（含图片：`blobs` 表）
   tau.db-wal   SQLite 的 WAL 文件
   tau.db-shm   SQLite 的 WAL 索引
   presets/     预设，纯文本，不在库里
+  tools/       工具定义，JSON 文件，不在库里
 ```
 
 - `tau serve` 先建出 `~/.tau/presets/`，再打开 `tau.db`（`src/main.ts`）。
@@ -84,7 +85,7 @@ CREATE TABLE blobs (
 | `mailbox` | 一条输入。`input_json` 是 `Input` 的 JSON | 见下 |
 | `effects` | 进程正在等的库外副作用：编号 `n` 和状态 | `handleNext` 和执行器 |
 | `memory` | 一个键现在的值 | `Memory` 的实现 `src/memory/kv.ts` |
-| `blobs` | 一块图片：哈希和原始字节，只增不删 | `startProcess`、`send` 和引用它的信在同一个事务里插入（`INSERT OR IGNORE`）；带图的工具结果以后由执行器上报结果的事务写（第 7 步） |
+| `blobs` | 一块图片：哈希和原始字节，只增不删 | `startProcess`、`send` 和引用它的信在同一个事务里插入（`INSERT OR IGNORE`）；带图的工具结果由执行器上报结果的事务写（[kb-executor](kb-executor.md#运行工具actionsts)） |
 
 - 段号从 1 开始。段内序号从 0 开始，每段重新计。
 - 没有删除进程或旧段的代码。旧段一直留在库里。
@@ -114,7 +115,7 @@ CREATE TABLE blobs (
 1. `PRAGMA journal_mode = WAL`。结果不是 `wal` 就关库并抛出。所以 `:memory:` 会被拒绝。
 2. `PRAGMA synchronous = FULL`。回执承诺“写进库才返回”，所以每次提交都要落盘。这是连接级设置，每次打开都设。
 3. 读 `PRAGMA user_version`：
-   - 0 是新库：在一个事务里建 6 张表，并写入 `SCHEMA_VERSION`（现在是 3）。
+   - 0 是新库：在一个事务里建 6 张表，并写入 `SCHEMA_VERSION`（现在是 4）。
    - 等于 `SCHEMA_VERSION`：直接用。
    - 其它值：关库并抛出，提示停掉服务、移走旧库、重启后重建。MVP 不做迁移。
 
@@ -159,7 +160,7 @@ CREATE TABLE blobs (
   - 目标进程的快照 `input` 含 `image`：`INSERT OR IGNORE INTO blobs`，每张图一个图片块，`data` 是 `blob:<hash>`，`mimeType` 是魔数算出的类型。文本为空时没有文本块。
   - 不含 `image`：不存图片，每张换成一行 `[图片：模型不支持，已省略]`，和文本合成一个文本块，行之间用换行。所以这种进程的段里永远没有图片。
 - `hash` 是原始字节的 sha256，64 位小写十六进制。同一张图只存一行。
-- 只增不删，和旧段一样。没人引用的行（例如以后带图的工具结果因为过时被丢掉）无害。
+- 只增不删，和旧段一样。没人引用的行无害（例如已经存下的图片，后来引用它的信被 `decide` 丢掉）。带图的工具结果的行在执行器上报结果的事务里写，结果过时被丢弃时，图片也不写。`putBlobs(db, images)` 是这两处共用的插入。
 - `readBlob(db, hash)` 只读，不开事务。服务的 `blob` 请求和执行器都用它。
 - 纯函数层里没有图片的字节：`decide`、`buildContext` 照样处理引用。字节只在执行器调用模型之前换进请求（[kb-executor](kb-executor.md#调用模型actionsts)）。
 
@@ -244,7 +245,7 @@ CREATE TABLE blobs (
 | 记忆 | `memory` |
 | 图片的字节 | `blobs`；引用在信、`turn.queued` 和段里，写成 `blob:<hash>` |
 
-存储有三个事务：`startProcess`、`send`、`handleNext`。`startProcess` 和 `send` 还写 `blobs`。执行器另有三个事务，只写 `effects` 和 `mailbox`。记忆的写入发生在 `handleNext` 的事务里。除了 `openDb` 建表，`src/` 里没有别的代码写库。
+存储有三个事务：`startProcess`、`send`、`handleNext`。`startProcess` 和 `send` 还写 `blobs`。执行器另有三个事务，只写 `effects` 和 `mailbox`；上报结果的事务还插入 `blobs`（带图的工具结果的图片）。记忆的写入发生在 `handleNext` 的事务里。除了 `openDb` 建表，`src/` 里没有别的代码写库。
 
 判断一次修改是否越界：
 
@@ -397,7 +398,7 @@ CREATE TABLE blobs (
 
 两处规则的例外（理由和别的做法见 [D36](kb-decisions.md#d36-第-4-步第二部分进程之间的工具的执行和两处例外)）：
 
-- “库内工具只碰库”：`spawn` 还读预设文件（以后还有工具定义文件），查工作目录。
+- “库内工具只碰库”：`spawn` 还读预设文件和它用到的工具定义文件，查工作目录。
 - “处理一条输入只读进程记录和当前工作段”：`post`、`stop_process` 读收件人的进程记录，`spawn` 读文件。
 
 ## 入口

@@ -13,9 +13,14 @@ export const IMAGE_UNSUPPORTED = "[图片：模型不支持，已省略]";
 export function letterContent(db: DatabaseSync, text: string, images: readonly Image[], accepts: boolean): Content[] {
   if (images.length === 0) return textContent(text);
   if (!accepts) return textContent([...(text === "" ? [] : [text]), ...images.map(() => IMAGE_UNSUPPORTED)].join("\n"));
+  putBlobs(db, images);
+  return [...(text === "" ? [] : textContent(text)), ...images.map((i): Content => ({ type: "image", data: BLOB_PREFIX + i.hash, mimeType: i.mimeType }))];
+}
+
+/** 存图片，已有的不动。必须在调用方的事务里调用。 */
+export function putBlobs(db: DatabaseSync, images: readonly Image[]): void {
   const insert = db.prepare("INSERT OR IGNORE INTO blobs (hash, data) VALUES (?, ?)");
   for (const i of images) insert.run(i.hash, i.bytes);
-  return [...(text === "" ? [] : textContent(text)), ...images.map((i): Content => ({ type: "image", data: BLOB_PREFIX + i.hash, mimeType: i.mimeType }))];
 }
 
 /** 读一块。不开事务。 */

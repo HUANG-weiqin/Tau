@@ -1,6 +1,6 @@
 // 工具描述是纯数据：名称、说明、参数，以及它是库内还是库外的副作用（见 .knowledge/kb-tools.md）。
 import type { Tool } from "@earendil-works/pi-ai";
-import type { PresetSnapshot } from "./types.ts";
+import type { PresetSnapshot, PresetTool } from "./types.ts";
 
 export interface ToolSpec {
   name: string;
@@ -121,17 +121,20 @@ const HANDOFF: ToolSpec = {
   inStore: true,
 };
 
-/** 预设能用的工具，按固定顺序：read、write、edit、bash，memory 组，agents 组；`self` 和 `handoff` 总在。 */
-export function toolsFor(preset: PresetSnapshot): ToolSpec[] {
+type Tools = Pick<PresetSnapshot, "tools" | "toolDefs">;
+
+/** 预设能用的工具，按固定顺序：read、write、edit、bash，memory 组，agents 组；`self` 和 `handoff` 总在；最后是工具定义，按预设里的顺序，都是库外工具。 */
+export function toolsFor(preset: Tools): ToolSpec[] {
   const out: ToolSpec[] = [];
-  for (const t of [READ, WRITE, EDIT, BASH]) if (preset.tools.includes(t.name as PresetSnapshot["tools"][number])) out.push(t);
+  for (const t of [READ, WRITE, EDIT, BASH]) if (preset.tools.includes(t.name as PresetTool)) out.push(t);
   if (preset.tools.includes("memory")) out.push(...MEMORY);
   if (preset.tools.includes("agents")) out.push(...AGENTS);
   out.push(SELF, HANDOFF);
+  for (const { name, description, parameters } of preset.toolDefs) out.push({ name, description, parameters, inStore: false });
   return out;
 }
 
 /** 预设里有这个工具时返回它的描述；不认识或预设里没有时返回 undefined。 */
-export function findTool(preset: PresetSnapshot, name: string): ToolSpec | undefined {
+export function findTool(preset: Tools, name: string): ToolSpec | undefined {
   return toolsFor(preset).find((t) => t.name === name);
 }

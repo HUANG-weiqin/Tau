@@ -61,7 +61,7 @@ async function setup(t: TestContext, presets: Record<string, string>, fauxOption
     await svc?.close();
     rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
-  svc = await serve({ pipe, dbPath: join(dir, "tau.db"), presetsDir, models, memory: sqliteMemory });
+  svc = await serve({ pipe, dbPath: join(dir, "tau.db"), presetsDir, toolsDir: join(dir, "tools"), models, memory: sqliteMemory });
   svc.server.on("connection", (s: Socket) => {
     sockets.add(s);
     s.on("close", () => sockets.delete(s));

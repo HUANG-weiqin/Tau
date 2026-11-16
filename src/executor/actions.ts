@@ -1,13 +1,14 @@
 // 真正的动作：调用模型、运行库外工具（见 .knowledge/kb-executor.md、.knowledge/kb-tools.md）。
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import type { Models } from "@earendil-works/pi-ai";
-import { buildContext, toolDefinitions } from "../kernel/context.ts";
+import { buildContext, toolDescriptions } from "../kernel/context.ts";
 import { outputMax } from "../kernel/derive.ts";
 import { textContent } from "../kernel/types.ts";
 import type { ProcessId } from "../kernel/types.ts";
 import { resolveImages } from "../store/blobs.ts";
 import { bash } from "../tools/bash.ts";
 import { edit, read, write } from "../tools/files.ts";
+import { runToolDef } from "../tools/tooldef.ts";
 import type { Actions } from "./executor.ts";
 
 /** 模型请求在拿到成功的响应之前的重试次数，交给 pi-ai（设计稿 5.7）。 */
@@ -37,7 +38,7 @@ export function createActions(models: Models, onText: (id: ProcessId, n: number,
     },
     async runTool(job, call, signal) {
       const { workdir } = job.process.preset;
-      const tool = toolDefinitions(job.process.preset).find((t) => t.name === call.name);
+      const tool = toolDescriptions(job.process.preset).find((t) => t.name === call.name);
       if (!tool) return { content: textContent(`工具 ${call.name} 不存在，或者预设里没有它。`), isError: true };
       let args;
       try {
@@ -54,8 +55,11 @@ export function createActions(models: Models, onText: (id: ProcessId, n: number,
           return edit(args, workdir);
         case "bash":
           return bash(args, workdir, signal, { process: job.process.id, pipe });
-        default:
-          return { content: textContent(`工具 ${call.name} 不由执行器运行。`), isError: true };
+        default: {
+          const def = job.process.preset.toolDefs.find((d) => d.name === call.name);
+          if (!def) return { content: textContent(`工具 ${call.name} 不由执行器运行。`), isError: true };
+          return runToolDef(def, args, workdir, signal, { process: job.process.id, pipe }, job.process.preset.input.includes("image"));
+        }
       }
     },
   };

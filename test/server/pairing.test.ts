@@ -57,7 +57,7 @@ function setup(t: TestContext): Env {
 
 /** 启动服务，并记下服务端的每个连接：模拟崩溃时由“操作系统”断开它们。 */
 async function boot(e: Env): Promise<{ svc: Service; sockets: Set<Socket> }> {
-  const svc = await serve({ pipe: e.pipe, dbPath: e.dbPath, presetsDir: e.presets, models: e.models, memory: sqliteMemory });
+  const svc = await serve({ pipe: e.pipe, dbPath: e.dbPath, presetsDir: e.presets, toolsDir: join(e.presets, "..", "tools"), models: e.models, memory: sqliteMemory });
   e.services.push(svc);
   const sockets = new Set<Socket>();
   svc.server.on("connection", (s: Socket) => {

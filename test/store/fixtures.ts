@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import type { TestContext } from "node:test";
 import type { JsonObject } from "@earendil-works/pi-ai";
-import type { Actions, Executor, Job } from "../../src/executor/executor.ts";
+import type { Actions, Executor, Job, ToolOutput } from "../../src/executor/executor.ts";
 import type { AssistantMessage, Input, Memory, Message, PresetSnapshot, ToolCall, ToolResultContent, Versioned } from "../../src/kernel/types.ts";
 import { openDb } from "../../src/store/db.ts";
 import { res } from "../plain.ts";
@@ -17,6 +17,7 @@ export const PRESET: PresetSnapshot = {
   workdir: "E:/work",
   model: "faux/model-1",
   tools: ["read", "memory"],
+  toolDefs: [],
   prompt: "你是测试助手。",
   contextWindow: 1_000_000,
   input: ["text"],
@@ -132,7 +133,7 @@ export interface Gate {
 }
 
 /** 由测试决定何时完成的假动作。中止时拒绝。 */
-export function gated(model: (job: Job) => AssistantMessage, tool: (job: Job, call: ToolCall) => ToolResultContent): Actions & { gates: Gate[] } {
+export function gated(model: (job: Job) => AssistantMessage, tool: (job: Job, call: ToolCall) => ToolOutput): Actions & { gates: Gate[] } {
   const gates: Gate[] = [];
   const gate = <T>(job: Job, signal: AbortSignal, make: () => T) =>
     new Promise<T>((resolve, reject) => {

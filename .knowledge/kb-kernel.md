@@ -13,7 +13,7 @@
 - 派生值：上下文用量、输出上限、换段阈值、待执行的工具调用、本段开始时间、最终回复、结束原因的文字。
 - `buildContext`：模型请求。
 - `observe`：投影。
-- 工具描述：名称、参数、库内还是库外。
+- 工具描述：名称、参数、库内还是库外。包括快照里冻结的工具定义。
 
 它不负责：
 
@@ -59,7 +59,7 @@ type Phase =
 type Ended = "done" | "stepLimit" | "stopped" | { error: string };
 ```
 
-- `PresetSnapshot` 有 `id`、`workdir`、`model`（`<provider>/<model-id>`）、`tools`、`prompt`、`contextWindow`、`input`（模型能收的输入，`text` 和 `image` 的子集），还有可选的 `thinking`（pi-ai 的思考级别，预设没写就没有这个键）。`tools` 是 `read`、`write`、`edit`、`bash`、`memory`、`agents` 的子集：`agents` 是一组工具（`post`、`spawn`、`stop_process`），不是单个工具。预设文件的格式见[设计稿第 2 节](../docs/design/mvp.md#2-预设)。
+- `PresetSnapshot` 有 `id`、`workdir`、`model`（`<provider>/<model-id>`）、`tools`、`prompt`、`contextWindow`、`input`（模型能收的输入，`text` 和 `image` 的子集），还有可选的 `thinking`（pi-ai 的思考级别，预设没写就没有这个键）。`tools` 是 `read`、`write`、`edit`、`bash`、`memory`、`agents` 的子集：`agents` 是一组工具（`post`、`spawn`、`stop_process`），不是单个工具。`toolDefs` 是预设 `tools` 里写的工具定义（`ToolDef`：`name`、`description`、`parameters`、`command`、`timeout`、`output`，默认值已补上），按写的顺序；没用时是空数组。预设的 `tools` 一行里，内置工具进 `tools`，其余的名字都是工具定义，进 `toolDefs`（[D43](kb-decisions.md#d43-第-7-步前一半工具定义的格式读取和冻结)）。预设文件的格式见[设计稿第 2 节](../docs/design/mvp.md#2-预设)，工具定义的格式见 [kb-tools](kb-tools.md#工具定义)。
 - `segment.memoryView` 是开段那一刻的记忆视图。以后算不出来，所以存。
 - `turn.steps` 必须存：一轮可以跨越换段。
 - `turn.queued` 存信件原样，写进段时才渲染。`turn.hops` 是本轮已经写进段的信的最大跳数，`turn.replyTo` 是本轮结束时要寄回信的进程，去重。规则见[设计稿 5.3](../docs/design/kernel-v2.md#53-进程之间寄信派生停止回信跳数)。
@@ -102,7 +102,7 @@ interface Env { now: Instant; memoryView: string }
 | `effectOf(p, seg)` | `decide.ts` | `idle`：`null`。`awaitingModel`：`callModel(lastEffect, purpose)`。`awaitingTool`：`runTool(lastEffect, 第一个待执行的调用)` |
 | `buildContext(p, seg)`、`tailStart(seg)`、`omitOldImages(messages)` | `context.ts` | 模型请求；段末用户消息的起点；请求里成批省略旧图 |
 | `observe(p, seg, siblings, now)` | `observe.ts` | 投影 |
-| `toolsFor(preset)`、`findTool(preset, name)` | `tools.ts` | 工具描述 |
+| `toolsFor(preset)`、`findTool(preset, name)` | `tools.ts` | 工具描述，含工具定义。参数只要 `tools` 和 `toolDefs` |
 | `contextUsed`、`messageBytes`、`tokens`、`outputMax`、`handoffThreshold`、`resultReserve`、`fixedTokens`、`startError`、`newSegmentUsed`、`pendingCalls`、`handoffRequested`、`segmentStartedAt`、`usageOf`、`clip`、`utf8Bytes` | `derive.ts` | 派生值和字节工具 |
 | `finalReply(seg)`、`endedText(ended)`、`endedReason(error)` | `derive.ts` | [最终回复](#最终回复)；[结束原因的文字](#结束原因的文字) |
 
@@ -117,7 +117,7 @@ interface Env { now: Instant; memoryView: string }
 `buildContext`：
 
 - 系统提示词由三部分用空行连接：预设提示词；`工作目录：<workdir>`；记忆视图不为空时，`## 记忆（开段时的快照）` 加视图。
-- 工具：`toolDefinitions(preset)`，只放 `name`、`description`、`parameters`。交接调用带同样的工具，请求前缀不变。
+- 工具：`toolDescriptions(preset)`，只放 `name`、`description`、`parameters`。工具定义的 `command`、`timeout`、`output` 不给模型。交接调用带同样的工具，请求前缀不变。
 - 消息就是工作段。`awaitingModel(handoff)` 时：
   - 去掉段末连续的用户消息（从 `tailStart` 起）。下标 0 总保留：第一条消息是写交接说明的依据。段末没有用户消息时什么都不去掉。
   - 末尾加一条不入库的用户消息 `HANDOFF_INSTRUCTION`。时间戳取保留下来的最后一条消息的，段空时取 `createdAt`。
@@ -141,9 +141,10 @@ interface Env { now: Instant; memoryView: string }
 | `stop_process` | `process` | 是 | `tools` 含 `agents` |
 | `self` | 无 | 是 | 总在 |
 | `handoff` | 无 | 是 | 总在 |
+| 工具定义 | 定义里的 `parameters` | 否 | 预设 `tools` 里写了它的名字 |
 
 - 参数都是 `additionalProperties: false` 的对象。
-- 顺序固定，按上表。
+- 顺序固定，按上表：工具定义最后，在 `handoff` 之后，按预设 `tools` 里的顺序。
 - `memory_set` 的描述引用 `tools.ts` 里的三个记忆上限：`MEMORY_KEY_MAX_BYTES`、`MEMORY_VALUE_MAX_BYTES`、`MEMORY_VIEW_MAX_BYTES`。检查在记忆的实现里（[kb-memory.md](kb-memory.md#上限在哪里检查)）。
 - `findTool` 对不认识的工具和预设里没有的工具都返回 `undefined`。
 
@@ -161,7 +162,7 @@ interface Env { now: Instant; memoryView: string }
 | 一次回复的输出上限 | `outputMax(preset)` | `floor(contextWindow / 8)`。执行器请求 `min(model.maxTokens, outputMax)`（[kb-executor.md](kb-executor.md#调用模型actionsts)） |
 | 换段阈值 | `handoffThreshold(preset)` | `contextWindow − 2 × outputMax − R − MARGIN_TOKENS`，R 是 `resultReserve(preset)`，见[换段阈值](#换段阈值) |
 | R | `resultReserve(preset)` | `tokens(MESSAGE_MAX_BYTES)`；`input` 含 `image` 时再加 `IMAGES_PER_MESSAGE × IMAGE_TOKENS`。只看快照 |
-| 固定部分 | `fixedTokens(preset)` | `tokens(预设提示词 + 工作目录那一行 + JSON.stringify(工具描述)的字节)`，口径和 `contextUsed` 一样 |
+| 固定部分 | `fixedTokens(preset)` | `tokens(预设提示词 + 工作目录那一行 + JSON.stringify(工具描述)的字节)`，口径和 `contextUsed` 一样。工具描述含工具定义，所以启动检查也算上它们 |
 | 启动检查 | `startError(preset)` | `fixedTokens + 记忆的上界 < handoffThreshold` 时返回 `null`，否则返回原因（含三个数）。记忆的上界：预设含 `memory` 时是 `tokens(MEMORY_VIEW_MAX_BYTES + 标题的字节)`，否则 0。`start` 和 `spawn` 在存储层调用（[kb-store](kb-store.md)） |
 | 假想的新段 | `newSegmentUsed(p, view, first)` | 新段只有 `first` 一条消息时的用量，加固定部分和记忆各多少 token。交接以后的检查用 |
 | 是否到阈值 | 内部 `overThreshold` | `contextUsed >= handoffThreshold` |
@@ -241,7 +242,7 @@ W 是 `preset.contextWindow`。快照里只冻结它和 `input`，不冻结模�
 
 - 其余的列照式子代入 R，余下不变。
 - 余下总是 `MARGIN_TOKENS` − I = 3,862，先给 S。S 用不完的部分留给消息框架和估算误差。
-- 提示词空间：最坏的新段（全部工具、16 KiB 的记忆视图、32 KiB 的第一条消息）里，预设提示词还能有多少字节而不立即再换段。收图片时，最坏的第一条还带 `IMAGES_PER_MESSAGE` 张图，多算 2 × `IMAGE_TOKENS` × `BYTES_PER_TOKEN` = 20,000 字节，上表已扣除。
+- 提示词空间：最坏的新段（全部内置工具、16 KiB 的记忆视图、32 KiB 的第一条消息）里，预设提示词还能有多少字节而不立即再换段。表里不含工具定义：每个工具定义的说明和参数的 JSON 字节，都要从提示词空间里扣。一个预设最多 `TOOL_DEFS_MAX_BYTES`（64 KiB，按整个 `ToolDef` 算，所以是上界）。收图片时，最坏的第一条还带 `IMAGES_PER_MESSAGE` 张图，多算 2 × `IMAGE_TOKENS` × `BYTES_PER_TOKEN` = 20,000 字节，上表已扣除。
 
 ### 请求里的图片
 
@@ -528,7 +529,8 @@ type PhaseView =
 | `src/kernel/types.ts` | 全部类型、`unreachable` |
 | `src/kernel/decide.ts` | `start`、`decide`、`effectOf`、`continueTurn`、`endTurn`、`sendReplies`（回信）、`endedNote`（上一轮的说明）、`header`、`render`、`fit`、`userMessage`、`toolResult`、`addUsage`、`INTERRUPTED`、`SKIPPED` |
 | `src/kernel/derive.ts` | 派生值、`clip`、`utf8Bytes`、`finalReply`、`endedText`、`endedReason`、常量 |
-| `src/kernel/context.ts` | `buildContext`、`tailStart`、`systemPrompt`、`toolDefinitions`、交接文本 |
+| `src/kernel/context.ts` | `buildContext`、`tailStart`、`systemPrompt`、`toolDescriptions`、交接文本 |
+| `src/presets/tooldefs.ts` | 读工具定义（不在 `kernel` 里，格式见 [kb-tools](kb-tools.md#工具定义)） |
 | `src/kernel/observe.ts` | `observe` |
 | `src/kernel/tools.ts` | 工具描述、记忆的三个上限 |
 | `test/invariants.ts` | `assertInvariants` |

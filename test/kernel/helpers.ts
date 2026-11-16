@@ -11,6 +11,7 @@ export function preset(over: Partial<PresetSnapshot> = {}): PresetSnapshot {
     workdir: "E:/work",
     model: "faux/test-model",
     tools: ["read", "write", "edit", "bash", "memory"],
+    toolDefs: [],
     prompt: "你是测试用的助手。",
     contextWindow: 200_000,
     input: ["text"],

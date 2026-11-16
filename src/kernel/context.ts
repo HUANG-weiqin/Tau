@@ -40,7 +40,7 @@ export function systemPrompt(p: Process): string {
   return fixedPrompt(p.preset) + memorySection(p.segment.memoryView);
 }
 
-export function toolDefinitions(preset: PresetSnapshot): Tool[] {
+export function toolDescriptions(preset: PresetSnapshot): Tool[] {
   return toolsFor(preset).map(({ name, description, parameters }) => ({ name, description, parameters }));
 }
 
@@ -72,5 +72,5 @@ export function buildContext(p: Process, segment: readonly Message[]): ModelRequ
     messages.push({ role: "user", content: HANDOFF_INSTRUCTION, timestamp: messages.at(-1)?.timestamp ?? p.createdAt });
   }
   messages = omitOldImages(messages);
-  return { systemPrompt: systemPrompt(p), messages, tools: toolDefinitions(p.preset) };
+  return { systemPrompt: systemPrompt(p), messages, tools: toolDescriptions(p.preset) };
 }

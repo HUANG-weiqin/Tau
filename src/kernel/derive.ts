@@ -1,5 +1,5 @@
 // 能从工作段算出来的值都在这里算，不存（见 .knowledge/kb-kernel.md）。
-import { fixedPrompt, MEMORY_HEADING, memorySection, systemPrompt, toolDefinitions } from "./context.ts";
+import { fixedPrompt, MEMORY_HEADING, memorySection, systemPrompt, toolDescriptions } from "./context.ts";
 import { MEMORY_VIEW_MAX_BYTES } from "./tools.ts";
 import { unreachable } from "./types.ts";
 import type { AssistantMessage, Ended, Instant, Message, PresetSnapshot, Process, ToolCall } from "./types.ts";
@@ -42,7 +42,7 @@ export function handoffThreshold(p: PresetSnapshot): number {
 
 /** 固定部分的 token：预设提示词、工作目录那一行、工具描述。口径和 `contextUsed` 一样。 */
 export function fixedTokens(p: PresetSnapshot): number {
-  return tokens(utf8Bytes(fixedPrompt(p)) + utf8Bytes(JSON.stringify(toolDefinitions(p))));
+  return tokens(utf8Bytes(fixedPrompt(p)) + utf8Bytes(JSON.stringify(toolDescriptions(p))));
 }
 
 /** 启动检查（设计稿 5.6）：固定部分加记忆的上界要低于阈值。通过时返回 null，否则返回失败的原因。 */
@@ -116,7 +116,7 @@ export function contextUsed(p: Process, segment: readonly Message[]): number {
     const m = segment[i]!;
     if (m.role === "assistant" && usageOf(m) > 0) return usageOf(m) + tokens(bytes(segment.slice(i + 1)));
   }
-  return tokens(utf8Bytes(systemPrompt(p)) + utf8Bytes(JSON.stringify(toolDefinitions(p.preset))) + bytes(segment));
+  return tokens(utf8Bytes(systemPrompt(p)) + utf8Bytes(JSON.stringify(toolDescriptions(p.preset))) + bytes(segment));
 }
 
 /** 本段开始时间：本段第一条消息的时间戳。 */

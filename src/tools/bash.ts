@@ -1,4 +1,6 @@
 import { execFile, spawn } from "node:child_process";
+import type { ChildProcessByStdio } from "node:child_process";
+import type { Readable, Writable } from "node:stream";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
@@ -45,6 +47,7 @@ function output() {
     dropped += Math.max(tail.length - KEEP_BYTES, 0);
     tail = tail.subarray(Math.max(tail.length - KEEP_BYTES, 0));
   };
+  const raw = (): { text: string; truncated: boolean } => ({ text: Buffer.concat([head, tail]).toString("utf8"), truncated: dropped > 0 });
   const text = (status: string): string => {
     const body =
       dropped === 0
@@ -52,7 +55,7 @@ function output() {
         : `${head.toString("utf8")}\n…（中间省略 ${dropped} 字节）…\n${tail.toString("utf8")}`;
     return clip(`${body}${body === "" || body.endsWith("\n") ? "" : "\n"}[${status}]`);
   };
-  return { push, text };
+  return { push, text, raw };
 }
 
 // 运行辅助程序，返回它的 stdout；出错也不抛出。
@@ -96,14 +99,40 @@ const commandEnv = (ctx: BashContext): NodeJS.ProcessEnv => ({
 export async function bash(args: { command: string; timeout?: number }, workdir: string, signal: AbortSignal, ctx: BashContext): Promise<ToolResultContent> {
   const seconds = Math.min(args.timeout ?? DEFAULT_SECONDS, MAX_SECONDS);
   if (!(seconds > 0)) return fail(`timeout 必须是正数（秒）：${args.timeout}`);
-  if (signal.aborted) return fail("已中止，命令没有运行");
+  return (await runCommand({ command: args.command, seconds }, workdir, signal, ctx)).result;
+}
+
+/** 一次命令的运行：`stdin` 有值时从标准输入给，写完就关；`split` 时另外单独收标准输出。 */
+export interface CommandSpec {
+  command: string;
+  /** 已经查过：正数，不超过 600。 */
+  seconds: number;
+  stdin?: string;
+  split?: boolean;
+}
+
+/** `result` 和 bash 工具的一样（合并的输出加状态行）。`stdout` 只在 `split` 且命令运行过时有：标准输出的原文，和它是否被截断。 */
+export interface CommandRun {
+  result: ToolResultContent;
+  stdout?: { text: string; truncated: boolean };
+}
+
+/** bash 工具和工具定义共用的运行机制（设计稿 5.5）：超时、中止、结束进程树、输出上限、环境变量都一样。 */
+export async function runCommand(spec: CommandSpec, workdir: string, signal: AbortSignal, ctx: BashContext): Promise<CommandRun> {
+  const { seconds } = spec;
+  if (signal.aborted) return { result: fail("已中止，命令没有运行") };
   const exe = findShell();
-  if (exe === null) return fail("需要 Git for Windows：PATH 上找不到 git.exe，也就找不到它的 bin\\bash.exe");
+  if (exe === null) return { result: fail("需要 Git for Windows：PATH 上找不到 git.exe，也就找不到它的 bin\\bash.exe") };
   const out = output();
+  const stdoutOnly = output();
   const pgidFile = path.join(os.tmpdir(), `tau-bash-${randomUUID()}.pgid`);
   return new Promise((resolve) => {
-    const env = { ...commandEnv(ctx), TAU_PGID: pgidFile, TAU_COMMAND: args.command };
-    const child = spawn(exe, ["-c", WRAPPER], { cwd: workdir, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    const env = { ...commandEnv(ctx), TAU_PGID: pgidFile, TAU_COMMAND: spec.command };
+    const stdio: ["ignore" | "pipe", "pipe", "pipe"] = [spec.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"];
+    const child = spawn(exe, ["-c", WRAPPER], { cwd: workdir, env, stdio, windowsHide: true }) as ChildProcessByStdio<Writable | null, Readable, Readable>;
+    // 命令不读标准输入就退出时，写入会报 EPIPE。没有错误监听器，Node 会把它当未捕获异常，服务就退出了。
+    child.stdin?.on("error", () => {});
+    if (spec.stdin !== undefined) child.stdin?.end(spec.stdin);
     let code: number | null = null;
     // 正在结束进程时，它完成后给出结束的原因。
     let killing: Promise<string> | undefined;
@@ -118,15 +147,19 @@ export async function bash(args: { command: string; timeout?: number }, workdir:
     // 会被调用多次（error、close、排空计时器）；resolve 只认第一次，其余步骤重复执行无害。
     const finish = (result: ToolResultContent): void => {
       stopWatching();
+      child.stdin?.destroy();
       child.stdout.destroy();
       child.stderr.destroy();
-      void rm(pgidFile, { force: true }).catch(() => {}).then(() => resolve(result));
+      void rm(pgidFile, { force: true }).catch(() => {}).then(() => resolve({ result, ...(spec.split ? { stdout: stdoutOnly.raw() } : {}) }));
     };
     const end = async (): Promise<void> => {
       const why = await killing;
       finish(why !== undefined ? fail(out.text(why)) : { content: textContent(out.text(`退出码 ${code ?? -1}`)), isError: code !== 0 });
     };
-    child.stdout.on("data", out.push);
+    child.stdout.on("data", (chunk: Buffer) => {
+      out.push(chunk);
+      if (spec.split) stdoutOnly.push(chunk);
+    });
     child.stderr.on("data", out.push);
     child.on("error", (e) => finish(fail(`无法启动 bash（工作目录 ${workdir}）：${e.message}`)));
     child.on("exit", (c) => {
