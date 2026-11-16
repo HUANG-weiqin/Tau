@@ -1301,7 +1301,7 @@ fork 原来在这张表里，已进内核，见 [D49](#d49-fork-进内核)。
 |---|---|
 | 代码量预算：不算测试，`src/` 不超过 3000 行 | 逼着做取舍；写到一半时校准 |
 | 修改 harness 自身代码，按普通项目工作，用户审核后再加载 | 不需要特殊机制 |
-| 工具顺序执行，不并行 | 简单、确定 |
+| 工具顺序执行，不并行 | 简单、确定。它已随契约冻结：进程一次只等一个副作用，`effects` 每个进程最多一行（[kb-contract 的契约清单](kb-contract.md#契约清单)）。要改按改契约的程序做，不受上面“随时可以改”约束 |
 | 工具定义的两个大小上限：一个定义 `TOOL_DEF_MAX_BYTES` 16 KiB，一个预设用到的全部定义 `TOOL_DEFS_MAX_BYTES` 64 KiB（[kb-tools](kb-tools.md#工具定义)） | 定义冻结进每个 `state_json`，每条输入整行重写，还占每次请求的上下文。放宽不算改契约，先在决策记录写理由；收紧算改契约，不受上面“随时可以改”约束（[kb-contract](kb-contract.md#契约清单)） |
 | `WATCH_BUFFER_MAX` 1 MiB（[kb-service](kb-service.md#历史和订阅)） | `watch` 订阅方的写缓冲上限。内部常量，调它不算改契约 |
 | `MODEL_RETRIES` 5（[kb-executor](kb-executor.md#调用模型actionsts)） | 交给 pi-ai 的重试次数。内部常量，调它不算改契约 |
