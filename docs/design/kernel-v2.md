@@ -146,7 +146,7 @@ function decide(p, seg, input, env): {
   - `process`：另一个进程。只由库内工具和回信产生（5.3）。
 - 头、合并、两种形状、张数上限和省略行、结束原因的文字：第 2 步已实现，细节和规则见 [kb-kernel](../../.knowledge/kb-kernel.md#信的头和合并)（[两种形状](../../.knowledge/kb-kernel.md#消息的两种形状)、[张数和省略行](../../.knowledge/kb-kernel.md#张数和省略行)、[结束原因的文字](../../.knowledge/kb-kernel.md#结束原因的文字)）。
 - 回信里存进信件的 `ended` 已按 `endedReason` 处理，整页的报错不进收件人的信箱：第 4 步已实现，见 [kb-kernel 的回信](../../.knowledge/kb-kernel.md#回信)。
-- 还没实现的：每封信的张数在入口限制（5.6，第 6 步）。
+- 每封信的张数在入口限制：已实现（第 6 步），见 [kb-service 的图片](../../.knowledge/kb-service.md#图片)。
 
 上层做的代价：做不到。信怎样写进工作段，只有 `decide` 能决定。
 
@@ -209,7 +209,7 @@ function decide(p, seg, input, env): {
 - 寄信方从工具结果知道寄出了。收信方看到带头的信，从头知道要不要回信。
 - 投影和 `self`：每个进程带 `parent`；运行中的子进程各一行，空闲的只给个数。空闲子进程的 ID，从协议 `ps` 的投影里按 `parent` 找（第 8 节“列出会话”）。已实现（第 5 步），文字格式见 [kb-store 的 self](../../.knowledge/kb-store.md#self)。
 
-测试：已实现（第 4 步第二部分），见 `test/store/agents.test.ts`、`test/store/replies.test.ts`、`test/kernel/replies.test.ts`、`test/store/crash.test.ts` 和 `test/server/e2e.test.ts`。还没做的：`spawn` 的启动检查不通过（第 6 步补）。
+测试：已实现（第 4 步第二部分），见 `test/store/agents.test.ts`、`test/store/replies.test.ts`、`test/kernel/replies.test.ts`、`test/store/crash.test.ts` 和 `test/server/e2e.test.ts`。`spawn` 的启动检查不通过的测试在 `test/store/launch.test.ts`。
 
 ### 5.4 主动换段
 
@@ -282,112 +282,41 @@ function decide(p, seg, input, env): {
 
 ### 5.6 内容块和图片
 
-入口：
+入口和存储：协议的 `start`、`send` 已实现（第 6 步），见 [kb-service 的图片](../../.knowledge/kb-service.md#图片)（入口检查：张数、大小、类型、尺寸，按这个顺序）和 [kb-store 的图片](../../.knowledge/kb-store.md#图片)（`blobs` 表、引用、不收图片的模型），取舍见 [D41](../../.knowledge/kb-decisions.md#d41-第-6-步后一半的选择)。
 
-- 图片只从两个入口进来：协议的 `start`、`send`；工具定义的 `content` 输出。
-- 入口按顺序检查，不合格就拒绝。协议回 `error`，工具定义的结果是错误。这些条件是契约（第 10 节）。
-  1. 张数：一个请求、一次 `content` 输出，最多 `IMAGES_PER_MESSAGE`（暂定 2）张。
-  2. 大小：每张不超过 `IMAGE_MAX_BYTES`（暂定 1.5 MiB）。
-  3. 类型：按文件头的魔数判断，只收 png、jpeg、gif、webp。不信声明的类型和扩展名。
-  4. 尺寸：宽和高都不超过 `IMAGE_MAX_EDGE`（暂定 2000 像素）。
-     - 尺寸从文件头读：PNG 的 IHDR、GIF 的逻辑屏幕描述、WebP 的 VP8、VP8L、VP8X 块，都在开头固定的位置。
-     - JPEG 要从头逐段跳过标记段（APPn、EXIF 等），找到 SOFn，包括渐进式的 SOF2。
-     - 不需要新依赖。
-- 为什么入口要查：不合格的图片进了段，每次调用模型都会失败，连交接调用也失败，进程就永远卡住。例如 Anthropic 拒绝边长超过 8000 像素的图。2000 像素和 pi-ai 模型目录给每个收图片的模型定的缩放尺寸一样。截图类的工具定义要自己先缩小。
-- 目标进程的模型不收图片（快照的 `input` 里没有 `image`）：入口照样先按顺序检查，不合格就拒绝。都合格，才把每张图换成一行 `[图片：模型不支持，已省略]`，不存图片。所以这种进程的段里永远没有图片。
+- 图片只从两个入口进来：协议的 `start`、`send`；工具定义的 `content` 输出。后一个入口第 7 步做：它的不合格是错误结果，检查和协议的完全一样，函数是同一个（`checkImages`）。
+- 为什么入口要查：不合格的图片进了段，每次调用模型都会失败，连交接调用也失败，进程就永远卡住。例如 Anthropic 拒绝边长超过 8000 像素的图。2000 像素和 pi-ai 模型目录给每个收图片的模型定的缩放尺寸一样。截图类的工具定义要自己先缩小。这些条件是契约（第 10 节）。
 - 文件头完好、数据损坏的图片仍可能进段。出路见风险表。
+- 带图的工具结果：`blobs` 的插入和上报结果的事务在同一个事务里（第 7 步）。
 
-存储：
+请求里的图片：已实现，见 [kb-kernel](../../.knowledge/kb-kernel.md#请求里的图片)，取舍见 [D40](../../.knowledge/kb-decisions.md#d40-第-6-步前一半的选择)。
 
-- 新表 `blobs(hash TEXT PRIMARY KEY, data BLOB NOT NULL) STRICT`。`data` 是原始字节。
-- `hash` 是原始字节的 sha256，64 位小写十六进制。
-- 工作段里，图片块的 `data` 写成 `blob:<hash>`，`mimeType` 是入口按魔数算出的类型。
-- 类型不另存。`blob` 请求的回复要类型时，用入口那个魔数函数现算。这是同一个纯函数，不是第二个来源。
-- `blobs` 的插入，和引用它的信件或工具结果在同一个事务里：协议请求的事务，或者执行器上报结果的事务。
-- 只增不删，和旧段一样。
-- 纯函数层里不出现图片的字节。`buildContext` 照样返回引用，执行器调用模型之前换成真数据。
+用量估算和换段阈值：已实现，见 [kb-kernel 的换段阈值](../../.knowledge/kb-kernel.md#换段阈值)。两种 R 和收图片预设的阈值表也在那里。下面是量 `IMAGE_TOKENS` 时要对照的文档估算。
 
-请求里的图片：
-
-- 一次请求最多带段里最近的 `IMAGES_PER_REQUEST`（记作 K，暂定 8）张。
-- 段里有 n 张：n 不超过 K 时全带。否则从最早的起整批省略，每批 B 张（暂定 4），省到剩下不超过 K 张为止，也就是省略 B × ⌈(n − K) / B⌉ 张。请求里留最近的 K − B + 1 到 K 张。省略的图换成一行 `[图片：较早的图片，已省略]`。
-- 现在 K = 8、B = 4：n = 9 到 12 省 4 张，n = 13 到 16 省 8 张。省略的张数每来 B 张图变一次。成批省略是为了提示缓存：请求的前缀不是每来一张图都变。
-- 这由 `buildContext` 做，是段的纯函数，不改库。
-- 所以一次请求里图片的数据不超过 8 × 1.5 MiB × 4/3 = 16 MiB。这低于 Anthropic 每次请求 32 MB 的上限，文字不超过约 4 MiB 时也低于 Google 的 20 MiB。
-- 这是“换段是唯一缩短上下文的办法”的例外，也改变了旧消息在请求里的样子。要写进决策记录。理由：截图常常一步一张，按张数换段会每几步就换一次段。
-
-用量估算和换段阈值：
-
-- 段里只有收图片的预设才会有图片。每张图按 `IMAGE_TOKENS`（暂定 5000）算，不看字节：`messageBytes` 把一张图算成 `IMAGE_TOKENS × BYTES_PER_TOKEN` 字节。
-- 锚点是真实用量，已经包括请求里真的图片。锚点之后的图片按上一条估算。
-- R 是快照的纯函数，`handoffThreshold` 照样只看快照：
-  - 不收图片的预设：R = `tokens(MESSAGE_MAX_BYTES)` = 16,384，和 v1 一样，阈值也不变。
-  - 收图片的预设：R = 16,384 + `IMAGES_PER_MESSAGE × IMAGE_TOKENS` = 26,384。
-- [阈值公式和证明](../../.knowledge/kb-kernel.md#换段阈值)照原样代入 R。
-- 证明的前提多一条：`IMAGE_TOKENS` 不低于在用模型一张图的真实 token 数。图按入口允许的各种形状算，不只正方形。
 - 按各家文档粗算，一张 2000 像素的图：
   - Anthropic 从 Opus 4.7 起的模型（含 claude-opus-5-5）最多约 4,784；更早的（含 claude-haiku-4-5）先缩到长边 1568，约 1,600。
   - Gemini 按 768 像素分块，约 2,322。
   - OpenAI 高细节按 512 像素分块，2000 × 768 约 1,445，比 2000 × 2000 的 765 还多。
   - DeepSeek、MiMo、Muse 的算法不知道，要实测。
-- 收图片的预设的新阈值（按 `IMAGE_TOKENS` = 5000 算）：
 
-| W | 旧 T | 新 T |
-|---|---|---|
-| 64,000 | 27,520（43.0%） | 17,520（27.4%） |
-| 128,000 | 75,520（59.0%） | 65,520（51.2%） |
-| 200,000 | 129,520（64.8%） | 119,520（59.8%） |
-| 1,000,000 | 729,520（73.0%） | 719,520（72.0%） |
+量 `IMAGE_TOKENS`（第 6 步）：已量，见 [D42](../../.knowledge/kb-decisions.md#d42-第-6-步量-image_tokens核实收图片)：量法、每个模型每种形状的数、四种类型的核实、取值（5000）和没核实的都在那里。要点：
 
-- 64K 窗口收图片时，阈值只有 17,520。带图的信赶上换段时，新段的第一条可能已经超过阈值，于是再换一次段。这一次，信的原文和图被概括进交接说明，图从此丢失。这条写进 kb-kernel 的坑点。
-
-量 `IMAGE_TOKENS`（第 6 步）：
-
-- 形状：2000 × 2000、2000 × 1000、2000 × 768。按块计价的模型，最坏的不一定是正方形。
-- 模型：在用、收图片、能调到的每个模型。现在是 opencode-go 的 deepseek-v4.1-flash、mimo-v2.6-flash（openai-completions），gpt-6-luna（openai-responses），加上 anthropic/claude-haiku-4-5。muse-spark-1.3-contributor 不支持（D34），不量。
-- claude-opus-5-5 不实测，用文档的上限 4,784。Anthropic 的凭据只许配 Haiku 用，这是用户的限制。要实测，先问用户。
-- 量法照 D24：同一个请求带图和不带图，比 `input + cacheRead + cacheWrite` 的差。
-- 同时核实这些模型真的收图片，四种类型各发一张，含一张动图 GIF。目录写着收、接口却拒绝的模型或类型，图片进段以后每次调用都失败。遇到这种情况，冻结之前定对策，写进决策记录。
+- 形状 2000 × 2000、2000 × 1000、2000 × 768；claude-opus-5-5 不实测，用文档的上限 4,784（Anthropic 的凭据只许配 Haiku 用）。
 - `IMAGE_TOKENS` 取全部测量值、文档上限和 5000 里的最大值，向上取整。
-- 决策记录写明量过哪些模型。以后收图片的预设换成没量过的模型，先量。这条写进 kb-kernel 的坑点。
+- 以后收图片的预设换成没量过的模型，先量。这条写在 kb-kernel 的坑点里。
 
-启动检查：
-
-- `start` 和 `spawn` 冻结快照时检查：
-
-  `tokens(固定部分) + 记忆的上界 < handoffThreshold(快照)`
-
-  - 固定部分：预设提示词、工作目录那一行、`JSON.stringify(工具描述)`。工具描述含内置工具和工具定义，口径和 `contextUsed` 一样。
-  - 记忆的上界：预设含 `memory` 时，是 `MEMORY_VIEW_MAX_BYTES` 的 token 数加上记忆的标题；否则是 0。
-  - 不通过就启动失败，报出固定部分、记忆的上界和阈值各多少 token。
-- 为什么要查：
-  - 证明的前提是“系统提示词和工具描述本身远小于窗口”。v1 不检查，是 D22 按 YAGNI 定的：换段循环由 `stepLimit` 收住。v1 的预设提示词其实也没有大小上限。v2 的工具定义最多 64 KiB，固定部分更容易到阈值，所以要查。
-  - 固定部分加记忆到了阈值，每个新段一开头就到阈值。没有启动检查，这种进程每封信都交接一次，再在下面的检查上出错，什么都做不了。启动时就挡住，用户马上知道。
-  - 这个式子等价于 F + M + R + `MARGIN_TOKENS` + 2·OUT < W。它比“交接请求放得进窗口”（F + M + R + `MARGIN_TOKENS` + OUT ≤ W）更严，所以交接请求一定放得进窗口。
-  - 阈值不大于 0 的小窗口，也被它挡住。
-- 它只挡固定部分加记忆到阈值的预设。差得不远的，新段的第一条（交接头加说明）还会把新段推到阈值。这一种由下面的检查兜住。
-
-交接以后的检查：
-
-- `onHandoff` 接受交接回复（`stop` 或 `length`，说明不空）以后、建新段之前，查一次假想的新段：记忆视图取 `env` 里的当前视图，段里只有一条 `clip(HANDOFF_HEADER + 交接说明)`，不带要带过去的信。
-- 判断和 `continueTurn` 用同一个：`contextUsed ≥ handoffThreshold`。不另写算式。所以检查通过时，不带信的新段一定低于阈值。
-- 到阈值，就按交接失败结束本轮：不写交接回复，不建新段。排队的信照 `endTurn` 合并写进旧段，和别的交接失败一样。
-- 原因写成：`交接失败：新段一开头就到阈值（固定部分 <f>、记忆 <m>、交接说明 <n>，共 <x> / <T> token）`。x 用上面的判断算，n 取 x − f − m。
-- 这样每封信最多浪费一次交接调用，不会空转到 `stepLimit`。
-- 带过去的信让新段到阈值时，检查不拦，照常再换一次段（上面 64K 收图片的情形）。
+启动检查和交接以后的检查：已实现，见 [kb-kernel](../../.knowledge/kb-kernel.md#启动检查和交接以后的检查)，取舍见 D40。
 
 上层做的代价：做不到。上层没有办法把图片放进模型的上下文。
 
 状态放在哪：`blobs` 表。引用在工作段里。
 
-事务和崩溃：
+事务和崩溃：协议的信已实现（第 6 步）：图片和引用它的信在同一个事务里提交；存储层不变量的 blob 引用完整性由 `assertStoreInvariants` 检查，崩溃注入测试里有一部分信带图片，每一步之后都检查。见 [kb-store 的图片](../../.knowledge/kb-store.md#图片)和[存储层不变量](../../.knowledge/kb-store.md#存储层不变量)。
 
-- 图片和引用它的信件或工具结果一起提交。
 - 可能有没人引用的图片：带图的工具结果进了信箱，又因为过时被丢掉。图片按内容寻址、只增不删，这样的图片无害。
-- 存储层不变量加一条：信箱、`turn.queued` 和段里的每个 blob 引用，`blobs` 里都有对应的行。它由 `assertStoreInvariants`（`test/store/invariants.ts`）检查，崩溃注入测试每一步之后照常调用。
 - 带引用的只有协议的信和工具结果。`post`、`spawn` 和回信只有文本。
 
-测试：张数；大小；魔数和四种类型；尺寸（每种格式，包括带 EXIF 的 JPEG）；不收图片的模型先检查、再换成占位行；引用完整性；执行器替换数据；请求里的成批省略（n = 8、9、12、13）；用量估算；两种 R；启动检查挡住固定部分加记忆到阈值的预设；交接以后的检查（固定部分离阈值不到一份说明时，每封信只交接一次就出错；带过去的信让新段到阈值时不拦）；最坏的图片负载下交接请求放得进窗口。`test/kernel/acceptance.test.ts` 里“每段一开始就超过阈值”的用例，改成交接一次就以交接失败结束。
+测试：协议这一半已实现，见 [kb-service 的测试表](../../.knowledge/kb-service.md#服务测试test-server)里的 protocol：图片、`test/images.test.ts`、`test/store/blobs.test.ts`、`test/store/crash.test.ts`。请求里的成批省略、用量估算、两种 R、两种检查、最坏的图片负载已有测试（`test/kernel/images.test.ts`、`test/store/launch.test.ts`、`test/kernel/acceptance.test.ts`）。第 7 步补带图的工具结果的测试。
 
 ### 5.7 调用模型：思考级别和重试
 
@@ -473,12 +402,12 @@ type Reply =
 | `start`、`send` | 同 v1，可以带图片（5.6 的入口检查） | 同 v1 |
 | `stop`、`ps` | 同 v1。投影是第 4 节的 v2 投影 | 同 v1 |
 | `history` | 读一段的消息。已实现（第 5 步），见 [kb-service 的历史和订阅](../../.knowledge/kb-service.md#历史和订阅) | 每条一行 `message`，最后一行 `end`，然后关闭 |
-| `blob` | 读一张图片。`hash` 不带 `blob:` 前缀 | 一行 `blob`，然后关闭。`hash` 不存在回 `error` |
+| `blob` | 读一张图片。已实现（第 6 步），见 [kb-service](../../.knowledge/kb-service.md#线协议srcprotocolts)。`hash` 不带 `blob:` 前缀 | 一行 `blob`，然后关闭。`hash` 不存在回 `error` |
 | `watch` | 订阅变化。已实现（第 5 步），见 [kb-service 的历史和订阅](../../.knowledge/kb-service.md#历史和订阅) | 一直推送，直到客户端断开 |
 
 - 没有单独的“寄信不等回复”的请求。它就是 `send` 收到回执后断开。
 
-`history` 和 `watch` 的行为已实现（第 5 步），见 [kb-service 的历史和订阅](../../.knowledge/kb-service.md#历史和订阅)。还没实现的契约：`history` 每行的 `message` 是 pi-ai 1.0.0 的消息 JSON，图片的 `data` 是 `blob:<hash>`（第 6 步）。这个格式是契约。升级 pi-ai 时消息 JSON 有变化，算契约变更。
+`history` 和 `watch` 的行为已实现（第 5 步），见 [kb-service 的历史和订阅](../../.knowledge/kb-service.md#历史和订阅)。契约：`history` 每行的 `message` 是 pi-ai 1.0.0 的消息 JSON，图片的 `data` 是 `blob:<hash>`（第 6 步已实现）。这个格式是契约。升级 pi-ai 时消息 JSON 有变化，算契约变更。
 
 CLI：
 
@@ -609,28 +538,8 @@ MSYS_NO_PATHCONV=1 exec node "$(cygpath -w "$(dirname "$0")")/src/main.ts" "$@"
 
 第 6 步：
 
-- AGENTS.md 上下文与记忆：“换段是唯一缩短上下文的办法”（:61）加上图片的例外。
-- AGENTS.md 边界与存储（:68）：其余数据都在 `tau.db`，包括 `blobs`。
-- kb-overview：“也不改写工作段里已有的消息”（:94）；kb-extending 原则 7（:19）。都加上请求里成批省略旧图的例外。
-- kb-overview 的状态分层（:48）：库里加 `blobs`。
-- kb-store：
-  - “库里有四类事实”（:213 起）加上 `blobs`。
-  - 三个事务的表（:124–125）：`startProcess`、`send` 在同一个事务里插入 `blobs`。
-  - 存储层不变量（:233 起）加上 blob 引用完整性（5.6）。
-- kb-service 请求校验（:134）加上 `images` 是字符串数组。
-- D22 就地改正：“W 是窗口，只有它冻结在快照里”（kb-decisions :296）；“在 `loadPreset` 检查窗口够不够：YAGNI”（:310）。
-- mvp.md 的风险“小窗口：阈值不大于 0 时……”（:219）和 kb-kernel 的坑点“小窗口”（:387）：改成启动检查挡住这些预设。
-- kb-kernel：
-  - 派生值表 `messageBytes` 的“图片：data.length”（:139）改成按 `IMAGE_TOKENS × BYTES_PER_TOKEN` 算。
-  - `handoffThreshold` 的式子（:145）里的 `tokens(MESSAGE_MAX_BYTES)` 改成 R。
-  - “R = tokens(MESSAGE_MAX_BYTES) = 16,384，一个满上限的工具结果”（:180）改成按快照的 `input` 取两种 R。
-  - 证明的前提（:194）：加上 `IMAGE_TOKENS` 的前提；“系统提示词和工具描述本身远小于窗口”改成由启动检查保证。
-  - 坑点“换段循环靠步数收住”（:386）：它的例子已被启动检查挡住，差得不远的由交接以后的检查兜住。
-  - 坑点“服务不另设上限”（:391）加上：图片在入口按 5.6 检查，不合格就拒绝，不截断。
-  - “提示词空间”：收图片的预设按新的 R 重算。
-  - `PresetSnapshot` 的字段（:54）加上 `input`。
-- kb-memory：“约占 64K 窗口换段阈值的 29%”（:79）加上：收图片的 64K 预设，阈值是 17,520，视图约占 47%。
-- 快照多冻结 `input`。从模型目录查到的值，快照只冻结 `contextWindow` 和 `input`：D19 的“只承诺 `contextWindow` 被冻结”（kb-decisions :226）、kb-executor（:97、:142）、kb-kernel 的“快照里只冻结它”（:177）、mvp.md（:38）。
+- 已做：AGENTS.md 边界与存储（其余数据包括 `blobs`）；kb-overview 的状态分层；kb-store 的四类事实改五类、三个事务的表、存储层不变量、新的“图片”一节；kb-service 的请求校验、协议的 `images` 和 `blob`、新的“图片”一节；kb-executor 的调用模型；D41。已做的条目已从这里删掉。
+- 前一半已做（纯函数层和它在 `start`、`spawn` 的调用）：AGENTS.md 的“换段是唯一缩短上下文的办法”；kb-overview 的“也不改写工作段里已有的消息”、kb-extending 原则 7；D22 的两处和 D19 的“只承诺 `contextWindow` 被冻结”；mvp.md 的风险“小窗口”和快照；kb-kernel 的派生值、常量、阈值、证明的前提、坑点和 `PresetSnapshot`；kb-memory 的 64K 那句；kb-executor 的快照；D40。已做的条目已从上面的清单里删掉。
 
 第 7 步：
 
@@ -882,7 +791,7 @@ HTTP 桥要做的检查：
 
 实现时定：
 
-1. `IMAGE_TOKENS`：暂定 5000。第 6 步按 5.6 量，取测量值、文档上限和 5000 里的最大值。估算必须偏高，这是阈值证明的前提。
+1. `IMAGE_TOKENS`：5000。第 6 步量过，取测量值、文档上限和 5000 里的最大值，结果还是 5000（[D42](../../.knowledge/kb-decisions.md#d42-第-6-步量-image_tokens核实收图片)）。估算必须偏高，这是阈值证明的前提。
 2. 图片的其余常量：`IMAGE_MAX_BYTES` 1.5 MiB、`IMAGE_MAX_EDGE` 2000 像素、`IMAGES_PER_MESSAGE` 2、`IMAGES_PER_REQUEST` 8、每批省略 4 张。
 3. 工具定义的两个大小上限：暂定 16 KiB 和 64 KiB。
 4. `WATCH_BUFFER_MAX`：暂定 1 MiB。

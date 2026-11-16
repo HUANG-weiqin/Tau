@@ -1,6 +1,6 @@
 // start、decide、effectOf：纯函数（见 .knowledge/kb-kernel.md）。
 import { CARRY_HEADER, HANDOFF_HEADER, HANDOFF_INSTRUCTION, tailStart } from "./context.ts";
-import { clip, contextUsed, endedReason, endedText, finalReply, handoffRequested, handoffThreshold, IMAGES_PER_MESSAGE, MARGIN_TOKENS, MESSAGE_MAX_BYTES, pendingCalls, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
+import { clip, contextUsed, endedReason, endedText, finalReply, handoffRequested, handoffThreshold, IMAGES_PER_MESSAGE, MARGIN_TOKENS, MESSAGE_MAX_BYTES, newSegmentUsed, pendingCalls, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
 import { textContent, unreachable } from "./types.ts";
 import type { AssistantMessage, Content, Effect, Ended, Env, ImageContent, Input, Letter, Message, Phase, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Turn, Usage } from "./types.ts";
 
@@ -119,6 +119,11 @@ function onHandoff(d: Draft, turn: Turn, m: AssistantMessage): void {
   const note = m.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n").trim();
   if ((m.stopReason === "stop" || m.stopReason === "length") && note !== "") {
     if (d.append.length > 0) throw new Error("换段前不能有要追加的消息");
+    // 第 5.6 节：先查假想的新段，不带要带过去的信。到阈值就按交接失败结束本轮，不写交接回复。
+    const first = userMessage(HANDOFF_HEADER + note, [], true, d.env.now);
+    const { used, fixed, memory } = newSegmentUsed(d.p, d.env.memoryView, first);
+    const threshold = handoffThreshold(d.p.preset);
+    if (used >= threshold) return endTurn(d, turn, { error: `交接失败：新段一开头就到阈值（固定部分 ${fixed}、记忆 ${memory}、交接说明 ${used - fixed - memory}，共 ${used} / ${threshold} token）` });
     // 交接请求没带段末的用户消息（见 buildContext），把它们原样附在交接说明后面：文本接在说明后，图片块原样带过去。
     const tail = d.seg.slice(tailStart(d.seg)).flatMap((u) => (u.role === "user" ? [typeof u.content === "string" ? textContent(u.content) : u.content] : []));
     const carriedText = tail.map(textOf).filter((t) => t !== "").join("\n\n");

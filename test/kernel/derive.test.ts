@@ -8,6 +8,7 @@ import {
   clip,
   contextUsed,
   ENDED_REASON_MAX_BYTES,
+  IMAGE_TOKENS,
   endedReason,
   endedText,
   finalReply,
@@ -72,7 +73,10 @@ test("一条消息的字节：工具调用算 ID + 名称 + 参数的 JSON；工
   assert.equal(messageBytes(result("id-1", "结果")), utf8Bytes("id-1") + utf8Bytes("read") + utf8Bytes("结果"));
   assert.equal(messageBytes(user("用户")), utf8Bytes("用户"));
   const blocks: Message = { role: "user", content: [{ type: "text", text: "ab" }, { type: "image", data: "QUJD", mimeType: "image/png" }], timestamp: 0 };
-  assert.equal(messageBytes(blocks), 2 + 4);
+  // 一张图按 IMAGE_TOKENS × BYTES_PER_TOKEN 字节算，不看 data。
+  assert.equal(messageBytes(blocks), 2 + IMAGE_TOKENS * BYTES_PER_TOKEN);
+  const big: Message = { role: "toolResult", toolCallId: "i", toolName: "read", isError: false, timestamp: 0, content: [{ type: "image", data: "x".repeat(100_000), mimeType: "image/png" }] };
+  assert.equal(messageBytes(big), utf8Bytes("i") + utf8Bytes("read") + IMAGE_TOKENS * BYTES_PER_TOKEN);
 });
 
 test("估算只在总字节数上向上取整一次：三条 1 字节的消息估成 2", () => {

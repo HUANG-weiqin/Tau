@@ -13,6 +13,7 @@ export function preset(over: Partial<PresetSnapshot> = {}): PresetSnapshot {
     tools: ["read", "write", "edit", "bash", "memory"],
     prompt: "你是测试用的助手。",
     contextWindow: 200_000,
+    input: ["text"],
     ...over,
   };
 }

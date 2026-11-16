@@ -1,5 +1,6 @@
 // 能从工作段算出来的值都在这里算，不存（见 .knowledge/kb-kernel.md）。
-import { systemPrompt, toolDefinitions } from "./context.ts";
+import { fixedPrompt, MEMORY_HEADING, memorySection, systemPrompt, toolDefinitions } from "./context.ts";
+import { MEMORY_VIEW_MAX_BYTES } from "./tools.ts";
 import { unreachable } from "./types.ts";
 import type { AssistantMessage, Ended, Instant, Message, PresetSnapshot, Process, ToolCall } from "./types.ts";
 
@@ -11,6 +12,8 @@ export const BYTES_PER_TOKEN = 2;
 export const MESSAGE_MAX_BYTES = 32 * 1024;
 /** 工具结果和新段的第一条消息，最多带多少张图片。 */
 export const IMAGES_PER_MESSAGE = 2;
+/** 一张图片算多少 token，不看字节（设计稿 5.6）。暂定值，要不低于在用模型一张图的真实 token 数。 */
+export const IMAGE_TOKENS = 5000;
 /** 结束原因的字节上限。provider 的报错可能很长，原文由 CLI 显示给用户。 */
 export const ENDED_REASON_MAX_BYTES = 1024;
 /** `post` 和 `spawn` 寄出的信，跳数超过它就失败（设计稿 5.3）。回信不受限制。 */
@@ -27,9 +30,34 @@ export function outputMax(p: PresetSnapshot): number {
   return Math.floor(p.contextWindow / 8);
 }
 
+/** R：一个没检查的工具结果最多多少 token。收图片的预设再加一份满张数的图片。只看快照。 */
+export function resultReserve(p: PresetSnapshot): number {
+  return tokens(MESSAGE_MAX_BYTES) + (p.input.includes("image") ? IMAGES_PER_MESSAGE * IMAGE_TOKENS : 0);
+}
+
 /** 换段阈值。阈值之上要放得下：一次回复、一个没检查的工具结果、交接说明的输出和余量。 */
 export function handoffThreshold(p: PresetSnapshot): number {
-  return p.contextWindow - 2 * outputMax(p) - tokens(MESSAGE_MAX_BYTES) - MARGIN_TOKENS;
+  return p.contextWindow - 2 * outputMax(p) - resultReserve(p) - MARGIN_TOKENS;
+}
+
+/** 固定部分的 token：预设提示词、工作目录那一行、工具描述。口径和 `contextUsed` 一样。 */
+export function fixedTokens(p: PresetSnapshot): number {
+  return tokens(utf8Bytes(fixedPrompt(p)) + utf8Bytes(JSON.stringify(toolDefinitions(p))));
+}
+
+/** 启动检查（设计稿 5.6）：固定部分加记忆的上界要低于阈值。通过时返回 null，否则返回失败的原因。 */
+export function startError(p: PresetSnapshot): string | null {
+  const fixed = fixedTokens(p);
+  const memory = p.tools.includes("memory") ? tokens(utf8Bytes(MEMORY_HEADING) + MEMORY_VIEW_MAX_BYTES) : 0;
+  const threshold = handoffThreshold(p);
+  if (fixed + memory < threshold) return null;
+  return `预设 ${p.id} 的窗口太小，装不下：固定部分 ${fixed} token，记忆的上界 ${memory} token，换段阈值 ${threshold} token`;
+}
+
+/** 假想的新段开头：只有一条消息 `first`，记忆视图是 `view`。返回它的用量和各部分的 token。 */
+export function newSegmentUsed(p: Process, view: string, first: Message): { used: number; fixed: number; memory: number } {
+  const probe: Process = { ...p, segment: { seq: p.segment.seq + 1, memoryView: view } };
+  return { used: contextUsed(probe, [first]), fixed: fixedTokens(p.preset), memory: tokens(utf8Bytes(memorySection(view))) };
 }
 
 /** 一条消息实际发出的原始 UTF-8 字节数，不算 JSON 外壳和转义。工具调用的参数本来就按 JSON 发，所以按 JSON 算。 */
@@ -55,7 +83,7 @@ function blockBytes(c: Exclude<Message["content"], string>[number]): number {
     case "toolCall":
       return utf8Bytes(c.id) + utf8Bytes(c.name) + utf8Bytes(JSON.stringify(c.arguments));
     case "image":
-      return c.data.length;
+      return IMAGE_TOKENS * BYTES_PER_TOKEN;
     default:
       return unreachable(c);
   }

@@ -15,6 +15,9 @@ import { loadProcess, loadProcesses, openDb } from "../../src/store/db.ts";
 import { handleNext, send, startProcess } from "../../src/store/inputs.ts";
 import { allMessages, effectRows, fakeMemory, gated, hash, mailbox, PRESET, reply, rng, tempDir, toolCall } from "./fixtures.ts";
 import type { FakeMemory, Gate } from "./fixtures.ts";
+import type { Image } from "../../src/images.ts";
+import { checkImages } from "../../src/images.ts";
+import { png } from "../images.ts";
 import { res } from "../plain.ts";
 import { assertStoreInvariants } from "./invariants.ts";
 
@@ -22,7 +25,7 @@ const SEEDS = [1, 2, 3, 4];
 const USER_MESSAGES = 8;
 const STOPS = 2;
 /** 窗口小一些，让换段也会发生。 */
-const CRASH_PRESET: PresetSnapshot = { ...PRESET, contextWindow: 33_000 };
+const CRASH_PRESET: PresetSnapshot = { ...PRESET, contextWindow: 60_000, input: ["text", "image"] };
 /** read 是库外工具；memory_*、self、handoff 是库内工具；bash 不在预设里；nope 不存在。 */
 const TOOLS = ["read", "read", "read", "memory_get", "memory_set", "self", "handoff", "bash", "nope"];
 
@@ -105,6 +108,11 @@ function enabled(run: Run): Kind[] {
   return out;
 }
 
+/** 一半的用户信带一张图片，每封的字节不同。 */
+function maybeImages(run: Run): Image[] {
+  return run.rand() < 0.5 ? checkImages([png(10, 10, run.users.length + 1).toString("base64")]) : [];
+}
+
 function pick<T>(run: Run, xs: readonly T[]): T {
   return xs[Math.floor(run.rand() * xs.length)]!;
 }
@@ -117,7 +125,7 @@ async function step(run: Run, kind: Kind): Promise<void> {
     case "start": {
       const id = `p${run.processes.length + 1}`;
       const text = `<u${run.users.length + 1}>`;
-      startProcess(db, run.memory, id, CRASH_PRESET, text, now);
+      startProcess(db, run.memory, id, CRASH_PRESET, text, now, maybeImages(run));
       run.processes.push(id);
       run.users.push(text);
       return;
@@ -130,7 +138,7 @@ async function step(run: Run, kind: Kind): Promise<void> {
       if (other !== undefined && run.rand() < 0.5) {
         send(db, to, { kind: "letter", letter: { from: { kind: "process", id: other, preset: PRESET.id }, content: textContent(text), hops: 1, replyTo: other } });
         run.asked++;
-      } else send(db, to, userLetter(text));
+      } else send(db, to, userLetter(text), maybeImages(run));
       run.users.push(text);
       return;
     }
@@ -214,7 +222,7 @@ function userText(m: Message): string {
 }
 
 /** 从空库开始跑到没有事可做。给了 `crashAt` 时，在第 crashAt 步之后崩溃一次。 */
-async function play(empty: Empty, seed: number, crashAt: number | null): Promise<{ steps: number; asked: number; backs: number; crashed: { kind: Kind; window: boolean } | null }> {
+async function play(empty: Empty, seed: number, crashAt: number | null): Promise<{ steps: number; asked: number; backs: number; blobs: number; crashed: { kind: Kind; window: boolean } | null }> {
   const path = join(empty.dir, `${seed}-${crashAt ?? "none"}.db`);
   copyFileSync(empty.path, path);
   const { dbs } = empty;
@@ -253,8 +261,9 @@ async function play(empty: Empty, seed: number, crashAt: number | null): Promise
   assert.deepEqual([...results].sort(), [...calls].sort());
   const replies = messages.filter((m) => m.role === "assistant").map((m) => JSON.stringify(m));
   assert.equal(new Set(replies).size, replies.length);
+  const blobs = db.prepare("SELECT COUNT(*) AS n FROM blobs").get()?.n as number;
   db.close();
-  return { steps, asked: run.asked, backs, crashed };
+  return { steps, asked: run.asked, backs, blobs, crashed };
 }
 
 /** 一个空库的模板。新建库要建表、落盘，在 Windows 上比复制文件慢十几倍，几百次重放都从复制它开始。 */
@@ -276,11 +285,14 @@ test("随机序列：真库上每一步之后不变量都成立，最后全部�
   const empty = emptyDb(t);
   let asked = 0;
   let backs = 0;
+  let blobs = 0;
   for (const seed of SEEDS) {
     const r = await play(empty, seed, null);
     asked += r.asked;
     backs += r.backs;
+    blobs += r.blobs;
   }
+  assert.ok(blobs > 0, "没有覆盖到带图片的信");
   assert.ok(asked > 0 && backs > 0, `要回信的信 ${asked} 封，回信 ${backs} 封：没有覆盖到回信`);
 });
 

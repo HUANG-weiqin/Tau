@@ -47,6 +47,7 @@ test("valid preset with LF line endings", () => {
     tools: ["read", "bash"],
     prompt: "你是测试。\n第二行",
     contextWindow: 123456,
+    input: ["text", "image"],
   });
 });
 
@@ -59,6 +60,7 @@ test("valid preset with CRLF line endings", () => {
     tools: ["read", "bash"],
     prompt: "你是测试。\n第二行",
     contextWindow: 123456,
+    input: ["text", "image"],
   });
 });
 

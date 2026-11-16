@@ -17,12 +17,15 @@ import { sqliteMemory } from "../../src/memory/kv.ts";
 import type { Reply, Request } from "../../src/protocol.ts";
 import { WATCH_BUFFER_MAX, serve } from "../../src/server/serve.ts";
 import type { Service } from "../../src/server/serve.ts";
+import { gif, jpeg, png } from "../images.ts";
 import { appendMessages, loadProcess, loadSegment, saveProcess } from "../../src/store/db.ts";
 
 interface Env {
   pipe: string;
   faux: FauxProviderHandle;
   svc: Service;
+  presetsDir: string;
+  work: string;
   /** 关服务。可以多次调用；测试结束时也会调。 */
   close(): Promise<void>;
 }
@@ -51,7 +54,7 @@ async function setup(t: TestContext, fauxOptions: RegisterFauxProviderOptions = 
     await close();
     rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
-  return { pipe, faux, svc, close };
+  return { pipe, faux, svc, presetsDir, work, close };
 }
 
 async function collect(pipe: string, req: Request): Promise<Reply[]> {
@@ -425,4 +428,149 @@ test("watch 写缓冲上限：快照很小、订阅方不读，超过上限才�
   for (const end = Date.now() + 10_000; (await connections(e)) !== 1; await sleep(20)) assert.ok(Date.now() < end, "不读的订阅没有被断开");
   await until(() => reader.replies.filter((r) => r.type === "text").map((r) => r.delta).join("").length >= big.length + 2, "读的订阅收到全部文字", 15_000);
   reader.socket.destroy();
+});
+
+test("start：预设的固定部分加记忆到了阈值，回 error，什么都不建（设计稿 5.6 启动检查）", async (t) => {
+  const e = await setup(t, { models: [{ id: "m", contextWindow: 30_000 }] });
+  writeFileSync(join(e.presetsDir, "big.md"), `---
+workdir: ${e.work}
+model: ${e.faux.getModel().provider}/m
+tools: read, memory
+---
+你是测试助手。
+`);
+  const r = await collect(e.pipe, { op: "start", preset: "big", text: "你好" });
+  assert.equal(r.length, 1);
+  assert.equal(r[0]?.type, "error");
+  assert.match(r[0]?.type === "error" ? r[0].message : "", /窗口太小.*固定部分 \d+ token，记忆的上界 \d+ token，换段阈值 -?\d+ token/);
+  const ps = await collect(e.pipe, { op: "ps" });
+  assert.deepEqual(ps, [{ type: "ps", processes: [] }]);
+});
+
+// 图片：start、send 带 images，blob 请求（设计稿 5.6、5.9）
+
+const b64 = (b: Buffer) => b.toString("base64");
+const errorOf = (r: Reply[]): string => {
+  assert.equal(r.length, 1);
+  assert.equal(r[0]?.type, "error");
+  return r[0]?.type === "error" ? r[0].message : "";
+};
+const blobRows = (e: Env) => e.svc.db.prepare("SELECT COUNT(*) AS n FROM blobs").get()?.n;
+
+test("start 带图片：段里是 blob 引用；blob 请求回类型和 base64，然后关闭", async (t) => {
+  const e = await setup(t);
+  const img = jpeg(640, 480, { exif: 500 });
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("看到了"))]);
+  const replies = await collect(e.pipe, { op: "start", preset: "p", text: "看图", images: [b64(img)] });
+  assert.equal(replies.at(-1)?.type, "final");
+  const first = replies[0];
+  assert.equal(first?.type, "receipt");
+  const user = segmentOf(e, first.process)[0];
+  assert.ok(user?.role === "user" && Array.isArray(user.content));
+  const block = user.content[1];
+  assert.ok(block?.type === "image");
+  assert.match(block.data, /^blob:[0-9a-f]{64}$/);
+  assert.equal(block.mimeType, "image/jpeg");
+  const got = await collect(e.pipe, { op: "blob", hash: block.data.slice("blob:".length) });
+  assert.deepEqual(got, [{ type: "blob", mimeType: "image/jpeg", data: b64(img) }]);
+  // history 里的图片也是引用，不带字节。
+  const hist = await collect(e.pipe, { op: "history", process: first.process });
+  assert.equal(JSON.stringify(hist).includes(b64(img)), false);
+});
+
+test("blob：hash 不存在、带 blob: 前缀、不是字符串，都回 error", async (t) => {
+  const e = await setup(t);
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("好"))]);
+  const r = await collect(e.pipe, { op: "start", preset: "p", text: "x", images: [b64(png(5, 5))] });
+  assert.equal(r.at(-1)?.type, "final");
+  const hash = (e.svc.db.prepare("SELECT hash FROM blobs").get() as { hash: string }).hash;
+  assert.match(errorOf(await collect(e.pipe, { op: "blob", hash: "0".repeat(64) })), /没有这个 blob/);
+  assert.match(errorOf(await collect(e.pipe, { op: "blob", hash: `blob:${hash}` })), /没有这个 blob/);
+  assert.match(errorOf(await collect(e.pipe, { op: "blob", hash: 5 } as never)), /无法识别的请求/);
+  assert.equal((await collect(e.pipe, { op: "blob", hash }))[0]?.type, "blob");
+});
+
+test("blob 是读请求：不写库，不动信箱和副作用表", async (t) => {
+  const e = await setup(t);
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("好"))]);
+  await collect(e.pipe, { op: "start", preset: "p", text: "x", images: [b64(gif(5, 5))] });
+  const hash = (e.svc.db.prepare("SELECT hash FROM blobs").get() as { hash: string }).hash;
+  const before = e.svc.db.prepare("PRAGMA data_version").get();
+  await collect(e.pipe, { op: "blob", hash });
+  assert.deepEqual(e.svc.db.prepare("PRAGMA data_version").get(), before);
+  assert.equal(e.svc.db.prepare("SELECT COUNT(*) AS n FROM mailbox").get()?.n, 0);
+});
+
+test("images 的校验：必须是字符串数组", async (t) => {
+  const e = await setup(t);
+  for (const images of ["abc", [1], [null], {}]) {
+    assert.match(errorOf(await collect(e.pipe, { op: "start", preset: "p", text: "x", images } as never)), /无法识别的请求/);
+    assert.match(errorOf(await collect(e.pipe, { op: "send", process: "nope", text: "x", images } as never)), /无法识别的请求/);
+  }
+  assert.deepEqual(await collect(e.pipe, { op: "ps" }), [{ type: "ps", processes: [] }]);
+});
+
+test("入口检查不合格：回 error，什么都不建，blobs 不动", async (t) => {
+  const e = await setup(t);
+  const ok = b64(png(10, 10));
+  const cases: [string[], RegExp][] = [
+    [[ok, ok, ok], /最多带 2 张/],
+    [[b64(Buffer.concat([png(10, 10), Buffer.alloc(1_600_000)]))], /上限 1572864 字节/],
+    [[b64(Buffer.from("BM" + "0".repeat(60)))], /类型不认识/],
+    [[b64(png(2001, 100, 7))], /2001×100/],
+    [["不是 base64"], /不是合法的 base64/],
+  ];
+  for (const [images, message] of cases) assert.match(errorOf(await collect(e.pipe, { op: "start", preset: "p", text: "x", images })), message);
+  assert.deepEqual(await collect(e.pipe, { op: "ps" }), [{ type: "ps", processes: [] }]);
+  assert.equal(blobRows(e), 0);
+  // send：进程在，图片不合格；进程不在，图片合格。信箱和 blobs 都不动。
+  const id = await startIdle(e);
+  assert.match(errorOf(await collect(e.pipe, { op: "send", process: id, text: "y", images: [b64(png(5000, 5000))] })), /5000×5000/);
+  assert.match(errorOf(await collect(e.pipe, { op: "send", process: "nope", text: "y", images: [ok] })), /没有这个进程/);
+  assert.equal(blobRows(e), 0);
+  assert.equal(segmentOf(e, id).length, 2);
+});
+
+test("send 带图片：同一进程的下一封信；blob 引用进段", async (t) => {
+  const e = await setup(t);
+  const id = await startIdle(e);
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("收到图"))]);
+  const replies = await collect(e.pipe, { op: "send", process: id, text: "再看", images: [b64(png(7, 8, 1)), b64(png(7, 8, 2))] });
+  assert.equal(replies.at(-1)?.type, "final");
+  const seg = segmentOf(e, id);
+  const user = seg[2];
+  assert.ok(user?.role === "user" && Array.isArray(user.content));
+  assert.deepEqual(user.content.map((c) => c.type), ["text", "image", "image"]);
+  assert.equal(blobRows(e), 2);
+});
+
+test("执行器：模型收到的请求里图片是真数据（base64），库里的段仍是引用", async (t) => {
+  const e = await setup(t);
+  const img = png(16, 16, 9);
+  let seen: unknown;
+  e.faux.appendResponses([
+    (context) => {
+      seen = context.messages.at(-1);
+      return fauxAssistantMessage(fauxText("好"));
+    },
+  ]);
+  const replies = await collect(e.pipe, { op: "start", preset: "p", text: "看图", images: [b64(img)] });
+  assert.equal(replies.at(-1)?.type, "final");
+  const content = (seen as { content: { type: string; data?: string; text?: string }[] }).content;
+  assert.deepEqual(content.map((c) => c.type), ["text", "image"]);
+  assert.equal(content[1]?.data, b64(img));
+  assert.match(JSON.stringify(segmentOf(e, (replies[0] as { process: string }).process)[0]), /blob:[0-9a-f]{64}/);
+});
+
+test("不收图片的模型：先检查；合格才把每张图换成一行说明，不存图片；不合格回 error", async (t) => {
+  const e = await setup(t, { models: [{ id: "m", contextWindow: 200_000, input: ["text"] }] });
+  assert.match(errorOf(await collect(e.pipe, { op: "start", preset: "p", text: "x", images: [b64(png(3000, 10))] })), /3000×10/);
+  assert.deepEqual(await collect(e.pipe, { op: "ps" }), [{ type: "ps", processes: [] }]);
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("好"))]);
+  const replies = await collect(e.pipe, { op: "start", preset: "p", text: "看图", images: [b64(png(10, 10)), b64(png(10, 10, 1))] });
+  assert.equal(replies.at(-1)?.type, "final");
+  const first = replies[0] as { process: string };
+  assert.deepEqual(segmentOf(e, first.process)[0]?.role === "user" ? segmentOf(e, first.process)[0]?.content : null, "看图\n[图片：模型不支持，已省略]\n[图片：模型不支持，已省略]");
+  assert.equal(blobRows(e), 0);
+  assert.match(errorOf(await collect(e.pipe, { op: "send", process: first.process, text: "y", images: [b64(Buffer.from("x".repeat(40)))] })), /类型不认识/);
 });

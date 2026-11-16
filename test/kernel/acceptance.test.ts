@@ -29,22 +29,22 @@ function runTurn(w: World, answer: (purpose: "turn" | "handoff") => ReplySpec, t
   return { calls, handoffs };
 }
 
-test("每段一开始就超过阈值：每次换段都计步，步数用完时结束本轮", () => {
+test("每段一开始就超过阈值：每条消息只交接一次，以交接失败结束，不建新段（第 6 步的交接以后的检查）", () => {
   const w = world(preset({ contextWindow: TINY }));
   const T = handoffThreshold(w.p.preset);
   assert.ok(T > 0, `阈值 ${T}`);
   for (let round = 1; round <= 3; round++) {
-    const seq = w.p.segment.seq;
     feed(w, userInput(`第 ${round} 条消息`));
     assert.ok(contextUsed(w.p, current(w)) >= T);
     const r = runTurn(w, (purpose) => {
       assert.equal(purpose, "handoff");
       return { usage: 5, text: "交接说明" };
     });
-    assert.equal(r.calls, STEPS_PER_TURN);
-    assert.equal(r.handoffs, STEPS_PER_TURN);
-    assert.equal(w.p.segment.seq, seq + STEPS_PER_TURN);
-    assert.deepEqual(w.p.phase, { tag: "idle", ended: "stepLimit" });
+    assert.equal(r.calls, 1);
+    assert.equal(r.handoffs, 1);
+    assert.equal(w.p.segment.seq, 1, "没有建新段");
+    assert.equal(current(w).length, round, "没有写交接回复");
+    assert.match(w.p.phase.tag === "idle" && typeof w.p.phase.ended === "object" ? w.p.phase.ended.error : "", /^交接失败：新段一开头就到阈值（固定部分 \d+、记忆 0、交接说明 \d+，共 \d+ \/ \d+ token）$/);
   }
 });
 

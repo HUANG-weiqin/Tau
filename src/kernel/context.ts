@@ -1,7 +1,7 @@
 // 从进程记录和工作段构造模型请求（见 .knowledge/kb-kernel.md）。
 import type { Tool } from "@earendil-works/pi-ai";
 import { toolsFor } from "./tools.ts";
-import type { Message, ModelRequest, PresetSnapshot, Process } from "./types.ts";
+import type { Content, Message, ModelRequest, PresetSnapshot, Process } from "./types.ts";
 
 /** 换段时末尾加的用户消息，不入库（见 .knowledge/kb-kernel.md）。 */
 export const HANDOFF_INSTRUCTION = [
@@ -23,22 +23,54 @@ export function tailStart(segment: readonly Message[]): number {
   return i;
 }
 
+/** 系统提示词里的固定部分：预设提示词和工作目录那一行。 */
+export function fixedPrompt(preset: PresetSnapshot): string {
+  return `${preset.prompt}\n\n工作目录：${preset.workdir}`;
+}
+
+/** 记忆视图前面的标题，连同它前面的空行。 */
+export const MEMORY_HEADING = "\n\n## 记忆（开段时的快照）\n\n";
+
+/** 系统提示词里记忆的那一段，视图为空时没有。 */
+export function memorySection(view: string): string {
+  return view === "" ? "" : MEMORY_HEADING + view;
+}
+
 export function systemPrompt(p: Process): string {
-  const parts = [p.preset.prompt, `工作目录：${p.preset.workdir}`];
-  if (p.segment.memoryView !== "") parts.push(`## 记忆（开段时的快照）\n\n${p.segment.memoryView}`);
-  return parts.join("\n\n");
+  return fixedPrompt(p.preset) + memorySection(p.segment.memoryView);
 }
 
 export function toolDefinitions(preset: PresetSnapshot): Tool[] {
   return toolsFor(preset).map(({ name, description, parameters }) => ({ name, description, parameters }));
 }
 
+/** 一次请求最多带段里最近的多少张图片（设计稿第 5.6 节的 K）。 */
+export const IMAGES_PER_REQUEST = 8;
+/** 超出时每批省略多少张（B）。成批省略，请求的前缀才不是每来一张图都变。 */
+export const IMAGES_OMIT_BATCH = 4;
+export const IMAGE_OMITTED = "[图片：较早的图片，已省略]";
+
+/** 消息里的内容块，字符串正文和助手消息没有图片。 */
+const blocksOf = (m: Message): readonly Content[] => (m.role === "assistant" || typeof m.content === "string" ? [] : m.content);
+
+/** 段里有 n 张图：n 不超过 K 时全带；否则从最早的起整批省略，省 B × ⌈(n − K) / B⌉ 张，每张换成一行说明。不改库。 */
+export function omitOldImages(messages: readonly Message[]): Message[] {
+  const n = messages.reduce((c, m) => c + blocksOf(m).filter((b) => b.type === "image").length, 0);
+  let omit = n <= IMAGES_PER_REQUEST ? 0 : IMAGES_OMIT_BATCH * Math.ceil((n - IMAGES_PER_REQUEST) / IMAGES_OMIT_BATCH);
+  return messages.map((m) => {
+    if (omit === 0 || blocksOf(m).length === 0) return m;
+    const content = blocksOf(m).map((b): Content => (b.type === "image" && omit-- > 0 ? { type: "text", text: IMAGE_OMITTED } : b));
+    return { ...m, content } as Message;
+  });
+}
+
 export function buildContext(p: Process, segment: readonly Message[]): ModelRequest {
-  const messages: Message[] = [...segment];
+  let messages: Message[] = [...segment];
   if (p.phase.tag === "awaitingModel" && p.phase.purpose === "handoff") {
     // 段末还没处理的用户消息不进交接请求：换段成功时它们原样带到新段（decide 的 onHandoff）。
     messages.splice(tailStart(segment));
     messages.push({ role: "user", content: HANDOFF_INSTRUCTION, timestamp: messages.at(-1)?.timestamp ?? p.createdAt });
   }
+  messages = omitOldImages(messages);
   return { systemPrompt: systemPrompt(p), messages, tools: toolDefinitions(p.preset) };
 }

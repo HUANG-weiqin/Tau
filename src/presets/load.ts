@@ -89,6 +89,7 @@ export function loadPreset(dir: string, id: string, models: Models): PresetSnaps
     tools,
     prompt: lines.slice(end + 1).join("\n").trim(),
     contextWindow: found.contextWindow,
+    input: [...found.input],
     ...(thinking === undefined ? {} : { thinking }),
   };
 }

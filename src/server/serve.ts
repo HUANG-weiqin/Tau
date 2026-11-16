@@ -10,9 +10,11 @@ import { finalReply } from "../kernel/derive.ts";
 import { observe } from "../kernel/observe.ts";
 import { unreachable, userLetter } from "../kernel/types.ts";
 import type { Instant, Memory, Process, ProcessId } from "../kernel/types.ts";
+import { checkImages, imageType } from "../images.ts";
 import { loadPreset } from "../presets/load.ts";
 import type { Reply, Request } from "../protocol.ts";
 import { loadProcess, loadProcesses, loadSegment, openDb, readSegment } from "../store/db.ts";
+import { readBlob } from "../store/blobs.ts";
 import { handleNext, send, startProcess } from "../store/inputs.ts";
 import type { Handled } from "../store/inputs.ts";
 import { listen } from "./listen.ts";
@@ -62,6 +64,7 @@ export async function serve(opts: ServeOptions): Promise<Service> {
         push(id, text);
       },
       opts.pipe,
+      (hash) => readBlob(db, hash),
     ),
   );
 
@@ -120,13 +123,14 @@ export async function serve(opts: ServeOptions): Promise<Service> {
     const now = Date.now();
     switch (req.op) {
       case "start": {
+        const images = checkImages(req.images ?? []);
         const preset = readPreset(req.preset);
         const id = randomBytes(4).toString("hex");
-        startProcess(db, memory, id, preset, req.text, now);
+        startProcess(db, memory, id, preset, req.text, now, images);
         return awaitFinal(s, id);
       }
       case "send":
-        send(db, req.process, userLetter(req.text));
+        send(db, req.process, userLetter(req.text), checkImages(req.images ?? []));
         return awaitFinal(s, req.process);
       case "stop":
         send(db, req.process, { kind: "stop" });
@@ -145,6 +149,13 @@ export async function serve(opts: ServeOptions): Promise<Service> {
         const { rows, count } = readSegment(db, p.id, segment, req.from ?? 0);
         for (const r of rows) reply(s, { type: "message", segment, seq: r.seq, message: r.message });
         reply(s, { type: "end", segment, messages: count }).end();
+        return;
+      }
+      case "blob": {
+        const data = readBlob(db, req.hash);
+        const mimeType = data && imageType(data);
+        if (!data || !mimeType) throw new Error(`没有这个 blob：${req.hash}`);
+        reply(s, { type: "blob", mimeType, data: data.toString("base64") }).end();
         return;
       }
       case "watch": {
@@ -217,8 +228,11 @@ function parseRequest(line: string): Request {
     if (r.op === "history" && str(r, "process") && num("segment") && num("from")) return r as Request;
     if (r.op === "watch" && (!("process" in r) || str(r, "process"))) return r as Request;
     if (r.op === "stop" && str(r, "process")) return r as Request;
-    if (r.op === "send" && str(r, "process") && str(r, "text")) return r as Request;
-    if (r.op === "start" && str(r, "preset") && str(r, "text")) return r as Request;
+    const images = "images" in r ? r.images : [];
+    const imagesOk = Array.isArray(images) && images.every((x) => typeof x === "string");
+    if (r.op === "blob" && str(r, "hash")) return r as Request;
+    if (r.op === "send" && str(r, "process") && str(r, "text") && imagesOk) return r as Request;
+    if (r.op === "start" && str(r, "preset") && str(r, "text") && imagesOk) return r as Request;
   }
   throw new Error(`无法识别的请求：${line}`);
 }

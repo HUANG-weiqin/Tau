@@ -53,7 +53,7 @@ const preset = (model: string, thinking?: ThinkingLevel): PresetSnapshot => {
 test("执行器传给 pi-ai：模型的 maxTokens 和 options.maxTokens 都是 cap，maxRetries 是 MODEL_RETRIES，没有 thinkingBudgets", async () => {
   const { models, calls } = recording();
   const p = preset("anthropic/claude-haiku-4-5", "high");
-  await createActions(models, noText, "test-pipe").callModel(job(p), new AbortController().signal);
+  await createActions(models, noText, "test-pipe", () => undefined).callModel(job(p), new AbortController().signal);
   const c = calls[0]!;
   const cap = Math.min(real.getModel("anthropic", "claude-haiku-4-5")!.maxTokens, outputMax(p));
   assert.equal(cap, 25_000);
@@ -69,14 +69,14 @@ test("执行器传给 pi-ai：模型的 maxTokens 和 options.maxTokens 都是 c
 test("模型的 maxTokens 比 outputMax 小时，cap 是模型的上限", async () => {
   const { models, calls } = recording();
   const p = { ...preset("anthropic/claude-haiku-4-5"), contextWindow: 4_000_000 };
-  await createActions(models, noText, "test-pipe").callModel(job(p), new AbortController().signal);
+  await createActions(models, noText, "test-pipe", () => undefined).callModel(job(p), new AbortController().signal);
   assert.equal(calls[0]!.model.maxTokens, 64_000);
   assert.equal(calls[0]!.options.maxTokens, 64_000);
 });
 
 test("预设没写 thinking：不传 reasoning，键都不在", async () => {
   const { models, calls } = recording();
-  await createActions(models, noText, "test-pipe").callModel(job(preset("anthropic/claude-haiku-4-5")), new AbortController().signal);
+  await createActions(models, noText, "test-pipe", () => undefined).callModel(job(preset("anthropic/claude-haiku-4-5")), new AbortController().signal);
   assert.equal("reasoning" in calls[0]!.options, false);
 });
 
@@ -109,7 +109,7 @@ async function payloadFor(model: string, thinking?: ThinkingLevel): Promise<{ pa
       }),
   } as unknown as Models;
   const p = preset(model, thinking);
-  await createActions(models, noText, "test-pipe").callModel(job(p), new AbortController().signal);
+  await createActions(models, noText, "test-pipe", () => undefined).callModel(job(p), new AbortController().signal);
   assert.ok(payload, "onPayload 没被调用");
   const slash = model.indexOf("/");
   return { payload, cap: Math.min(real.getModel(model.slice(0, slash), model.slice(slash + 1))!.maxTokens, outputMax(p)), fetches };
@@ -148,7 +148,7 @@ test("预算路径：cap 不大于预算加 1,024 时，预算被压到 cap 减 
       real.streamSimple(m, context as never, { ...options, onPayload: (x) => void (payload = x as never), fetch: (async () => new Response("{}", { status: 400 })) as never }),
   } as unknown as Models;
   const p = { ...preset("anthropic/claude-haiku-4-5", "high"), contextWindow: 8 * 17_408 };
-  await createActions(models, noText, "test-pipe").callModel(job(p), new AbortController().signal);
+  await createActions(models, noText, "test-pipe", () => undefined).callModel(job(p), new AbortController().signal);
   assert.equal(payload!.max_tokens, 17_408);
   assert.equal(payload!.thinking.budget_tokens, 17_408 - 1024);
 });
@@ -167,7 +167,7 @@ async function runWithFetch(fetchImpl: () => Promise<Response>): Promise<{ stopR
         }) as never,
       }),
   } as unknown as Models;
-  const reply = await createActions(models, noText, "test-pipe").callModel(job(preset("opencode-go/mimo-v2.6-flash")), new AbortController().signal);
+  const reply = await createActions(models, noText, "test-pipe", () => undefined).callModel(job(preset("opencode-go/mimo-v2.6-flash")), new AbortController().signal);
   return { stopReason: reply.stopReason, errorMessage: reply.errorMessage, fetches };
 }
 
@@ -227,7 +227,7 @@ test("重试：恰好 60 秒不算超过（只验证不被拒绝，用 retry-aft
     streamSimple: (m: Model<Api>, context: unknown, options: SimpleStreamOptions) =>
       real.streamSimple(m, context as never, { ...options, fetch: (async () => (fetches++, err(429, { "retry-after-ms": "60000" }))) as never }),
   } as unknown as Models;
-  const done = createActions(models, noText, "test-pipe").callModel(job(preset("opencode-go/mimo-v2.6-flash")), ac.signal);
+  const done = createActions(models, noText, "test-pipe", () => undefined).callModel(job(preset("opencode-go/mimo-v2.6-flash")), ac.signal);
   await new Promise((r) => setTimeout(r, 200));
   ac.abort();
   const reply = await done;

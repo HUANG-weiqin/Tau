@@ -59,7 +59,7 @@ type Phase =
 type Ended = "done" | "stepLimit" | "stopped" | { error: string };
 ```
 
-- `PresetSnapshot` 有 `id`、`workdir`、`model`（`<provider>/<model-id>`）、`tools`、`prompt`、`contextWindow`，还有可选的 `thinking`（pi-ai 的思考级别，预设没写就没有这个键）。`tools` 是 `read`、`write`、`edit`、`bash`、`memory`、`agents` 的子集：`agents` 是一组工具（`post`、`spawn`、`stop_process`），不是单个工具。预设文件的格式见[设计稿第 2 节](../docs/design/mvp.md#2-预设)。
+- `PresetSnapshot` 有 `id`、`workdir`、`model`（`<provider>/<model-id>`）、`tools`、`prompt`、`contextWindow`、`input`（模型能收的输入，`text` 和 `image` 的子集），还有可选的 `thinking`（pi-ai 的思考级别，预设没写就没有这个键）。`tools` 是 `read`、`write`、`edit`、`bash`、`memory`、`agents` 的子集：`agents` 是一组工具（`post`、`spawn`、`stop_process`），不是单个工具。预设文件的格式见[设计稿第 2 节](../docs/design/mvp.md#2-预设)。
 - `segment.memoryView` 是开段那一刻的记忆视图。以后算不出来，所以存。
 - `turn.steps` 必须存：一轮可以跨越换段。
 - `turn.queued` 存信件原样，写进段时才渲染。`turn.hops` 是本轮已经写进段的信的最大跳数，`turn.replyTo` 是本轮结束时要寄回信的进程，去重。规则见[设计稿 5.3](../docs/design/kernel-v2.md#53-进程之间寄信派生停止回信跳数)。
@@ -100,10 +100,10 @@ interface Env { now: Instant; memoryView: string }
 | `start(id, preset, env)` | `decide.ts` | 建一个 `idle` 进程：段号 1，`lastEffect` 为 0，`memoryView` 和 `createdAt` 取自 `env` |
 | `decide(p, seg, input, env)` | `decide.ts` | 返回 `{ process, append, out }`，不发出副作用。`out` 是要寄的回信：`{ to, letter }[]` |
 | `effectOf(p, seg)` | `decide.ts` | `idle`：`null`。`awaitingModel`：`callModel(lastEffect, purpose)`。`awaitingTool`：`runTool(lastEffect, 第一个待执行的调用)` |
-| `buildContext(p, seg)`、`tailStart(seg)` | `context.ts` | 模型请求；段末用户消息的起点 |
+| `buildContext(p, seg)`、`tailStart(seg)`、`omitOldImages(messages)` | `context.ts` | 模型请求；段末用户消息的起点；请求里成批省略旧图 |
 | `observe(p, seg, siblings, now)` | `observe.ts` | 投影 |
 | `toolsFor(preset)`、`findTool(preset, name)` | `tools.ts` | 工具描述 |
-| `contextUsed`、`messageBytes`、`tokens`、`outputMax`、`handoffThreshold`、`pendingCalls`、`handoffRequested`、`segmentStartedAt`、`usageOf`、`clip`、`utf8Bytes` | `derive.ts` | 派生值和字节工具 |
+| `contextUsed`、`messageBytes`、`tokens`、`outputMax`、`handoffThreshold`、`resultReserve`、`fixedTokens`、`startError`、`newSegmentUsed`、`pendingCalls`、`handoffRequested`、`segmentStartedAt`、`usageOf`、`clip`、`utf8Bytes` | `derive.ts` | 派生值和字节工具 |
 | `finalReply(seg)`、`endedText(ended)`、`endedReason(error)` | `derive.ts` | [最终回复](#最终回复)；[结束原因的文字](#结束原因的文字) |
 
 `decide` 的输出约定：
@@ -153,13 +153,17 @@ interface Env { now: Instant; memoryView: string }
 
 | 值 | 函数 | 怎么算 |
 |---|---|---|
-| 一条消息的字节数 | `messageBytes(m)` | 实际发出的原始 UTF-8 字节，不算 JSON 外壳和转义。用户消息：正文。工具结果：`toolCallId` + `toolName` + 文本。助手消息：文本 + 思考 + 每个工具调用的 ID + 名称 + `JSON.stringify(arguments)`（参数本来就按 JSON 发）。图片：`data.length`。孤立的代理项按 3 字节算 |
+| 一条消息的字节数 | `messageBytes(m)` | 实际发出的原始 UTF-8 字节，不算 JSON 外壳和转义。用户消息：正文。工具结果：`toolCallId` + `toolName` + 文本。助手消息：文本 + 思考 + 每个工具调用的 ID + 名称 + `JSON.stringify(arguments)`（参数本来就按 JSON 发）。图片：`IMAGE_TOKENS × BYTES_PER_TOKEN` 字节，不看 `data`。孤立的代理项按 3 字节算 |
 | 字节换成 token | `tokens(b)` | `ceil(b / BYTES_PER_TOKEN)`，只对总字节数取整一次 |
 | 一条助手消息的用量 | `usageOf(m)` | `usage.totalTokens`；为 0 时取 `input + output + cacheRead + cacheWrite` |
 | 上下文用量 | `contextUsed(p, seg)` | 段里最后一条用量不为 0 的助手消息（锚点）的用量，加上 `tokens(锚点之后各消息的 messageBytes 之和)` |
 | 上下文用量（没有锚点） | `contextUsed(p, seg)` | `tokens(系统提示词的字节 + 工具描述 JSON 的字节 + 全段 messageBytes 之和)` |
 | 一次回复的输出上限 | `outputMax(preset)` | `floor(contextWindow / 8)`。执行器请求 `min(model.maxTokens, outputMax)`（[kb-executor.md](kb-executor.md#调用模型actionsts)） |
-| 换段阈值 | `handoffThreshold(preset)` | `contextWindow − 2 × outputMax − tokens(MESSAGE_MAX_BYTES) − MARGIN_TOKENS`，见[换段阈值](#换段阈值) |
+| 换段阈值 | `handoffThreshold(preset)` | `contextWindow − 2 × outputMax − R − MARGIN_TOKENS`，R 是 `resultReserve(preset)`，见[换段阈值](#换段阈值) |
+| R | `resultReserve(preset)` | `tokens(MESSAGE_MAX_BYTES)`；`input` 含 `image` 时再加 `IMAGES_PER_MESSAGE × IMAGE_TOKENS`。只看快照 |
+| 固定部分 | `fixedTokens(preset)` | `tokens(预设提示词 + 工作目录那一行 + JSON.stringify(工具描述)的字节)`，口径和 `contextUsed` 一样 |
+| 启动检查 | `startError(preset)` | `fixedTokens + 记忆的上界 < handoffThreshold` 时返回 `null`，否则返回原因（含三个数）。记忆的上界：预设含 `memory` 时是 `tokens(MEMORY_VIEW_MAX_BYTES + 标题的字节)`，否则 0。`start` 和 `spawn` 在存储层调用（[kb-store](kb-store.md)） |
+| 假想的新段 | `newSegmentUsed(p, view, first)` | 新段只有 `first` 一条消息时的用量，加固定部分和记忆各多少 token。交接以后的检查用 |
 | 是否到阈值 | 内部 `overThreshold` | `contextUsed >= handoffThreshold` |
 | 段末用户消息的起点 | `tailStart(seg)`（`context.ts`） | 段末最长一串用户消息的起点。段不空时最小为 1，段空时为 0 |
 | 本段开始时间 | `segmentStartedAt(seg)` | 第一条消息的 `timestamp`；段空时没有 |
@@ -176,6 +180,9 @@ interface Env { now: Instant; memoryView: string }
 | `MARGIN_TOKENS` | 4096 | 已定 | 阈值之上的余量：交接指令、补的结果、ID、消息框架和估算误差 |
 | `ENDED_REASON_MAX_BYTES` | 1024 | 已定 | 出错的原因经 `clip` 截到这个字节数：D25 的说明、`self` 和回信的头都用 |
 | `HOPS_MAX` | 32 | 暂定 | `post` 和 `spawn` 寄出的信，跳数超过它就失败。回信不受限制。只防库内工具的循环（设计稿 5.3）。检查在存储层 `post`、`spawn` 的执行里（[kb-store](kb-store.md#进程之间的工具)），常量放在 `derive.ts` |
+| `IMAGE_TOKENS` | 5000 | 已定 | 一张图算多少 token，不看字节。取全部测量值（最大 4,763）、文档上限 4,784 和 5000 里的最大值（[D42](kb-decisions.md#d42-第-6-步量-image_tokens核实收图片)） |
+| `IMAGES_PER_REQUEST` | 8 | 暂定 | 一次请求最多带段里最近的几张图（K）。放在 `context.ts` |
+| `IMAGES_OMIT_BATCH` | 4 | 暂定 | 超出时每批省略几张（B）。放在 `context.ts` |
 | `IMAGES_PER_MESSAGE` | 2 | 暂定 | 工具结果和新段第一条消息最多带几张图片（[张数和省略行](#张数和省略行)）。设计稿 5.6 说明暂定的理由 |
 
 已定的值为什么是这样，见 [D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)；`ENDED_REASON_MAX_BYTES` 见 [D25](kb-decisions.md#d25-上一轮没有正常结束时下一条消息加说明)。
@@ -193,10 +200,13 @@ interface Env { now: Instant; memoryView: string }
 
 ### 换段阈值
 
-W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出上限。
+W 是 `preset.contextWindow`。快照里只冻结它和 `input`，不冻结模型的输出上限。
 
 - OUT = `outputMax` = `floor(W / 8)`。
-- R = `tokens(MESSAGE_MAX_BYTES)` = 16,384，一个满上限的工具结果。
+- R = `resultReserve(preset)`，一个没检查的工具结果最多多少 token，是快照的纯函数：
+  - 不收图片：`tokens(MESSAGE_MAX_BYTES)` = 16,384。
+  - 收图片：16,384 + `IMAGES_PER_MESSAGE × IMAGE_TOKENS` = 26,384。
+  - 一张图在估算里是 `IMAGE_TOKENS` 个 token（`messageBytes`）。锚点是真实用量，已经包括请求里真的图片；锚点之后的图片按这个估算。
 - T = `handoffThreshold` = W − 2·OUT − R − `MARGIN_TOKENS`。阈值之上要放得下：一次回复、一个没检查的工具结果、交接说明的输出和余量。
 
 证明梗概。U 是用量估算，I = 234 是交接指令，S 是补的结果以及工具结果的 ID 和名称。
@@ -210,7 +220,7 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 7. 停止、步数用完、交接失败多少次、后来的消息多大，都不改变这个上界。重试发的是同一个请求。
 8. `turn` 调用：T + OUT < W。
 
-前提：真实的分词至少 2 字节一个 token；系统提示词和工具描述本身远小于窗口。
+前提：真实的分词至少 2 字节一个 token；`IMAGE_TOKENS` 不低于在用模型一张图的真实 token 数，图按入口允许的各种形状算，不只正方形；固定部分加记忆的上界低于阈值，由[启动检查](#启动检查和交接以后的检查)保证。
 
 | W | OUT | T（占 W） | 交接请求上界 T + OUT + R + I（不含 S） | 加交接说明 | 余下 | 提示词空间 |
 |---|---|---|---|---|---|---|
@@ -220,8 +230,34 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 | 200,000 | 25,000 | 129,520（64.8%） | 171,138 | 196,138 | 3,862 | 约 206 KB |
 | 1,000,000 | 125,000 | 729,520（73.0%） | 871,138 | 996,138 | 3,862 | 约 1.4 MB |
 
+收图片的预设（R = 26,384）：
+
+| W | T（占 W） | 提示词空间 |
+|---|---|---|
+| 64,000 | 17,520（27.4%） | 放不下最坏的新段，见坑点 |
+| 128,000 | 65,520（51.2%） | 约 56 KB |
+| 200,000 | 119,520（59.8%） | 约 164 KB |
+| 1,000,000 | 719,520（72.0%） | 约 1.36 MB |
+
+- 其余的列照式子代入 R，余下不变。
 - 余下总是 `MARGIN_TOKENS` − I = 3,862，先给 S。S 用不完的部分留给消息框架和估算误差。
-- 提示词空间：最坏的新段（全部工具、16 KiB 的记忆视图、32 KiB 的第一条消息）里，预设提示词还能有多少字节而不立即再换段。
+- 提示词空间：最坏的新段（全部工具、16 KiB 的记忆视图、32 KiB 的第一条消息）里，预设提示词还能有多少字节而不立即再换段。收图片时，最坏的第一条还带 `IMAGES_PER_MESSAGE` 张图，多算 2 × `IMAGE_TOKENS` × `BYTES_PER_TOKEN` = 20,000 字节，上表已扣除。
+
+### 请求里的图片
+
+- 一次请求最多带段里最近的 `IMAGES_PER_REQUEST`（K）张。段里有 n 张：n 不超过 K 时全带；否则从最早的起整批省略，每批 `IMAGES_OMIT_BATCH`（B）张，省 B × ⌈(n − K) / B⌉ 张，请求里留最近的 K − B + 1 到 K 张。省略的每张换成一行 `[图片：较早的图片，已省略]`。
+- K = 8、B = 4：n = 9 到 12 省 4 张，n = 13 到 16 省 8 张。省略的张数每来 B 张图变一次。成批省略是为了提示缓存：请求的前缀不是每来一张图都变。
+- 这由 `buildContext` 调 `omitOldImages` 做，是段的纯函数，不改库。交接请求先去掉段末的用户消息，再数图。
+- 所以一次请求里图片的数据不超过 8 × 1.5 MiB × 4/3 = 16 MiB。这低于 Anthropic 每次请求 32 MB 的上限，文字不超过约 4 MiB 时也低于 Google 的 20 MiB。
+- 这是“换段是唯一缩短上下文的办法”的例外，理由见 [D40](kb-decisions.md#d40-第-6-步前一半的选择)。
+- 用量估算：`messageBytes` 把一张图算成 `IMAGE_TOKENS × BYTES_PER_TOKEN` 字节，不看 `data`。段里只有收图片的预设才会有图片。
+
+### 启动检查和交接以后的检查
+
+- 启动检查：`start` 和 `spawn` 冻结快照时，`startError(preset)` 要返回 `null`。式子等价于 F + M + R + `MARGIN_TOKENS` + 2·OUT < W，比“交接请求放得进窗口”更严。阈值不大于 0 的小窗口也被挡住。启动失败时报出固定部分、记忆的上界和阈值各多少 token。纯函数层只算，调用在存储层：`startProcess` 抛错，`spawn` 是错误结果，什么都不建（[kb-store](kb-store.md)）。
+- 它只挡固定部分加记忆到阈值的预设。差得不远的，新段的第一条（交接头加说明）还会把新段推到阈值。这一种由交接以后的检查兜住。
+- 交接以后的检查：`onHandoff` 接受交接回复以后、建新段之前，用 `newSegmentUsed` 查假想的新段。记忆视图取 `env` 里的当前视图，段里只有一条 `HANDOFF_HEADER` 加交接说明，不带要带过去的信。用量不低于阈值（和 `continueTurn` 同一个判断）就按交接失败结束本轮：不写交接回复，不建新段，排队的信照 `endTurn` 合并写进旧段。原因：`交接失败：新段一开头就到阈值（固定部分 <f>、记忆 <m>、交接说明 <n>，共 <x> / <T> token）`。每封信最多浪费一次交接调用。
+- 带过去的信让新段到阈值时，检查不拦，照常再换一次段。
 
 ### 信的头和合并
 
@@ -247,7 +283,7 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 - 没有图片：`content` 是字符串，头直接拼进文本，经 `clip` 截到 `MESSAGE_MAX_BYTES`。
 - 有图片：`content` 是数组，一个文本块（文本为空时没有），后面接图片块。文本经 `clip`。
 
-信的内容块由 `decide` 里的 `render` 拆成文本和图片；图片按信的顺序全带。合并几封信时不限张数，入口限每封信（设计稿 5.6，第 6 步）。
+信的内容块由 `decide` 里的 `render` 拆成文本和图片；图片按信的顺序全带。合并几封信时不限张数，入口限每封信（[kb-service 的图片](kb-service.md#图片)）。
 
 ### 张数和省略行
 
@@ -520,12 +556,15 @@ type PhaseView =
 - **回信的最终回复要在合并排队的信之前算。** 顺序是补工具结果、算最终回复、寄回信、再合并。先合并，段末就是用户消息，最终回复成了空串，等回信的进程拿不到这一轮的答案。验证：`replies.test.ts` 的“最终回复在合并排队的信之前算”。
 - **并入的信会在新旧两段里各有一份。** 换段时它在旧段末尾，也原样带进新段的第一条。数“这条信出现几次”的测试要跳过新段的第一条。
 - **步数用完时安全点不合并。** 先查步数，再合并。合并以后再 `continueTurn` 会让发起这一轮的进程拿到空串，而不合并时它拿到最后一条助手消息的正文。
-- **换段循环靠步数收住。** 新段一开始就超过阈值时（例如系统提示词和工具描述已经超过），每次换段都成功，又立即再换段，直到 `stepLimit`。每条消息最多调用 `STEPS_PER_TURN` 次模型。不要让交接调用不计步。验证：`acceptance.test.ts`。
-- **小窗口。** 窗口小于 27,307 时阈值不大于 0，每次调用都是交接。空记忆、交接说明不超过 8 KiB 时，约从 36K 起能用。最坏的新段要约 63K 以上；64K 窗口只给预设提示词留约 2.1 到 4.4 KB（见[换段阈值](#换段阈值)）。加载预设时不检查。
+- **换段循环靠步数收住。** 固定部分加记忆到阈值的预设，被启动检查挡在门外，不会进来。差得不远的（固定部分离阈值不到一份交接说明），新段的第一条还会把新段推到阈值，由交接以后的检查兜住：每封信交接一次就以交接失败结束，不会空转到 `stepLimit`。`stepLimit` 仍是最后一道保险：带过去的信让新段到阈值时检查不拦，照常再换一次段，每次换段都计步。不要让交接调用不计步。验证：`acceptance.test.ts`，`images.test.ts`。
+- **小窗口由启动检查挡住。** 窗口小于 27,307 时阈值不大于 0，窗口再大一点，固定部分加记忆也可能到阈值。`start` 和 `spawn` 在冻结快照时检查，不通过就启动失败，用户马上知道（[启动检查和交接以后的检查](#启动检查和交接以后的检查)）。通过的预设里，最坏的新段（全部工具、16 KiB 的记忆视图、32 KiB 的第一条消息）仍可能要约 63K 以上；64K 窗口只给预设提示词留约 2.1 到 4.4 KB（见[换段阈值](#换段阈值)）。
+- **64K 窗口收图片时阈值很低。** 阈值只有 17,520。带图的信赶上换段时，新段的第一条可能已经超过阈值，于是再换一次段。这一次，信的原文和图被概括进交接说明，图从此丢失。
+- **`IMAGE_TOKENS` 只量过一批模型。** 它取全部测量值、文档上限和 5000 里的最大值。以后收图片的预设换成没量过的模型，先量（量法见设计稿 5.6，量过哪些模型见 [D42](kb-decisions.md#d42-第-6-步量-image_tokens核实收图片)）。最大的测量值 4,763 离 5000 只差 5%。算少了，证明的前提就不成立，请求可能超过窗口。
+- **请求里的旧图是成批省略的，库里不变。** 一次请求最多带最近的 K 张；超出时从最早的起整批省略 B 张的整数倍，换成一行说明。这改变旧消息在请求里的样子，是“换段是唯一缩短上下文的办法”的例外（[D40](kb-decisions.md#d40-第-6-步前一半的选择)）。省略只在 `buildContext` 里做，`contextUsed` 的估算仍按全部图片算：宁可高估。
 - **2 字节一个 token 是证明的前提。** 阈值检查只看估算。真实分词低于它时，误差按字节累加。误差只在两次真实用量之间累加。一次回复读回多个结果时，每个都少算。最后一次 `turn` 调用之前少算的部分，会让那次回复的用量超过 T + OUT。所以第 2、5、6、8 步都可能不成立，`turn` 调用本身也可能超过窗口。补的结果（S）里随机的 ID 也会被少算：在用的 opencode-go 的 ID 是 `call_` 加 24 个十六进制字符。超过窗口时，同一个请求每次重试都同样失败。量过的数见 [D24](kb-decisions.md#d24-真模型验收)，风险和应对见设计稿的[风险](../docs/design/mvp.md#风险)。
 - **在等模型时停止或失败，只靠下一条消息里的说明告诉模型。** 这时段里不写回复，也不写标记。排队的消息照常合并写入。段末是那条用户消息、合并的排队消息，或者最后的工具结果。不加说明时，模型可能把没做完的请求当成还要做的事（[D24](kb-decisions.md#d24-真模型验收)）。在工具运行中停止或被中断时，模型另外还能看到“被中断，结果未知”。
 - **说明只加在空闲时收到的消息上。** 合并的排队消息不加，一轮只说一次。停止的说明把排队的消息也一并取消。说明是消息正文，存进段，换段时跟着带过去。不要改成假的助手消息，理由见 [D25](kb-decisions.md#d25-上一轮没有正常结束时下一条消息加说明)。验证：`flow.test.ts` 的“上一轮没有正常结束”。
-- **不要在 CLI 或服务的边上截断消息。** 上限只在 `decide` 的 `userMessage` 里检查。边上再截一次是第二个来源，也管不到合并的排队消息和带过来的消息。`turn.queued` 保持原样，直到在安全点或本轮结束时写进段。服务不另设上限；经 CLI 发来的消息受 Windows 命令行（32,767 个 UTF-16 单元）限制。
+- **不要在 CLI 或服务的边上截断消息。** 上限只在 `decide` 的 `userMessage` 里检查。边上再截一次是第二个来源，也管不到合并的排队消息和带过来的消息。`turn.queued` 保持原样，直到在安全点或本轮结束时写进段。服务不另设上限（图片除外：入口按设计稿 5.6 检查，不合格就拒绝，不截断）；经 CLI 发来的消息受 Windows 命令行（32,767 个 UTF-16 单元）限制。
 - **交接请求不能带段末的用户消息。** 它们可能在阈值之后才到，大小不受阈值约束。带上它们，停止、步数用完或交接失败之后再发的大消息会让交接请求超过窗口。验证：`acceptance.test.ts` 的三条角落路径。
 - **换段失败时旧段也会变。** “旧段不变”只指没有交接说明、没有新段。排队的消息照样合并写进旧段。
 - **失败的回复不能写进段。** 写进去会让最后一条助手消息的用量变成 0，上下文用量退回字节估算。

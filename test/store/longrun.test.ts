@@ -33,7 +33,7 @@ test("长跑：200 轮、几十次换段，每条用户消息读取的行数按�
   const reads = new Map<number, number[]>();
   let maxRecord = 0;
   let maxSegment = 0;
-  startProcess(db, memory, "p1", { ...PRESET, contextWindow: 32_000 }, "开始", 0);
+  startProcess(db, memory, "p1", { ...PRESET, tools: ["read"], contextWindow: 32_000 }, "开始", 0);
   for (let i = 0; i < 200; i++) {
     if (i > 0) send(db, "p1", userLetter(`第 ${i} 条消息`));
     const seq = loadProcess(db, "p1")!.segment.seq;

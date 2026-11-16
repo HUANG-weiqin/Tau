@@ -82,19 +82,20 @@ abort(id, n)
 ### 调用模型（`actions.ts`）
 
 1. 按第一个 `/` 把快照里的模型 ID 拆成 provider 和模型 ID，用 `models.getModel` 现查。查不到就抛出 `模型目录里没有 <ID>`，执行器把它变成 `error` 回复。
-2. `models.streamSimple({ ...model, maxTokens: cap }, buildContext(process, segment), { signal, sessionId: process.id, maxTokens: cap, maxRetries: MODEL_RETRIES, reasoning? })`。`cap` = `min(model.maxTokens, outputMax(preset))`，`outputMax` 是窗口的 1/8。快照有 `thinking` 才传 `reasoning`，没有就连键都不传。不传 `thinkingBudgets`。轮次调用和交接调用一样。
+2. `models.streamSimple({ ...model, maxTokens: cap }, resolveImages(buildContext(process, segment), readBlob), { signal, sessionId: process.id, maxTokens: cap, maxRetries: MODEL_RETRIES, reasoning? })`。`cap` = `min(model.maxTokens, outputMax(preset))`，`outputMax` 是窗口的 1/8。快照有 `thinking` 才传 `reasoning`，没有就连键都不传。不传 `thinkingBudgets`。轮次调用和交接调用一样。
 3. 只把 `text_delta` 事件连同进程 ID 和副作用编号交给 `onText`。服务怎样转发，见 [kb-service.md](kb-service.md#流式文本)。
 4. 返回 `stream.result()`，也就是最终的助手消息。
 
 - 服务的模型目录来自 `@earendil-works/pi-ai/providers/all` 的 `builtinModels`，怎样创建见 [kb-service.md](kb-service.md#启动脚本和入口)。`createModels()` 返回空目录，测试用它装 faux provider。
 - `sessionId` 用进程 ID，换段后不变。支持会话缓存的 provider 会用它。
 - 凭据由服务在创建模型目录时传入，执行器不管。凭据从哪来见 [kb-service.md](kb-service.md#启动脚本和入口)。
+- `resolveImages`（`src/store/blobs.ts`）：请求里图片块的 `blob:<hash>` 换成从 `blobs` 读出的 base64 真数据。`buildContext` 已经成批省略了旧图，所以只读真正要发的图片。段和库不变。引用在 `blobs` 里没有行（存储层不变量保证不会）时抛出，变成 `error` 回复，不发请求。`readBlob` 由服务传给 `createActions`。
 - 请求用 `claim` 时读出的进程记录和工作段。运行中排队的用户消息在 `turn.queued` 里，不进这次请求。
 
 输出上限 `maxTokens`：
 
 - 为什么是窗口的 1/8：换段阈值只给一次回复留 `outputMax` 的空间（[kb-kernel](kb-kernel.md#换段阈值)）。请求得更多，交接请求就可能放不进窗口。
-- 为什么取较小的：不向模型要它给不了的输出。快照只冻结窗口，`model.maxTokens` 调用时现查（[D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)）。
+- 为什么取较小的：不向模型要它给不了的输出。快照只冻结窗口和 `input`，`model.maxTokens` 调用时现查（[D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)）。
 - pi-ai 1.0.0 的 `buildBaseOptions` 取 `options.maxTokens ?? model.maxTokens`，再截到 `max(1, 窗口 − 它的估算 − 4096)`。这一步只会调低。
 - pi-ai 的估算是锚点用量加上之后的字符数 / 4，不超过纯函数层的估算（字节数 / 2）。所以轮次调用时这一截不起作用。交接调用时，它最多把交接说明的上限压低“补的结果 + 交接指令”那么多。
 思考级别：
@@ -167,7 +168,7 @@ abort(id, n)
 | 恢复写在 `createExecutor` 里 | 不能被跳过；运行时中止开关表一定是空的 |
 | `Actions` 是两个有类型的函数，执行器自己构造 `Input` | 动作写不错结果的种类和编号；测试换一组假动作就能测执行器 |
 | 动作抛出也变成结果 | 模型失败和 pi-ai 一样写在助手消息里（D18 第 3 条）；工具失败是结果内容（[kb-kernel.md](kb-kernel.md)） |
-| 调用时才从模型目录取模型 | 快照只冻结 `contextWindow`（D19） |
+| 调用时才从模型目录取模型 | 快照只冻结 `contextWindow` 和 `input`（D19、D40） |
 | 请求的输出上限取 `min(model.maxTokens, 窗口的 1/8)`，不冻结进快照；模型的 `maxTokens` 也换成它 | 换段阈值按窗口的 1/8 留输出的空间；正确性不需要模型自己的上限（[D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)） |
 
 ## 认知模型
@@ -193,7 +194,7 @@ abort(id, n)
 | 路径 | 内容 |
 |---|---|
 | `src/executor/executor.ts` | `createExecutor`、`Executor`、`Actions`、`Job`；`claim`、`complete`、`recover` |
-| `src/executor/actions.ts` | `createActions(models, onText, pipe)`：调用模型、校验参数、分派工具 |
+| `src/executor/actions.ts` | `createActions(models, onText, pipe, readBlob)`：调用模型、校验参数、分派工具 |
 | `src/server/serve.ts` | `pump`：把 `handleNext` 的 `abort` 接到 `exec.abort`，循环 `startNext` |
 | `src/main.ts` | 用 `builtinModels()` 建模型目录 |
 | `test/store/executor.test.ts` | 开始、完成、中止、失败上报、启动恢复、竞态 |
@@ -235,6 +236,7 @@ abort(id, n)
 | 竞态：停止时还是 `pending` | 执行器绝不会再开始它 |
 | 竞态：库外工具结果排在用户消息后面 | 先处理用户消息不会再插行，工具只执行一次 |
 | 竞态：库内工具结果排在用户消息后面 | `memory_set` 只执行一次 |
+| 调用模型前换成真数据 | `test/store/blobs.test.ts`：10 张图的段，请求里最早的 4 张是省略说明，其余 6 张是真数据，只读了这 6 张；引用对不上时拒绝、不发请求；`test/server/protocol.test.ts`：faux 模型收到的是 base64，库里仍是引用 |
 | 调用模型的 `maxTokens`、`reasoning`、`maxRetries` | `model-call.test.ts` 的六个模型；另有真的 `createActions` 加 faux 模型，几组接近真实目录的窗口和上限：轮次调用和交接调用都请求 `min(model.maxTokens, floor(W/8))` |
 
 ## 坑点

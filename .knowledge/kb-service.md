@@ -13,6 +13,7 @@
 - 线协议：请求和回复的类型、请求的校验、回执什么时候发。
 - 观察者：哪些连接在等哪个进程，最终回复什么时候发、内容怎么算。
 - `history` 和 `watch`：读历史，订阅变化，订阅的写缓冲上限。
+- 图片：`start`、`send` 的入口检查，`blob` 请求。
 - CLI 的命令、输出、退出码，以及“结果未知”。
 - `tau ps` 的文字格式。
 - 启动脚本 `tau.cmd`、入口 `src/main.ts`、正常退出。
@@ -122,11 +123,12 @@ pump()
 
 ```ts
 type Request =
-  | { op: "start"; preset: string; text: string }
-  | { op: "send"; process: string; text: string }
+  | { op: "start"; preset: string; text: string; images?: string[] }   // images 是 base64
+  | { op: "send"; process: string; text: string; images?: string[] }
   | { op: "stop"; process: string }
   | { op: "ps" }
   | { op: "history"; process: string; segment?: number; from?: number }
+  | { op: "blob"; hash: string }                            // hash 不带 blob: 前缀
   | { op: "watch"; process?: string };
 
 type Reply =
@@ -136,17 +138,19 @@ type Reply =
   | { type: "ps"; processes: Projection[] }
   | { type: "message"; segment: number; seq: number; message: Message }
   | { type: "end"; segment: number; messages: number }      // history 读完
+  | { type: "blob"; mimeType: string; data: string }        // data 是 base64
   | { type: "update"; self: Projection["self"] }            // watch 的快照和增量
   | { type: "error"; message: string };
 ```
 
 | 请求 | 服务做什么 | 回复 |
 |---|---|---|
-| `start` | `loadPreset` 读预设；生成进程 ID；`startProcess` | `receipt`，若干 `text`，`final` |
-| `send` | `send` 放进一封用户的信；进程不存在就抛出 | 同上 |
+| `start` | `checkImages` 检查图片；`loadPreset` 读预设；生成进程 ID；`startProcess`（启动检查不通过就抛错，回 `error`，什么都不建） | `receipt`，若干 `text`，`final` |
+| `send` | `checkImages` 检查图片；`send` 放进一封用户的信；进程不存在就抛出 | 同上 |
 | `stop` | `send` 放进一条 `stop` | `receipt` |
 | `ps` | 读全部进程记录；每个进程 `observe(p, 当前段, 全部进程, now)` | 一行 `ps` |
 | `history` | 读一段的消息 | 若干 `message`，一行 `end`，然后关闭 |
+| `blob` | 读一张图片：`hash` 不带 `blob:` 前缀。不开写事务 | 一行 `blob`，然后关闭。`hash` 不存在回 `error` |
 | `watch` | 推快照，登记订阅 | 一直推 `update` 和 `text`，直到客户端断开 |
 | 处理时抛出 | — | 一行 `error`，然后关闭 |
 
@@ -160,9 +164,30 @@ type Reply =
 
 - 每个连接只读第一行。`\r\n` 算一个换行。
 - 不是合法 JSON：`error`，内容是 `JSON.parse` 的错误信息。
-- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`；`stop` 要字符串 `process`；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`watch` 的 `process` 可以没有，有就要是字符串。否则 `error`：“无法识别的请求：<原文>”。
+- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`；`stop` 要字符串 `process`；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`blob` 要字符串 `hash`；`start`、`send` 的 `images` 可以没有，有就要是字符串数组；`watch` 的 `process` 可以没有，有就要是字符串。否则 `error`：“无法识别的请求：<原文>”。
 - 只查类型。空串能通过，多余的字段被忽略。空预设 ID 由 `loadPreset` 拒绝；空消息会成为一条用户消息。CLI 不发空消息。
 - 预设读不出、进程不存在、进程 ID 冲突，都回 `error`。这些情况下库里什么都没写。
+
+### 图片
+
+入口检查在 `src/images.ts` 的 `checkImages`，`start` 和 `send` 在碰库之前调用。纯函数，不读库。不合格就抛出，原因是 `error` 的内容，什么都不写。
+
+按顺序，每一步对全部图片做完再做下一步（张数、大小、类型、尺寸）：
+
+1. 张数：一个请求最多 `IMAGES_PER_MESSAGE`（2）张。
+2. 大小：每张不超过 `IMAGE_MAX_BYTES`（1.5 MiB，指原始字节）。解出字节要先是合法的 base64，不是就在这一步拒绝。
+3. 类型：按文件头的魔数（`imageType`），只收 png、jpeg、gif、webp。不信声明的类型和扩展名。
+4. 尺寸：宽和高都在 1 到 `IMAGE_MAX_EDGE`（2000）之间，从文件头读（`imageSize`）：
+   - PNG：IHDR。GIF：逻辑屏幕描述。
+   - WebP：VP8、VP8L、VP8X 三种块。别的块读不出尺寸，拒绝。
+   - JPEG：从头逐段跳过标记段（APPn、EXIF 等），到 SOFn 为止，包括渐进式的 SOF2。到 SOS 还没有 SOFn、头被截断，读不出尺寸，拒绝。
+
+通过的图片带上 sha256 哈希和魔数算出的类型，交给存储事务（[kb-store](kb-store.md#图片)）。目标进程的模型不收图片时，照样先检查：不合格回 `error`，都合格才换成说明行，不存图片。
+
+- `blob` 的回复：类型用同一个 `imageType` 现算，不另存。库里的字节认不出类型（不会发生）也回 `error`。
+- `history` 里图片块的 `data` 是 `blob:<hash>`，不带字节。要看图，用 `blob`。
+- 文件头完好、数据损坏的图片仍可能进段，模型接口会拒绝它（[设计稿的风险表](../docs/design/kernel-v2.md#12-风险)）。
+- CLI 不带图片：CLI 的命令、输出和退出码冻结在 v1。上层的命令行直接用协议。
 
 ### 进程 ID
 
@@ -302,7 +327,9 @@ tau stop <进程>
 | `src/server/listen.ts` | `listen`：在命名管道上监听；`EADDRINUSE` 变成“已经有一个 tau 服务” |
 | `src/server/credentials.ts` | `piCredentials`：只读 pi 的凭据文件，只交出 `api_key` 条目 |
 | `src/protocol.ts` | `PIPE`、`Request`、`Reply` |
-| `test/server/protocol.test.ts` | `history`、`watch`、`text` 的进程和编号 |
+| `src/images.ts` | `checkImages`、`imageType`、`imageSize`、`IMAGE_MAX_BYTES`、`IMAGE_MAX_EDGE` |
+| `test/server/protocol.test.ts` | `history`、`watch`、`text` 的进程和编号、图片和 `blob` |
+| `test/images.test.ts` | 入口检查：常量、魔数、每种格式的尺寸、张数、大小、类型、尺寸、顺序、base64 |
 | `src/cli/main.ts` | `main`（命令和退出码）、`request`（连接、发一行、逐行交出回复）、`formatPs`、`ago` |
 | `src/main.ts` | 入口：`serve` 或 CLI；`~/.tau` 的位置；信号处理 |
 | `tau.cmd` | 启动脚本（cmd.exe） |
@@ -339,6 +366,7 @@ tau stop <进程>
 | protocol：`watch` 快照和增量 | 带不带 `process` 的快照；每次处理输入一条 `update`，消息条数和用量与库一致；不推 `final`；只推订阅的进程；订阅不存在的进程回 `error` |
 | protocol：`watch` 断开和退出 | 客户端断开后连接被释放，其余订阅照常；服务退出时断开订阅；退出开始以后才到的 `watch` 回 `error`，等最终回复的连接照常收到 |
 | protocol：`watch` 写缓冲上限 | 快照大于管道缓冲、订阅方一直不读：到上限才断开，读的订阅不受影响；快照很小、订阅方不读：少量推送不断开，超过上限才断开 |
+| protocol：图片 | `start`、`send` 带图：段里是引用，`blob` 取回原字节和类型，`history` 不带字节；`images` 的校验；不合格回 `error`、什么都不建；不收图片的模型先检查、再换说明；执行器发给模型的是真数据；`blob` 不存在、带前缀回 `error`，读请求不写库 |
 | cli：模型不在目录里 | 本轮以“模型目录里没有”的错误结束，回复不入段；模型放回后进程照常可用 |
 
 ## 坑点

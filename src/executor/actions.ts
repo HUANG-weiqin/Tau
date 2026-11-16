@@ -5,6 +5,7 @@ import { buildContext, toolDefinitions } from "../kernel/context.ts";
 import { outputMax } from "../kernel/derive.ts";
 import { textContent } from "../kernel/types.ts";
 import type { ProcessId } from "../kernel/types.ts";
+import { resolveImages } from "../store/blobs.ts";
 import { bash } from "../tools/bash.ts";
 import { edit, read, write } from "../tools/files.ts";
 import type { Actions } from "./executor.ts";
@@ -12,8 +13,8 @@ import type { Actions } from "./executor.ts";
 /** 模型请求在拿到成功的响应之前的重试次数，交给 pi-ai（设计稿 5.7）。 */
 export const MODEL_RETRIES = 5;
 
-/** `onText` 收到模型的流式文本和产生它的副作用编号；它只是预览，不进库。`pipe` 是服务实际监听的管道名，bash 工具把它交给命令（TAU_PIPE）。 */
-export function createActions(models: Models, onText: (id: ProcessId, n: number, delta: string) => void, pipe: string): Actions {
+/** `onText` 收到模型的流式文本和产生它的副作用编号；它只是预览，不进库。`pipe` 是服务实际监听的管道名，bash 工具把它交给命令（TAU_PIPE）。`readBlob` 读 blobs 表：调用模型之前，请求里的 `blob:<hash>` 换成真数据。 */
+export function createActions(models: Models, onText: (id: ProcessId, n: number, delta: string) => void, pipe: string, readBlob: (hash: string) => Buffer | undefined): Actions {
   return {
     async callModel(job, signal) {
       const name = job.process.preset.model;
@@ -24,7 +25,7 @@ export function createActions(models: Models, onText: (id: ProcessId, n: number,
       // 模型的 maxTokens 也换成 cap：按预算思考的路径把预算加到 maxTokens 上，再按模型的 maxTokens 截。
       const { thinking } = job.process.preset;
       const cap = Math.min(model.maxTokens, outputMax(job.process.preset));
-      const stream = models.streamSimple({ ...model, maxTokens: cap }, buildContext(job.process, job.segment), {
+      const stream = models.streamSimple({ ...model, maxTokens: cap }, resolveImages(buildContext(job.process, job.segment), readBlob), {
         signal,
         sessionId: job.process.id,
         maxTokens: cap,

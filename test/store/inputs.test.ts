@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { start } from "../../src/kernel/decide.ts";
 import { userLetter } from "../../src/kernel/types.ts";
+import type { PresetSnapshot } from "../../src/kernel/types.ts";
 import { handoffThreshold } from "../../src/kernel/derive.ts";
 import { createExecutor } from "../../src/executor/executor.ts";
 import { loadProcess, loadSegment, tx } from "../../src/store/db.ts";
@@ -225,7 +226,7 @@ test("记忆工具：读、写、冲突时带最新值、删除、参数错误",
 test("处理一条输入只读当前段：旧段不加载，查询走 (process_id, segment_seq)", async (t) => {
   const db = tempDb(t);
   const memory = fakeMemory();
-  const preset = { ...PRESET, contextWindow: 32_000 };
+  const preset: PresetSnapshot = { ...PRESET, tools: ["read"], contextWindow: 32_000 };
   const exec = createExecutor(db, scripted([reply("toolUse", [toolCall("c1", "read", { path: "a" })], handoffThreshold(preset)), say("交接说明"), say("完成"), say("又完成")]));
   startProcess(db, memory, "p1", preset, "a", 0);
   await settle(db, memory, exec);

@@ -19,6 +19,7 @@ export const PRESET: PresetSnapshot = {
   tools: ["read", "memory"],
   prompt: "你是测试助手。",
   contextWindow: 1_000_000,
+  input: ["text"],
 };
 
 /** 一个临时目录，测试结束时先关掉 `dbs` 里还开着的库，再删掉目录。 */

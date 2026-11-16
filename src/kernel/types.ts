@@ -3,7 +3,7 @@ import type { AssistantMessage, Context, ImageContent, TextContent, ThinkingLeve
 
 export type { AssistantMessage, ImageContent, ToolCall, ToolResultMessage, UserMessage };
 
-/** 信件和工具结果的内容块。图片的 data 将写成 `blob:<hash>`（设计稿第 5.6 节）；现在还没有代码产生图片。 */
+/** 信件和工具结果的内容块。图片的 data 将写成 `blob:<hash>`（设计稿第 5.6 节）。 */
 export type Content = TextContent | ImageContent;
 
 /** 工作段里只有这三种消息。 */
@@ -24,6 +24,8 @@ export interface PresetSnapshot {
   tools: PresetTool[];
   prompt: string;
   contextWindow: number;
+  /** 模型能收的输入，从模型目录冻结。含 `image` 才会有图片（设计稿第 5.6 节）。 */
+  input: ("text" | "image")[];
   /** pi-ai 的思考级别。预设没写就没有这个键，调用模型时不传 `reasoning`。 */
   thinking?: ThinkingLevel;
 }

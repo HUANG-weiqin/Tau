@@ -2,7 +2,7 @@
 // 永不抛错：抛错会让事务回滚，这条输入留在信箱队头，所有进程都卡住。所有失败都是 isError 的结果。
 import { createHash } from "node:crypto";
 import { start } from "../kernel/decide.ts";
-import { endedText, HOPS_MAX } from "../kernel/derive.ts";
+import { endedText, HOPS_MAX, startError } from "../kernel/derive.ts";
 import { observe } from "../kernel/observe.ts";
 import { MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
 import { textContent, unreachable } from "../kernel/types.ts";
@@ -61,6 +61,8 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
       } catch (e) {
         return fail(`预设 ${preset} 读不出：${e instanceof Error ? e.message : String(e)}`);
       }
+      const tooBig = startError(snapshot);
+      if (tooBig !== null) return fail(tooBig);
       let attempt = 0;
       let id = spawnId(p.id, p.lastEffect, attempt);
       while (loadProcess(db, id)) id = spawnId(p.id, p.lastEffect, ++attempt);

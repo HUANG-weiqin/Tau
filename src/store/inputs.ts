@@ -1,27 +1,39 @@
 // 进程的事务：启动、收一条命令、处理一条输入（见 .knowledge/kb-store.md）。每个函数恰好一个事务。
 import { decide, effectOf, start } from "../kernel/decide.ts";
+import { startError } from "../kernel/derive.ts";
 import { findTool } from "../kernel/tools.ts";
-import { textContent, unreachable, userLetter } from "../kernel/types.ts";
+import { textContent, unreachable } from "../kernel/types.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { Effect, Input, Instant, Memory, Message, PresetSnapshot, Process, ProcessId, ToolResultContent } from "../kernel/types.ts";
+import type { Image } from "../images.ts";
+import { letterContent } from "./blobs.ts";
 import { appendMessages, loadProcess, loadSegment, putMail, saveProcess, tx } from "./db.ts";
 import { envFor, runInStore } from "./instore.ts";
 import type { ReadPreset } from "./instore.ts";
 
-/** 写入 `start` 返回的进程记录，把第一条消息作为用户的信放进信箱。 */
-export function startProcess(db: DatabaseSync, memory: Memory, id: ProcessId, preset: PresetSnapshot, text: string, now: Instant): void {
+/**
+ * 写入 `start` 返回的进程记录，把第一条消息作为用户的信放进信箱。启动检查不通过（设计稿 5.6）就抛错，什么都不写。
+ * `images` 是通过入口检查的图片（`checkImages`）：模型收图片就和信在同一个事务里存进 `blobs`，否则每张换成一行说明。
+ */
+export function startProcess(db: DatabaseSync, memory: Memory, id: ProcessId, preset: PresetSnapshot, text: string, now: Instant, images: readonly Image[] = []): void {
+  const tooBig = startError(preset);
+  if (tooBig !== null) throw new Error(tooBig);
   tx(db, () => {
     const p = start(id, preset, envFor(memory, preset, now));
     db.prepare("INSERT INTO processes (id, state_json) VALUES (?, ?)").run(id, JSON.stringify(p));
-    putMail(db, id, userLetter(text));
+    putMail(db, id, { kind: "letter", letter: { from: { kind: "user" }, content: letterContent(db, text, images, preset.input.includes("image")), hops: 0 } });
   });
 }
 
-/** 把信或停止放进一个已有进程的信箱。提交之后才能发回执。 */
-export function send(db: DatabaseSync, id: ProcessId, input: Extract<Input, { kind: "letter" | "stop" }>): void {
+/** 把信或停止放进一个已有进程的信箱。提交之后才能发回执。`images` 只能跟着信：按目标进程的模型收不收图片，存进 `blobs` 或换成说明。 */
+export function send(db: DatabaseSync, id: ProcessId, input: Extract<Input, { kind: "letter" | "stop" }>, images: readonly Image[] = []): void {
   tx(db, () => {
-    if (!db.prepare("SELECT 1 FROM processes WHERE id = ?").get(id)) throw new Error(`没有这个进程：${id}`);
-    putMail(db, id, input);
+    const p = loadProcess(db, id);
+    if (!p) throw new Error(`没有这个进程：${id}`);
+    if (images.length === 0) return putMail(db, id, input);
+    if (input.kind !== "letter") throw new Error("图片只能跟着信。");
+    const text = input.letter.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("");
+    putMail(db, id, { kind: "letter", letter: { ...input.letter, content: letterContent(db, text, images, p.preset.input.includes("image")) } });
   });
 }
 

@@ -9,7 +9,7 @@
 它负责：
 
 - `~/.tau/tau.db` 的位置、表结构和 PRAGMA。
-- 三个事务：启动进程、收一条命令、处理一条输入。
+- 三个事务：启动进程、收一条命令、处理一条输入。图片和引用它的信在同一个事务里写入 `blobs`。
 - 处理输入时同步待办副作用表（`effects`）。
 - 在事务里执行库内工具：`self`、`handoff`、`memory_*`，以及预设含 `agents` 时的 `post`、`spawn`、`stop_process`。
 
@@ -84,7 +84,7 @@ CREATE TABLE blobs (
 | `mailbox` | 一条输入。`input_json` 是 `Input` 的 JSON | 见下 |
 | `effects` | 进程正在等的库外副作用：编号 `n` 和状态 | `handleNext` 和执行器 |
 | `memory` | 一个键现在的值 | `Memory` 的实现 `src/memory/kv.ts` |
-| `blobs` | 一块大数据（图片）：哈希和原始字节，只增（[设计稿 5.6](../docs/design/kernel-v2.md)）。现在没有代码写它 | 以后和引用它的信件或工具结果在同一个事务里写 |
+| `blobs` | 一块图片：哈希和原始字节，只增不删 | `startProcess`、`send` 和引用它的信在同一个事务里插入（`INSERT OR IGNORE`）；带图的工具结果以后由执行器上报结果的事务写（第 7 步） |
 
 - 段号从 1 开始。段内序号从 0 开始，每段重新计。
 - 没有删除进程或旧段的代码。旧段一直留在库里。
@@ -114,7 +114,7 @@ CREATE TABLE blobs (
 1. `PRAGMA journal_mode = WAL`。结果不是 `wal` 就关库并抛出。所以 `:memory:` 会被拒绝。
 2. `PRAGMA synchronous = FULL`。回执承诺“写进库才返回”，所以每次提交都要落盘。这是连接级设置，每次打开都设。
 3. 读 `PRAGMA user_version`：
-   - 0 是新库：在一个事务里建 6 张表，并写入 `SCHEMA_VERSION`（现在是 2）。
+   - 0 是新库：在一个事务里建 6 张表，并写入 `SCHEMA_VERSION`（现在是 3）。
    - 等于 `SCHEMA_VERSION`：直接用。
    - 其它值：关库并抛出，提示停掉服务、移走旧库、重启后重建。MVP 不做迁移。
 
@@ -128,8 +128,8 @@ CREATE TABLE blobs (
 
 | 函数 | 做什么 | 失败时 |
 |---|---|---|
-| `startProcess(db, memory, id, preset, text, now)` | 用 `start` 建 `idle` 进程记录并插入；第一条消息作为用户的信进信箱 | ID 重复：主键冲突，什么都不写 |
-| `send(db, id, input)` | 把信件或 `stop` 放进已有进程的信箱 | 进程不存在：抛出“没有这个进程”，什么都不写 |
+| `startProcess(db, memory, id, preset, text, now, images?)` | 用 `start` 建 `idle` 进程记录并插入；第一条消息作为用户的信进信箱。带图片时，信的内容块在同一个事务里生成，图片存进 `blobs`（见[图片](#图片)） | ID 重复：主键冲突，什么都不写，`blobs` 也不留。启动检查不通过（[kb-kernel](kb-kernel.md#启动检查和交接以后的检查)）：抛错，什么都不写 |
+| `send(db, id, input, images?)` | 把信件或 `stop` 放进已有进程的信箱。带图片时和 `startProcess` 一样，按目标进程的快照处理；图片只能跟着信 | 进程不存在：抛出“没有这个进程”，什么都不写，`blobs` 也不留 |
 | `handleNext(db, memory, now, readPreset?)` | 处理信箱里最早的一条输入。`readPreset` 给 `spawn` 读预设用，服务传 `loadPreset` | 抛出时整个事务回滚，这条输入留在队头 |
 
 `Env` 怎样算：`now` 由调用方传入；预设 `tools` 含 `memory` 时，`memoryView` 是 `memory.view(preset.id)`，否则是空串，不碰记忆。
@@ -149,6 +149,19 @@ CREATE TABLE blobs (
 9. 提交，返回 `{ process: 新记录, segment: 处理后的当前段, abort }`。`segment` 让服务算 `watch` 的 `update` 时不再读库。
 
 `abort` 不为 `null` 时，是这个事务删掉的 `running` 行的编号。调用方在提交之后中止执行器里的这个动作。
+
+### 图片
+
+代码在 `src/store/blobs.ts`。入口检查在 `src/images.ts`，由服务在调用事务之前做（[kb-service](kb-service.md#图片)）。事务收到的是已经检查过的图片：哈希、类型、字节。
+
+- `letterContent(db, text, images, accepts)` 在调用方的事务里生成信的内容块：
+  - 没有图片：一个文本块。
+  - 目标进程的快照 `input` 含 `image`：`INSERT OR IGNORE INTO blobs`，每张图一个图片块，`data` 是 `blob:<hash>`，`mimeType` 是魔数算出的类型。文本为空时没有文本块。
+  - 不含 `image`：不存图片，每张换成一行 `[图片：模型不支持，已省略]`，和文本合成一个文本块，行之间用换行。所以这种进程的段里永远没有图片。
+- `hash` 是原始字节的 sha256，64 位小写十六进制。同一张图只存一行。
+- 只增不删，和旧段一样。没人引用的行（例如以后带图的工具结果因为过时被丢掉）无害。
+- `readBlob(db, hash)` 只读，不开事务。服务的 `blob` 请求和执行器都用它。
+- 纯函数层里没有图片的字节：`decide`、`buildContext` 照样处理引用。字节只在执行器调用模型之前换进请求（[kb-executor](kb-executor.md#调用模型actionsts)）。
 
 ### 同步副作用
 
@@ -221,7 +234,7 @@ CREATE TABLE blobs (
 
 ## 认知模型
 
-库里有四类事实，各存一处：
+库里有五类事实，各存一处：
 
 | 事实 | 存在哪 |
 |---|---|
@@ -229,8 +242,9 @@ CREATE TABLE blobs (
 | 还没处理的输入 | `mailbox` |
 | 进程在等哪个库外副作用，开始了没有 | `effects` |
 | 记忆 | `memory` |
+| 图片的字节 | `blobs`；引用在信、`turn.queued` 和段里，写成 `blob:<hash>` |
 
-存储有三个事务：`startProcess`、`send`、`handleNext`。执行器另有三个事务，只写 `effects` 和 `mailbox`。记忆的写入发生在 `handleNext` 的事务里。除了 `openDb` 建表，`src/` 里没有别的代码写库。
+存储有三个事务：`startProcess`、`send`、`handleNext`。`startProcess` 和 `send` 还写 `blobs`。执行器另有三个事务，只写 `effects` 和 `mailbox`。记忆的写入发生在 `handleNext` 的事务里。除了 `openDb` 建表，`src/` 里没有别的代码写库。
 
 判断一次修改是否越界：
 
@@ -250,6 +264,8 @@ CREATE TABLE blobs (
 5. 运行中的进程有 `effects` 行时，行的编号就是 `effectOf` 的编号。
 6. 在等库外副作用 n（`callModel`，或 `inStore` 为 false 的工具）：“`effects` 里有 n 这一行”和“信箱里有 n 的结果”，恰好成立一个。
 7. 在等库内副作用 n（库内工具、不认识的工具、预设里没有的工具）：`effects` 里没有行，信箱里恰好有一个 n 的结果。
+
+8. 信箱、`turn.queued` 和段里的每个 blob 引用，`blobs` 里都有对应的行。图片块的 `data` 不是 `blob:<hash>` 也算违反：库里只存引用。检查在 `assertStoreInvariants` 的 `assertBlobRefs`。
 
 “n 的结果”指：同一个进程、种类对得上（`callModel` 对 `modelResult`，`runTool` 对 `toolResult`）、编号是 n 的输入。
 
@@ -356,6 +372,7 @@ CREATE TABLE blobs (
 | `post` 给自己 | `不能给自己寄信。` | 是 |
 | `stop_process` 停自己 | `不能停止自己。要结束这一轮，直接回复，不再调用工具。` | 是 |
 | 预设读不出 | `预设 <preset> 读不出：<原因>`，原因是读预设抛出的错误信息 | 是 |
+| 预设通不过启动检查 | `预设 <preset> 的窗口太小，装不下：固定部分 <f> token，记忆的上界 <m> token，换段阈值 <T> token`，什么都不建 | 是 |
 | 跳数到上限 | `跳数到上限（32）：这封信是被进程之间的信一路引出来的。结束本轮，等用户的下一封信。` | 是 |
 | 参数不对 | `参数错误：<说明>` | 是 |
 
@@ -390,12 +407,14 @@ CREATE TABLE blobs (
 | `src/store/db.ts` | `SCHEMA`、`SCHEMA_VERSION`、`openDb`、`tx`、行的读写 |
 | `src/store/inputs.ts` | `startProcess`、`send`、`handleNext`、同步副作用 |
 | `src/store/instore.ts` | `runInStore`：`self`、`handoff`、`memory_*`、`post`、`spawn`、`stop_process`；`spawnId`、`envFor`、`ReadPreset` |
+| `src/store/blobs.ts` | `letterContent`（信的内容块，存图片或换成说明）、`readBlob`、`resolveImages`（请求里的引用换成 base64）、`IMAGE_UNSUPPORTED` |
 | `src/memory/kv.ts` | `Memory` 的 SQLite 实现，服务用它；规则见 [kb-memory.md](kb-memory.md) |
 | `test/store/db.test.ts` | 表、PRAGMA、表结构版本、主键和 `CHECK`、编号不复用、回滚 |
 | `test/store/inputs.test.ts` | 三个事务、同步规则、库内工具、只读当前段（读取行数和查询计划） |
-| `test/store/invariants.ts` | 存储层不变量 |
+| `test/store/blobs.test.ts` | 图片：存字节和引用、同一事务（反例：进程不存在、启动检查不过、ID 重复时不留 `blobs`）、不收图片的模型换说明、`resolveImages`、执行器调用模型前换成真数据、不变量能抓到缺行 |
+| `test/store/invariants.ts` | 存储层不变量（含 blob 引用完整性） |
 | `test/store/regressions.test.ts` | 审查发现的缺陷的最小反例 |
-| `test/store/crash.test.ts` | 真库上的随机序列（含要回信的信和回信）；在每个事务之后崩溃 |
+| `test/store/crash.test.ts` | 真库上的随机序列（含要回信的信和回信、带图片的信）；在每个事务之后崩溃 |
 | `test/store/longrun.test.ts` | 多次换段后，处理一条输入读取的行数不增长 |
 | `test/store/replies.test.ts` | 回信在处理那条输入的事务里投递（回滚时一起撤销）；同一轮合并的几封信只回一封 |
 | `test/store/agents.test.ts` | `post`、`spawn`、`stop_process` 的结果和失败；A 问 B、B 被停止；互相寄信停在 `HOPS_MAX`；顺序委派 16 次；`spawn` 的 ID 和记忆视图；回滚；在每一步之后崩溃，结果和不崩溃时一样 |
