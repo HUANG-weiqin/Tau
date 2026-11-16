@@ -33,13 +33,13 @@ export function assertInvariants(p: Process, segment: readonly Message[]): void 
       if (missing) throw bad(`idle 时工具调用 ${missing.calls[missing.from]?.id} 没有结果`);
       if (effect !== null) throw bad(`idle 时 effectOf 应为 null，实际是 ${JSON.stringify(effect)}`);
       if (phase.ended === undefined) {
-        // ended 缺省表示还没跑过一轮：进程刚由 start 建出来。
+        // ended 缺省表示这个进程自己还没跑过一轮：由 start 建出来（工作段是空的），或者由 fork 带 before 建出来（工作段是复制的前缀）。
         if (p.lastEffect !== 0) throw bad(`还没跑过一轮，lastEffect 却是 ${p.lastEffect}`);
         if (p.segment.seq !== 1) throw bad(`还没跑过一轮，段号却是 ${p.segment.seq}`);
-        if (segment.length !== 0) throw bad("还没跑过一轮，工作段却不是空的");
       } else {
         checkEnded(phase.ended, bad);
-        if (p.lastEffect < 1) throw bad("跑过一轮，lastEffect 却是 0");
+        // lastEffect 为 0 只可能是不带 before 的 fork：第 1 段、复制来的结束原因。
+        if (p.lastEffect < 1 && p.segment.seq !== 1) throw bad("跑过一轮，lastEffect 却是 0");
         if (segment.length === 0) throw bad("跑过一轮，工作段却是空的");
       }
       return;

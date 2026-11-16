@@ -34,7 +34,7 @@ tools: read, write, edit, bash, memory
 
 - 前置信息有 `workdir`、`model`、`tools` 和可选的 `thinking`，每行一个 `key: value`。`thinking` 只收 `minimal`、`low`、`medium`、`high`、`xhigh`、`max`（pi-ai 的思考级别）；不写就不传给模型，值不对就报错。怎么用见 [kb-executor](../../.knowledge/kb-executor.md#调用模型actionsts)。
 - `tools` 里除了内置工具和工具组，还能写工具定义的名字（`~/.tau/tools/<name>.json`，格式见 [kb-tools](../../.knowledge/kb-tools.md#工具定义)）。
-- `tools` 里的 `memory` 表示进程有记忆库。`agents` 表示进程能给别的进程寄信、建进程、停进程（`post`、`spawn`、`stop_process`，[v2 设计稿 5.3](kernel-v2.md#53-进程之间寄信派生停止回信跳数)）。
+- `tools` 里的 `memory` 表示进程有记忆库。`agents` 表示进程能给别的进程寄信、建进程、停进程（`post`、`spawn`、`stop_process`，[kb-store](../../.knowledge/kb-store.md#进程之间的工具)）。
 - 进程启动时，预设被冻结成快照存进进程记录，用到的工具定义也一起冻结（快照的 `toolDefs`）。之后修改预设文件或工具定义文件，只影响新启动的进程。
 - 快照里还有两项：从 pi-ai 模型目录查到的这个模型的 `contextWindow` 和 `input`（模型能收的输入）。查不到就启动失败。冻结它们，是为了让 `decide` 不做 I/O。调用模型时，执行器仍从模型目录取模型（第 6 节）。
 
@@ -174,11 +174,11 @@ src/
 
 这些已被移出 MVP。要做其中任何一项，先改本稿和执行清单。理由见 D14、D18 和 D19。以后接在哪里，见 [kb-extending](../../.knowledge/kb-extending.md)。
 
-v2 的设计（[kernel-v2](kernel-v2.md)）改了其中几项的去向：
+v2 的设计（[kernel-v2](kernel-v2.md)，已冻结，细节在 kb 页）改了其中几项的去向：
 
-- 移出“不做”，v2 要做：派生和进程之间互发消息、Agent 的控制命令（立即换段）、运行中插话、图片输入、累计用量（取代花费统计）、自动重试（交给 pi-ai）。见 [v2 第 5 节](kernel-v2.md#5-原语)。
-- 改成“上层做”，不进内核：Web UI、HTTP、远程访问、grep 工具、扩展（不做宿主）、桌面截图、多设备、通知。做法见 [v2 第 8 节](kernel-v2.md#8-上层建筑的做法)。
-- 仍然不做：定时器、审批、推送状态行、LSP、MCP。理由见 [v2 第 6 节](kernel-v2.md#6-v2-也不做的)。
+- 移出“不做”，v2 要做：派生和进程之间互发消息、Agent 的控制命令（立即换段）、运行中插话、图片输入、累计用量（取代花费统计）、自动重试（交给 pi-ai）。见 [kb-contract 的原语和它在内核的理由](../../.knowledge/kb-contract.md#原语和它在内核的理由)。
+- 改成“上层做”，不进内核：Web UI、HTTP、远程访问、grep 工具、扩展（不做宿主）、桌面截图、多设备、通知。做法见 [kb-extras](../../.knowledge/kb-extras.md)。
+- 仍然不做：定时器、审批、推送状态行、LSP、MCP。理由见 [D46](../../.knowledge/kb-decisions.md#d46-v2-也不做的)。
 
 **自主和控制**
 

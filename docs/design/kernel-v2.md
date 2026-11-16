@@ -1,755 +1,107 @@
 # tau 内核 v2 契约（设计稿）
 
-`status: 定稿（第六版），按第 9 节实现` · `updated: 2026-11-16`
+`status: 已冻结，细节都在 kb 页，本稿只留链接` · `updated: 2026-11-16`
 
 ## 0. 这份稿子管什么
 
-- 本稿提出内核 v2 的契约：把内核推广成少数几个通用原语，实现以后冻结。
-- 审阅通过以后，按[第 9 节](#9-实现顺序)的顺序实现。每做完一步，细节移进对应的 kb 页，本稿只留链接。这和 [MVP 设计稿](mvp.md)的做法一样。
-- 现有机制以 kb 页为准。本稿只写要改什么、为什么改。
-- 本稿说的“内核”是 tau 自己：`src/` 的代码，加上它的文件格式、协议和 CLI。和它相对的是“上层”。`src/kernel/` 叫“纯函数层”（第 7 节第 0 步统一用词）。
+本稿是索引：v2 的设计已经实现并冻结，细节都移进了 kb 页。每一节只留一两句话和指向负责页的链接。
+
+- 标题全部保留，因为决策记录和源码注释还链接到这些章节。
+- 现有机制以 kb 页和代码为准。哪个事实由哪个页负责，见 [INDEX](../../.knowledge/INDEX.md#每类事实由谁负责)。
+- 冻结了什么、怎样改契约：[kb-contract](../../.knowledge/kb-contract.md)。
+- 做到哪一步：[v2 执行清单](../plan/kernel-v2-checklist.md)。
 
 ## 1. 目标和不变量
 
-目标：
-
-1. 冻结内核契约。以后 Pi Web 那类功能都在上层做，不再改内核。
-2. 功能放在上层，不因此变差：仍然原子、持久、看得见，崩溃后说得清。
-3. 内核只做上层做不了、或者做了要付出代价的事（[第 2 节](#2-准入原则)）。
-4. 仍然遵守 YAGNI：只为真实用过的功能加原语。
-5. 判据：推导测试通过（[第 9 节](#9-实现顺序)第 8 步）。只读文档的 Agent（Sonnet、Haiku 级别）能把文档没写过的新功能放对地方。
-
-不变量。这是 v2 实现以后的样子，已经含 v2 自己的新增和例外。第 2 节的取舍顺序按这张表判断，第 10 节把它冻结：
-
-1. 3 个阶段：`idle`、`awaitingModel`、`awaitingTool`。
-2. 2 种副作用：调用模型、运行工具。工具分库内和库外。
-3. `effects` 表和信箱的结构。
-4. 一条输入一个事务。`decide`、`effectOf`、`observe` 是纯函数。
-5. 崩溃后，库外动作报“被中断”，不自动重做。
-6. 快照冻结：进程是一份启动时冻结的预设快照。
-7. 回信只在一轮结束时寄出，每个进程一封（5.3 的规则 4）。信的 `replyTo` 并进哪一轮（规则 1），就由那一轮结束时回，之后的几轮不回。信还在排队时这一轮异常结束，也在这一轮结束时回。
-8. 换段是唯一缩短上下文的办法。图片有一个例外（5.6）。
-9. 处理一条输入不读旧段，也不读别的进程的工作段。
-10. 数据只增：进程、旧段、图片都不删。
-11. 服务只在命名管道上监听。
-
-另外不变的规矩：依赖白名单；代码量预算 3000 行（[第 7 节](#7-要改的规则)）。
+目标和不变量已移进 kb-contract：[目标](../../.knowledge/kb-contract.md#目标)、[不变量](../../.knowledge/kb-contract.md#不变量)。
 
 ## 2. 准入原则
 
 五种代价、四条取舍顺序（第 4 条分三支）和“怎样用这个顺序”，见 [kb-extending 的取舍顺序](../../.knowledge/kb-extending.md#取舍顺序)。核心一句：上层能完整接管、不付出代价的功能，内核不做。
 
-写法的要求：
-
-- 第 5 节的每个原语都写出“上层做的代价”。写不出来，它就放上层。
-- 第 6、8 节的每一行都写明按哪一条归类。第 8 节写“没有代价”时，要说出为什么五种都不沾。
-- 需求取自 Pi Web：`E:\piweb` 的 README 和 kb 说明有哪些功能，本机的 Pi Web 会话记录说明用过没有。
-- 现在就把原语定全，不等每个功能出现再改内核。原因：内核要冻结，契约就得一次定全。
-
-v2 的原语都按第 4 条第 3 支进内核：5.1、5.2、5.4、5.5、5.6、5.9 和 5.7 的思考级别，上层做不到；5.3、5.8 和 5.7 的重试，上层做会不原子或丢数据。
+每个原语为什么在内核、上层做要付什么代价：[kb-contract 的原语和它在内核的理由](../../.knowledge/kb-contract.md#原语和它在内核的理由)。写设计稿时的要求（需求取自 Pi Web、现在就把原语定全）：[D47](../../.knowledge/kb-decisions.md#d47-v2-的来由六个缺口和-v1v2-的对照)。
 
 ## 3. 现在的缺口
 
-v1 上，Pi Web 的这些功能只能放在上层，而且有代价。代价来自六个缺口：
-
-1. **只有一种发送者，投递太晚。** 内核只认用户。运行中到的信要排队到本轮结束。所以进程之间没法原子地发消息，也没法插话。
-2. **进程不能管进程。** 进程不能建进程、不能停别的进程，也拿不到别的进程的结果。
-3. **工具和内容是写死的。** 工具列在 `tools.ts` 里，内容只有文本。所以上层加不了工具，图片进不来。
-4. **调用模型的参数是写死的。** 预设不能设思考级别，tau 也不重试。Pi Web 的角色几乎都开着思考，Pi SDK 默认会重试。这两样上层都碰不到。
-5. **累计用量没有来源。** 交接回复和没写进段的回复，用量哪里都没存。
-6. **上层看不到过程。** 协议只有 `start`、`send`、`stop`、`ps`。读不了历史，也不能订阅变化。
+v1 上，Pi Web 的功能放在上层要付代价。代价来自六个缺口，列在 [D47](../../.knowledge/kb-decisions.md#d47-v2-的来由六个缺口和-v1v2-的对照)。
 
 ## 4. v2 的心智模型
 
-一句话：**进程是带持久信箱的 actor。所有输入都是信件，信件来自人或别的进程。**
-
-| 概念 | v1 | v2 |
-|---|---|---|
-| 输入 | 用户消息、模型结果、工具结果、停止 | 信件、模型结果、工具结果、停止 |
-| 谁能写信 | 用户 | 用户、进程 |
-| 运行中到的信 | 排队到本轮结束 | 排队到下一个安全点 |
-| 进程能对别的进程做什么 | 什么都不能 | 寄信、派生、停止；派生和要回信的信会收到回信 |
-| 有哪些工具 | 写死在 `tools.ts` | 内置工具，加工具定义文件 |
-| 内容 | 文本 | 文本和图片 |
-| 调用模型 | 不传思考级别，不重试 | 按预设传思考级别；拿到成功的响应之前的失败由 pi-ai 重试 |
-| `decide` 输出什么 | 新记录、要追加的消息 | 再加要寄出的回信 |
-| 进程记录 | v1 的字段 | 再加父进程、累计用量 |
-
-类型草图（只写变化）：
-
-```ts
-type Sender =
-  | { kind: "user" }
-  | { kind: "process"; id: ProcessId; preset: string; reply?: { ended: Ended } };   // reply 有值：这是回信
-
-type Content = TextContent | ImageContent;   // pi-ai 1.0.0 的类型；图片的 data 写成 "blob:<hash>"
-
-interface Letter {
-  from: Sender;
-  content: Content[];
-  hops: number;              // 跳数，见 5.3
-  replyTo?: ProcessId;       // 处理这封信的那一轮结束时，把最终回复寄给它，见 5.3
-}
-
-type Input =
-  | { kind: "letter"; letter: Letter }                       // 取代 userMessage
-  | { kind: "modelResult"; n: number; outcome: ... }         // 不变
-  | { kind: "toolResult"; n: number; outcome: ... }          // 内容可以带图片
-  | { kind: "stop" };                                        // 不变
-
-interface ToolResultContent { content: Content[]; isError: boolean }   // v1 只有 text
-
-interface Turn { steps: number; queued: Letter[]; hops: number; replyTo: ProcessId[] }
-
-interface Usage { input: number; output: number; cacheRead: number; cacheWrite: number }
-
-interface Process {
-  /* v1 的字段 */
-  parent?: ProcessId;        // 建好后不变
-  usage: Usage;              // 累计用量，见 5.8
-}
-
-interface PresetSnapshot {
-  /* v1 的字段：id、workdir、model、tools、prompt、contextWindow。tools 还能写 agents 和工具定义的名字 */
-  thinking?: ThinkingLevel;      // pi-ai 的思考级别，不写就不传，见 5.7
-  input: ("text" | "image")[];   // 模型能收的输入，启动时从 pi-ai 的模型目录冻结，见 5.6
-  toolDefs: ToolDef[];           // 用到的工具定义，启动时冻结，见 5.5
-}
-
-interface ToolDef {
-  name: string; description: string; parameters: object;
-  command: string; timeout: number; output: "text" | "content";
-}
-
-function decide(p, seg, input, env): {
-  process: Process;
-  append: Message[];
-  out: { to: ProcessId; letter: Letter }[];                 // 回信
-};
-```
-
-- 阶段还是 3 个，`Phase` 的形状不变，只有 `Turn` 多了字段。只在运行中有意义的新数据，都放在 `turn` 里。
-- `Env` 不变。
-- 投影（`parent`、`messages`、`usage`、`children`、`idleChildren`，出错的原因截短）：第 5 步已实现，字段和规则见 [kb-kernel 的投影与命令](../../.knowledge/kb-kernel.md#投影与命令)。
+一句话：进程是带持久信箱的 actor，所有输入都是信件，信件来自人或别的进程。v1 和 v2 的对照在 [D47](../../.knowledge/kb-decisions.md#d47-v2-的来由六个缺口和-v1v2-的对照)；类型见 [kb-kernel 的状态](../../.knowledge/kb-kernel.md#状态)和[输入、副作用、环境](../../.knowledge/kb-kernel.md#输入副作用环境)；投影的字段见 [kb-kernel 的投影与命令](../../.knowledge/kb-kernel.md#投影与命令)；最小心智模型见 [kb-overview](../../.knowledge/kb-overview.md#认知模型)。
 
 ## 5. 原语
 
-每个原语都按 [kb-extending 的推导顺序](../../.knowledge/kb-extending.md#推导顺序)写：做法、上层做的代价、状态放在哪、事务和崩溃、模型和人怎样知道、怎样测试。
+每个原语的做法、状态、事务和崩溃、模型和人怎样知道、测试，都在下面链接的 kb 页。每个原语上层做的代价，集中在 [kb-contract 的原语和它在内核的理由](../../.knowledge/kb-contract.md#原语和它在内核的理由)。
 
 ### 5.1 信件和发送者
 
-做法：
-
-- 输入 `userMessage` 改成 `letter`。信件带发送者、内容块、跳数和回信对象。
-- 发送者有两种：
-  - `user`：人，或者上层程序。CLI、bash 里运行的 `tau`、上层程序寄的信，都是用户的信。要标明来源，就在正文前加前缀，例如 `[Claude Code] `、`[后台任务] `。
-  - `process`：另一个进程。只由库内工具和回信产生（5.3）。
-- 头、合并、两种形状、张数上限和省略行、结束原因的文字：第 2 步已实现，细节和规则见 [kb-kernel](../../.knowledge/kb-kernel.md#信的头和合并)（[两种形状](../../.knowledge/kb-kernel.md#消息的两种形状)、[张数和省略行](../../.knowledge/kb-kernel.md#张数和省略行)、[结束原因的文字](../../.knowledge/kb-kernel.md#结束原因的文字)）。
-- 回信里存进信件的 `ended` 已按 `endedReason` 处理，整页的报错不进收件人的信箱：第 4 步已实现，见 [kb-kernel 的回信](../../.knowledge/kb-kernel.md#回信)。
-- 每封信的张数在入口限制：已实现（第 6 步），见 [kb-service 的图片](../../.knowledge/kb-service.md#图片)。
-
-上层做的代价：做不到。信怎样写进工作段，只有 `decide` 能决定。
-
-状态放在哪：`turn.queued` 存信件原样，写进段时才渲染。
-
-事务和崩溃：和 v1 的用户消息一样。
-
-测试：每种头；合并时用户的信加不加头；结束原因带换行、超长；裁剪；张数上限和占位行；两种发送者加入随机序列。
+发送者、信的头和合并、两种形状、张数和省略行、结束原因的文字：[kb-kernel](../../.knowledge/kb-kernel.md#信的头和合并)（[两种形状](../../.knowledge/kb-kernel.md#消息的两种形状)、[张数和省略行](../../.knowledge/kb-kernel.md#张数和省略行)、[结束原因的文字](../../.knowledge/kb-kernel.md#结束原因的文字)）。每封信的张数在入口限制：[kb-service 的图片](../../.knowledge/kb-service.md#图片)。选定的细节见 [D31](../../.knowledge/kb-decisions.md#d31-第-2-步信的头两种形状张数累计用量)。
 
 ### 5.2 安全点投递
 
-第 3 步已实现：做法、步数先查、写入不计步、阈值证明不变、坑点，见 [kb-kernel](../../.knowledge/kb-kernel.md#安全点投递)（坑点在[坑点一节](../../.knowledge/kb-kernel.md#坑点)）。选定的细节见 [D32](../../.knowledge/kb-decisions.md#d32-第-3-步前一半安全点投递和-handoff)。
-
-上层做的代价：做不到。什么时候把信写进段，只有 `decide` 能决定。
-
-状态放在哪：没有新状态。事务和崩溃：在处理那条工具结果的事务里。模型和人：模型在下一次调用时看到；用户在运行中用 `tau send` 发的信，因此在本轮里就被看到，连接仍等到本轮结束才收到最终回复。
-
-已在第 3 步核实，结论见[D34](../../.knowledge/kb-decisions.md#d34-第-3-步真模型核实)：在用的模型都接受“工具结果后面紧跟一条用户消息”。结论只对核实过的模型成立，规则见 [5.7](#57-调用模型思考级别和重试)。
+做法、步数先查、写入不计步、阈值证明不变、坑点：[kb-kernel 的安全点投递](../../.knowledge/kb-kernel.md#安全点投递)。选定的细节见 [D32](../../.knowledge/kb-decisions.md#d32-第-3-步前一半安全点投递和-handoff)，真模型核实见 [D34](../../.knowledge/kb-decisions.md#d34-第-3-步真模型核实)。
 
 ### 5.3 进程之间：寄信、派生、停止、回信、跳数
 
-已实现（第 4 步第二部分）：库内工具 `post`、`spawn`、`stop_process`（预设 `tools` 含 `agents` 时有）的参数、结果表、检查顺序、停止的语义和停一棵进程树的办法，见 [kb-store 的进程之间的工具](../../.knowledge/kb-store.md#进程之间的工具)。工具说明里的三件事在 `src/kernel/tools.ts`（第一部分）。
-
-回信：
-
-- 回信的正文是这一轮的最终回复：从段尾往前，遇到用户消息之前的最后一条助手消息的正文。
-- 已实现（第 4 步第一部分）：最终回复的算法、`decide` 的 `out`、存储层在同一个事务里投递、回信不带 `replyTo`、停止时有排队的信也取合并之前的最终回复，见 [kb-kernel 的回信](../../.knowledge/kb-kernel.md#回信)和 [kb-store 的处理一条输入](../../.knowledge/kb-store.md#处理一条输入)。选定的细节见 [D35](../../.knowledge/kb-decisions.md#d35-第-4-步第一部分回信out-agents-的描述)。
-- “等子进程”不是一个状态：父进程结束本轮，回信到了，它就被唤醒。
-- 回信只覆盖处理那封信的那一轮。进程为了等子进程或后台任务而结束本轮，等它回信的进程收到的就是这时的回复，例如“已派出”。之后几轮的结果不会自动寄上去。出路见[第 8 节](#8-上层建筑的做法)的“多 Agent：等待”。
-- 子进程要问父进程，就在回复里提问、结束本轮。问题作为回信到父进程。父进程用 `post`（`reply` 为真）回答。
-
-`replyTo` 和 `hops` 的规则：
-
-1. 一封信写进段时，它的 `replyTo` 和 `hops` 才并进 `turn`：`replyTo` 加进集合，去重；`hops` 取最大。写进段的时机有三个：空闲时收信、安全点、`endTurn`。
-2. 空闲时收信，开新一轮：新一轮的 `replyTo` 和 `hops` 只取自这封信。
-3. 到 6. 已实现（第 4 步第一部分）：`endTurn` 的顺序、寄回信的规则、处理 `queued`，见 [kb-kernel 的回信](../../.knowledge/kb-kernel.md#回信)和[结束一轮](../../.knowledge/kb-kernel.md#流程两个辅助步骤)。D25 的三条新说明在 [kb-kernel 的常量](../../.knowledge/kb-kernel.md#常量)。措辞已照 D25 的办法用真模型重量，结果在 D25 的“v2 重量”：停止的说明下，无关的问题和复述都不再写诗；上一轮末尾合并进来的信，模型也不回应，所以不另外让模型放下它们。
-
-跳数：已实现（第 4 步第二部分），见 [kb-store 的进程之间的工具](../../.knowledge/kb-store.md#进程之间的工具)：规则、顺序委派最多 16 次的算术、`HOPS_MAX` 放宽不算改契约。`HOPS_MAX` 本身见 [kb-kernel 的常量](../../.knowledge/kb-kernel.md#常量)。
-
-环境变量：
-
-- 已实现（第 4 步第三部分），见 [kb-tools 的包装脚本](../../.knowledge/kb-tools.md#包装脚本)和 [kb-service 的启动脚本和入口](../../.knowledge/kb-service.md#启动脚本和入口)：bash 的命令拿到 `TAU_PROCESS`、`TAU_PIPE`，CLI 认 `TAU_PIPE`。工具定义（5.5）走同一套机制，第 7 步后一半已覆盖。
-- 测试要清掉从外面继承来的 `TAU_` 变量。
-
-上层做的代价：
-
-- 不原子。用工具定义运行 `tau send`、`tau start`、`tau stop`，也能寄信、建进程、停进程。但它们是库外工具：在做完和写结果之间崩溃，模型看到“被中断”，再做一次。信就重复，子进程就多一个，停止就可能停掉对方后来的一轮。重做有害，所以不按第 2 节第 4 条第 2 支放上层。
-- 丢数据。回信要和一轮的结束在同一个事务里寄出。上层只能盯着 `watch`，它没在运行时，回信就漏了。
-
-状态放在哪：
-
-- `replyTo` 和 `hops` 在 `turn` 里。它们只在运行中有意义。
-- `parent` 在进程记录里，建好后不变。
-- 寄出的信和停止，在收件人的信箱里。
-
-事务和崩溃：已实现（第 4 步第二部分）。三个工具在处理输入的事务里执行，永不抛错；`spawn` 不调用 `startProcess`，`Env` 按子进程的预设算，ID 由父进程 ID、副作用编号和尝试次数算出，预设用服务传给 `handleNext` 的读取函数读。细节见 [kb-store 的进程之间的工具](../../.knowledge/kb-store.md#进程之间的工具)。两处规则的例外写在 [D36](../../.knowledge/kb-decisions.md#d36-第-4-步第二部分进程之间的工具的执行和两处例外)。第 6 步起，冻结快照时还要做启动检查（5.6）；第 7 步起，还要读工具定义。读不出或不通过，就是错误结果，什么都不建。
-
-模型和人：
-
-- 寄信方从工具结果知道寄出了。收信方看到带头的信，从头知道要不要回信。
-- 投影和 `self`：每个进程带 `parent`；运行中的子进程各一行，空闲的只给个数。空闲子进程的 ID，从协议 `ps` 的投影里按 `parent` 找（第 8 节“列出会话”）。已实现（第 5 步），文字格式见 [kb-store 的 self](../../.knowledge/kb-store.md#self)。
-
-测试：已实现（第 4 步第二部分），见 `test/store/agents.test.ts`、`test/store/replies.test.ts`、`test/kernel/replies.test.ts`、`test/store/crash.test.ts` 和 `test/server/e2e.test.ts`。`spawn` 的启动检查不通过的测试在 `test/store/launch.test.ts`。
+- 工具 `post`、`spawn`、`stop_process` 的参数、结果、检查顺序、停止的语义、跳数、事务和崩溃：[kb-store 的进程之间的工具](../../.knowledge/kb-store.md#进程之间的工具)。
+- 回信和 `replyTo`、`hops` 并进 `turn` 的规则：[kb-kernel 的回信](../../.knowledge/kb-kernel.md#回信)。
+- 环境变量 `TAU_PROCESS`、`TAU_PIPE`：[kb-tools 的包装脚本](../../.knowledge/kb-tools.md#包装脚本)、[kb-service 的启动脚本和入口](../../.knowledge/kb-service.md#启动脚本和入口)。
+- 等子进程的做法：[kb-extras 的多 Agent 的等待](../../.knowledge/kb-extras.md#多-agent-的等待)。
+- 选定的细节见 [D35](../../.knowledge/kb-decisions.md#d35-第-4-步第一部分回信outagents-的描述)、[D36](../../.knowledge/kb-decisions.md#d36-第-4-步第二部分进程之间的工具的执行和两处例外)、[D37](../../.knowledge/kb-decisions.md#d37-第-4-步第三部分环境变量tau_pipetau-脚本)。
 
 ### 5.4 主动换段
 
-第 3 步已实现：工具、结果、触发条件、不存状态、不变量，见 [kb-kernel](../../.knowledge/kb-kernel.md#主动换段handoff)。选定的细节见 [D32](../../.knowledge/kb-decisions.md#d32-第-3-步前一半安全点投递和-handoff)。
-
-上层做的代价：做不到。换段只能由 `decide` 发起。
+`handoff` 工具、结果、触发条件、不变量：[kb-kernel 的主动换段](../../.knowledge/kb-kernel.md#主动换段handoff)。选定的细节见 [D32](../../.knowledge/kb-decisions.md#d32-第-3-步前一半安全点投递和-handoff)。
 
 ### 5.5 工具定义
 
-“工具定义”专指 `~/.tau/tools/` 下的文件。请求里给模型看的工具名、说明和参数，叫“工具描述”（第 7 节第 0 步统一用词）。
-
-格式、读取、快照冻结、工具描述里的位置、大小上限：已实现（第 7 步前一半），见 [kb-tools 的工具定义](../../.knowledge/kb-tools.md#工具定义)和 [kb-kernel](../../.knowledge/kb-kernel.md#工具描述)，取舍见 [D43](../../.knowledge/kb-decisions.md#d43-第-7-步前一半工具定义的格式读取和冻结)。
-
-运行：已实现（第 7 步后一半），见 [kb-tools 的运行工具定义](../../.knowledge/kb-tools.md#运行工具定义)，取舍见 [D44](../../.knowledge/kb-decisions.md#d44-第-7-步后一半运行工具定义)。参数先按 schema 校验；用 bash 的整套机制运行 `command`，参数的 JSON 走标准输入；`text` 和 `content` 两种输出；带图的结果在上报结果的事务里存 `blobs`。整节是契约（第 10 节），原文在 kb-tools。MCP 不进内核（第 6 节）。
-
-上层做的代价：做不到。模型能调用哪些工具，只由内核给的工具描述决定。没有工具定义，上层的功能只能让模型自己拼 bash 命令：没有参数说明，没有 bash 的预设也用不了。
-
-状态放在哪：预设快照里。
-
-事务和崩溃：已实现，见 kb-tools 的运行工具定义。
-
-测试：已实现，见 [kb-tools 的工具定义测试](../../.knowledge/kb-tools.md#工具定义测试testtoolstooldeftestts)。
+“工具定义”专指 `~/.tau/tools/` 下的文件，请求里给模型看的叫“工具描述”（[AGENTS.md 的用词](../../AGENTS.md#用词)）。格式、读取、冻结、大小上限、运行：[kb-tools 的工具定义](../../.knowledge/kb-tools.md#工具定义)、[运行工具定义](../../.knowledge/kb-tools.md#运行工具定义)；工具描述：[kb-kernel](../../.knowledge/kb-kernel.md#工具描述)。取舍见 [D43](../../.knowledge/kb-decisions.md#d43-第-7-步前一半工具定义的格式读取和冻结)、[D44](../../.knowledge/kb-decisions.md#d44-第-7-步后一半运行工具定义)。
 
 ### 5.6 内容块和图片
 
-入口和存储：协议的 `start`、`send` 已实现（第 6 步），见 [kb-service 的图片](../../.knowledge/kb-service.md#图片)（入口检查：张数、大小、类型、尺寸，按这个顺序）和 [kb-store 的图片](../../.knowledge/kb-store.md#图片)（`blobs` 表、引用、不收图片的模型），取舍见 [D41](../../.knowledge/kb-decisions.md#d41-第-6-步后一半的选择)。
-
-- 图片只从两个入口进来：协议的 `start`、`send`；工具定义的 `content` 输出（第 7 步后一半已实现）。后一个入口的不合格是错误结果，检查和协议的完全一样，函数是同一个（`checkImages`）。
-- 为什么入口要查：不合格的图片进了段，每次调用模型都会失败，连交接调用也失败，进程就永远卡住。例如 Anthropic 拒绝边长超过 8000 像素的图。2000 像素和 pi-ai 模型目录给每个收图片的模型定的缩放尺寸一样。截图类的工具定义要自己先缩小。这些条件是契约（第 10 节）。
-- 文件头完好、数据损坏的图片仍可能进段。出路见风险表。
-- 带图的工具结果：`blobs` 的插入和上报结果的事务在同一个事务里（已实现，见 [kb-executor](../../.knowledge/kb-executor.md#失败怎样变成结果)）。
-
-请求里的图片：已实现，见 [kb-kernel](../../.knowledge/kb-kernel.md#请求里的图片)，取舍见 [D40](../../.knowledge/kb-decisions.md#d40-第-6-步前一半的选择)。
-
-用量估算和换段阈值：已实现，见 [kb-kernel 的换段阈值](../../.knowledge/kb-kernel.md#换段阈值)。两种 R 和收图片预设的阈值表也在那里。下面是量 `IMAGE_TOKENS` 时要对照的文档估算。
-
-- 按各家文档粗算，一张 2000 像素的图：
-  - Anthropic 从 Opus 4.7 起的模型（含 claude-opus-5-5）最多约 4,784；更早的（含 claude-haiku-4-5）先缩到长边 1568，约 1,600。
-  - Gemini 按 768 像素分块，约 2,322。
-  - OpenAI 高细节按 512 像素分块，2000 × 768 约 1,445，比 2000 × 2000 的 765 还多。
-  - DeepSeek、MiMo、Muse 的算法不知道，要实测。
-
-量 `IMAGE_TOKENS`（第 6 步）：已量，见 [D42](../../.knowledge/kb-decisions.md#d42-第-6-步量-image_tokens核实收图片)：量法、每个模型每种形状的数、四种类型的核实、取值（5000）和没核实的都在那里。要点：
-
-- 形状 2000 × 2000、2000 × 1000、2000 × 768；claude-opus-5-5 不实测，用文档的上限 4,784（Anthropic 的凭据只许配 Haiku 用）。
-- `IMAGE_TOKENS` 取全部测量值、文档上限和 5000 里的最大值，向上取整。
-- 以后收图片的预设换成没量过的模型，先量。这条写在 kb-kernel 的坑点里。
-
-启动检查和交接以后的检查：已实现，见 [kb-kernel](../../.knowledge/kb-kernel.md#启动检查和交接以后的检查)，取舍见 D40。
-
-上层做的代价：做不到。上层没有办法把图片放进模型的上下文。
-
-状态放在哪：`blobs` 表。引用在工作段里。
-
-事务和崩溃：协议的信已实现（第 6 步）：图片和引用它的信在同一个事务里提交；存储层不变量的 blob 引用完整性由 `assertStoreInvariants` 检查，崩溃注入测试里有一部分信带图片，每一步之后都检查。见 [kb-store 的图片](../../.knowledge/kb-store.md#图片)和[存储层不变量](../../.knowledge/kb-store.md#存储层不变量)。
-
-- 可能有没人引用的图片：带图的工具结果进了信箱，又因为过时被丢掉。图片按内容寻址、只增不删，这样的图片无害。
-- 带引用的只有协议的信和工具结果。`post`、`spawn` 和回信只有文本。
-
-测试：协议这一半已实现，见 [kb-service 的测试表](../../.knowledge/kb-service.md#服务测试test-server)里的 protocol：图片、`test/images.test.ts`、`test/store/blobs.test.ts`、`test/store/crash.test.ts`。请求里的成批省略、用量估算、两种 R、两种检查、最坏的图片负载已有测试（`test/kernel/images.test.ts`、`test/store/launch.test.ts`、`test/kernel/acceptance.test.ts`）。带图的工具结果的测试已实现：`test/tools/tooldef.test.ts`、`test/store/toolimages.test.ts`、`test/store/crash.test.ts`、`test/server/protocol.test.ts`。
+- 入口检查：[kb-service 的图片](../../.knowledge/kb-service.md#图片)。存储、引用、不收图片的模型：[kb-store 的图片](../../.knowledge/kb-store.md#图片)。
+- 请求里的图片、用量估算和换段阈值、启动检查：[kb-kernel](../../.knowledge/kb-kernel.md#请求里的图片)（[换段阈值](../../.knowledge/kb-kernel.md#换段阈值)、[启动检查](../../.knowledge/kb-kernel.md#启动检查和交接以后的检查)）。
+- 带图的工具结果：[kb-executor](../../.knowledge/kb-executor.md#失败怎样变成结果)。
+- 取舍和核实：[D40](../../.knowledge/kb-decisions.md#d40-第-6-步前一半的选择)、[D41](../../.knowledge/kb-decisions.md#d41-第-6-步后一半的选择)、[D42](../../.knowledge/kb-decisions.md#d42-第-6-步量-image_tokens核实收图片)、[D45](../../.knowledge/kb-decisions.md#d45-第-7-步带图的工具结果的真模型核实)；文档估算见 [D48](../../.knowledge/kb-decisions.md#d48-量-image_tokens-的文档估算和思考级别重试的需求来源)。
 
 ### 5.7 调用模型：思考级别和重试
 
-思考级别、输出上限的算法、预算路径上回答的空间，已实现：[kb-executor](../../.knowledge/kb-executor.md#调用模型actionsts)。预设的 `thinking` 见 [mvp.md 第 2 节](mvp.md#2-预设)。
-
-- 要点：`cap = min(model.maxTokens, outputMax)`；调用时传 `{ ...model, maxTokens: cap }` 和 `options.maxTokens = cap`；有 `thinking` 才传 `reasoning`；不传 `thinkingBudgets`。
-- 其余路径上思考和回答共用 `cap`，这是 provider 的语义。
-
-已在第 3 步核实（消息形状和输出上限），结论见 [D34](../../.knowledge/kb-decisions.md#d34-第-3-步真模型核实)：muse-spark-1.3-contributor 的输出超过上限，不支持。
-
-- openai-codex-responses 的请求不发输出上限，总输出可能超过 `outputMax`。tau 本来也调不了它：它只有 OAuth（D23）。不支持。
-- 结论只对核实过的模型成立。消息形状和输出上限的语义由后端决定，路径相同、后端不同也要重核。预设换到没核实过的模型，先真调用核实一次。只有用户没许真调用的模型（现在是 claude-opus-5-5），才只断言请求体。
-
-重试已实现：[kb-executor](../../.knowledge/kb-executor.md#调用模型actionsts)。执行器传 `maxRetries` = `MODEL_RETRIES`（5）；哪些错误重试、等多久，以 pi-ai 1.0.0 的 `utils/provider-retry.js` 为准，`test/store/model-call.test.ts` 断言。
-
-需求来源：
-
-- 本机 Pi Web 的 17 个角色里，16 个开着思考：max 8 个、xhigh 3 个、high 3 个、medium 1 个、low 1 个。
-- Pi SDK 默认开着重试，最多 3 次，Pi Web 没有关。
-
-上层做的代价：
-
-- 思考级别：做不到。它是调用模型的参数。
-- 重试：丢数据。上层只能等这一轮出错结束，再寄“继续”。这时回信已经寄出，新的一轮没有 `replyTo`，等回信的父进程拿不到结果。上层没在运行时也不会重试。
-
-状态放在哪：思考级别在快照里。重试不存状态。
-
-测试：已写（`test/store/model-call.test.ts`）：执行器传给 pi-ai 的参数；用 `onPayload` 和假的 `fetch`，对每个在用的模型断言请求体里的输出上限不超过 `cap`，预算路径上预算小于 `max_tokens`。第 3 步的真模型核实见 [D34](../../.knowledge/kb-decisions.md#d34-第-3-步真模型核实)。
+思考级别、输出上限的算法、重试：[kb-executor 的调用模型](../../.knowledge/kb-executor.md#调用模型actionsts)。预设的 `thinking` 见 [mvp.md 第 2 节](mvp.md#2-预设)。取舍见 [D33](../../.knowledge/kb-decisions.md#d33-第-3-步后一半思考级别输出上限重试)，真模型核实见 [D34](../../.knowledge/kb-decisions.md#d34-第-3-步真模型核实)，需求来源见 [D48](../../.knowledge/kb-decisions.md#d48-量-image_tokens-的文档估算和思考级别重试的需求来源)。
 
 ### 5.8 累计用量
 
-做法：
-
-- 进程记录的 `usage` 累计输入、输出、缓存读、缓存写四个 token 数，已实现，规则见 [kb-kernel](../../.knowledge/kb-kernel.md#累计用量)。
-- 不存钱数。Pi Web 只显示 token。pi-ai 按单次请求的输入量分档计价，钱数从累计的 token 数算不出来。
-
-上层做的代价：丢数据。交接回复和没写进段的回复，用量哪里都没存，上层从段里算不全。上层盯着 `watch` 累加，它没在运行时就漏了。
-
-状态放在哪：进程记录。它跨段累计，从工作段算不出来（[kb-extending 原则 3](../../.knowledge/kb-extending.md#核心原则)）。
-
-模型和人：投影和 `self` 多一行累计用量。人用上层的命令行看（第 8 节）。已实现（第 5 步）。
-
-测试：每种回复都累加；重复的结果、编号对不上的结果不加。
+规则：[kb-kernel 的累计用量](../../.knowledge/kb-kernel.md#累计用量)。投影和 `self` 里的那一行：[kb-kernel 的投影与命令](../../.knowledge/kb-kernel.md#投影与命令)。
 
 ### 5.9 协议
 
-分帧：
-
-- 管道名是 `\\.\pipe\tau`。CLI 有 `TAU_PIPE` 时用它（5.3）。
-- 一个连接一行请求。服务回若干行，每行一个 JSON，以 `\n` 结束。
-- 回完由服务关闭连接。`watch` 例外：由客户端断开。
-- 客户端发完请求，不能半关闭（不调用 `end` 或 `shutdown`）。已实现（第 5 步），原因见 [kb-service 的坑点](../../.knowledge/kb-service.md#坑点)。
-- 客户端可以在回执之后直接断开（`destroy`）：服务照常处理，不再给它写。v1 已经这样处理 `tau send` 被 Ctrl+C 的情形。
-
-v2 的请求和回复（`src/protocol.ts`）：
-
-```ts
-type Request =
-  | { op: "start"; preset: string; text: string; images?: string[] }   // images 是 base64
-  | { op: "send"; process: string; text: string; images?: string[] }
-  | { op: "stop"; process: string }
-  | { op: "ps" }
-  | { op: "history"; process: string; segment?: number; from?: number }
-  | { op: "blob"; hash: string }
-  | { op: "watch"; process?: string };
-
-type Reply =
-  | { type: "receipt"; process: string }
-  | { type: "text"; process: string; n: number; delta: string }        // v1 只有 delta
-  | { type: "final"; reply: string; ended: Ended | null }
-  | { type: "ps"; processes: Projection[] }
-  | { type: "message"; segment: number; seq: number; message: Message }
-  | { type: "end"; segment: number; messages: number }                 // history 读完
-  | { type: "blob"; mimeType: string; data: string }                   // data 是 base64
-  | { type: "update"; self: Projection["self"] }
-  | { type: "error"; message: string };
-```
-
-请求：
-
-| 请求 | 做什么 | 回复 |
-|---|---|---|
-| `start`、`send` | 同 v1，可以带图片（5.6 的入口检查） | 同 v1 |
-| `stop`、`ps` | 同 v1。投影是第 4 节的 v2 投影 | 同 v1 |
-| `history` | 读一段的消息。已实现（第 5 步），见 [kb-service 的历史和订阅](../../.knowledge/kb-service.md#历史和订阅) | 每条一行 `message`，最后一行 `end`，然后关闭 |
-| `blob` | 读一张图片。已实现（第 6 步），见 [kb-service](../../.knowledge/kb-service.md#线协议srcprotocolts)。`hash` 不带 `blob:` 前缀 | 一行 `blob`，然后关闭。`hash` 不存在回 `error` |
-| `watch` | 订阅变化。已实现（第 5 步），见 [kb-service 的历史和订阅](../../.knowledge/kb-service.md#历史和订阅) | 一直推送，直到客户端断开 |
-
-- 没有单独的“寄信不等回复”的请求。它就是 `send` 收到回执后断开。
-
-`history` 和 `watch` 的行为已实现（第 5 步），见 [kb-service 的历史和订阅](../../.knowledge/kb-service.md#历史和订阅)。契约：`history` 每行的 `message` 是 pi-ai 1.0.0 的消息 JSON，图片的 `data` 是 `blob:<hash>`（第 6 步已实现）。这个格式是契约。升级 pi-ai 时消息 JSON 有变化，算契约变更。
-
-CLI：
-
-- 命令、输出和退出码都照 v1：`serve`、`start`、`send`、`stop`、`ps`。v2 只加一条：连接服务时，`TAU_PIPE` 有值就用它（5.3）。
-- 读历史、寄信不等回复、带图片、看父进程和累计用量，都放上层的命令行做（第 8 节）。它们只是协议的薄封装，上层做没有代价（第 2 节第 3 条）。这样冻结的 CLI 也小。
-- 仓库根目录加一个不带扩展名的 `tau` 脚本，和 `tau.cmd` 放在一起。它和 `tau.cmd` 一样是启动脚本，不是功能。已实现（第 4 步第三部分），说明见 [kb-service 的启动脚本和入口](../../.knowledge/kb-service.md#启动脚本和入口)和[坑点](../../.knowledge/kb-service.md#坑点)；脚本内容：
-
-```sh
-#!/bin/sh
-MSYS_NO_PATHCONV=1 exec node "$(cygpath -w "$(dirname "$0")")/src/main.ts" "$@"
-```
-
-  - 为什么要它：bash 找不到不带扩展名的 `tau`。`tau.cmd` 能运行，但要写全名，还经 cmd.exe 解析参数。
-  - `MSYS_NO_PATHCONV=1`：不让 msys 改写参数。否则以 `/` 开头的正文会被改成 Windows 路径。
-  - `cygpath -w`：node 要 Windows 路径才找得到 `main.ts`。
-  - 这个变量只为 `exec node` 这一步而设，却会留在 node 的环境里。在 Git Bash 里运行 `tau serve`，服务就带着它，bash 工具的每条命令都不再转换路径。所以 bash 工具构造子进程环境时去掉它，和加 `TAU_PROCESS`、`TAU_PIPE` 在同一处（`src/tools/bash.ts`）。工具定义走同一套机制，自动覆盖。
-- `tau.cmd` 经 cmd.exe 解析参数，正文里的 `&` 会被当成命令分隔符。外部程序和系统计划任务寄信，要直接连管道，或者直接运行 `node <仓库>\src\main.ts`，不要经 `tau.cmd`。这条写进 kb-service 的坑点。
-
-上层做的代价：
-
-- 做不到。上层只能通过协议看内核：读不了历史，就做不了历史检索；拿不到流式文本，页面就看不到实时输出。
-- 慢。没有 `watch`，上层只能反复 `ps`。`ps` 读全部进程，随年头变慢。
-
-事务和崩溃：和 v1 一样。回执在提交之后才发。读的请求不开写事务。
-
-测试：`history` 和 `watch` 的测试已写（第 5 步，见 kb-service 的测试表）；CLI 经 `TAU_PIPE` 连测试服务；`bash()` 在环境带 `MSYS_NO_PATHCONV` 时，命令看不到它，msys 路径照常转换。
+请求和回复、分帧、请求的校验：[kb-service 的线协议](../../.knowledge/kb-service.md#线协议srcprotocolts)。`history` 和 `watch`：[历史和订阅](../../.knowledge/kb-service.md#历史和订阅)。CLI、`tau` 脚本、`TAU_PIPE`：[CLI](../../.knowledge/kb-service.md#clisrcclimaints)、[启动脚本和入口](../../.knowledge/kb-service.md#启动脚本和入口)。容易踩的坑（半关闭、`tau.cmd` 的 `&`）：[坑点](../../.knowledge/kb-service.md#坑点)。选定的细节见 [D39](../../.knowledge/kb-decisions.md#d39-第-5-步后一半协议的-historywatch-和-text-的编号)。
 
 ## 6. v2 也不做的
 
-按第 2 节第 2 条，现在不做、也不进内核的（本机没用过，或者 tau 不需要）：
-
-| 不做 | 为什么 | 要的话上层怎么做，代价是什么 |
-|---|---|---|
-| 延时投递、定时器 | 本机没用过：Pi Web 没有定时器 | 系统计划任务到点直接运行 `node <仓库>\src\main.ts send <进程> <正文>`，或者经 Git Bash 运行 `bash -c 'tau send …'`，不经 `tau.cmd`（5.9）。代价：`ps` 里看不到预约（看不见）；到点时服务没在运行，这封信就漏了（丢数据） |
-| 应答工具（等外部回答的工具） | tau 不需要，已有别的机制：Agent 提问就结束本轮，回答作为下一封信来。Pi Web 的 `propose_role_revision` 等用户在编辑器里提交，本机用过 4 次 | 结束本轮，等下一封信 |
-| 每轮推送状态行、调用前提示 | tau 不需要，已有别的机制。Pi Web 的调用前提示推三样：没做完的清单项、用了多少分钟、快到压缩阈值的提醒。在 tau 里，清单在笔记里，模型要看就读，换段时交接说明会带上没做完的事；时间用 `self` 看；到阈值时内核自动换段，不需要提醒 | `self`。要的话，上层在进程等工具时寄一封提示信，它在这批工具结果之后的安全点并入。代价：信晚到时这一轮已经结束，信会开新的一轮 |
-| 不唤醒空闲进程的信 | tau 不需要：Pi Web 用它推调用前提示和后台通知。调用前提示 tau 不做（上一行）；后台通知在 tau 里本来就要唤醒进程 | 照常寄信 |
-| fork | 本机没用过 | 用 `history` 读出，再 `start` 一个新进程。代价：第一封信最多 32 KiB，带不过去完整的上下文 |
-| 花费上限、钱数 | 本机没用过：Pi Web 只显示累计 token，没有上限，也不显示钱 | 上层用累计用量、`watch` 和 `stop` 尽力而为。代价：上层没在运行时不生效，只能事后停 |
-| 扇出上限、并发上限 | 本机没用过：Pi Web 有上限（深度 3、每个来源 run 64 个、每个根 64 个活着的后代），本机 7 个项目的会话记录里从没触发过。跳数只挡循环。能运行命令的进程还能用 `tau start` 建进程，内核的上限也挡不住它（第 12 节）。D14 的前提“每一轮都由用户发起”在 v2 不成立，接受这个风险 | 上层用 `watch` 和 `stop` 尽力而为 |
-| LSP | 本机没用过（`lsp_*` 0 次） | 工具定义。代价：每次调用起一个语言服务，冷启动慢（慢）。要常驻，就得有上层的守护进程 |
-| MCP | 本机没用过 | 上层的中转进程，为每个 MCP 工具生成一个工具定义，并负责规整 schema（5.5）。代价：中转进程没在运行时，这些工具报错 |
-| 网页抓取 | 本机没用过 | bash 运行 curl，或者工具定义 |
-| 沙箱 | 本机没用过：Pi Web 也没有 OS 沙箱。D7 定的是第一版不做 | 工具定义在沙箱里运行命令，预设不给内置的 `bash`。D7 写的“以后只换 bash 的实现”是改内核，冻结以后要按改契约做 |
-
-按第 2 节第 4 条第 1 支，内核做要推翻不变量、上层一点都做不了的：
-
-| 不做 | 内核做要推翻的 | 怎么办 |
-|---|---|---|
-| 压缩（改写已有的消息） | 不变量 8（换段是唯一缩短上下文的办法） | 上层做不了。用 `handoff` 工具换段 |
-| 删除进程、旧段、图片 | 不变量 10（数据只增） | 上层做不了。见风险 |
-
-按第 2 节第 1 条，做法本身就违反那几条规则、原则上不做的：
-
-| 不做 | 违反的规则 | 要的话怎么办 |
-|---|---|---|
-| 审批当安全边界 | 不做能被 bash 绕过的假边界：有 bash 的 Agent 能自己批准自己 | Agent 在回复里先问，再等下一封信 |
-| 按工具拦截的钩子、路径限制 | 同上：能被 bash 绕过 | 在预设里决定给不给 bash |
-| Pi 扩展宿主 | 沿着运行循环长，不开旁路：扩展在服务进程里跑任意代码、挂 SDK 事件 | 在上层用工具定义、`watch` 和信件做 |
-| 表结构迁移 | 不写兼容代码。v2 一次定全表结构 | 开发期间重建库 |
+v2 也不做的三张表，已移进[决策记录 D46](../../.knowledge/kb-decisions.md#d46-v2-也不做的)。
 
 ## 7. 要改的规则
 
-- 规则的句子，在实现它的那一步改。第 0 步只改决定“做什么”的部分，以及用词。
-- 每一步的验收都包括：这一步对应的句子已经改掉，或者改成指向本稿的链接。
-- 引号里是原文，括号里是写稿时的行号，只作提示。
-
-第 0 步：
-
-- AGENTS.md 准入规则：
-  - 加一条：上层能完整接管、不付出代价的功能，内核不做。取舍顺序见 kb-extending。
-  - “新功能必须能写成‘新的输入类型’或‘新的阶段’，不能在状态之外加可变字段。”（:75）改成三句：进内核的功能不加阶段，阶段固定是 3 个。不在状态之外加可变字段。不推翻本稿第 1 节的不变量。第 8 步把第三句的链接改指 kb-contract。
-- AGENTS.md 用词：
-  - 加“上层”“内核”“纯函数层”“工具描述”。内核是 tau 自己：`src/` 的代码，加上它的文件格式、协议和 CLI。纯函数层是 `src/kernel/`。工具描述是请求里给模型看的工具名、说明和参数。
-  - 指 `src/kernel/` 的旧用法改成“纯函数层”，例如“副作用：内核之外的动作”（:35）。AGENTS.md、INDEX、全部 kb 页和 mvp.md 都查一遍。已知的有：INDEX（:18、:37）、kb-overview、kb-extending、kb-kernel、kb-store（:236、:297、:342）、kb-executor（:99、:127）、kb-memory（:79、:189）、mvp.md（:84、:218）。
-  - kb-decisions 的旧条目不改原文。新的用词决策里写一句：此前条目里的“内核”指纯函数层。
-  - 源码和测试注释里的同样用法，改到那个文件时一起改。
-  - 验收：除了 kb-decisions 的旧条目，这些文件里再搜不到指 `src/kernel/` 的“内核”。
-- AGENTS.md 必读顺序：第 5 条改成 v2 的执行清单。
-- 旧义的“工具定义”（请求里的工具描述）统一改叫“工具描述”：kb-overview（:86）、kb-kernel（:143、:194）、kb-decisions（:338–339），以及别处同样的用法。
-- INDEX：
-  - 加本稿。
-  - “判断一个功能该不该做”（:14）加上 kb-extending 的取舍顺序。
-  - 指向 MVP 执行清单的几处（:5、:25、:35）改成 v2 的执行清单。
-- kb-extending：
-  - 原则加上五种代价、第 2 节的取舍顺序和“怎样用这个顺序”。从此它们归 kb-extending 负责，本稿第 2 节只留链接。
-  - 第 1 节的不变量留在本稿，第 8 步移进 kb-contract。在那之前，取舍顺序链接到本稿第 1 节。
-  - 推导顺序第 1 步（:27）“怎么答”一格的前两句（“现在没有用户的不做。外部工具能完整替代的不做。”）换成：按原则里的取舍顺序定，答出按哪一条、放在哪里。不进内核的，写明上层怎么做，答到这里为止。只有进内核的，才往下答第 2 到 8 步。“依据”一格加上取舍顺序的链接。
-  - 原则 2（:14）和推导顺序第 2 步（:28）的分类按 v2 补全：进来的事是信件或新的输入种类；要做的事是工具；调用模型的参数放进快照；给上层看的是协议请求；大块数据进只增的表。不加阶段：要等别的进程，就等它的回信；别的要等的事，放上层。
-  - 原则 1（:13）的“将来的定时器”。
-  - 大致方向表按 v2 改：定时器、Agent 的控制命令、派生和进程间消息、审批、花费统计、Web UI；新工具和 MCP（:47，先问能不能写成工具定义）；推送状态行（:44，改成“不做，用 `self`”）；日志和整理（:48，“要先有定时器”改成上层的计划任务）；大块数据（:53，“按哈希单独存，消息里只存引用”改成存进库的 `blobs` 表，和引用在同一个事务里）。沙箱一行改成：上层用在沙箱里运行命令的工具定义做；只换 bash 的实现要按改契约做（D7）。
-- kb-kernel：“新功能只能是新的输入种类或新的阶段。”（:299）同 AGENTS.md :75。
-- kb-overview：“外面的事（CLI 的请求，将来的定时器）”（:72）；指向 MVP 清单的链接（:133）。
-- 设计稿“MVP 不做”：
-  - 移出：派生和进程间消息、控制命令（立即换段）、运行中插话、图片输入、花费统计（改为累计用量）、自动重试（改为交给 pi-ai）。
-  - 改成“上层做”，链接到本稿第 8 节：Web UI、HTTP、远程访问、grep 工具、扩展（不做宿主）、桌面截图、多设备、通知。
-  - 留在“不做”里，链接到本稿第 6 节：定时器、审批、推送状态行、LSP、MCP。
-- kb-piweb-lessons：“MVP 没有插话，运行中的消息排队到本轮结束”（:53）；“MVP 不做插话”（:69）；“以后有大块数据，按哈希存成文件，库里只存引用”（:39）；“MVP 不做桌面截图”（:38）；“MVP 不做 MCP”（:59）；“MVP 没有 Agent 派生，也就没有等待”（:67）。
-- kb-decisions：写下面列的新决策；D14（派生、插话和并发上限的前提）、D17（“删掉花费统计”）按它自己的规定就地改正。
-
-第 1 步：
-
-- AGENTS.md 用词：“输入：信箱里的一条：用户消息、模型结果、工具结果、停止。”（:34）改成信件。加“信件”。
-- kb-overview：“输入（用户消息 / 副作用结果 / 停止）”（:28）；“4 种输入：用户消息、……”（:79）。
-- kb-kernel：`Turn` 的类型（:43）和运行中的约束“`queued` 是字符串数组”（:325）改成信件数组。
-- kb-store：
-  - 表：加 `blobs`。
-  - “在一个事务里建 5 张表，并写入 `SCHEMA_VERSION`（现在是 1）”（:110）改成 6 张表，版本号照 `db.ts` 写。
-  - 信箱的写入方（:93）和三个事务的表（:124–125）里的 `userMessage` 改成信件。
-
-第 2 步：
-
-- 最终回复的算法从 kb-service 移到 kb-kernel。
-- kb-kernel 的换段流程：“只带正文是字符串的用户消息。`decide` 写入的用户消息都是这种。”（:275）改成：段末的用户消息两种形状都带，图片块原样带，张数按 5.1 限制。
-
-第 3 步：
-
-- 前一半已做（安全点投递、`handoff`）：AGENTS.md 的排队句、副作用、用词“安全点”；各 kb 页的库内工具清单（kb-executor、kb-tools、kb-store、INDEX）；kb-kernel 的 `awaitingModel` 不变量和 `turn.queued` 的坑点；kb-service 三处；mvp.md 第 2 节的 `tools` 句。
-- 后一半已做（快照的 `thinking`、输出上限的算法、重试）：AGENTS.md 提交与执行的“也不重试”；kb-executor 讲重试的三处、讲 `reasoning` 的两处；kb-kernel 的 `PresetSnapshot`；mvp.md 第 2 节的字段和报错。
-
-第 4 步：
-
-- 第一部分已做（回信、`decide` 的 `out`、预设的 `agents`、D25 的新措辞）：AGENTS.md 提交与执行的回信句、用词“回信”；kb-overview 的 `decide` 句；kb-kernel 的函数表、输出约定、`tools` 子集、D25 的常量；kb-store 的信箱写入方、`handleNext` 的步骤、`post` 改名；mvp.md 第 2 节的 `agents`；D18 第 10 条；D25。已做的条目已从下面的清单里删掉。
-- 第三部分已做（环境变量、`TAU_PIPE`、`tau` 脚本）：kb-executor 运行工具第 3 条、kb-tools 的接口表、“工具不读库，不写库”、bash 的环境、坑点“bash 继承服务的全部环境变量”、kb-tools 的测试表；kb-service 的 `TAU_PIPE`、`tau` 脚本、入口表、测试表和两条坑点；D37。已做的条目已从下面的清单里删掉。
-- 第二部分已做（`post`、`spawn`、`stop_process` 的执行）：AGENTS.md 副作用的库内副作用、上下文与记忆的两个例外；kb-overview 的“处理一条输入只读这两样”和“库内工具只碰库”；kb-extending 的“只碰库的是库内工具”（两处）；kb-store 的库内工具清单和表、`processes` 表、信箱写入方、`handleNext` 的步骤、“处理一条输入读什么”、`readPreset`；kb-executor、kb-tools 的库内工具清单；kb-service 的三个新工具；D36 写两处例外。
-
-第 5 步已做（投影、`self`、协议的 `history` 和 `watch`、`text` 的进程和编号）：kb-service 的开头、协议、校验、流式文本、退出、认知模型、坑点和测试表；kb-overview 状态分层的观察者一行；kb-kernel 的投影；kb-store 的 `self`；kb-extending 推导顺序第 7 步；mvp.md 第 9 节的自省表；D16 就地改正；D38、D39。
-
-第 6 步：
-
-- 已做：AGENTS.md 边界与存储（其余数据包括 `blobs`）；kb-overview 的状态分层；kb-store 的四类事实改五类、三个事务的表、存储层不变量、新的“图片”一节；kb-service 的请求校验、协议的 `images` 和 `blob`、新的“图片”一节；kb-executor 的调用模型；D41。已做的条目已从这里删掉。
-- 前一半已做（纯函数层和它在 `start`、`spawn` 的调用）：AGENTS.md 的“换段是唯一缩短上下文的办法”；kb-overview 的“也不改写工作段里已有的消息”、kb-extending 原则 7；D22 的两处和 D19 的“只承诺 `contextWindow` 被冻结”；mvp.md 的风险“小窗口”和快照；kb-kernel 的派生值、常量、阈值、证明的前提、坑点和 `PresetSnapshot`；kb-memory 的 64K 那句；kb-executor 的快照；D40。已做的条目已从上面的清单里删掉。
-
-第 7 步：
-
-- 前一半已做（工具定义的格式和读取、快照的 `toolDefs`、`spawn` 冻结、启动检查、改名）：AGENTS.md 的用词和边界与存储；mvp.md 的快照、`tools`、读取规则、启动失败的条件、“工具描述是 kernel 里的纯数据”；D18 第 9 条的括注；kb-kernel 的快照、工具描述、固定部分和提示词空间；kb-tools 的“工具定义”一节；INDEX；kb-extending 原则 5；D43。已做的条目已从下面的清单里删掉。
-
-- 后一半已做（运行工具定义、带图的结果）：AGENTS.md 副作用；kb-store 的执行器事务、“预设和工具定义以外的全部数据”、目录图、`blobs` 两处；D8 就地改正；mvp.md 的“SQL 不只在 `store/`”；kb-executor 的开头、运行工具、中止信号、坑点、入口和测试表；D20 的括注；kb-tools 的“运行工具定义”、接口、包装脚本、入口、测试表和认知模型；D44。已做的条目已从上面的清单里删掉。
-
-第 8 步：
-
-- AGENTS.md 新加一节“内核契约”：第 10 节的摘要和改契约的程序。细节放进新页 kb-contract。
-- kb-contract 还负责第 1 节的不变量，以及推导测试的做法（第 9 节）。
-- AGENTS.md 准入规则里“不推翻本稿第 1 节的不变量”的链接，改指 kb-contract。
-- kb-extending 取舍顺序里指向本稿的地方，改成指向接手的页：第 1 节的不变量指 kb-contract，第 6 节的三张表指决策记录，第 8 节指 kb-extras。冻结以后新加的行，也写进这几页。
-- 新页 kb-extras：上层建筑放在哪、依赖规则、第 8 节的做法和代价。
-- AGENTS.md 小而硬规矩：写明 `extras/` 的依赖规则（第 8 节末）。
-- INDEX：加 kb-contract、kb-extras；`blobs` 归 kb-store。
-- 本稿的细节都已移进 kb 页，本稿只留链接。
-
-代码量预算不变，仍是 3000 行。现在是 1,669 行，v2 估计加 900 到 1,100 行。超了先停下来复查设计。
-
-决策记录（第 0 步写）：
-
-- 可以合成几条，编号到时再定。做法的细节链接到本稿的章节；实现到哪一步，链接就改指那一步的 kb 页。
-- v2 的 actor 模型。
-- 准入原则和四条取舍顺序（第 4 条分三支）；不变量合成一张表。
-- “内核”“纯函数层”“工具定义”“工具描述”的用词。此前条目里的“内核”指纯函数层。
-- 安全点投递；步数用完时不合并。
-- 进程之间的工具、回信和跳数；停止的语义；回信只覆盖一轮；顺序委派最多 16 次。
-- 回信的头只写结束原因；规则 6 的信靠 D25 的说明纠正，不另设头。
-- 不做 `unread`：它是第三版里回信标记“信没被处理”的字段。安全点并入后异常结束、同一进程去重时，它的判定都不准，所以删掉。
-- 5.3 的两个规则例外。
-- 工具定义文件；启动检查和交接以后的检查（第 6 步改 D22）。
-- 图片：存进库；入口检查；请求里成批省略旧图（“换段是唯一缩短上下文的办法”的例外）。
-- 思考级别和输出上限的算法；把重试交给 pi-ai。
-- 累计用量。
-- 放到上层的：HTTP、外部程序寄信、`read` 读图片、笔记、历史检索、看别的会话、codemode、任务清单的续跑、换角色；CLI 的新命令（读历史、寄信不等回复、带图片、看父进程和累计用量）。
-- 不做的：协议的 `post` 请求（第 3 条：它就是 `send` 收到回执后断开，5.9）；协议的发送者字段（第 3 条：前缀就是那行头，第 8 节）；`TAU_HOPS`（第 2 条：本机没用过；跳数只防库内工具的循环，从 bash 寄的信都是用户的信）。
-- 第 6 节的三张表；扇出上限接受风险（改 D14）；沙箱：第一版不做照旧，以后的做法改成上层的工具定义（就地改正 D7 的方向）。
+各步要改的规则句子，都在对应的那一步改完了（AGENTS.md、kb 页、mvp.md 和决策记录里的就地改正）。逐步的任务和验收见[执行清单](../plan/kernel-v2-checklist.md)。以后改规则，按 [kb-contract 的改契约的程序](../../.knowledge/kb-contract.md#改契约的程序)。
 
 ## 8. 上层建筑的做法
 
-Pi Web 的功能在 v2 上都不改内核。“归类”一列是第 2 节的哪一条：已有的写“已有”；第 5 节的原语写“4.3”加小节号；按第 4 条第 1 支的，写明内核版要推翻哪一条不变量。
-
-| Pi Web 的功能 | 在 v2 上怎么做 | 放上层的代价 | 归类 |
-|---|---|---|---|
-| 角色 | 预设文件 | — | 已有 |
-| 持久会话、恢复 | 进程 | — | 已有 |
-| 只读模式 | 预设不给 `write`、`edit`、`bash` | — | 已有 |
-| 多 Agent：建队友、发消息、中止 | `spawn`、`post`、`stop_process`、回信 | — | 4.3（5.3） |
-| 运行中插话 | 安全点投递 | — | 4.3（5.2） |
-| 压缩请求 | `handoff` | — | 4.3（5.4） |
-| 思考级别、自动重试、图片输入 | 5.6、5.7 | — | 4.3（5.6、5.7） |
-| 用量统计 | 投影里的累计用量；人用上层的命令行看 | — | 4.3（5.8） |
-| 重命名 | 上层自己存别名 | 没有：别名只影响显示。上层没在运行时显示 ID，什么都不丢 | 3 |
-| grep、find、ls | 工具定义 | 没有：和内置的 `read`、`bash` 一样是库外工具，崩溃时一样报“被中断” | 3 |
-| 看图片文件、桌面截图 | `output: content` 的工具定义。图片先缩到宽和高都不超过 2000 像素，再压到 1.5 MiB 以内，例如存成 JPEG | 没有：图片照样走入口检查。内核版让 `read` 读图片，也是库外工具。缩图要外部命令，例如 PowerShell 的 System.Drawing（见下面的依赖规则） | 3 |
-| 外部程序寄信（如 Claude Code） | 直接连管道发 `send`，正文前加前缀，例如 `[Claude Code] `。发完请求不能半关闭（5.9） | 没有：内核里只差一行头，前缀就是这行头 | 3 |
-| skills、提示词模板 | 文本文件，用 `read`。上层把技能清单生成进预设提示词；模板由上层拼进信里 | 没有：清单随预设在进程启动时冻结，内核版也一样 | 3 |
-| 列出会话、我建的会话 | 工具定义，命令是一段 Node 脚本：连管道发 `ps`，按 `parent` 等于 `$TAU_PROCESS` 过滤。没有 bash 的预设也能用 | 不原子：崩溃时报“被中断”，只读，重做无害。`ps` 读全部进程、随年头变慢，内核版也一样（v1 已有的风险） | 4.2 |
-| Notebook、任务清单 | 工具定义 `note_write`、`note_read`、`note_list`。笔记按 `TAU_PROCESS` 存在 `~/.tau/extras/notes/<进程 ID>/` | 不原子：写笔记是库外工具，崩溃时报“被中断”。先写临时文件再改名，不会写一半；模型再写一次，重做无害。自动续跑见下面单独一行 | 4.2 |
-| 看别的会话（Pi Web 的 `peek_session`） | 工具定义，连管道发 `history`，读别的进程的当前段，只给模型最后几条 | 不原子：崩溃时报“被中断”，只读，重做无害。不慢：一次请求读一段，段有上界 | 4.1：内核版要推翻不变量 9 |
-| 会话历史检索 | 工具定义 `history_search`、`history_read`。连管道发 `history`，读本进程的各段，位置写成“段号:序号” | 不原子：崩溃时报“被中断”，只读，重做无害。慢：每次检索读全部旧段，进程活得越久越慢。Pi Web 的检索也是有预算的线性扫描。真慢了，上层自建索引：旧段永不改，索引不会过时 | 4.1：内核版要推翻不变量 9 |
-| 多 Agent：等待 | 结束本轮，等回信；或者在同一轮里等（见下） | 看不见：结果只自动上交一层（5.3）。中间层为等子进程而结束本轮，上一层收到的是“已派出”，之后的汇总不会自动寄上去。顺序委派最多 16 次就到跳数上限（5.3）。本机的委派最深一层 | 4.1：内核版要推翻不变量 7 |
-| 后台命令和完成通知 | 见下面的配方 | 看不见：等回信的进程用它时，回信在等通知之前就寄出了，通知开的新一轮没有 `replyTo`，出路同“等待”。`ps` 里看不到后台命令。停止进程不结束它们：命令跑完照样寄信，进程又开一轮；要一起停，得自己结束后台命令。丢数据：服务停了一小时以上，这封通知会丢；没收到回执连接就断了（退出码 3），可能丢。退出码留在 log 里 | 4.1：内核版要推翻不变量 3、7 |
-| 任务清单的自动续跑 | 笔记工具记清单。上层盯着 `watch`，进程空闲而清单没做完时，寄一封“继续”，信里列出没做完的项。上层重启后，先扫一遍空闲进程的清单 | 看不见：一轮结束时回信已经寄出，续跑的那一轮没有 `replyTo`，所以只能用在没人等回信的进程上。上层没在运行时不续跑，重启后补上，不丢。本机续跑过 9 次 | 4.1：内核版要推翻不变量 7 |
-| 给进程换角色 | `start` 一个新进程，第一封信是摘要 | 看不见：ID 变了，子进程的回信和笔记留在旧进程。本机用过 7 次 | 4.1：内核版要推翻不变量 6 |
-| codemode | 工具定义，命令运行一段脚本，脚本自己读文件、跑命令，调上层的工具 | 寄信：要回信的，模型直接用 `post`，不放进脚本；脚本只寄不要回信的信，经上层的帮助函数加上进程 ID 的前缀，和外部程序寄信一样没有代价（本机脚本里调过 5 次 `send_session_message`）。`self` 的内容从协议的 `ps` 拿得到（本机调过 5 次 `current_session`）；笔记、清单、列会话、读会话都是上层的工具，脚本直接调。做不到：脚本调不到记忆、`spawn`、`handoff` 等库内工具（本机 129 段脚本里没调过）。不原子：中途崩溃整段报“被中断”，内核版也一样 | 4.1：内核版要让库外的脚本中途调用库内工具，推翻不变量 4 |
-| 手机访问 | 上层的 HTTP 桥，加 Tailscale Serve，加上层页面 | 桥没在运行时手机连不上。不丢数据：信都在库里 | 4.1：内核版要推翻不变量 11 |
-| 扩展弹窗 | 不做扩展宿主。Agent 要问就结束本轮 | — | 1（第 6 节） |
-
-上层的命令行（`extras/`，暂名 `tx`，冻结以后再做）：
-
-- 子命令：`post`（发 `send`，收到回执就断开）、`history`（打印 `message` 行和 `end` 行）、`ps`（带父进程和累计用量，能按父进程过滤）；`start`、`send`、`post` 能带 `--image`。
-- 约定，照 5.9 的分帧和 v1 的 CLI 定：
-  - 连接服务时，`TAU_PIPE` 有值就用它。发完请求不能半关闭。
-  - `tx` 的启动脚本和 `tau` 一样设 `MSYS_NO_PATHCONV=1`。下面“`/` 开头报错”的检查靠它：不设时，msys 先把 `/` 开头的参数改成 Windows 路径，正文也会被改坏（5.9）。
-  - 选项写在位置参数之前。第一个位置参数之后，任何一个参数等于已知选项，或者以“已知选项=”开头，都按用法错误退出，提示把选项挪到前面。正文里真要写这些字，加引号和别的字放进同一个参数。
-  - `--image` 的路径以 `/` 开头时，按用法错误退出，提示用 `cygpath -w` 转换。文件读不出，也退出 2：它和用法错误一样，请求没发出。
-  - `history` 收到 `end` 退出 0；收到 `error` 退出 1；用法错误或者连不上退出 2；没收到 `end` 连接就关了，退出 3。
-
-多 Agent 的等待，两条出路：
-
-- 在同一轮里等：
-  - 用上层的等待工具：一个工具定义，`timeout` 设 600，经 `watch` 订阅子进程，阶段变成带结束原因的 `idle(...)` 就返回，最长约 590 秒。
-  - 只有 bash 时，在一次 bash 调用里轮询：`timeout` 设 600，每 10 秒查一次 `tau ps`，最长约 590 秒。用 `grep -q` 之类只做判断，不打印 `ps` 的输出；打印的话，每次醒来都把整张表写进段。代价是慢：每次 `ps` 都读全部进程和它们的当前段，服务这期间不处理别的输入，随年头变慢。
-  - 刚建的子进程处理第一封信之前，阶段是不带括号的 `idle`，不算结束。
-  - 等的是后台命令时，查它的 log，不查 `ps`：出现退出码那一行就返回。配方的通知照寄：这一轮没等到就结束时，靠它唤醒进程。它一般在这次调用返回后的安全点并入；晚到时，会多开一轮。
-  - 回信在这批工具结果之后的安全点并入，模型在同一轮里就看得到。这一轮的最终回复就是汇总，照常寄给上一层。
-  - 每次醒来算一步。一轮最多等约（`STEPS_PER_TURN` − 已用的步数）× 10 分钟。超过就以步数用完结束，代价和结束本轮一样。
-- 事后主动报告：
-  - 有 `agents` 时，用 `post` 寄给上一层。
-  - 只有 bash 时，运行 `(tau send <上一层> "[子进程 <自己的 ID>] …" >/dev/null 2>&1 &)`。寄到的是用户的信，要靠前缀说明来源。放到后台，是因为 `tau send` 要等对方这一轮结束；上一层正在等自己时，前台运行会互相等到 bash 超时。
-  - 上一层的 ID 在第一封信的头里，也在 `self` 的 `parent` 里。
-
-后台命令和完成通知的配方（`<名字>` 是这个后台任务的名字）：
-
-```sh
-mkdir -p "$HOME/.tau/extras/bg"
-(set +e
- 长命令; c=$?
- echo "[后台任务 <名字>] 退出码 $c"
- for i in $(seq 720); do
-   tau send "$TAU_PROCESS" "[后台任务 <名字>] 完成，退出码 $c"
-   [ $? -ne 2 ] && break
-   sleep 5
- done) >>"$HOME/.tau/extras/bg/$TAU_PROCESS-<名字>.log" 2>&1 &
-```
-
-- 整个子 shell 的输出都写进 log。bash 工具结束后，它的输出管道会关闭。子 shell 自己再往里写（例如长命令被信号结束时 bash 打出的 `Terminated`），就会被 SIGPIPE 杀掉（kb-tools），通知就没了。
-- log 写在 `~/.tau/extras/bg/` 下，按进程 ID 和任务名分文件，不写进项目目录。
-- `set +e`：调用方开了 `set -e` 时，长命令失败，或者第一次寄信退出 2，子 shell 都会提前退出。
-- 先把退出码存下来，并写进 log。寄信失败时，log 里还有它。
-- 用 `tau send`：它等这个进程这一轮结束才退出。放在后台，等多久都不碍事。
-- 退出码 2 表示肯定没寄出：连不上服务（例如正在重启），或者用法错误（例如 `$TAU_PROCESS` 为空）。所以只在 2 时重试，最多 720 次，约 1 小时。用法错误不会一直重试下去。
-- 退出码 0、1 表示信已经寄出。收件人是自己，一定存在，所以这里的 1 只会是那一轮没有正常结束。退出码 3 表示连接中途断了；没收到回执时，寄没寄出不知道。都不重试。
-- 退出码 1，或者收到回执以后的 3（服务在这一轮中途退出）：信在库里，但那一轮没有正常结束。通知要是还排在队里，就按规则 6 写进段，进程停在空闲，下一封信来时模型才看到。被停止时，D25 的说明还让模型不回应它。规则 6 对所有信都这样，不算放上层的代价。log 里有 `[本轮结束：…]` 或者断开的提示。
-
-HTTP 桥要做的检查：
-
-- 只在 `127.0.0.1` 上监听。
-- 只收 POST，并且要求 `Content-Type: application/json`。跨站请求因此必须先预检。
-- `Host` 只认 `127.0.0.1:<端口>`、`localhost:<端口>` 和 Tailscale 给的名字。
-- 带 `Origin` 时，按完整的源比较，含协议和端口。`null` 拒绝。
-- 先查头，再读正文。正文有大小上限。
-- 响应分块发送，不设 `Content-Length`。否则代理会攒着不发，`watch` 就不实时。
-- 身份头 `Tailscale-User-Login` 只证明请求经过了 Tailscale Serve（Funnel 不带这个头）。它不防本机进程，本机进程本来就能连管道。
-- 只用 `tailscale serve`，不用 `tailscale funnel`。
-
-上层建筑放在哪：
-
-- 仓库里的 `extras/`，不算进 `src/` 的预算。
-- 它只依赖线协议、CLI、工具定义和预设。不导入 `src/`。一个扫描测试负责检查。
-- 连管道时，`TAU_PIPE` 有值就用它，否则用默认的管道，和 CLI 一样。这样在测试服务里，上层的工具定义也不会连到正式服务。
-- 依赖规则：只用 Node 的内置模块和外部命令（例如 PowerShell）。要加 npm 依赖，和 `src/` 一样先在决策记录写理由。
-- 它自己的数据放在 `~/.tau/extras/<名字>/`，不进 `tau.db`。
+上层建筑的做法已移进 [kb-extras](../../.knowledge/kb-extras.md)：[放在哪里](../../.knowledge/kb-extras.md#放在哪里)、[依赖规则](../../.knowledge/kb-extras.md#依赖规则)、[Pi Web 功能的做法和代价](../../.knowledge/kb-extras.md#pi-web-的功能在-v2-上的做法)、[`tx`](../../.knowledge/kb-extras.md#上层的命令行-tx)、[多 Agent 的等待](../../.knowledge/kb-extras.md#多-agent-的等待)、[后台命令的配方](../../.knowledge/kb-extras.md#后台命令和完成通知的配方)、[HTTP 桥的检查](../../.knowledge/kb-extras.md#http-桥要做的检查)。
 
 ## 9. 实现顺序
 
-每一步先写崩溃和竞态的最小反例测试，再写代码。每一步过完成门槛，改第 7 节列给它的规则句子，单独提交，更新 kb 页。
+实现顺序、每一步的任务和验收，在[执行清单](../plan/kernel-v2-checklist.md)。第 7 步的真模型核实见 [D45](../../.knowledge/kb-decisions.md#d45-第-7-步带图的工具结果的真模型核实)。
 
-| 步 | 做什么 | 验收 |
-|---|---|---|
-| 0 | 第 7 节第 0 步的改动；写 v2 的执行清单；INDEX 加本稿 | 第 7 节第 0 步列的每一句，都已改掉或者改成指向本稿的链接 |
-| 1 | 契约类型和 v2 表结构：信件、发送者、内容块、工具结果的内容块、`Turn` 的新字段、`parent`、`usage`、`blobs` 表。快照和投影的新字段，到用它们的那一步再加。行为还和 v1 一样 | 现有测试改名后全过；`SCHEMA_VERSION` 为 2。开发期间 `state_json` 的形状一变，就再加一 |
-| 2 | 信件的头和合并；消息的两种形状；换段带全部段末消息（含图片块）；最终回复和结束原因的文字移进纯函数层；累计用量 | 纯函数层的单元测试和随机序列 |
-| 3 | 安全点投递（先查步数）、`handoff`；快照的 `thinking` 和输出上限的算法；重试 | 纯函数层的测试；`onPayload` 断言；真模型核实在用的模型（[D34](../../.knowledge/kb-decisions.md#d34-第-3-步真模型核实)） |
-| 4 | `post`、`spawn`、`stop_process`、回信、跳数；D25 的新说明；`TAU_PROCESS`、`TAU_PIPE`；bash 工具的环境去掉 `MSYS_NO_PATHCONV`；`tau` 脚本 | 崩溃测试；互相寄信停在上限；顺序委派第 17 次失败；`spawn` 的 ID 确定、撞上能重算；在测试服务里，bash 工具真的运行一次 `tau ps`，经 `TAU_PIPE` 连到测试服务；`bash()` 的环境测试；重量 D25 的说明 |
-| 5 | 投影的 `parent`、子进程、累计用量、消息条数，出错原因截断；`self` 的文字；协议的 `history`（含 `end` 行）、`watch`；`text` 回复带进程和编号 | 服务测试：`watch` 的快照、增量、断开、写缓冲上限（含一直不读的订阅）、服务退出；`history` 的 `end` 行和越界 |
-| 6 | 图片：入口检查、不收图片的模型、`blobs` 的读写、执行器替换引用、请求里成批省略、两种 R；快照的 `input`；启动检查（`start` 和 `spawn`）和交接以后的检查；协议的 `blob` | 存储层不变量（信箱、`queued`、段）；最坏图片负载下的阈值测试；两种检查的测试；按 5.6 量出 `IMAGE_TOKENS`，核实在用模型收四种图片 |
-| 7 | 工具定义：`text` 和 `content` 输出（含图片：上报结果的事务插入 `blobs`）；快照的 `toolDefs`；`spawn` 冻结工具定义；启动检查算上工具定义 | 假命令的测试；带图的工具结果的真模型核实（见下） |
-| 8 | 冻结：先做完第 7 节第 8 步的文档并提交；`extras/` 的 import 扫描测试；然后做推导测试 | 推导测试按事先写定的题目和标准通过 |
-
-第 7 步的真模型核实：见 [D45](../../.knowledge/kb-decisions.md#d45-第-7-步带图的工具结果的真模型核实)。测两种形状：请求以带图的工具结果结尾；带图的工具结果后面再接安全点并入的一封信。四个在用的模型全部接受；claude-opus-5-5 只断言请求体。
-
-推导测试：
-
-- 第 8 步的文档改完、提交，记下提交号，然后再出题。这样文档不会照着题目写。
-- 测试时，受试者读的就是记下的那个提交，只多决策记录里 sha256 那一行。出题以后要改文档，这批题作废，改完重新出题。
-- 写定 5 个功能、每个的正确落点和理由、评分标准。
-- 每道题写明本机的使用情况：这个功能和它的各个部分，用没用过、用过几次。受试者查不到会话记录，第 2 节第 2 条和第 4 条第 2 支都靠它。
-- 题目只出受试者的文件清单里没给过落点的功能。第 5、6、8 节、kb-extending 的方向表、决策记录、kb-piweb-lessons、mvp.md 的“MVP 不做”都算给过，以前推导测试的题目也算。
-- 每次测试都出新题。没通过以后的重测、第 10 节的改契约，都一样。
-- 写定的文件放在仓库外。决策记录里先只记它的 sha256。测完再把题目、答卷、判分和结论并进决策记录；并进以后，这些题就作废。
-- 受试者是 Claude Code 的子 Agent，Sonnet 和 Haiku 各答一次。不经 tau，不用 pi 的凭据。
-  - 子 Agent 只给 Read、Grep、Glob，不给 Bash。读取只放行仓库目录：写定的题目和历次审阅的记录都在仓库外。
-  - 给它的提示只有题目、本机使用情况和文件清单：AGENTS.md、INDEX 和它们链接的文档。
-- 每个功能的关键点全对才算推对。Sonnet 和 Haiku 都把 5 题全部推对，才算通过。通过线不随题目改。
+推导测试的做法已移进 [kb-contract 的推导测试的做法](../../.knowledge/kb-contract.md#推导测试的做法)。
 
 ## 10. 冻结规则
 
-冻结以后，下面这些是契约：
-
-- 第 1 节的不变量。
-- 类型：`Input`、`Letter`、`Sender`、`Phase`、`Turn`、`Effect`、`ToolResultContent`，`Process`、`PresetSnapshot`、`Projection` 的字段。内容块用 pi-ai 1.0.0 的类型。
-- `decide` 的输出：新记录、追加的消息、回信。
-- 行为：
-  - 回信的时机和正文的算法（5.3 的回信和规则 1 到 6）。
-  - 安全点投递（5.2）。
-  - 停止的语义（5.3）。
-  - 跳数怎样增加（5.3）。
-  - bash 工具正常结束时，不结束命令留在后台的进程。第 8 节的配方靠它。
-- 事务清单，以及每个事务做什么。
-- `effects` 和 `mailbox` 的规则。
-- 线协议：
-  - 管道名和分帧，包括“客户端不能半关闭”。
-  - `Request`、`Reply`。
-  - `history` 每行的消息格式和结束行。
-  - `watch` 的推送规则：先快照后增量；`update` 只带 `self`；流式文本带进程和编号；不推最终回复；写缓冲超限就断开。
-- 表结构。索引不算：`openDb` 每次打开时用 `CREATE INDEX IF NOT EXISTS` 补上，不提高 `SCHEMA_VERSION`。对 `state_json` 的表达式索引也一样。
-- 文件格式：预设、工具定义。
-- 工具定义的运行（原文在 [kb-tools 的运行工具定义](../../.knowledge/kb-tools.md#运行工具定义)，来自本稿 5.5）。
-- 环境变量：`TAU_PROCESS`、`TAU_PIPE`。
-- CLI：v1 的命令、输出和退出码，加上 `TAU_PIPE`。入口是仓库里的 `tau`、`tau.cmd` 和 `node src/main.ts`。
-- `decide` 写进段的固定文字：信的头、结束原因的文字、D25 的说明、`HANDOFF_HEADER`、`CARRY_HEADER`、`INTERRUPTED`、`SKIPPED`、图片的占位行。上层显示“谁说的”，只能解析信的头。
-- 内置工具和工具组的名字。工具定义不能和它们重名，所以加一个内置工具，会让用户已有的同名定义启动失败。
-- 上层看得见的入口条件：
-  - 5.6 入口检查的全部条件：张数、大小、类型（按魔数收 png、jpeg、gif、webp）、尺寸。
-  - `MESSAGE_MAX_BYTES`、`TOOL_DEF_MAX_BYTES`、`TOOL_DEFS_MAX_BYTES`、`HOPS_MAX`、工具定义 `timeout` 的范围。
-  - 收紧算改契约，包括删类型、加新的拒绝条件。
-  - 放宽 `HOPS_MAX`、`TOOL_DEF_MAX_BYTES`、`TOOL_DEFS_MAX_BYTES` 和工具定义 `timeout` 的范围，不算改契约，先在决策记录写理由。
-  - 放宽 `MESSAGE_MAX_BYTES` 和图片的条件（含加图片类型），先做下面“参与启动检查的量”里写的检查。
-
-参与启动检查的量：
-
-- 启动检查和阈值除了快照，还用到下面这些。它们从代码现取，不在快照里：
-  - `MESSAGE_MAX_BYTES`、`IMAGES_PER_MESSAGE`、`IMAGE_TOKENS`、`MARGIN_TOKENS`、`BYTES_PER_TOKEN`、`outputMax` 占窗口的比例（1/8）：决定 R 和阈值。
-  - `MEMORY_VIEW_MAX_BYTES`：决定启动检查里记忆的上界。
-  - 系统提示词的拼法（工作目录那一行、记忆的标题），内置工具的描述和参数：算进固定部分。
-- `BYTES_PER_TOKEN` 调小、其余调大，阈值就降低，或者启动检查更严。已经启动的进程跟着变，原来能启动的预设也可能启动失败。
-- 改其中任何一样之前，用现有的预设和库里全部进程的快照重算启动检查，空闲的进程也算。有不通过的，按改契约处理。
-- 放宽 `IMAGE_MAX_EDGE`、`IMAGE_MAX_BYTES` 之前，先按 5.6 重量 `IMAGE_TOKENS`。
-- 调大 `IMAGE_MAX_BYTES` 或 `IMAGES_PER_REQUEST` 之前，先重算 5.6 的请求上界：张数 × 字节上限 × 4/3，再加上文字。结果不能超过在用 provider 的请求上限，例如 Anthropic 的 32 MiB、Google 的 20 MiB。
-- 加图片类型之前，先按 5.6 核实在用的模型收它。
-
-改契约，要先在决策记录里写清两件事：上层为什么做不到，或者要付出第 2 节的哪一种代价；推导测试的结果（按第 9 节的做法出新题，第 8 步以后这个做法在 kb-contract）。
-
-不算改契约：
-
-- 修 bug。契约里写的行为不算 bug。
-- 调内部的常量：没在上面列出的常量都是内部常量，例如 `WATCH_BUFFER_MAX`、`MODEL_RETRIES`、`STEPS_PER_TURN`。`IMAGES_PER_REQUEST` 和每批省略的张数也是；调大前者之前，先按上面重算请求上界。
-- 放宽上面写明可以放宽的入口条件。
-- 跟着 pi-ai 改适配，消息 JSON 不变时。
-- 不改接口的性能优化，包括加索引。
+冻结的契约清单、参与启动检查的量、改契约的程序和不算改契约的事，已移进 [kb-contract](../../.knowledge/kb-contract.md#契约清单)。
 
 ## 11. 未决问题
 
-实现时定：
-
-1. `IMAGE_TOKENS`：5000。第 6 步量过，取测量值、文档上限和 5000 里的最大值，结果还是 5000（[D42](../../.knowledge/kb-decisions.md#d42-第-6-步量-image_tokens核实收图片)）。估算必须偏高，这是阈值证明的前提。
-2. 图片的其余常量：`IMAGE_MAX_BYTES` 1.5 MiB、`IMAGE_MAX_EDGE` 2000 像素、`IMAGES_PER_MESSAGE` 2、`IMAGES_PER_REQUEST` 8、每批省略 4 张。
-3. 工具定义的两个大小上限：暂定 16 KiB 和 64 KiB。
-4. `WATCH_BUFFER_MAX`：暂定 1 MiB。
-5. `MODEL_RETRIES`：暂定 5。
-6. OAuth 订阅：不在 v2 里，维持 D23。只读访问令牌在 pi 不运行时会过期，表现是每次调用模型都出错。先核实 pi 什么时候刷新，再单独决定。
-7. `ps` 和 `self` 随进程数变慢：`self` 要数空闲的子进程，仍然读全部记录。真的变慢时加索引、改查询，不算改契约。
-8. 目录写着收图片、接口却拒绝的在用模型或类型：第 6 步核实，冻结之前定对策。
+未决问题已定：常量和它们的状态在 [kb-kernel 的常量](../../.knowledge/kb-kernel.md#常量)和 [kb-service 的图片](../../.knowledge/kb-service.md#图片)；内部常量的默认值和 OAuth 在[决策记录的未确认的默认值](../../.knowledge/kb-decisions.md#未确认的默认值)。`ps` 和 `self` 变慢见 [kb-contract 的不算改契约](../../.knowledge/kb-contract.md#不算改契约)，目录写着收图片却被拒的模型见 [kb-contract 的风险表](../../.knowledge/kb-contract.md#风险表)。
 
 ## 12. 风险
 
-| 风险 | 对策 |
-|---|---|
-| 一次设计多个原语，抽象设计错 | 推导测试；按第 9 节逐个实现 |
-| 库越长越大：图片、旧段、进程都不删 | 记录增长速度。真要删时，作为契约变更单独设计 |
-| 安全点投递改变了模型看到的消息形状 | 第 3 步核实在用的模型，第 7 步再核实带图的工具结果。换到没核实过的模型，先核实 |
-| `spawn` 的扇出没有上限，进程和花费暴涨 | 跳数只挡循环。只给需要的预设 `agents` 和能运行命令的工具。上层尽力而为地停 |
-| 子预设没有 `agents`，递归也不一定停 | 子预设没有 `agents`，也不能运行它控制的命令时，递归才在它这一层停住。bash、运行模型所给脚本的工具定义（如 codemode）、命令里调用 `tau` 的工具定义、运行它能用 `write` 或 `edit` 改的文件的工具定义（如 `npm test`），都能运行 `tau start`，建出不挂在树上的进程 |
-| 子进程的模型调用卡住，父进程永远等不到回信 | 模型调用没有超时，这是 v1 已有的行为。用户用 `tau stop` 停掉子进程，父进程收到“被停止”的回信 |
-| `spawn` 在事务里读文件。工作目录在网络路径上时，查目录可能卡住几十秒，期间所有进程都等着 | 预设的工作目录用本机路径 |
-| 图片文件头完好、数据损坏，进段后每次调用模型都失败 | 用 `history` 读出，再 `start` 一个新进程 |
-| `IMAGE_TOKENS` 低于真实值，阈值证明不成立 | 第 6 步在在用的模型上量；换成没量过的模型先量 |
-| 目录写着收图片，接口却拒绝 | 第 6 步核实，冻结之前定对策 |
-| 64K 窗口的预设收图片，带图的信赶上换段时图会丢 | 写进 kb-kernel 的坑点 |
-| 固定部分离阈值不到一份交接说明 | 交接以后的检查：每封信只交接一次就出错，报出各部分的数字。快照冻结，卡住的进程改不了：用缩小了提示词或工具定义的预设、或者大窗口的模型，新启动一个进程。记忆占得多时，也可以先用同一预设的另一个进程删掉一些记忆，下一次交接用新的记忆视图 |
-| 重试只覆盖拿到成功的响应之前的错误 | 流式输出中途的错误，本轮出错结束。这比 Pi SDK 弱：它按最终消息判断要不要重试 |
-| 预算路径上回答只剩 1,024 | 5.7 的式子；换模型时先算 |
-| 不发输出上限的 API（openai-codex-responses），总输出可能超过 `outputMax` | 不支持。tau 本来也调不了它 |
-| 工具定义的 schema 内层不合法，进程第一次调用模型就失败 | 改文件，`start` 新进程。上层的中转生成定义时负责规整 schema |
-| 工具定义冻结进每个 `state_json`，`self` 和 `ps` 变慢 | 定义有大小上限；真的变慢时加表达式索引 |
-| `tau.cmd` 把正文里的 `&` 当成命令 | 外部程序直接连管道；bash 里用 `tau` 脚本；计划任务直接运行 node |
-| 代码量超出预期 | 每步完成时校准；超出 3000 行先停下来复查设计 |
+风险表已移进 [kb-contract 的风险表](../../.knowledge/kb-contract.md#风险表)。

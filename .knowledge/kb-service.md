@@ -4,7 +4,7 @@
 
 ## 这个模块是干什么的
 
-服务是 `tau serve` 这个常驻进程。它持有单实例锁，打开库，做启动恢复，再用一个同步的 `pump` 推进全部进程。CLI 是它自己的客户端；协议还有 `history` 和 `watch`，给上层用。
+服务是 `tau serve` 这个常驻进程。它持有单实例锁，打开库，做启动恢复，再用一个同步的 `pump` 推进全部进程。CLI 是它自己的客户端；协议还有 `history`、`watch` 和 `fork`，给上层用。
 
 它负责：
 
@@ -14,13 +14,14 @@
 - 观察者：哪些连接在等哪个进程，最终回复什么时候发、内容怎么算。
 - `history` 和 `watch`：读历史，订阅变化，订阅的写缓冲上限。
 - 图片：`start`、`send` 的入口检查，`blob` 请求。
+- `fork`：请求的参数、什么时候拒绝、回执和订阅的推送。复制什么在[纯函数层](kb-kernel.md#fork)。
 - CLI 的命令、输出、退出码，以及“结果未知”。
 - `tau ps` 的文字格式。
 - 启动脚本 `tau.cmd`、入口 `src/main.ts`、正常退出。
 
 它不负责：
 
-- 三个存储事务，以及回执承诺的落盘：[kb-store.md](kb-store.md#三个事务)。
+- 四个存储事务，以及回执承诺的落盘：[kb-store.md](kb-store.md#四个事务)。
 - 执行器的开始、中止、上报和启动恢复：[kb-executor.md](kb-executor.md)。
 - 投影的字段：[kb-kernel.md](kb-kernel.md#投影与命令)。`self` 的文字：[kb-store.md](kb-store.md#self)。
 - 预设文件的格式：[设计稿第 2 节](../docs/design/mvp.md#2-预设)。工具，包括 bash 怎样结束进程：[kb-tools.md](kb-tools.md)。
@@ -127,12 +128,13 @@ type Request =
   | { op: "send"; process: string; text: string; images?: string[] }
   | { op: "stop"; process: string }
   | { op: "ps" }
+  | { op: "fork"; process: string; before?: number }       // before 是当前段里一条用户消息的段内序号
   | { op: "history"; process: string; segment?: number; from?: number }
   | { op: "blob"; hash: string }                            // hash 不带 blob: 前缀
   | { op: "watch"; process?: string };
 
 type Reply =
-  | { type: "receipt"; process: string }                    // 命令的事务提交之后
+  | { type: "receipt"; process: string }                    // 命令的事务提交之后；fork 的回执带新进程的 ID
   | { type: "text"; process: string; n: number; delta: string } // 流式文本，只是预览；n 是副作用编号
   | { type: "final"; reply: string; ended: Ended | null }   // 从库里取
   | { type: "ps"; processes: Projection[] }
@@ -148,6 +150,7 @@ type Reply =
 | `start` | `checkImages` 检查图片；`loadPreset` 读预设；生成进程 ID；`startProcess`（启动检查不通过就抛错，回 `error`，什么都不建） | `receipt`，若干 `text`，`final` |
 | `send` | `checkImages` 检查图片；`send` 放进一封用户的信；进程不存在就抛出 | 同上 |
 | `stop` | `send` 放进一条 `stop` | `receipt` |
+| `fork` | 生成进程 ID（和 `start` 一样）；`forkProcess`（拒绝的情形见下，什么都不建）。提交之后，给订阅的连接推新进程的 `update`，再回执。不调用 `pump`：没有输入要处理 | `receipt`，然后关闭；拒绝回 `error` |
 | `ps` | 读全部进程记录；每个进程 `observe(p, 当前段, 全部进程, now)` | 一行 `ps` |
 | `history` | 读一段的消息 | 若干 `message`，一行 `end`，然后关闭 |
 | `blob` | 读一张图片：`hash` 不带 `blob:` 前缀。不开写事务 | 一行 `blob`，然后关闭。`hash` 不存在回 `error` |
@@ -156,15 +159,19 @@ type Reply =
 
 - `start` 和 `send` 走同一条路径：提交，然后 `awaitFinal`（发回执、登记观察者、`pump`）。
 - 回执在事务提交之后才发。库是 `synchronous = FULL`，所以回执表示已经落盘。
+- `fork` 的拒绝（都回 `error`，库里什么都没写）：没有这个进程；带 `before` 时，`before` 超出当前段，或那条消息不是用户消息；不带 `before` 时源进程不是 `idle`；新进程通不过启动检查。复制什么、为什么这样拒绝，见 [kb-kernel 的 fork](kb-kernel.md#fork)。源进程在运行时，带 `before` 的 `fork` 照常可以。
+- `fork` 的回执在事务提交之后才发，之前先推 `update`：订阅的客户端收到回执时，已经见过新进程。`update` 由 `observe` 用 `forkProcess` 返回的记录和段算出，不读库。
 - `stop` 的回执只表示停止进了信箱。随后的 `pump` 同步处理它，并中止正在运行的动作。进程已经 `idle` 时停止什么都不做，回执照发。
 - `ps` 的进程按 ID 排序，包括 `idle` 的。每个投影带自己的 `now` 和 `siblings`。
 - `error` 可能跟在回执后面：`awaitFinal` 里的 `pump` 抛出时（见[坑点](#坑点)）。
+- 客户端可以在回执之后直接断开（`destroy`）：服务照常处理，不再给它写。`tau send` 被 Ctrl+C 就是这样。
+- 没有单独的“寄信不等回复”的请求。它就是 `send` 收到回执后断开（[D29](kb-decisions.md#d29-放到上层的和不做的)）。
 
 ### 请求的校验（`parseRequest`）
 
 - 每个连接只读第一行。`\r\n` 算一个换行。
 - 不是合法 JSON：`error`，内容是 `JSON.parse` 的错误信息。
-- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`；`stop` 要字符串 `process`；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`blob` 要字符串 `hash`；`start`、`send` 的 `images` 可以没有，有就要是字符串数组；`watch` 的 `process` 可以没有，有就要是字符串。否则 `error`：“无法识别的请求：<原文>”。
+- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`；`stop` 要字符串 `process`；`fork` 要字符串 `process`，可选的 `before` 要是非负整数；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`blob` 要字符串 `hash`；`start`、`send` 的 `images` 可以没有，有就要是字符串数组；`watch` 的 `process` 可以没有，有就要是字符串。否则 `error`：“无法识别的请求：<原文>”。
 - 只查类型。空串能通过，多余的字段被忽略。空预设 ID 由 `loadPreset` 拒绝；空消息会成为一条用户消息。CLI 不发空消息。
 - 预设读不出、进程不存在、进程 ID 冲突，都回 `error`。这些情况下库里什么都没写。
 
@@ -186,7 +193,9 @@ type Reply =
 
 - `blob` 的回复：类型用同一个 `imageType` 现算，不另存。库里的字节认不出类型（不会发生）也回 `error`。
 - `history` 里图片块的 `data` 是 `blob:<hash>`，不带字节。要看图，用 `blob`。
-- 文件头完好、数据损坏的图片仍可能进段，模型接口会拒绝它（[设计稿的风险表](../docs/design/kernel-v2.md#12-风险)）。
+- 为什么入口要查（[D41](kb-decisions.md#d41-第-6-步后一半的选择)）：不合格的图片进了段，每次调用模型都会失败，连交接调用也失败，进程就永远卡住。例如 Anthropic 拒绝边长超过 8000 像素的图。`IMAGE_MAX_EDGE` 的 2000 像素，和 pi-ai 模型目录给每个收图片的模型定的缩放尺寸一样。截图类的工具定义要自己先缩小（[kb-extras](kb-extras.md#pi-web-的功能在-v2-上的做法)）。
+- 图片只从两个入口进来：协议的 `start`、`send`，和工具定义的 `content` 输出。后一个入口的不合格是错误结果，检查和协议的完全一样，函数是同一个（`checkImages`，[kb-tools](kb-tools.md#运行工具定义)）。
+- 文件头完好、数据损坏的图片仍可能进段，模型接口会拒绝它（[风险表](kb-contract.md#风险表)）。
 - CLI 不带图片：CLI 的命令、输出和退出码冻结在 v1。上层的命令行直接用协议。
 
 ### 进程 ID
@@ -323,12 +332,12 @@ tau stop <进程>
 
 | 路径 | 内容 |
 |---|---|
-| `src/server/serve.ts` | `serve`：启动顺序、`pump`、`settle`、`push`、`awaitFinal`、`handle`、`parseRequest`、`close`；`WATCH_BUFFER_MAX` |
+| `src/server/serve.ts` | `serve`：启动顺序、`pump`、`settle`、`push`、`awaitFinal`、`handle`（含 `fork`）、`parseRequest`、`close`；`WATCH_BUFFER_MAX` |
 | `src/server/listen.ts` | `listen`：在命名管道上监听；`EADDRINUSE` 变成“已经有一个 tau 服务” |
 | `src/server/credentials.ts` | `piCredentials`：只读 pi 的凭据文件，只交出 `api_key` 条目 |
 | `src/protocol.ts` | `PIPE`、`Request`、`Reply` |
 | `src/images.ts` | `checkImages`、`imageType`、`imageSize`、`IMAGE_MAX_BYTES`、`IMAGE_MAX_EDGE` |
-| `test/server/protocol.test.ts` | `history`、`watch`、`text` 的进程和编号、图片和 `blob` |
+| `test/server/protocol.test.ts` | `history`、`watch`、`text` 的进程和编号、图片和 `blob`、`fork` |
 | `test/images.test.ts` | 入口检查：常量、魔数、每种格式的尺寸、张数、大小、类型、尺寸、顺序、base64 |
 | `src/cli/main.ts` | `main`（命令和退出码）、`request`（连接、发一行、逐行交出回复）、`formatPs`、`ago` |
 | `src/main.ts` | 入口：`serve` 或 CLI；`~/.tau` 的位置；信号处理 |
@@ -345,7 +354,7 @@ tau stop <进程>
 
 ### 服务测试（`test/server/`）
 
-都走真的管道、库和 `createActions`，模型是 pi-ai 的 faux。
+都走真的管道、库和 `createActions`，模型是 pi-ai 的 faux。测试要先清掉从外面继承来的 `TAU_` 变量，否则 `TAU_PIPE` 会让测试连到正式服务。
 
 | 测试 | 证明 |
 |---|---|
@@ -367,11 +376,12 @@ tau stop <进程>
 | protocol：`watch` 断开和退出 | 客户端断开后连接被释放，其余订阅照常；服务退出时断开订阅；退出开始以后才到的 `watch` 回 `error`，等最终回复的连接照常收到 |
 | protocol：`watch` 写缓冲上限 | 快照大于管道缓冲、订阅方一直不读：到上限才断开，读的订阅不受影响；快照很小、订阅方不读：少量推送不断开，超过上限才断开 |
 | protocol：图片 | `start`、`send` 带图：段里是引用，`blob` 取回原字节和类型，`history` 不带字节；`images` 的校验；不合格回 `error`、什么都不建；不收图片的模型先检查、再换说明；执行器发给模型的是真数据；`blob` 不存在、带前缀回 `error`，读请求不写库 |
+| protocol：`fork` | 回执带新 ID 并关闭；`history` 读新进程等于源进程的前缀；之后对新进程 `send`，模型收到复制的消息，系统提示词和源进程一样；各种 `error`（没有进程、越界、不是用户消息、运行中不带 `before`、启动检查、请求校验）；订阅在回执之前收到新进程的 `update`；带图片引用的段 |
 | cli：模型不在目录里 | 本轮以“模型目录里没有”的错误结束，回复不入段；模型放回后进程照常可用 |
 
 ## 坑点
 
-- **`tau.cmd` 经 cmd.exe 解析参数，`&` 是命令分隔符。** 正文里的 `&` 会把命令截断。外部程序和系统计划任务寄信，要直接连管道，或者直接运行 `node <仓库>srcmain.ts`，不要经 `tau.cmd`。bash 里用 `tau` 脚本，它不经 cmd.exe。
+- **`tau.cmd` 经 cmd.exe 解析参数，`&` 是命令分隔符。** 正文里的 `&` 会把命令截断。外部程序和系统计划任务寄信，要直接连管道，或者直接运行 `node <仓库>\src\main.ts`，不要经 `tau.cmd`。bash 里用 `tau` 脚本，它不经 cmd.exe。
 - **`MSYS_NO_PATHCONV` 会留在服务的环境里。** `tau` 脚本只为 `exec node` 设它，但它在 node 的环境里。在 Git Bash 里运行 `tau serve`，服务就带着它。所以 bash 工具构造命令环境时去掉它（[kb-tools](kb-tools.md#包装脚本)）；服务自己的环境不动。
 - **在 `pump` 之外推进状态。** `pump` 的同步是服务里“没有并发”的唯一来源。验证：pairing 的停止用例（中止及时到达）、kill 测试。
 - **pi 正在写凭据文件。** pi 在锁里原地截断再写，tau 读时不拿锁。读到空文件或半个文件时，这次模型调用以“不是合法的 JSON”结束，重发即可。窗口很小，但服务要跑很多年。

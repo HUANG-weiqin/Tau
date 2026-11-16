@@ -9,7 +9,7 @@
 它负责：
 
 - `~/.tau/tau.db` 的位置、表结构和 PRAGMA。
-- 三个事务：启动进程、收一条命令、处理一条输入。图片和引用它的信在同一个事务里写入 `blobs`。
+- 四个事务：启动进程、分叉进程、收一条命令、处理一条输入。图片和引用它的信在同一个事务里写入 `blobs`。
 - 处理输入时同步待办副作用表（`effects`）。
 - 在事务里执行库内工具：`self`、`handoff`、`memory_*`，以及预设含 `agents` 时的 `post`、`spawn`、`stop_process`。
 
@@ -123,13 +123,14 @@ CREATE TABLE blobs (
 
 行的读写函数都在 `db.ts`：`loadProcess`、`loadProcesses`（按 ID 排序）、`saveProcess`、`loadSegment`、`appendMessages`、`putMail`（把一条输入放进一个进程的信箱）。它们不开事务。写入都由调用方放进 `tx`。
 
-### 三个事务
+### 四个事务
 
 都在 `src/store/inputs.ts`，每个函数恰好一个 `tx`。
 
 | 函数 | 做什么 | 失败时 |
 |---|---|---|
 | `startProcess(db, memory, id, preset, text, now, images?)` | 用 `start` 建 `idle` 进程记录并插入；第一条消息作为用户的信进信箱。带图片时，信的内容块在同一个事务里生成，图片存进 `blobs`（见[图片](#图片)） | ID 重复：主键冲突，什么都不写，`blobs` 也不留。启动检查不通过（[kb-kernel](kb-kernel.md#启动检查和交接以后的检查)）：抛错，什么都不写 |
+| `forkProcess(db, id, source, before, now)` | 读源进程记录和当前段，用 `fork` 算出新进程记录和要复制的消息，过启动检查，插入新进程记录，写入复制的消息；返回新记录和复制的段。不寄信，不碰 `effects` 和 `blobs`（图片引用照用，`blobs` 只增不删） | 没有源进程、`fork` 的拒绝（[kb-kernel](kb-kernel.md#fork)）、启动检查不通过、新 ID 已被占用：抛错，整个事务回滚，什么都不留 |
 | `send(db, id, input, images?)` | 把信件或 `stop` 放进已有进程的信箱。带图片时和 `startProcess` 一样，按目标进程的快照处理；图片只能跟着信 | 进程不存在：抛出“没有这个进程”，什么都不写，`blobs` 也不留 |
 | `handleNext(db, memory, now, readPreset?)` | 处理信箱里最早的一条输入。`readPreset` 给 `spawn` 读预设用，服务传 `loadPreset` | 抛出时整个事务回滚，这条输入留在队头 |
 
@@ -161,6 +162,7 @@ CREATE TABLE blobs (
   - 不含 `image`：不存图片，每张换成一行 `[图片：模型不支持，已省略]`，和文本合成一个文本块，行之间用换行。所以这种进程的段里永远没有图片。
 - `hash` 是原始字节的 sha256，64 位小写十六进制。同一张图只存一行。
 - 只增不删，和旧段一样。没人引用的行无害（例如已经存下的图片，后来引用它的信被 `decide` 丢掉）。带图的工具结果的行在执行器上报结果的事务里写，结果过时被丢弃时，图片也不写。`putBlobs(db, images)` 是这两处共用的插入。
+- 带引用的只有协议的信和工具结果。`post`、`spawn` 和回信只有文本。
 - `readBlob(db, hash)` 只读，不开事务。服务的 `blob` 请求和执行器都用它。
 - 纯函数层里没有图片的字节：`decide`、`buildContext` 照样处理引用。字节只在执行器调用模型之前换进请求（[kb-executor](kb-executor.md#调用模型actionsts)）。
 
@@ -199,6 +201,8 @@ CREATE TABLE blobs (
 | 收件人或目标的进程记录（只查存不存在） | 库内工具是 `post`、`stop_process` 时 |
 | 预设文件，和子进程的记忆视图 | 库内工具是 `spawn` 时（通过 `readPreset` 和 `Memory`） |
 | 已有的进程 ID | `spawn` 算新 ID 时，每次尝试一次 |
+
+`forkProcess` 不是处理一条输入，另有一张读取表：源进程的进程记录和当前段（和 `history` 读当前段一样），不读旧段。
 
 不读旧段，也不读别的进程的工作段。
 
@@ -245,7 +249,7 @@ CREATE TABLE blobs (
 | 记忆 | `memory` |
 | 图片的字节 | `blobs`；引用在信、`turn.queued` 和段里，写成 `blob:<hash>` |
 
-存储有三个事务：`startProcess`、`send`、`handleNext`。`startProcess` 和 `send` 还写 `blobs`。执行器另有三个事务，只写 `effects` 和 `mailbox`；上报结果的事务还插入 `blobs`（带图的工具结果的图片）。记忆的写入发生在 `handleNext` 的事务里。除了 `openDb` 建表，`src/` 里没有别的代码写库。
+存储有四个事务：`startProcess`、`forkProcess`、`send`、`handleNext`。`startProcess` 和 `send` 还写 `blobs`。执行器另有三个事务，只写 `effects` 和 `mailbox`；上报结果的事务还插入 `blobs`（带图的工具结果的图片）。记忆的写入发生在 `handleNext` 的事务里。除了 `openDb` 建表，`src/` 里没有别的代码写库。
 
 判断一次修改是否越界：
 
@@ -406,14 +410,15 @@ CREATE TABLE blobs (
 | 文件 | 内容 |
 |---|---|
 | `src/store/db.ts` | `SCHEMA`、`SCHEMA_VERSION`、`openDb`、`tx`、行的读写 |
-| `src/store/inputs.ts` | `startProcess`、`send`、`handleNext`、同步副作用 |
+| `src/store/inputs.ts` | `startProcess`、`forkProcess`、`send`、`handleNext`、同步副作用 |
 | `src/store/instore.ts` | `runInStore`：`self`、`handoff`、`memory_*`、`post`、`spawn`、`stop_process`；`spawnId`、`envFor`、`ReadPreset` |
 | `src/store/blobs.ts` | `letterContent`（信的内容块，存图片或换成说明）、`readBlob`、`resolveImages`（请求里的引用换成 base64）、`IMAGE_UNSUPPORTED` |
 | `src/memory/kv.ts` | `Memory` 的 SQLite 实现，服务用它；规则见 [kb-memory.md](kb-memory.md) |
 | `test/store/db.test.ts` | 表、PRAGMA、表结构版本、主键和 `CHECK`、编号不复用、回滚 |
-| `test/store/inputs.test.ts` | 三个事务、同步规则、库内工具、只读当前段（读取行数和查询计划） |
+| `test/store/inputs.test.ts` | `startProcess`、`send`、`handleNext` 三个事务、同步规则、库内工具、只读当前段（读取行数和查询计划） |
 | `test/store/blobs.test.ts` | 图片：存字节和引用、同一事务（反例：进程不存在、启动检查不过、ID 重复时不留 `blobs`）、不收图片的模型换说明、`resolveImages`、执行器调用模型前换成真数据、不变量能抓到缺行 |
 | `test/store/invariants.ts` | 存储层不变量（含 blob 引用完整性） |
+| `test/store/fork.test.ts` | `forkProcess`：新进程和复制的消息、源进程和库里别的东西不变；运行中带 `before` 可以、不带被拒；各种拒绝和启动检查不通过什么都不建；新 ID 被占用或写到一半失败时回滚；带图片引用的段不变量成立、`blobs` 不增 |
 | `test/store/regressions.test.ts` | 审查发现的缺陷的最小反例 |
 | `test/store/crash.test.ts` | 真库上的随机序列（含要回信的信和回信、带图片的信）；在每个事务之后崩溃 |
 | `test/store/longrun.test.ts` | 多次换段后，处理一条输入读取的行数不增长 |

@@ -13,8 +13,9 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 1. 本文件：用词、必须遵守的规则、工作习惯。
 2. [`.knowledge/INDEX.md`](.knowledge/INDEX.md)：每类事实由哪个文件负责。
 3. [总览的认知模型](.knowledge/kb-overview.md#认知模型)：一屏讲完 tau 的最小心智模型。
-4. [`docs/design/mvp.md`](docs/design/mvp.md)：模块细节和“MVP 不做”清单。
-5. [`docs/plan/kernel-v2-checklist.md`](docs/plan/kernel-v2-checklist.md)：当前做到哪一步。
+4. [`.knowledge/kb-contract.md`](.knowledge/kb-contract.md)：内核冻结了什么，每个原语为什么在内核。
+5. [`docs/design/mvp.md`](docs/design/mvp.md)：模块细节和“MVP 不做”清单。
+6. [`docs/plan/kernel-v2-checklist.md`](docs/plan/kernel-v2-checklist.md)：当前做到哪一步。
 
 加功能前，按 [kb-extending 的推导顺序](.knowledge/kb-extending.md#推导顺序)逐条回答。
 
@@ -27,14 +28,14 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 | 词 | 意思 |
 |---|---|
 | 预设 | `~/.tau/presets/<id>.md`。文件名就是预设 ID，也就是 Agent 的身份。 |
-| 工具定义 | `~/.tau/tools/<name>.json`。模型能调用的外部命令：名称、说明、参数和命令（[设计稿 5.5](docs/design/kernel-v2.md#55-工具定义)）。请求里给模型看的工具名、说明和参数叫“工具描述”。 |
+| 工具定义 | `~/.tau/tools/<name>.json`。模型能调用的外部命令：名称、说明、参数和命令（[kb-tools](.knowledge/kb-tools.md#工具定义)）。请求里给模型看的工具名、说明和参数叫“工具描述”。 |
 | 进程 | 一条正在工作的线：一份冻结的预设快照、一个信箱、一个状态。 |
 | 工作段 | 进程当前的模型上下文。 |
 | 换段 | 写交接说明，开一个新的工作段。 |
 | 安全点 | 当前这条助手消息的工具结果全部写完或补完、调用 `continueTurn` 之前。运行中到的信在这里并进段。 |
 | 信箱 | 发给一个进程的所有输入排成的队。 |
-| 信件 | 信箱里的一条人或进程写来的消息：发送者、内容块、跳数、回信对象（[设计稿 5.1](docs/design/kernel-v2.md#51-信件和发送者)）。 |
-| 回信 | 一轮结束时，寄给等回信的进程的信。正文是这一轮的最终回复，头写结束原因（[设计稿 5.3](docs/design/kernel-v2.md#53-进程之间寄信派生停止回信跳数)）。 |
+| 信件 | 信箱里的一条人或进程写来的消息：发送者、内容块、跳数、回信对象（[kb-kernel](.knowledge/kb-kernel.md#信的头和合并)）。 |
+| 回信 | 一轮结束时，寄给等回信的进程的信。正文是这一轮的最终回复，头写结束原因（[kb-kernel](.knowledge/kb-kernel.md#回信)）。 |
 | 输入 | 信箱里的一条：信件、模型结果、工具结果、停止。 |
 | 内核 | tau 自己：`src/` 的代码，加上它的文件格式、协议和 CLI。和它相对的是上层。 |
 | 上层 | 建在内核之上的功能，不改内核。 |
@@ -46,7 +47,7 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 
 ## 必须遵守的规则
 
-这一节和下面的准入规则是 tau 的架构宪法。每条规则都能对照代码检查。细节见括号里的设计稿章节。要破例，先在[决策记录](.knowledge/kb-decisions.md)写清理由，再改这里。
+这一节和下面的准入规则是 tau 的架构宪法。每条规则都能对照代码检查。细节见括号里的 [MVP 设计稿](docs/design/mvp.md)章节和各模块页；冻结的内容见 [kb-contract](.knowledge/kb-contract.md)。要破例，先在[决策记录](.knowledge/kb-decisions.md)写清理由，再改这里。
 
 **状态**（第 4 节）
 
@@ -81,14 +82,31 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 - **YAGNI**：MVP 里没有用户的功能不做。“以后会用到”“很便宜”都不是理由。
 - 外部工具能完整替代的功能不做：Git 负责 diff 和历史，编辑器负责浏览和编辑文件，终端负责交互式 shell。
 - 上层能完整接管、不付出代价的功能，内核不做。取舍顺序见 [kb-extending](.knowledge/kb-extending.md#取舍顺序)。
-- 进内核的功能不加阶段，阶段固定是 3 个。不在状态之外加可变字段。不推翻[设计稿第 1 节的不变量](docs/design/kernel-v2.md#1-目标和不变量)。
+- 进内核的功能不加阶段，阶段固定是 3 个。不在状态之外加可变字段。不推翻[不变量](.knowledge/kb-contract.md#不变量)。
 - 只调用依赖的公开、无状态函数。不碰私有 API，不打补丁。
 - 设计稿“MVP 不做”清单里的任何一项，要做之前先更新设计稿和清单。
 - 决定要做以后，接在哪里、按什么原则接，见 [kb-extending](.knowledge/kb-extending.md)的原则和推导顺序。
 
+## 内核契约
+
+内核契约已冻结。完整清单、参与启动检查的量和不算改契约的事，见 [kb-contract](.knowledge/kb-contract.md#契约清单)。下面只是摘要：
+
+- 不变量，和进程、信件、阶段、投影这些类型的字段，以及表结构。
+- 行为：回信、安全点投递、停止、跳数，事务和两张表的规则，`decide` 的输出，bash 正常结束时不结束后台进程。
+- 线协议、CLI、环境变量，以及预设和工具定义的文件格式和运行。
+- `decide` 写进段的固定文字，和内置工具的名字。
+- 入口条件：图片检查、消息和工具定义的大小上限、工具定义 `timeout` 的范围、跳数上限。
+
+改契约的程序：
+
+1. 先在[决策记录](.knowledge/kb-decisions.md)写清理由：上层为什么做不到，或者要付出哪一种代价。
+2. 按 [kb-contract 的做法](.knowledge/kb-contract.md#推导测试的做法)出新题，做推导测试并通过，结果也写进决策记录。
+3. 然后才改。
+
 ## 小而硬规矩
 
 - 依赖白名单：`@earendil-works/pi-ai`（精确锁定 `1.0.0`），开发依赖 `typescript` 和 `@types/node`。加新依赖要在[决策记录](.knowledge/kb-decisions.md)里写明理由。
+- `extras/`（上层建筑）不导入 `src/`，只用 Node 内置模块和外部命令，加 npm 依赖先在决策记录写理由；`test/extras-imports.test.ts` 只检查不导入 `src/`（和其它 extras/ 之外的仓库文件）。细节见 [kb-extras](.knowledge/kb-extras.md#依赖规则)。
 - SQLite 用内置的 `node:sqlite`。
 - 没有构建步骤：Node 24（不低于 24.21）直接运行 `.ts`。只用可擦除的 TS 语法（不用 enum、namespace、参数属性）；import 写 `.ts` 扩展名。
 - tsconfig：strict 全开，`noEmit`、`erasableSyntaxOnly`、`allowImportingTsExtensions`、`verbatimModuleSyntax`。

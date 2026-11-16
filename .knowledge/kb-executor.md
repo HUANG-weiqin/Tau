@@ -250,7 +250,7 @@ abort(id, n)
 - 模型调用挂住时，执行器不会超时。进程一直在 `awaitingModel`，只能停止它。
 - 传 `reasoning` 时只传 `maxTokens` 不够：按预算思考的路径会在 `maxTokens` 之上再加预算（默认最多 16,384），换段阈值的上界就不成立。所以模型的 `maxTokens` 也要换成 `cap`。升级 pi-ai 时，重跑 `test/store/model-call.test.ts`，并重查 `maxTokens` 只会被调低、`maxRetries` 默认值、`retry-after` 上限。
 - 预算路径上的小窗口模型，回答可能只剩 1,024（算法见上）。
-- 安全点之后的消息形状、思考算不算进输出上限，这两件事由后端决定，结论只对核实过的模型成立（[D34](kb-decisions.md#d34-第-3-步真模型核实)）。预设换到没核实过的模型，先真调用核实一次，再用。muse-spark-1.3-contributor 的输出会超过上限，不支持（[D34](kb-decisions.md#d34-第-3-步真模型核实)）。
+- 安全点之后的消息形状、思考算不算进输出上限，这两件事由后端决定，结论只对核实过的模型成立（[D34](kb-decisions.md#d34-第-3-步真模型核实)）。路径相同、后端不同，也要重核。预设换到没核实过的模型，先真调用核实一次，再用。只有用户没许真调用的模型（现在是 claude-opus-5-5），才只断言请求体（[D45](kb-decisions.md#d45-第-7-步带图的工具结果的真模型核实)）。muse-spark-1.3-contributor 的输出会超过上限，不支持（[D34](kb-decisions.md#d34-第-3-步真模型核实)）。
 - opencode-go 要求请求带会话 ID（`x-opencode-session`）。执行器把进程 ID 作为 `sessionId` 传给 pi-ai，去掉它会被以 400 拒绝（`MissingSessionID`）。直接调 pi-ai 的脚本也要传。
 - 崩溃测试的库句柄设 `synchronous = OFF`。原因和限制见 [kb-store.md 的坑点](kb-store.md#坑点)。
 

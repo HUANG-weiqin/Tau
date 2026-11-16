@@ -42,7 +42,7 @@
 |---|---|---|
 | 文件名 | — | 名字匹配 `^[A-Za-z0-9_-]{1,64}$`，按目录项精确匹配（大小写、8.3 短名都不行），和预设一样。开头的 BOM 忽略 |
 | `description` | 是 | 字符串，空串可以 |
-| `parameters` | 是 | 对象，`type` 是 `object`。只查顶层：顶层不是 `object` 时，有的 provider 会拒绝每一次请求。内层不查，pi-ai 也不查，原样转发：内层写错时，进程第一次调用模型就失败（出路见设计稿的风险表） |
+| `parameters` | 是 | 对象，`type` 是 `object`。只查顶层：顶层不是 `object` 时，有的 provider 会拒绝每一次请求。内层不查，pi-ai 也不查，原样转发：内层写错时，进程第一次调用模型就失败（出路见 [kb-contract 的风险表](kb-contract.md#风险表)） |
 | `command` | 是 | 字符串 |
 | `timeout` | 否 | 1 到 600 的整数，单位秒，默认 120 |
 | `output` | 否 | `text` 或 `content`，默认 `text` |
@@ -57,7 +57,7 @@
 
 ### 运行工具定义
 
-整节是契约（[设计稿第 10 节](../docs/design/kernel-v2.md#10-冻结规则)）。
+整节是契约（[kb-contract](kb-contract.md#契约清单)）。
 
 - 参数先按 schema 校验（pi-ai 的 `validateToolArguments`），和内置工具一样。
 
@@ -75,9 +75,9 @@
   - 退出码是 0：丢掉标准错误。标准输出必须是一个 JSON 数组，每项是 `{ "type": "text", "text": … }` 或 `{ "type": "image", "path": … }`。
   - 先解析 JSON，检查每一项的格式和图片的张数（不超过 `IMAGES_PER_MESSAGE`），再读图片文件。读之前先看大小，超过 `IMAGE_MAX_BYTES` 就不读。
   - `path` 只认 Windows 的绝对路径：盘符开头或 UNC。msys 的 `/tmp/x.png` 不认，和预设的 `workdir` 一样。
-  - 文本项按顺序用换行连起来，成为结果的文本块。图片按 5.6 检查，存进 `blobs`。
+  - 文本项按顺序用换行连起来，成为结果的文本块。图片按[入口检查](kb-service.md#图片)检查，存进 `blobs`。
   - 不合法时，结果是错误：`content 输出不合法：<说明>`。不合法包括：标准输出超过上限被截断、不是合法 JSON、不是数组、项的格式不对、图片超过张数、`path` 不是 Windows 的绝对路径、文件读不出、图片不合格（5.6）。
-- MCP 不进内核（[设计稿第 6 节](../docs/design/kernel-v2.md#6-v2-也不做的)）。
+- MCP 不进内核（[D46](kb-decisions.md#d46-v2-也不做的)）。
 
 事务和崩溃：和 bash 一样。被中断就报“被中断”，不重做。带图的 `content` 结果，图片在执行器上报结果的事务里插入 `blobs`（[kb-executor](kb-executor.md#失败怎样变成结果)、[kb-store 的图片](kb-store.md#图片)）。
 

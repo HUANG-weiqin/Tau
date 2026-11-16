@@ -10,6 +10,8 @@ export type Request =
   | { op: "send"; process: string; text: string; images?: string[] }
   | { op: "stop"; process: string }
   | { op: "ps" }
+  /** 从进程当前段里一条用户消息（段内序号 `before`）前面分叉出新进程；不带 `before` 复制整个当前段。回执带新进程的 ID。 */
+  | { op: "fork"; process: string; before?: number }
   /** 读一段的消息，从段内序号 from 起。段默认是当前段，from 默认是 0。 */
   | { op: "history"; process: string; segment?: number; from?: number }
   /** 读一张图片。`hash` 不带 `blob:` 前缀。 */

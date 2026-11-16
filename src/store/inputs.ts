@@ -1,5 +1,5 @@
 // 进程的事务：启动、收一条命令、处理一条输入（见 .knowledge/kb-store.md）。每个函数恰好一个事务。
-import { decide, effectOf, start } from "../kernel/decide.ts";
+import { decide, effectOf, fork, start } from "../kernel/decide.ts";
 import { startError } from "../kernel/derive.ts";
 import { findTool } from "../kernel/tools.ts";
 import { textContent, unreachable } from "../kernel/types.ts";
@@ -22,6 +22,23 @@ export function startProcess(db: DatabaseSync, memory: Memory, id: ProcessId, pr
     const p = start(id, preset, envFor(memory, preset, now));
     db.prepare("INSERT INTO processes (id, state_json) VALUES (?, ?)").run(id, JSON.stringify(p));
     putMail(db, id, { kind: "letter", letter: { from: { kind: "user" }, content: letterContent(db, text, images, preset.input.includes("image")), hops: 0 } });
+  });
+}
+
+/**
+ * 从源进程的当前段分叉出新进程 `id`：读源进程记录和当前段、写新进程记录和复制的消息，在一个事务里。拒绝的情形见 `fork`，加上启动检查；抛错就什么都不写。
+ * 不寄信：没有输入要处理。图片的 `blob:` 引用照用，`blobs` 只增不删。
+ */
+export function forkProcess(db: DatabaseSync, id: ProcessId, source: ProcessId, before: number | undefined, now: Instant): { process: Process; segment: Message[] } {
+  return tx(db, () => {
+    const old = loadProcess(db, source);
+    if (!old) throw new Error(`没有这个进程：${source}`);
+    const { process, messages } = fork(id, old, loadSegment(db, old), before, now);
+    const tooBig = startError(process.preset);
+    if (tooBig !== null) throw new Error(tooBig);
+    db.prepare("INSERT INTO processes (id, state_json) VALUES (?, ?)").run(id, JSON.stringify(process));
+    appendMessages(db, process, 0, messages);
+    return { process, segment: messages };
   });
 }
 

@@ -84,12 +84,13 @@ test("awaitingTool：已有结果后用量到阈值，就不该再等下一个�
   assertInvariants(p, [user("u"), assistant({ usage: full, calls: [call("c1"), call("c2")] })]);
 });
 
-test("idle：ended 缺省当且仅当还没跑过一轮", () => {
+test("idle：ended 缺省表示这个进程自己还没跑过一轮；fork 出来的进程可以带复制的段，lastEffect 为 0", () => {
   const fresh = world().p;
   broken({ ...fresh, lastEffect: 3 }, [], /还没跑过一轮，lastEffect 却是 3/);
-  broken(fresh, [user("u")], /还没跑过一轮，工作段却不是空的/);
+  assertInvariants(fresh, [user("u")]); // fork 带 before：复制的前缀
   broken({ ...fresh, segment: { seq: 2, memoryView: "" } }, [], /还没跑过一轮，段号却是 2/);
-  broken({ ...fresh, phase: { tag: "idle", ended: "done" } }, [user("u")], /lastEffect 却是 0/);
+  assertInvariants({ ...fresh, phase: { tag: "idle", ended: "done" } }, [user("u")]); // fork 不带 before：复制的结束原因
+  broken({ ...fresh, segment: { seq: 2, memoryView: "" }, phase: { tag: "idle", ended: "done" } }, [user("u")], /lastEffect 却是 0/);
   broken({ ...fresh, lastEffect: 1, phase: { tag: "idle", ended: "done" } }, [], /工作段却是空的/);
   broken({ ...fresh, lastEffect: 1, phase: { tag: "idle", ended: "nope" as "done" } }, [user("u")], /未知的结束原因/);
 });

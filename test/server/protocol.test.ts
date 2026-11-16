@@ -646,3 +646,134 @@ test("工具定义：模型不收图片时，content 输出的图片不存，在
   assert.deepEqual(result?.role === "toolResult" && result.content, [{ type: "text", text: "截图\n[图片：模型不支持，已省略]" }]);
   assert.equal(blobRows(e), 0);
 });
+
+// fork
+
+/** 回复里的回执：新进程的 ID。 */
+const receiptOf = (r: Reply[]): string => {
+  const first = r[0];
+  assert.equal(first?.type, "receipt");
+  return first.process;
+};
+
+async function history(e: Env, id: string): Promise<Message[]> {
+  const r = await collect(e.pipe, { op: "history", process: id });
+  return r.flatMap((x) => (x.type === "message" ? [x.message] : []));
+}
+
+test("fork：回执带新 ID，然后关闭连接；history 读新进程等于源进程的前缀；源进程不变", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e, "第一句。");
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("第二句。"))]);
+  await collect(e.pipe, { op: "send", process: a, text: "再说" });
+  const src = await history(e, a);
+  assert.equal(src.length, 4);
+  const stateBefore = JSON.stringify(loadProcess(e.svc.db, a));
+
+  const c = open(e.pipe, { op: "fork", process: a, before: 2 });
+  await c.closed;
+  assert.equal(c.replies.length, 1);
+  const b = receiptOf(c.replies);
+  assert.match(b, /^[0-9a-f]{8}$/);
+  assert.notEqual(b, a);
+  assert.deepEqual(await history(e, b), src.slice(0, 2));
+  assert.deepEqual(await collect(e.pipe, { op: "history", process: b }).then((r) => r.at(-1)), { type: "end", segment: 1, messages: 2 });
+  assert.equal(JSON.stringify(loadProcess(e.svc.db, a)), stateBefore);
+  assert.deepEqual(await history(e, a), src);
+
+  // 不带 before：整个当前段。
+  const full = receiptOf(await collect(e.pipe, { op: "fork", process: a }));
+  assert.deepEqual(await history(e, full), src);
+  const ps = await collect(e.pipe, { op: "ps" });
+  const rows = ps[0]?.type === "ps" ? ps[0].processes : [];
+  assert.equal(rows.length, 3);
+  const row = rows.find((p) => p.self.id === full);
+  assert.deepEqual(row?.self.phase, { tag: "idle", ended: "done" });
+  assert.deepEqual(rows.find((p) => p.self.id === b)?.self.phase, { tag: "idle" });
+});
+
+test("fork 之后对新进程 send：模型收到复制的消息和同样的系统提示词，源进程不受影响", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e, "第一句。");
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("第二句。"))]);
+  await collect(e.pipe, { op: "send", process: a, text: "再说" });
+  const b = receiptOf(await collect(e.pipe, { op: "fork", process: a, before: 2 }));
+
+  const seen: { system: string | undefined; roles: string[]; last: unknown }[] = [];
+  const spy = (context: { systemPrompt?: string; messages: { role: string; content?: unknown }[] }) => {
+    // 系统提示词在 systemPrompt 里或者是第一条 system 消息，随 provider 而定。
+    const [head, ...rest] = context.messages;
+    const inline = head?.role === "system";
+    seen.push({ system: context.systemPrompt ?? (inline ? JSON.stringify(head.content) : undefined), roles: (inline ? rest : context.messages).map((m) => m.role), last: context.messages.at(-1) });
+    return fauxAssistantMessage(fauxText("分支的话。"));
+  };
+  e.faux.appendResponses([spy, spy]);
+  const r = await collect(e.pipe, { op: "send", process: b, text: "改问" });
+  assert.equal(r.at(-1)?.type, "final");
+  await collect(e.pipe, { op: "send", process: a, text: "源的下一句" });
+  assert.equal(seen.length, 2);
+  assert.deepEqual(seen[0]!.roles, ["user", "assistant", "user"]);
+  assert.deepEqual(seen[1]!.roles, ["user", "assistant", "user", "assistant", "user"]);
+  assert.ok(seen[0]!.system !== undefined && seen[0]!.system === seen[1]!.system, "系统提示词和源进程一样");
+  const bseg = segmentOf(e, b);
+  assert.deepEqual(bseg.slice(0, 2), segmentOf(e, a).slice(0, 2));
+  assert.equal(bseg.length, 4);
+  assert.deepEqual(loadProcess(e.svc.db, b)?.preset, loadProcess(e.svc.db, a)?.preset);
+});
+
+test("fork：各种 error，什么都不建", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  const errors = async (req: unknown): Promise<string> => {
+    const r = await collect(e.pipe, req as Request);
+    assert.equal(r.length, 1, JSON.stringify(req));
+    assert.equal(r[0]?.type, "error", JSON.stringify(req));
+    return r[0]?.type === "error" ? r[0].message : "";
+  };
+  assert.match(await errors({ op: "fork", process: "nope" }), /没有这个进程：nope/);
+  assert.match(await errors({ op: "fork", process: a, before: 2 }), /没有第 2 条/);
+  assert.match(await errors({ op: "fork", process: a, before: 1 }), /不是用户消息/);
+  for (const bad of [{ op: "fork" }, { op: "fork", process: 1 }, { op: "fork", process: a, before: -1 }, { op: "fork", process: a, before: 0.5 }, { op: "fork", process: a, before: "0" }, { op: "fork", process: a, before: null }]) {
+    assert.match(await errors(bad), /^无法识别的请求/, JSON.stringify(bad));
+  }
+  // 源进程在运行：不带 before 被拒，带 before 可以。
+  const p = loadProcess(e.svc.db, a)!;
+  saveProcess(e.svc.db, { ...p, lastEffect: p.lastEffect + 1, phase: { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 0, replyTo: [] }, purpose: "turn" } });
+  assert.match(await errors({ op: "fork", process: a }), /正在运行/);
+  assert.equal(receiptOf(await collect(e.pipe, { op: "fork", process: a, before: 0 })).length, 8);
+  // 启动检查不通过。
+  const q = loadProcess(e.svc.db, a)!;
+  saveProcess(e.svc.db, { ...q, phase: { tag: "idle", ended: "done" }, preset: { ...q.preset, contextWindow: 20_000 } });
+  assert.match(await errors({ op: "fork", process: a }), /窗口太小/);
+  const ps = await collect(e.pipe, { op: "ps" });
+  assert.equal(ps[0]?.type === "ps" ? ps[0].processes.length : 0, 2, "只有 a 和那个 before 为 0 的");
+});
+
+test("fork：watch 的订阅在回执之前收到新进程的 update；只订阅别的进程的不收", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  const all = open(e.pipe, { op: "watch" });
+  const mine = open(e.pipe, { op: "watch", process: a });
+  await until(() => updates(all).length === 1 && updates(mine).length === 1, "快照");
+  const b = receiptOf(await collect(e.pipe, { op: "fork", process: a }));
+  await until(() => updates(all).length === 2, "新进程的 update");
+  const u = updates(all)[1]!;
+  assert.equal(u.self.id, b);
+  assert.equal(u.self.messages, segmentOf(e, b).length);
+  assert.equal(u.self.segment, 1);
+  assert.deepEqual(u.self.phase, { tag: "idle", ended: "done" });
+  await sleep(100);
+  assert.equal(updates(mine).length, 1);
+  all.socket.destroy();
+  mine.socket.destroy();
+});
+
+test("fork 带图片引用的段：新进程的图片还能用 blob 请求读到", async (t) => {
+  const e = await setup(t);
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("看到了"))]);
+  const img = png(16, 16, 3).toString("base64");
+  const a = receiptOf(await collect(e.pipe, { op: "start", preset: "p", text: "看图", images: [img] }));
+  const b = receiptOf(await collect(e.pipe, { op: "fork", process: a }));
+  assert.match(JSON.stringify(segmentOf(e, b)[0]), /blob:[0-9a-f]{64}/);
+  assert.deepEqual(segmentOf(e, b), segmentOf(e, a));
+});

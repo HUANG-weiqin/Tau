@@ -1,4 +1,4 @@
-// observe（设计稿第 9 节、kernel-v2 第 4 节）：自己、时间、兄弟、父进程、子进程、累计用量、消息条数。
+// observe（MVP 设计稿第 9 节、kb-kernel 的投影与命令）：自己、时间、兄弟、父进程、子进程、累计用量、消息条数。
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { start } from "../../src/kernel/decide.ts";

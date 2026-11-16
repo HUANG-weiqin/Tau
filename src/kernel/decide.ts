@@ -2,13 +2,35 @@
 import { CARRY_HEADER, HANDOFF_HEADER, HANDOFF_INSTRUCTION, tailStart } from "./context.ts";
 import { clip, contextUsed, endedReason, endedText, finalReply, handoffRequested, handoffThreshold, IMAGES_PER_MESSAGE, MARGIN_TOKENS, MESSAGE_MAX_BYTES, newSegmentUsed, pendingCalls, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
 import { textContent, unreachable } from "./types.ts";
-import type { AssistantMessage, Content, Effect, Ended, Env, ImageContent, Input, Letter, Message, Phase, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Turn, Usage } from "./types.ts";
+import type { AssistantMessage, Content, Effect, Ended, Env, ImageContent, Input, Instant, Letter, Message, Phase, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Turn, Usage } from "./types.ts";
 
 export const INTERRUPTED = "被中断，结果未知";
 export const SKIPPED = "未执行";
 
 export function start(id: ProcessId, preset: PresetSnapshot, env: Env): Process {
   return { id, preset, createdAt: env.now, segment: { seq: 1, memoryView: env.memoryView }, lastEffect: 0, phase: { tag: "idle" }, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+}
+
+/**
+ * 从源进程的当前段分叉出一个新进程（见 .knowledge/kb-kernel.md 的 fork）。`before` 是当前段里一条用户消息的段内序号：新进程的第 1 段是它前面的全部消息，阶段是没有结束原因的 idle。
+ * 不带 `before` 时复制整个当前段和 idle 阶段，源进程必须是 idle。不合格就抛错。
+ */
+export function fork(id: ProcessId, source: Process, segment: readonly Message[], before: number | undefined, now: Instant): { process: Process; messages: Message[] } {
+  let phase: Phase;
+  let messages: Message[];
+  if (before === undefined) {
+    if (source.phase.tag !== "idle") throw new Error(`进程 ${source.id} 正在运行，不带 before 不能 fork。`);
+    phase = source.phase;
+    messages = [...segment];
+  } else {
+    const at = segment[before];
+    if (!at) throw new Error(`进程 ${source.id} 的当前段有 ${segment.length} 条消息，没有第 ${before} 条。`);
+    if (at.role !== "user") throw new Error(`进程 ${source.id} 的当前段第 ${before} 条是 ${at.role}，不是用户消息。`);
+    phase = { tag: "idle" };
+    messages = segment.slice(0, before);
+  }
+  const process: Process = { id, preset: source.preset, createdAt: now, segment: { seq: 1, memoryView: source.segment.memoryView }, lastEffect: 0, phase, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+  return { process, messages };
 }
 
 /** 要寄出的回信：收件人和信件。存储层在同一个事务里放进收件人的信箱。 */

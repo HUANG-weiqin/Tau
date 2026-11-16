@@ -15,7 +15,7 @@ import { loadPreset } from "../presets/load.ts";
 import type { Reply, Request } from "../protocol.ts";
 import { loadProcess, loadProcesses, loadSegment, openDb, readSegment } from "../store/db.ts";
 import { readBlob } from "../store/blobs.ts";
-import { handleNext, send, startProcess } from "../store/inputs.ts";
+import { forkProcess, handleNext, send, startProcess } from "../store/inputs.ts";
 import type { Handled } from "../store/inputs.ts";
 import { listen } from "./listen.ts";
 
@@ -137,6 +137,13 @@ export async function serve(opts: ServeOptions): Promise<Service> {
         send(db, req.process, { kind: "stop" });
         reply(s, { type: "receipt", process: req.process }).end();
         return pump();
+      case "fork": {
+        const id = randomBytes(4).toString("hex");
+        const h = forkProcess(db, id, req.process, req.before, now);
+        if (subscriptions.size > 0) push(id, update(h, now));
+        reply(s, { type: "receipt", process: id }).end();
+        return;
+      }
       case "ps": {
         const all = loadProcesses(db);
         reply(s, { type: "ps", processes: all.map((p) => observe(p, loadSegment(db, p), all, now)) }).end();
@@ -208,7 +215,7 @@ export async function serve(opts: ServeOptions): Promise<Service> {
 }
 
 /** 处理完一条输入后，这个进程的 self 部分。只用 handleNext 返回的记录和段，不读库。 */
-function update(h: Handled, now: Instant): Reply {
+function update(h: Pick<Handled, "process" | "segment">, now: Instant): Reply {
   return { type: "update", self: observe(h.process, h.segment, [h.process], now).self };
 }
 
@@ -229,6 +236,7 @@ function parseRequest(line: string): Request {
     if (r.op === "history" && str(r, "process") && num("segment") && num("from")) return r as Request;
     if (r.op === "watch" && (!("process" in r) || str(r, "process"))) return r as Request;
     if (r.op === "stop" && str(r, "process")) return r as Request;
+    if (r.op === "fork" && str(r, "process") && num("before")) return r as Request;
     const images = "images" in r ? r.images : [];
     const imagesOk = Array.isArray(images) && images.every((x) => typeof x === "string");
     if (r.op === "blob" && str(r, "hash")) return r as Request;
