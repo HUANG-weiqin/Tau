@@ -139,7 +139,8 @@ export async function serve(opts: ServeOptions): Promise<Service> {
         return pump();
       case "fork": {
         const id = randomBytes(4).toString("hex");
-        const h = forkProcess(db, id, req.process, req.before, now);
+        const preset = req.preset === undefined ? undefined : readPreset(req.preset);
+        const h = forkProcess(db, memory, id, req.process, req.before, now, preset);
         if (subscriptions.size > 0) push(id, update(h, now));
         reply(s, { type: "receipt", process: id }).end();
         return;
@@ -236,7 +237,7 @@ function parseRequest(line: string): Request {
     if (r.op === "history" && str(r, "process") && num("segment") && num("from")) return r as Request;
     if (r.op === "watch" && (!("process" in r) || str(r, "process"))) return r as Request;
     if (r.op === "stop" && str(r, "process")) return r as Request;
-    if (r.op === "fork" && str(r, "process") && num("before")) return r as Request;
+    if (r.op === "fork" && str(r, "process") && num("before") && ((r as Record<string, unknown>).preset === undefined || str(r, "preset"))) return r as Request;
     const images = "images" in r ? r.images : [];
     const imagesOk = Array.isArray(images) && images.every((x) => typeof x === "string");
     if (r.op === "blob" && str(r, "hash")) return r as Request;

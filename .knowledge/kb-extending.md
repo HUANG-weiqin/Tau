@@ -79,13 +79,15 @@
 | 推送状态行 | 不做，用 `self`。见 [D46](kb-decisions.md#d46-v2-也不做的) 第一张表 | [D25](kb-decisions.md#d25-上一轮没有正常结束时下一条消息加说明) |
 | Agent 派生、进程之间发消息 | 库内工具 `spawn`、`post`、`stop_process` 和回信。要等子进程，就等它的回信，不做“等待”状态机。见 [kb-store](kb-store.md#进程之间的工具)、[kb-kernel](kb-kernel.md#回信) | [Pi Web 的教训](kb-piweb-lessons.md) |
 | 审批 | 不做。审批当安全边界会被 bash 绕过。Agent 在回复里先问，再等下一封信。见 [D46](kb-decisions.md#d46-v2-也不做的) 第三张表 | 无 |
-| 新工具、MCP | 先问能不能写成工具定义。MCP 由上层的中转进程为每个 MCP 工具生成工具定义。见 [D46](kb-decisions.md#d46-v2-也不做的) 第一张表和 [kb-extras](kb-extras.md#pi-web-的功能在-v2-上的做法) | [Pi Web 的教训](kb-piweb-lessons.md) |
+| 新工具、MCP | 先问能不能写成工具定义。MCP 由上层的中转进程为每个 MCP 工具生成工具定义。见 [kb-extras](kb-extras.md#pi-web-的功能在-v2-上的做法)的 MCP 一行 | [Pi Web 的教训](kb-piweb-lessons.md) |
+| 换段阈值、上下文大小 | 不做新功能：预设的可选字段 `handoff`（token 数）把换段阈值调低，只能调低，不能调高。见 [kb-kernel 的换段阈值](kb-kernel.md#换段阈值)和 [D51](kb-decisions.md#d51-预设加-handoff换段阈值只能调低)。运行中按会话改不做，要改就 `fork` 带另一个预设（[D46](kb-decisions.md#d46-v2-也不做的) 第一张表） | [D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限) |
 | 日志、整理 | 换记忆的实现。整理由一个进程来做，定时用上层的计划任务。见 [D46](kb-decisions.md#d46-v2-也不做的) 第一张表 | [D6](kb-decisions.md#d6-mvp-的记忆是带版本号的键值存储)、[D14](kb-decisions.md#d14-yagni-审查移出-mvp-的-20-项) |
 | 挂载 | 不只是换实现，要改预设和记忆接口。先改 D6 | [D6](kb-decisions.md#d6-mvp-的记忆是带版本号的键值存储) |
 | 沙箱 | 上层用在沙箱里运行命令的工具定义做，预设不给内置的 `bash`。只换 `bash` 的实现要按改契约做。见 [D46](kb-decisions.md#d46-v2-也不做的) 第一张表 | [D7](kb-decisions.md#d7-第一版不做沙箱) |
 | Web UI | 放上层：HTTP 桥走线协议，读同一份投影。见 [kb-extras](kb-extras.md) | [D9](kb-decisions.md#d9-自省同一份投影)、[D16](kb-decisions.md#d16-服务只在命名管道上监听mvp-用-cli) |
 | 花费统计和上限 | 统计用投影里的累计用量。上限放上层，用累计用量、`watch` 和 `stop` 尽力而为。见 [D46](kb-decisions.md#d46-v2-也不做的) 第一张表 | 原则 3 |
-| fork、从某条消息重来 | 内核的 `fork` 请求：复制当前段的前缀，新进程不带父进程和用量。上层用不了 `history` 加 `start`，第一封信最多 32 KiB。见 [kb-kernel 的 fork](kb-kernel.md#fork)和 [D49](kb-decisions.md#d49-fork-进内核)；命令行在上层的 `tx` | [D46](kb-decisions.md#d46-v2-也不做的) |
+| 服务重启后接着做被打断的一轮 | 不做新功能：崩溃后正在运行的库外动作作为“被中断”送回，被中断的那一轮以“出错：服务重启，……被中断”结束，不自动重做（[不变量 5](kb-contract.md#不变量)、[kb-executor 的崩溃窗口](kb-executor.md#崩溃窗口)）。要接着做，由上层在重启后给这类进程寄一封“继续”，和任务清单的续跑同一套做法，代价也一样：回信已经带着出错寄出，上层没在运行时不续跑（[kb-extras](kb-extras.md#pi-web-的功能在-v2-上的做法)）。本机 Pi Web 的热重载后续跑 21 条 | [D54](kb-decisions.md#d54-使用数据重核) |
+| fork、从某条消息重来 | 内核的 `fork` 请求：复制当前段的前缀，新进程不带父进程和用量。上层用不了 `history` 加 `start`，第一封信最多 32 KiB。可选的 `preset` 参数带着完整当前段换角色（新进程的 ID 变了，那份代价仍在上层，见 [kb-extras](kb-extras.md#pi-web-的功能在-v2-上的做法)）。见 [kb-kernel 的 fork](kb-kernel.md#fork)、[D49](kb-decisions.md#d49-fork-进内核)和 [D52](kb-decisions.md#d52-fork-带-preset给进程换角色)；命令行在上层的 `tx` | [D46](kb-decisions.md#d46-v2-也不做的) |
 | 图片、截图等大块数据 | 存进库的 `blobs` 表，和引用在同一个事务里。见 [kb-store](kb-store.md#图片) | [Pi Web 的教训](kb-piweb-lessons.md) |
 
 表里没有的，按上面的原则推。推不出来，或者要破例，先在[决策记录](kb-decisions.md)写清理由。

@@ -61,7 +61,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | 思考级别 | [kb-executor 的调用模型](kb-executor.md#调用模型actionsts) | 做不到。它是调用模型的参数 |
 | 重试 | [kb-executor 的调用模型](kb-executor.md#调用模型actionsts) | 丢数据。上层只能等这一轮出错结束，再寄“继续”。这时回信已经寄出，新的一轮没有 `replyTo`，等回信的父进程拿不到结果。上层没在运行时也不会重试 |
 | 累计用量 | [kb-kernel 的累计用量](kb-kernel.md#累计用量) | 丢数据。交接回复和没写进段的回复，用量哪里都没存，上层从段里算不全。上层盯着 `watch` 累加，它没在运行时就漏了 |
-| fork | [kb-kernel 的 fork](kb-kernel.md#fork)、[kb-service 的线协议](kb-service.md#线协议srcprotocolts)、[D49](kb-decisions.md#d49-fork-进内核) | 做不到。上层只能 `history` 读出再 `start`，第一封信最多 `MESSAGE_MAX_BYTES`（32 KiB），带不过去完整的段。本机的 Pi Web 用过 3 次 |
+| fork（含换角色） | [kb-kernel 的 fork](kb-kernel.md#fork)、[kb-service 的线协议](kb-service.md#线协议srcprotocolts)、[D49](kb-decisions.md#d49-fork-进内核)、[D52](kb-decisions.md#d52-fork-带-preset给进程换角色) | 做不到。上层只能 `history` 读出再 `start`，第一封信最多 `MESSAGE_MAX_BYTES`（32 KiB），带不过去完整的段。本机的 Pi Web 用过 4 次（[D49](kb-decisions.md#d49-fork-进内核)）。带 `preset` 的换角色：上层只能让新进程按需 `history` 读回旧段，慢而且失真，见 [D52](kb-decisions.md#d52-fork-带-preset给进程换角色) |
 | 协议：`history`、`blob`、`watch` | [kb-service 的线协议](kb-service.md#线协议srcprotocolts)、[历史和订阅](kb-service.md#历史和订阅) | 做不到：上层只能通过协议看内核，读不了历史，就做不了历史检索；拿不到流式文本，页面就看不到实时输出。慢：没有 `watch`，上层只能反复 `ps`，`ps` 读全部进程，随年头变慢 |
 
 ### 契约清单
@@ -75,7 +75,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | `decide` 的输出：新记录、追加的消息、回信 | [kb-kernel 的函数](kb-kernel.md#函数) |
 | 行为：回信的时机和正文的算法，`replyTo` 和 `hops` 并进 `turn` 的规则，`endTurn` 的顺序，排队的信的处理（`done` 时合并并开新一轮，只取这批信的 `replyTo` 和 `hops`；不是 `done` 时合并写进段、停在 `idle`） | [kb-kernel 的回信](kb-kernel.md#回信)、[流程：两个辅助步骤](kb-kernel.md#流程两个辅助步骤) |
 | 行为：安全点投递 | [kb-kernel 的安全点投递](kb-kernel.md#安全点投递) |
-| 行为：`fork` 复制什么（预设快照、当前段的前缀或全部、记忆视图；不复制 `parent`、用量、旧段），新进程的阶段，什么时候拒绝（没有进程、`before` 越界或不是用户消息、不带 `before` 而源进程不是 `idle`、启动检查不通过）。事务：读源进程和当前段、建新进程、写消息，一个事务，抛错回滚 | [kb-kernel 的 fork](kb-kernel.md#fork)、[kb-store 的四个事务](kb-store.md#四个事务) |
+| 行为：`fork` 复制什么（预设快照、当前段的前缀或全部、记忆视图；不复制 `parent`、用量、旧段），新进程的阶段，什么时候拒绝（没有进程、`before` 越界或不是用户消息、不带 `before` 而源进程不是 `idle`、启动检查不通过）。带 `preset` 是换角色：快照和记忆视图用新预设的；新模型不收图片时图片换成 `IMAGE_UNSUPPORTED`；不带锚点的估算要低于新预设的换段阈值，否则拒绝（[D52](kb-decisions.md#d52-fork-带-preset给进程换角色)）。事务：读源进程和当前段、建新进程、写消息，一个事务，抛错回滚 | [kb-kernel 的 fork](kb-kernel.md#fork)、[kb-store 的四个事务](kb-store.md#四个事务) |
 | 行为：停止的语义、跳数怎样增加 | [kb-kernel 的流程](kb-kernel.md#流程每种输入)、[kb-store 的进程之间的工具](kb-store.md#进程之间的工具) |
 | 行为：bash 工具正常结束时，不结束命令留在后台的进程。上层的配方靠它 | [kb-tools 的退出之后](kb-tools.md#退出之后排空和后台进程) |
 | 事务清单，以及每个事务做什么 | [kb-store 的四个事务](kb-store.md#四个事务)、[处理一条输入](kb-store.md#处理一条输入)、[kb-executor 的一行的一生](kb-executor.md#一行的一生) |
@@ -104,6 +104,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 启动检查和阈值除了快照，还用到下面这些。它们从代码现取，不在快照里：
 
 - `MESSAGE_MAX_BYTES`、`IMAGES_PER_MESSAGE`、`IMAGE_TOKENS`、`MARGIN_TOKENS`、`BYTES_PER_TOKEN`、`outputMax` 占窗口的比例（1/8）：决定 R 和阈值（[kb-kernel 的换段阈值](kb-kernel.md#换段阈值)）。
+- 预设的 `handoff` 不在这一类：它冻结在快照里，不是从代码现取，改预设文件只影响新启动的进程（[D51](kb-decisions.md#d51-预设加-handoff换段阈值只能调低)）。
 - `MEMORY_VIEW_MAX_BYTES`：决定启动检查里记忆的上界（[kb-memory](kb-memory.md#上限)）。
 - 系统提示词的拼法（工作目录那一行、记忆的标题），内置工具的描述和参数：算进固定部分（[kb-kernel 的启动检查](kb-kernel.md#启动检查和交接以后的检查)）。
 
@@ -144,7 +145,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 **题目的要求**
 
 - 写定 5 个功能、每个的正确落点和理由、评分标准。
-- 每道题写明本机的使用情况：这个功能和它的各个部分，用没用过、用过几次。受试者查不到会话记录，取舍顺序的第 2 条和第 4 条第 2 支都靠它。
+- 每道题写明本机的使用情况：这个功能和它的各个部分，用没用过、用过几次。受试者查不到会话记录，取舍顺序的第 2 条和第 4 条第 2 支都靠它。使用情况按全部 `.piweb` 目录统计（[D54](kb-decisions.md#d54-使用数据重核)）。
 - 题目只出受试者的文件清单里没给过落点的功能。凡是文件清单里的文档写过落点的，都算给过：设计稿第 5、6、8 节（搬走以后，是接手它们的页）、kb-extending 的方向表、决策记录、kb-piweb-lessons、mvp.md 的“MVP 不做”。以前推导测试的题目也算。
 - 每次测试都出新题。没通过以后的重测、改契约，都一样。
 
@@ -211,7 +212,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | 一次设计多个原语，抽象设计错 | 推导测试；按[执行清单](../docs/plan/kernel-v2-checklist.md)逐个实现 |
 | 库越长越大：图片、旧段、进程都不删 | 记录增长速度。真要删时，作为契约变更单独设计 |
 | 安全点投递改变了模型看到的消息形状 | 第 3 步核实在用的模型（[D34](kb-decisions.md#d34-第-3-步真模型核实)），第 7 步再核实带图的工具结果（[D45](kb-decisions.md#d45-第-7-步带图的工具结果的真模型核实)）。换到没核实过的模型，按 [kb-executor 的坑点](kb-executor.md#坑点)核实 |
-| `spawn` 的扇出没有上限，进程和花费暴涨 | 跳数只挡循环。只给需要的预设 `agents` 和能运行命令的工具。上层尽力而为地停 |
+| `spawn` 的扇出没有上限，进程和花费暴涨 | 跳数只挡循环。只给需要的预设 `agents` 和能运行命令的工具。上层用 `watch` 和 `stop` 尽力而为地停，只能数在运行的后代；本机没出现过失控，Pi Web 的上限只触发过 4 次，都挡在一次有意的大扇出上（[kb-extras](kb-extras.md#pi-web-的功能在-v2-上的做法)） |
 | 子预设没有 `agents`，递归也不一定停 | 子预设没有 `agents`，也不能运行它控制的命令时，递归才在它这一层停住。bash、运行模型所给脚本的工具定义（如 codemode）、命令里调用 `tau` 的工具定义、运行它能用 `write` 或 `edit` 改的文件的工具定义（如 `npm test`），都能运行 `tau start`，建出不挂在树上的进程 |
 | 子进程的模型调用卡住，父进程永远等不到回信 | 模型调用没有超时，这是 v1 已有的行为。用户用 `tau stop` 停掉子进程，父进程收到“被停止”的回信 |
 | `spawn` 在事务里读文件。工作目录在网络路径上时，查目录可能卡住几十秒，期间所有进程都等着 | 预设的工作目录用本机路径 |

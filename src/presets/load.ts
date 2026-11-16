@@ -7,7 +7,7 @@ import { loadToolDefs } from "./tooldefs.ts";
 
 const TOOLS: readonly PresetTool[] = ["read", "write", "edit", "bash", "memory", "agents"];
 const REQUIRED = ["workdir", "model", "tools"];
-const KEYS = [...REQUIRED, "thinking"];
+const KEYS = [...REQUIRED, "thinking", "handoff"];
 const THINKING: readonly ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
 export function presetsDir(): string {
@@ -87,6 +87,9 @@ export function loadPreset(dir: string, id: string, models: Models, toolsDir: st
   const thinking = fields.get("thinking");
   if (thinking !== undefined && !isThinking(thinking)) throw new Error(`预设 ${id} 的 thinking 只能是 ${THINKING.join(", ")}：${thinking}`);
 
+  const handoffText = fields.get("handoff");
+  if (handoffText !== undefined && !/^[1-9][0-9]{0,14}$/.test(handoffText)) throw new Error(`预设 ${id} 的 handoff 必须是正整数（token）：${handoffText}`);
+
   return {
     id,
     workdir,
@@ -97,5 +100,6 @@ export function loadPreset(dir: string, id: string, models: Models, toolsDir: st
     contextWindow: found.contextWindow,
     input: [...found.input],
     ...(thinking === undefined ? {} : { thinking }),
+    ...(handoffText === undefined ? {} : { handoff: Number(handoffText) }),
   };
 }

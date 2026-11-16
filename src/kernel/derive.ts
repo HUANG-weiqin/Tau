@@ -17,7 +17,7 @@ export const IMAGE_TOKENS = 5000;
 /** 结束原因的字节上限。provider 的报错可能很长，原文由 CLI 显示给用户。 */
 export const ENDED_REASON_MAX_BYTES = 1024;
 /** `post` 和 `spawn` 寄出的信，跳数超过它就失败（设计稿 5.3）。回信不受限制。 */
-export const HOPS_MAX = 32;
+export const HOPS_MAX = 1024;
 /** 阈值之上留给交接指令、补的结果、消息框架和估算误差的 token。 */
 export const MARGIN_TOKENS = 4096;
 
@@ -35,9 +35,10 @@ export function resultReserve(p: PresetSnapshot): number {
   return tokens(MESSAGE_MAX_BYTES) + (p.input.includes("image") ? IMAGES_PER_MESSAGE * IMAGE_TOKENS : 0);
 }
 
-/** 换段阈值。阈值之上要放得下：一次回复、一个没检查的工具结果、交接说明的输出和余量。 */
+/** 换段阈值。阈值之上要放得下：一次回复、一个没检查的工具结果、交接说明的输出和余量。预设写了 `handoff` 就取较小的：只能调低。 */
 export function handoffThreshold(p: PresetSnapshot): number {
-  return p.contextWindow - 2 * outputMax(p) - resultReserve(p) - MARGIN_TOKENS;
+  const computed = p.contextWindow - 2 * outputMax(p) - resultReserve(p) - MARGIN_TOKENS;
+  return p.handoff === undefined ? computed : Math.min(computed, p.handoff);
 }
 
 /** 固定部分的 token：预设提示词、工作目录那一行、工具描述。口径和 `contextUsed` 一样。 */
@@ -116,7 +117,12 @@ export function contextUsed(p: Process, segment: readonly Message[]): number {
     const m = segment[i]!;
     if (m.role === "assistant" && usageOf(m) > 0) return usageOf(m) + tokens(bytes(segment.slice(i + 1)));
   }
-  return tokens(utf8Bytes(systemPrompt(p)) + utf8Bytes(JSON.stringify(toolDescriptions(p.preset))) + bytes(segment));
+  return estimatedUsed(p, segment);
+}
+
+/** 不用锚点的估算：系统提示词、工具描述和整段，按字节算。`fork` 换预设时用它：旧段里的用量是旧模型、旧固定部分的。 */
+export function estimatedUsed(p: Process, segment: readonly Message[]): number {
+  return tokens(utf8Bytes(systemPrompt(p)) + utf8Bytes(JSON.stringify(toolDescriptions(p.preset))) + sum(segment.map(messageBytes)));
 }
 
 /** 本段开始时间：本段第一条消息的时间戳。 */

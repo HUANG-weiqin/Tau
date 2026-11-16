@@ -57,7 +57,7 @@ test("fork 不带 before：新进程和复制的消息写进库，源进程不�
   const seg = loadSegment(db, src);
   assert.equal(seg.length, 4);
   const before = dump(db);
-  const h = forkProcess(db, "b", "a", undefined, 500);
+  const h = forkProcess(db, memory, "b", "a", undefined, 500);
   const p = loadProcess(db, "b")!;
   assert.deepEqual(p, h.process);
   assert.deepEqual(p, { id: "b", preset: src.preset, createdAt: 500, segment: { seq: 1, memoryView: src.segment.memoryView }, lastEffect: 0, phase: { tag: "idle", ended: "done" }, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } });
@@ -78,7 +78,7 @@ test("fork 带 before：前缀，idle 不带结束原因；之后 send 一封信
   const db = tempDb(t);
   idleSource(db);
   const seg = loadSegment(db, loadProcess(db, "a")!);
-  forkProcess(db, "b", "a", 2, 0);
+  forkProcess(db, memory, "b", "a", 2, 0);
   const b = loadProcess(db, "b")!;
   assert.deepEqual(b.phase, { tag: "idle" });
   assert.deepEqual(loadSegment(db, b), seg.slice(0, 2));
@@ -99,9 +99,9 @@ test("反例：源进程在运行时，不带 before 被拒；带 before 在并�
   const seg = loadSegment(db, src);
   assert.deepEqual(seg.map((m) => m.role), ["user", "assistant", "toolResult", "user"]);
   const before = dump(db);
-  assert.throws(() => forkProcess(db, "b", "a", undefined, 0), /正在运行/);
+  assert.throws(() => forkProcess(db, memory, "b", "a", undefined, 0), /正在运行/);
   assert.equal(dump(db), before);
-  forkProcess(db, "b", "a", 3, 0);
+  forkProcess(db, memory, "b", "a", 3, 0);
   const b = loadProcess(db, "b")!;
   assert.deepEqual(loadSegment(db, b), seg.slice(0, 3));
   assert.equal(loadSegment(db, b).at(-1)?.role, "toolResult");
@@ -117,10 +117,10 @@ test("拒绝：没有这个进程、before 越界、不是用户消息；什么�
   const db = tempDb(t);
   idleSource(db);
   const before = dump(db);
-  assert.throws(() => forkProcess(db, "b", "nope", undefined, 0), /没有这个进程：nope/);
-  assert.throws(() => forkProcess(db, "b", "a", 4, 0), /没有第 4 条/);
-  assert.throws(() => forkProcess(db, "b", "a", 1, 0), /不是用户消息/);
-  assert.throws(() => forkProcess(db, "b", "a", 3, 0), /不是用户消息/);
+  assert.throws(() => forkProcess(db, memory, "b", "nope", undefined, 0), /没有这个进程：nope/);
+  assert.throws(() => forkProcess(db, memory, "b", "a", 4, 0), /没有第 4 条/);
+  assert.throws(() => forkProcess(db, memory, "b", "a", 1, 0), /不是用户消息/);
+  assert.throws(() => forkProcess(db, memory, "b", "a", 3, 0), /不是用户消息/);
   assert.equal(dump(db), before);
   assert.equal(loadProcesses(db).length, 1);
 });
@@ -131,7 +131,7 @@ test("启动检查不通过：什么都不建", (t) => {
   const tiny: PresetSnapshot = { ...PRESET, id: "tiny", contextWindow: 20_000 };
   db.prepare("INSERT INTO processes (id, state_json) VALUES (?, ?)").run("a", JSON.stringify(start("a", tiny, { now: 0, memoryView: "" })));
   const before = dump(db);
-  assert.throws(() => forkProcess(db, "b", "a", undefined, 0), /窗口太小/);
+  assert.throws(() => forkProcess(db, memory, "b", "a", undefined, 0), /窗口太小/);
   assert.equal(dump(db), before);
 });
 
@@ -141,12 +141,12 @@ test("事务失败时什么都不留：新 ID 已经被占用，复制的消息�
   startProcess(db, memory, "b", PRESET, "占着", 0);
   drain(db);
   const before = dump(db);
-  assert.throws(() => forkProcess(db, "b", "a", undefined, 0), /constraint|UNIQUE/i);
+  assert.throws(() => forkProcess(db, memory, "b", "a", undefined, 0), /constraint|UNIQUE/i);
   assert.equal(dump(db), before);
   // 消息写到一半失败：让第二条消息的主键冲突（预先放一行假消息）。
   db.prepare("INSERT INTO segment_messages (process_id, segment_seq, seq, message_json) VALUES ('c', 1, 1, '{}')").run();
   const mid = dump(db);
-  assert.throws(() => forkProcess(db, "c", "a", undefined, 0), /constraint|UNIQUE/i);
+  assert.throws(() => forkProcess(db, memory, "c", "a", undefined, 0), /constraint|UNIQUE/i);
   assert.equal(dump(db), mid);
   assert.equal(loadProcess(db, "c"), undefined);
 });
@@ -159,12 +159,66 @@ test("带图片引用的段复制后存储层不变量成立，blobs 不增", (t
   drain(db);
   const blobs = () => db.prepare("SELECT COUNT(*) AS n FROM blobs").get()?.n;
   assert.equal(blobs(), 1);
-  forkProcess(db, "b", "a", undefined, 0);
-  forkProcess(db, "c", "a", 0, 0);
+  forkProcess(db, memory, "b", "a", undefined, 0);
+  forkProcess(db, memory, "c", "a", 0, 0);
   assert.equal(blobs(), 1);
   const copied = loadSegment(db, loadProcess(db, "b")!)[0];
   assert.equal(copied?.role, "user");
   assert.deepEqual(copied, loadSegment(db, loadProcess(db, "a")!)[0]);
   assert.deepEqual(loadSegment(db, loadProcess(db, "c")!), []);
   assertStoreInvariants(db);
+});
+
+test("fork 带预设：快照和记忆视图来自新预设，复制的消息不变，源进程和库里别的行不变", (t) => {
+  const db = tempDb(t);
+  const mem = fakeMemory();
+  mem.set("other", "k", "新预设的记忆", null);
+  mem.set("helper", "k", "源预设的记忆", null);
+  idleSource(db);
+  const seg = loadSegment(db, loadProcess(db, "a")!);
+  const before = dump(db);
+  const target: PresetSnapshot = { ...PRESET, id: "other", prompt: "你是另一个角色。" };
+  const h = forkProcess(db, mem, "b", "a", undefined, 500, target);
+  const p = loadProcess(db, "b")!;
+  assert.deepEqual(p, h.process);
+  assert.deepEqual(p.preset, target);
+  assert.equal(p.segment.memoryView, "k: 新预设的记忆");
+  assert.deepEqual(loadSegment(db, p), seg);
+  assert.deepEqual({ ...p, preset: null, segment: null }, { id: "b", preset: null, createdAt: 500, segment: null, lastEffect: 0, phase: { tag: "idle", ended: "done" }, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } });
+  assert.equal(mailbox(db).length, 0);
+  assert.deepEqual(effectRows(db), []);
+  assertStoreInvariants(db);
+  db.prepare("DELETE FROM processes WHERE id = 'b'").run();
+  db.prepare("DELETE FROM segment_messages WHERE process_id = 'b'").run();
+  assert.equal(dump(db), before);
+});
+
+test("fork 带预设：新模型不收图片，复制的图片换成说明；源的段和 blobs 不变；新模型收图片则原样", (t) => {
+  const db = tempDb(t);
+  startProcess(db, memory, "a", VISION, "看图", 0, checkImages([png(16, 16, 1).toString("base64")]));
+  drain(db);
+  putMail(db, "a", model(1, say("看到了")));
+  drain(db);
+  const seg = loadSegment(db, loadProcess(db, "a")!);
+  assert.match(JSON.stringify(seg[0]), /blob:/);
+  const blobs = db.prepare("SELECT hash FROM blobs").all().length;
+  forkProcess(db, memory, "b", "a", undefined, 0, { ...PRESET, id: "text" });
+  const b = loadSegment(db, loadProcess(db, "b")!);
+  assert.deepEqual(b[0], { ...seg[0]!, content: "看图\n[图片：模型不支持，已省略]" });
+  assert.deepEqual(b.slice(1), seg.slice(1));
+  assert.deepEqual(loadSegment(db, loadProcess(db, "a")!), seg);
+  assert.equal(db.prepare("SELECT hash FROM blobs").all().length, blobs);
+  forkProcess(db, memory, "c", "a", undefined, 0, { ...VISION, id: "vision2" });
+  assert.deepEqual(loadSegment(db, loadProcess(db, "c")!), seg);
+  assertStoreInvariants(db);
+});
+
+test("fork 带预设：估算放不进新阈值、新预设的启动检查不过，都什么都不建", (t) => {
+  const db = tempDb(t);
+  idleSource(db);
+  const before = dump(db);
+  assert.throws(() => forkProcess(db, memory, "b", "a", undefined, 0, { ...PRESET, id: "low", handoff: 10 }), /放不进预设 low/);
+  // 空前缀放得下，但记忆的上界放不下：启动检查拒绝。
+  assert.throws(() => forkProcess(db, memory, "b", "a", 0, 0, { ...PRESET, id: "tiny", handoff: 4000 }), /窗口太小/);
+  assert.equal(dump(db), before);
 });

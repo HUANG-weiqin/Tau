@@ -10,7 +10,7 @@ import { start } from "../../src/kernel/decide.ts";
 import { HOPS_MAX } from "../../src/kernel/derive.ts";
 import { textContent } from "../../src/kernel/types.ts";
 import type { AssistantMessage, Process, PresetSnapshot } from "../../src/kernel/types.ts";
-import { loadProcess, loadProcesses, openDb, tx } from "../../src/store/db.ts";
+import { loadProcess, loadProcesses, openDb, putMail, tx } from "../../src/store/db.ts";
 import { handleNext, startProcess } from "../../src/store/inputs.ts";
 import { runInStore, spawnId } from "../../src/store/instore.ts";
 import { allMessages, fakeMemory, mailbox, PRESET, say, settle, tempDb, tempDir, toolCall, use } from "./fixtures.ts";
@@ -230,19 +230,23 @@ test("两个互相寄信的进程在 HOPS_MAX 处停住", async (t) => {
   const db = tempDb(t);
   const memory = fakeMemory();
   const ping = (to: string) => (job: Job) => (startsTurn(job) ? use(toolCall(`c${job.effect.n}`, "post", { to, text: "乒" })) : say("寄了"));
-  startProcess(db, memory, "a", BOSS, "开始", 0);
-  startProcess(db, memory, "b", BOSS, "开始", 0);
+  // 从接近上限的跳数起步，免得空跑 1000 多封信：startProcess 的第一封信跳数是 0，所以清空信箱，改放一封带跳数的进程信。
+  for (const [id, other] of [["a", "b"], ["b", "a"]] as const) {
+    startProcess(db, memory, id, BOSS, "开始", 0);
+    db.prepare("DELETE FROM mailbox WHERE process_id = ?").run(id);
+    putMail(db, id, { kind: "letter", letter: { from: { kind: "process", id: other, preset: "boss" }, content: textContent("开始"), hops: HOPS_MAX - 10 } });
+  }
   const exec = createExecutor(db, byTurn({ a: ping("b"), b: ping("a") }));
   await settle(db, memory, exec, undefined, readPreset);
   const results = ["a", "b"].flatMap((id) => allMessages(db, id).flatMap((m) => (m.role === "toolResult" ? [m] : [])));
   const failed = results.filter((m) => m.isError);
   assert.ok(failed.length >= 1);
-  for (const m of failed) assert.match(textOf(m.content), /^跳数到上限（32）/);
+  for (const m of failed) assert.match(textOf(m.content), /^跳数到上限（1024）/);
   assert.deepEqual(mailbox(db), []);
   assertStoreInvariants(db);
 });
 
-test("顺序委派：前 16 次 spawn 成功，第 17 次报跳数到上限", async (t) => {
+test("顺序委派：前 512 次 spawn 成功，第 513 次报跳数到上限", async (t) => {
   const db = tempDb(t);
   const memory = fakeMemory();
   // 父进程：一轮的第一次调用模型就派一个子进程，看到结果就回复“派出了”结束本轮；子进程只回复。
@@ -250,11 +254,11 @@ test("顺序委派：前 16 次 spawn 成功，第 17 次报跳数到上限", as
   startProcess(db, memory, "a", BOSS, "开始", 0);
   await settle(db, memory, exec, undefined, readPreset);
   const kids = loadProcesses(db).filter((p) => p.parent === "a");
-  assert.equal(kids.length, 16);
+  assert.equal(kids.length, 512);
   const results = allMessages(db, "a").flatMap((m) => (m.role === "toolResult" ? [m] : []));
-  assert.equal(results.length, 17);
-  assert.deepEqual(results.map((m) => m.isError), [...Array<boolean>(16).fill(false), true]);
-  assert.match(textOf(results[16]!.content), /^跳数到上限（32）/);
+  assert.equal(results.length, 513);
+  assert.deepEqual(results.map((m) => m.isError), [...Array<boolean>(512).fill(false), true]);
+  assert.match(textOf(results[512]!.content), /^跳数到上限（1024）/);
   assert.deepEqual(mailbox(db), []);
   assertStoreInvariants(db);
 });

@@ -28,12 +28,13 @@ export function startProcess(db: DatabaseSync, memory: Memory, id: ProcessId, pr
 /**
  * 从源进程的当前段分叉出新进程 `id`：读源进程记录和当前段、写新进程记录和复制的消息，在一个事务里。拒绝的情形见 `fork`，加上启动检查；抛错就什么都不写。
  * 不寄信：没有输入要处理。图片的 `blob:` 引用照用，`blobs` 只增不删。
+ * 带 `preset`（调用方在事务之外读好的）是换角色：记忆视图按它重取，和 `spawn` 一样。
  */
-export function forkProcess(db: DatabaseSync, id: ProcessId, source: ProcessId, before: number | undefined, now: Instant): { process: Process; segment: Message[] } {
+export function forkProcess(db: DatabaseSync, memory: Memory, id: ProcessId, source: ProcessId, before: number | undefined, now: Instant, preset?: PresetSnapshot): { process: Process; segment: Message[] } {
   return tx(db, () => {
     const old = loadProcess(db, source);
     if (!old) throw new Error(`没有这个进程：${source}`);
-    const { process, messages } = fork(id, old, loadSegment(db, old), before, now);
+    const { process, messages } = fork(id, old, loadSegment(db, old), before, now, preset && { preset, memoryView: envFor(memory, preset, now).memoryView });
     const tooBig = startError(process.preset);
     if (tooBig !== null) throw new Error(tooBig);
     db.prepare("INSERT INTO processes (id, state_json) VALUES (?, ?)").run(id, JSON.stringify(process));

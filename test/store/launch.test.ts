@@ -118,3 +118,14 @@ test("spawn：工具定义让检查不通过就是错误结果，什么都不建
   assert.equal(spawn("ok").isError, false);
   assert.equal(loadProcess(db, loadProcesses(db).find((x) => x.parent === "a")!.id)?.preset.toolDefs.length, 2, "子进程的快照冻结了定义");
 });
+
+test("预设的 handoff：冻结进库里的快照；低到放不下固定部分，start 抛错，什么都不建", (t) => {
+  const db = tempDb(t);
+  const memory = fakeMemory();
+  const base: PresetSnapshot = { ...PRESET, id: "low", tools: ["read"], contextWindow: 200_000 };
+  startProcess(db, memory, "p1", { ...base, handoff: 50_000 }, "你好", 0);
+  assert.equal(loadProcess(db, "p1")?.preset.handoff, 50_000);
+  assert.throws(() => startProcess(db, memory, "p2", { ...base, handoff: fixedTokens(base) }, "你好", 0), new RegExp(`窗口太小.*换段阈值 ${fixedTokens(base)} token`));
+  assert.equal(loadProcess(db, "p2"), undefined);
+  assert.equal(loadProcesses(db).length, 1);
+});

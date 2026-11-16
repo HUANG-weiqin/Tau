@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { Input, Message, Process, ProcessId } from "../kernel/types.ts";
 
 /** 表结构的版本，记在 `PRAGMA user_version` 里。MVP 不做迁移。 */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 const SCHEMA = `
 CREATE TABLE processes (

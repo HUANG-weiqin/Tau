@@ -3,10 +3,11 @@ import { readFile, stat } from "node:fs/promises";
 import type { ToolOutput } from "../executor/executor.ts";
 import { checkImages, IMAGE_MAX_BYTES } from "../images.ts";
 import type { Image } from "../images.ts";
+import { IMAGE_UNSUPPORTED } from "../kernel/context.ts";
 import { IMAGES_PER_MESSAGE } from "../kernel/derive.ts";
 import { textContent } from "../kernel/types.ts";
 import type { Content, ToolDef, ToolResultContent } from "../kernel/types.ts";
-import { BLOB_PREFIX, IMAGE_UNSUPPORTED } from "../store/blobs.ts";
+import { BLOB_PREFIX } from "../store/blobs.ts";
 import { runCommand } from "./bash.ts";
 import type { BashContext } from "./bash.ts";
 

@@ -32,11 +32,12 @@ tools: read, write, edit, bash, memory
 你是……（角色提示词）
 ```
 
-- 前置信息有 `workdir`、`model`、`tools` 和可选的 `thinking`，每行一个 `key: value`。`thinking` 只收 `minimal`、`low`、`medium`、`high`、`xhigh`、`max`（pi-ai 的思考级别）；不写就不传给模型，值不对就报错。怎么用见 [kb-executor](../../.knowledge/kb-executor.md#调用模型actionsts)。
+- 前置信息有 `workdir`、`model`、`tools` 和可选的 `thinking`、`handoff`，每行一个 `key: value`。`thinking` 只收 `minimal`、`low`、`medium`、`high`、`xhigh`、`max`（pi-ai 的思考级别）；不写就不传给模型，值不对就报错。怎么用见 [kb-executor](../../.knowledge/kb-executor.md#调用模型actionsts)。
+- `handoff` 是正整数，单位 token：把换段阈值调低到它。写得比算出的阈值大就等于没写；不写就用算出的阈值；不是正整数就报错。怎么用见 [kb-kernel 的换段阈值](../../.knowledge/kb-kernel.md#换段阈值)。
 - `tools` 里除了内置工具和工具组，还能写工具定义的名字（`~/.tau/tools/<name>.json`，格式见 [kb-tools](../../.knowledge/kb-tools.md#工具定义)）。
 - `tools` 里的 `memory` 表示进程有记忆库。`agents` 表示进程能给别的进程寄信、建进程、停进程（`post`、`spawn`、`stop_process`，[kb-store](../../.knowledge/kb-store.md#进程之间的工具)）。
 - 进程启动时，预设被冻结成快照存进进程记录，用到的工具定义也一起冻结（快照的 `toolDefs`）。之后修改预设文件或工具定义文件，只影响新启动的进程。
-- 快照里还有两项：从 pi-ai 模型目录查到的这个模型的 `contextWindow` 和 `input`（模型能收的输入）。查不到就启动失败。冻结它们，是为了让 `decide` 不做 I/O。调用模型时，执行器仍从模型目录取模型（第 6 节）。
+- 快照里还有两项：从 pi-ai 模型目录查到的这个模型的 `contextWindow` 和 `input`（模型能收的输入）。查不到就启动失败。冻结它们，是为了让 `decide` 不做 I/O。预设写了的 `thinking`、`handoff` 也冻结进快照。调用模型时，执行器仍从模型目录取模型（第 6 节）。
 
 读取预设（`src/presets/load.ts`）的规则：
 
@@ -45,7 +46,7 @@ tools: read, write, edit, bash, memory
 - 文件开头的 UTF-8 BOM 被忽略。行尾可以是 LF，也可以是 CRLF。
 - 第一行必须是 `---`。前置信息到下一行 `---` 为止。
 - 每行在第一个 `:` 处拆成键和值，两边去掉空白。空行跳过。
-- 没有 `:` 的行、未知字段、重复字段、缺少的字段，都报错。`thinking` 可以不写，其余字段缺了报错。
+- 没有 `:` 的行、未知字段、重复字段、缺少的字段，都报错。`thinking` 和 `handoff` 可以不写，其余字段缺了报错。
 - `workdir` 必须是绝对路径，而且是一个存在的目录。绝对路径只认两种：盘符开头（`E:/x`、`E:\x`）和 UNC（`\\server\share`）。不带盘符的 `/foo` 会落在服务当前目录所在的盘上，所以拒绝。
 - `model` 在第一个 `/` 处拆成 provider 和模型 ID，两边都不能为空。模型 ID 里可以再有 `/`。
 - `tools` 按逗号拆开，去掉空白，跳过空项。不是内置工具和工具组的名字，都按工具定义读，读不出就报错（找不到、格式不对、重名、超过大小上限）。重复的去掉，保留第一次出现的顺序。
@@ -177,8 +178,8 @@ src/
 v2 的设计（[kernel-v2](kernel-v2.md)，已冻结，细节在 kb 页）改了其中几项的去向：
 
 - 移出“不做”，v2 要做：派生和进程之间互发消息、Agent 的控制命令（立即换段）、运行中插话、图片输入、累计用量（取代花费统计）、自动重试（交给 pi-ai）。见 [kb-contract 的原语和它在内核的理由](../../.knowledge/kb-contract.md#原语和它在内核的理由)。
-- 改成“上层做”，不进内核：Web UI、HTTP、远程访问、grep 工具、扩展（不做宿主）、桌面截图、多设备、通知。做法见 [kb-extras](../../.knowledge/kb-extras.md)。
-- 仍然不做：定时器、审批、推送状态行、LSP、MCP。理由见 [D46](../../.knowledge/kb-decisions.md#d46-v2-也不做的)。
+- 改成“上层做”，不进内核：Web UI、HTTP、远程访问、grep 工具、扩展（不做宿主）、桌面截图、多设备、通知、MCP。做法见 [kb-extras](../../.knowledge/kb-extras.md)。
+- 仍然不做：定时器、审批、推送状态行、LSP。理由见 [D46](../../.knowledge/kb-decisions.md#d46-v2-也不做的)。
 
 **自主和控制**
 

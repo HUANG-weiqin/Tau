@@ -128,7 +128,7 @@ type Request =
   | { op: "send"; process: string; text: string; images?: string[] }
   | { op: "stop"; process: string }
   | { op: "ps" }
-  | { op: "fork"; process: string; before?: number }       // before 是当前段里一条用户消息的段内序号
+  | { op: "fork"; process: string; before?: number; preset?: string } // before 是当前段里一条用户消息的段内序号；preset 是换角色
   | { op: "history"; process: string; segment?: number; from?: number }
   | { op: "blob"; hash: string }                            // hash 不带 blob: 前缀
   | { op: "watch"; process?: string };
@@ -150,7 +150,7 @@ type Reply =
 | `start` | `checkImages` 检查图片；`loadPreset` 读预设；生成进程 ID；`startProcess`（启动检查不通过就抛错，回 `error`，什么都不建） | `receipt`，若干 `text`，`final` |
 | `send` | `checkImages` 检查图片；`send` 放进一封用户的信；进程不存在就抛出 | 同上 |
 | `stop` | `send` 放进一条 `stop` | `receipt` |
-| `fork` | 生成进程 ID（和 `start` 一样）；`forkProcess`（拒绝的情形见下，什么都不建）。提交之后，给订阅的连接推新进程的 `update`，再回执。不调用 `pump`：没有输入要处理 | `receipt`，然后关闭；拒绝回 `error` |
+| `fork` | 生成进程 ID（和 `start` 一样）；带 `preset` 时，用 `loadPreset` 读预设（含工具定义），读不出就回 `error`；`forkProcess`（拒绝的情形见下，什么都不建）。提交之后，给订阅的连接推新进程的 `update`，再回执。不调用 `pump`：没有输入要处理 | `receipt`，然后关闭；拒绝回 `error` |
 | `ps` | 读全部进程记录；每个进程 `observe(p, 当前段, 全部进程, now)` | 一行 `ps` |
 | `history` | 读一段的消息 | 若干 `message`，一行 `end`，然后关闭 |
 | `blob` | 读一张图片：`hash` 不带 `blob:` 前缀。不开写事务 | 一行 `blob`，然后关闭。`hash` 不存在回 `error` |
@@ -159,7 +159,7 @@ type Reply =
 
 - `start` 和 `send` 走同一条路径：提交，然后 `awaitFinal`（发回执、登记观察者、`pump`）。
 - 回执在事务提交之后才发。库是 `synchronous = FULL`，所以回执表示已经落盘。
-- `fork` 的拒绝（都回 `error`，库里什么都没写）：没有这个进程；带 `before` 时，`before` 超出当前段，或那条消息不是用户消息；不带 `before` 时源进程不是 `idle`；新进程通不过启动检查。复制什么、为什么这样拒绝，见 [kb-kernel 的 fork](kb-kernel.md#fork)。源进程在运行时，带 `before` 的 `fork` 照常可以。
+- `fork` 的拒绝（都回 `error`，库里什么都没写）：没有这个进程；带 `before` 时，`before` 超出当前段，或那条消息不是用户消息；不带 `before` 时源进程不是 `idle`；带 `preset` 时，预设读不出，或复制来的段放不进新预设的换段阈值；新进程通不过启动检查。复制什么、为什么这样拒绝，见 [kb-kernel 的 fork](kb-kernel.md#fork)。源进程在运行时，带 `before` 的 `fork` 照常可以。
 - `fork` 的回执在事务提交之后才发，之前先推 `update`：订阅的客户端收到回执时，已经见过新进程。`update` 由 `observe` 用 `forkProcess` 返回的记录和段算出，不读库。
 - `stop` 的回执只表示停止进了信箱。随后的 `pump` 同步处理它，并中止正在运行的动作。进程已经 `idle` 时停止什么都不做，回执照发。
 - `ps` 的进程按 ID 排序，包括 `idle` 的。每个投影带自己的 `now` 和 `siblings`。
@@ -171,7 +171,7 @@ type Reply =
 
 - 每个连接只读第一行。`\r\n` 算一个换行。
 - 不是合法 JSON：`error`，内容是 `JSON.parse` 的错误信息。
-- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`；`stop` 要字符串 `process`；`fork` 要字符串 `process`，可选的 `before` 要是非负整数；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`blob` 要字符串 `hash`；`start`、`send` 的 `images` 可以没有，有就要是字符串数组；`watch` 的 `process` 可以没有，有就要是字符串。否则 `error`：“无法识别的请求：<原文>”。
+- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`；`stop` 要字符串 `process`；`fork` 要字符串 `process`，可选的 `before` 要是非负整数，可选的 `preset` 要是字符串；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`blob` 要字符串 `hash`；`start`、`send` 的 `images` 可以没有，有就要是字符串数组；`watch` 的 `process` 可以没有，有就要是字符串。否则 `error`：“无法识别的请求：<原文>”。
 - 只查类型。空串能通过，多余的字段被忽略。空预设 ID 由 `loadPreset` 拒绝；空消息会成为一条用户消息。CLI 不发空消息。
 - 预设读不出、进程不存在、进程 ID 冲突，都回 `error`。这些情况下库里什么都没写。
 
@@ -376,7 +376,7 @@ tau stop <进程>
 | protocol：`watch` 断开和退出 | 客户端断开后连接被释放，其余订阅照常；服务退出时断开订阅；退出开始以后才到的 `watch` 回 `error`，等最终回复的连接照常收到 |
 | protocol：`watch` 写缓冲上限 | 快照大于管道缓冲、订阅方一直不读：到上限才断开，读的订阅不受影响；快照很小、订阅方不读：少量推送不断开，超过上限才断开 |
 | protocol：图片 | `start`、`send` 带图：段里是引用，`blob` 取回原字节和类型，`history` 不带字节；`images` 的校验；不合格回 `error`、什么都不建；不收图片的模型先检查、再换说明；执行器发给模型的是真数据；`blob` 不存在、带前缀回 `error`，读请求不写库 |
-| protocol：`fork` | 回执带新 ID 并关闭；`history` 读新进程等于源进程的前缀；之后对新进程 `send`，模型收到复制的消息，系统提示词和源进程一样；各种 `error`（没有进程、越界、不是用户消息、运行中不带 `before`、启动检查、请求校验）；订阅在回执之前收到新进程的 `update`；带图片引用的段 |
+| protocol：`fork` | 回执带新 ID 并关闭；带 `preset`：新进程用新预设，之后 `send` 模型收到新系统提示词和工具描述；读不出的预设、放不进的预设回 `error`；`history` 读新进程等于源进程的前缀；之后对新进程 `send`，模型收到复制的消息，系统提示词和源进程一样；各种 `error`（没有进程、越界、不是用户消息、运行中不带 `before`、启动检查、请求校验）；订阅在回执之前收到新进程的 `update`；带图片引用的段 |
 | cli：模型不在目录里 | 本轮以“模型目录里没有”的错误结束，回复不入段；模型放回后进程照常可用 |
 
 ## 坑点

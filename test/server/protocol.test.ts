@@ -9,7 +9,7 @@ import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
+import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import type { FauxProviderHandle, RegisterFauxProviderOptions } from "@earendil-works/pi-ai";
 import { request } from "../../src/cli/main.ts";
 import type { Message } from "../../src/kernel/types.ts";
@@ -776,4 +776,49 @@ test("fork 带图片引用的段：新进程的图片还能用 blob 请求读到
   const b = receiptOf(await collect(e.pipe, { op: "fork", process: a }));
   assert.match(JSON.stringify(segmentOf(e, b)[0]), /blob:[0-9a-f]{64}/);
   assert.deepEqual(segmentOf(e, b), segmentOf(e, a));
+});
+
+test("fork 带 preset：新进程用新预设的快照和记忆，之后 send 模型收到新系统提示词、新工具描述和复制的消息；源不变", async (t) => {
+  const e = await setup(t);
+  writeFileSync(join(e.presetsDir, "q.md"), `---\nworkdir: ${e.work}\nmodel: ${e.faux.getModel().provider}/m\ntools: read, write\n---\n你是另一个角色。\n`);
+  const a = await startIdle(e, "第一句。");
+  const stateBefore = JSON.stringify(loadProcess(e.svc.db, a));
+  const b = receiptOf(await collect(e.pipe, { op: "fork", process: a, preset: "q" }));
+  assert.deepEqual(await history(e, b), await history(e, a));
+  assert.equal(loadProcess(e.svc.db, b)?.preset.id, "q");
+  assert.equal(JSON.stringify(loadProcess(e.svc.db, a)), stateBefore);
+
+  const seen: { system: string; tools: string[]; roles: string[] }[] = [];
+  e.faux.appendResponses([
+    (context: { systemPrompt?: string; messages: { role: string; content?: unknown }[] }) => {
+      const [head, ...rest] = context.messages;
+      const inline = head?.role === "system";
+      seen.push({ system: context.systemPrompt ?? (inline ? JSON.stringify(head.content) : ""), tools: getCurrentTools(context.messages as never).map((x) => x.name), roles: (inline ? rest : context.messages).map((m) => m.role) });
+      return fauxAssistantMessage(fauxText("换了角色。"));
+    },
+  ]);
+  const r = await collect(e.pipe, { op: "send", process: b, text: "继续" });
+  assert.equal(r.at(-1)?.type, "final");
+  assert.equal(seen.length, 1);
+  assert.match(seen[0]!.system, /你是另一个角色/);
+  assert.doesNotMatch(seen[0]!.system, /你是测试助手/);
+  assert.deepEqual(seen[0]!.tools, ["read", "write", "self", "handoff"]);
+  assert.deepEqual(seen[0]!.roles, ["user", "assistant", "user"]);
+});
+
+test("fork 带 preset：读不出的预设、放不进的预设、类型不对，都回 error，什么都不建", async (t) => {
+  const e = await setup(t);
+  writeFileSync(join(e.presetsDir, "low.md"), `---\nworkdir: ${e.work}\nmodel: ${e.faux.getModel().provider}/m\ntools: read\nhandoff: 5\n---\n低。\n`);
+  const a = await startIdle(e);
+  const errors = async (req: unknown): Promise<string> => {
+    const r = await collect(e.pipe, req as Request);
+    assert.equal(r.length, 1, JSON.stringify(req));
+    assert.equal(r[0]?.type, "error", JSON.stringify(req));
+    return r[0]?.type === "error" ? r[0].message : "";
+  };
+  assert.match(await errors({ op: "fork", process: a, preset: "nope" }), /nope/);
+  assert.match(await errors({ op: "fork", process: a, preset: "low" }), /窗口太小|放不进/);
+  for (const bad of [{ preset: 1 }, { preset: null }]) assert.match(await errors({ op: "fork", process: a, ...bad }), /^无法识别的请求/);
+  const ps = await collect(e.pipe, { op: "ps" });
+  assert.equal(ps[0]?.type === "ps" ? ps[0].processes.length : 0, 1);
 });

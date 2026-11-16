@@ -13,6 +13,8 @@ export const HANDOFF_INSTRUCTION = [
 
 /** 新段第一条消息的开头。 */
 export const HANDOFF_HEADER = "（这是你在上一个工作段结束时写的交接说明。）\n\n";
+/** 模型不收图片时，每张图换成的一行。信、工具结果和 fork 换预设都用它。 */
+export const IMAGE_UNSUPPORTED = "[图片：模型不支持，已省略]";
 /** 新段第一条消息里，交接说明之后、带过来的用户消息之前的一行。 */
 export const CARRY_HEADER = "（下面是写交接说明时还没处理的用户消息。）";
 

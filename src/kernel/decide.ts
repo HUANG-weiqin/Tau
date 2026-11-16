@@ -1,6 +1,6 @@
 // start、decide、effectOf：纯函数（见 .knowledge/kb-kernel.md）。
-import { CARRY_HEADER, HANDOFF_HEADER, HANDOFF_INSTRUCTION, tailStart } from "./context.ts";
-import { clip, contextUsed, endedReason, endedText, finalReply, handoffRequested, handoffThreshold, IMAGES_PER_MESSAGE, MARGIN_TOKENS, MESSAGE_MAX_BYTES, newSegmentUsed, pendingCalls, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
+import { CARRY_HEADER, HANDOFF_HEADER, HANDOFF_INSTRUCTION, IMAGE_UNSUPPORTED, tailStart } from "./context.ts";
+import { clip, contextUsed, endedReason, endedText, estimatedUsed, finalReply, handoffRequested, handoffThreshold, IMAGES_PER_MESSAGE, MARGIN_TOKENS, MESSAGE_MAX_BYTES, newSegmentUsed, pendingCalls, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
 import { textContent, unreachable } from "./types.ts";
 import type { AssistantMessage, Content, Effect, Ended, Env, ImageContent, Input, Instant, Letter, Message, Phase, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Turn, Usage } from "./types.ts";
 
@@ -14,8 +14,9 @@ export function start(id: ProcessId, preset: PresetSnapshot, env: Env): Process 
 /**
  * 从源进程的当前段分叉出一个新进程（见 .knowledge/kb-kernel.md 的 fork）。`before` 是当前段里一条用户消息的段内序号：新进程的第 1 段是它前面的全部消息，阶段是没有结束原因的 idle。
  * 不带 `before` 时复制整个当前段和 idle 阶段，源进程必须是 idle。不合格就抛错。
+ * 带 `to` 是换角色：新进程的快照和记忆视图用 `to` 的，不用源进程的。新模型不收图片就把复制的图片换成说明；不用用量锚点估算，复制来的段要低于新预设的换段阈值，否则抛错。
  */
-export function fork(id: ProcessId, source: Process, segment: readonly Message[], before: number | undefined, now: Instant): { process: Process; messages: Message[] } {
+export function fork(id: ProcessId, source: Process, segment: readonly Message[], before: number | undefined, now: Instant, to?: { preset: PresetSnapshot; memoryView: string }): { process: Process; messages: Message[] } {
   let phase: Phase;
   let messages: Message[];
   if (before === undefined) {
@@ -29,8 +30,24 @@ export function fork(id: ProcessId, source: Process, segment: readonly Message[]
     phase = { tag: "idle" };
     messages = segment.slice(0, before);
   }
-  const process: Process = { id, preset: source.preset, createdAt: now, segment: { seq: 1, memoryView: source.segment.memoryView }, lastEffect: 0, phase, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+  const preset = to?.preset ?? source.preset;
+  if (to && !preset.input.includes("image")) messages = messages.map(withoutImages);
+  const process: Process = { id, preset, createdAt: now, segment: { seq: 1, memoryView: to?.memoryView ?? source.segment.memoryView }, lastEffect: 0, phase, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+  if (to) {
+    // 超过阈值时第一次调用就是交接调用，带着整段，换到小窗口会失败。
+    const used = estimatedUsed(process, messages);
+    const threshold = handoffThreshold(preset);
+    if (used >= threshold) throw new Error(`复制来的 ${messages.length} 条消息放不进预设 ${preset.id}：估算 ${used} token，换段阈值 ${threshold} token`);
+  }
   return { process, messages };
+}
+
+/** 一条消息里的图片换成说明，在原位置，和文字用换行连成一段：用户消息是字符串，工具结果是一个文本块。没有图片的消息原样。 */
+function withoutImages(m: Message): Message {
+  if (m.role === "assistant" || typeof m.content === "string" || !m.content.some((c) => c.type === "image")) return m;
+  const text = m.content.map((c) => (c.type === "image" ? IMAGE_UNSUPPORTED : c.text)).join("\n");
+  // 用户消息没有图片时 content 是字符串（消息的两种形状）。
+  return m.role === "user" ? { ...m, content: text } : { ...m, content: textContent(text) };
 }
 
 /** 要寄出的回信：收件人和信件。存储层在同一个事务里放进收件人的信箱。 */

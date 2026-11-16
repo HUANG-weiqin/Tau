@@ -2,12 +2,11 @@
 // 纯函数层只见到引用 `blob:<hash>`；字节只在这里和执行器调用模型之前出现。
 import type { DatabaseSync } from "node:sqlite";
 import type { Image } from "../images.ts";
+import { IMAGE_UNSUPPORTED } from "../kernel/context.ts";
 import { textContent } from "../kernel/types.ts";
 import type { Content, ModelRequest } from "../kernel/types.ts";
 
 export const BLOB_PREFIX = "blob:";
-/** 目标进程的模型不收图片时，每张图换成的一行。 */
-export const IMAGE_UNSUPPORTED = "[图片：模型不支持，已省略]";
 
 /** 信的内容块：文本，加上图片。必须在调用方的事务里调用。`accepts` 为假时不存图片，每张换成一行说明。 */
 export function letterContent(db: DatabaseSync, text: string, images: readonly Image[], accepts: boolean): Content[] {

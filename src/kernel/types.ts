@@ -41,6 +41,8 @@ export interface PresetSnapshot {
   input: ("text" | "image")[];
   /** pi-ai 的思考级别。预设没写就没有这个键，调用模型时不传 `reasoning`。 */
   thinking?: ThinkingLevel;
+  /** 换段阈值的上限，token，正整数。预设没写就没有这个键。只能把阈值调低：写得比算出的阈值大就等于没写。 */
+  handoff?: number;
 }
 
 /** 累计用量：这个进程所有模型调用的 token 之和（设计稿第 5.8 节）。 */

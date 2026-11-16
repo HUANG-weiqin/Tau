@@ -115,7 +115,7 @@ CREATE TABLE blobs (
 1. `PRAGMA journal_mode = WAL`。结果不是 `wal` 就关库并抛出。所以 `:memory:` 会被拒绝。
 2. `PRAGMA synchronous = FULL`。回执承诺“写进库才返回”，所以每次提交都要落盘。这是连接级设置，每次打开都设。
 3. 读 `PRAGMA user_version`：
-   - 0 是新库：在一个事务里建 6 张表，并写入 `SCHEMA_VERSION`（现在是 4）。
+   - 0 是新库：在一个事务里建 6 张表，并写入 `SCHEMA_VERSION`（现在是 5）。
    - 等于 `SCHEMA_VERSION`：直接用。
    - 其它值：关库并抛出，提示停掉服务、移走旧库、重启后重建。MVP 不做迁移。
 
@@ -130,7 +130,7 @@ CREATE TABLE blobs (
 | 函数 | 做什么 | 失败时 |
 |---|---|---|
 | `startProcess(db, memory, id, preset, text, now, images?)` | 用 `start` 建 `idle` 进程记录并插入；第一条消息作为用户的信进信箱。带图片时，信的内容块在同一个事务里生成，图片存进 `blobs`（见[图片](#图片)） | ID 重复：主键冲突，什么都不写，`blobs` 也不留。启动检查不通过（[kb-kernel](kb-kernel.md#启动检查和交接以后的检查)）：抛错，什么都不写 |
-| `forkProcess(db, id, source, before, now)` | 读源进程记录和当前段，用 `fork` 算出新进程记录和要复制的消息，过启动检查，插入新进程记录，写入复制的消息；返回新记录和复制的段。不寄信，不碰 `effects` 和 `blobs`（图片引用照用，`blobs` 只增不删） | 没有源进程、`fork` 的拒绝（[kb-kernel](kb-kernel.md#fork)）、启动检查不通过、新 ID 已被占用：抛错，整个事务回滚，什么都不留 |
+| `forkProcess(db, memory, id, source, before, now, preset?)` | 读源进程记录和当前段，用 `fork` 算出新进程记录和要复制的消息（带 `preset`，是调用方在事务之外读好的新预设快照，记忆视图按它重取，见 [kb-kernel 的 fork](kb-kernel.md#fork)），过启动检查，插入新进程记录，写入复制的消息；返回新记录和复制的段。不寄信，不碰 `effects` 和 `blobs`（图片引用照用，`blobs` 只增不删） | 没有源进程、`fork` 的拒绝（[kb-kernel](kb-kernel.md#fork)）、启动检查不通过、新 ID 已被占用：抛错，整个事务回滚，什么都不留 |
 | `send(db, id, input, images?)` | 把信件或 `stop` 放进已有进程的信箱。带图片时和 `startProcess` 一样，按目标进程的快照处理；图片只能跟着信 | 进程不存在：抛出“没有这个进程”，什么都不写，`blobs` 也不留 |
 | `handleNext(db, memory, now, readPreset?)` | 处理信箱里最早的一条输入。`readPreset` 给 `spawn` 读预设用，服务传 `loadPreset` | 抛出时整个事务回滚，这条输入留在队头 |
 
@@ -202,7 +202,7 @@ CREATE TABLE blobs (
 | 预设文件，和子进程的记忆视图 | 库内工具是 `spawn` 时（通过 `readPreset` 和 `Memory`） |
 | 已有的进程 ID | `spawn` 算新 ID 时，每次尝试一次 |
 
-`forkProcess` 不是处理一条输入，另有一张读取表：源进程的进程记录和当前段（和 `history` 读当前段一样），不读旧段。
+`forkProcess` 不是处理一条输入，另有一张读取表：源进程的进程记录和当前段（和 `history` 读当前段一样），不读旧段。带 `preset` 时还读新预设的记忆视图（和 `spawn` 一样）；预设文件和工具定义文件由服务在事务之外读。
 
 不读旧段，也不读别的进程的工作段。
 
@@ -378,13 +378,13 @@ CREATE TABLE blobs (
 | `stop_process` 停自己 | `不能停止自己。要结束这一轮，直接回复，不再调用工具。` | 是 |
 | 预设读不出 | `预设 <preset> 读不出：<原因>`，原因是读预设抛出的错误信息 | 是 |
 | 预设通不过启动检查 | `预设 <preset> 的窗口太小，装不下：固定部分 <f> token，记忆的上界 <m> token，换段阈值 <T> token`，什么都不建 | 是 |
-| 跳数到上限 | `跳数到上限（32）：这封信是被进程之间的信一路引出来的。结束本轮，等用户的下一封信。` | 是 |
+| 跳数到上限 | `跳数到上限（1024）：这封信是被进程之间的信一路引出来的。结束本轮，等用户的下一封信。` | 是 |
 | 参数不对 | `参数错误：<说明>` | 是 |
 
 - 永不抛错：抛错会让事务回滚，这条输入留在队头，所有进程都卡住（见[坑点](#坑点)）。所有失败都是 `isError` 的结果，什么都不写。
 - 检查顺序：参数，对象是不是自己，对象存不存在，跳数，（`spawn`）读预设。`spawn` 没有“对象”这两步。
-- 跳数：用户的信 `hops` 为 0；`post`、`spawn` 寄出的信 `hops` = `turn.hops + 1`，超过 `HOPS_MAX`（32）就失败；回信不受这个限制。跳数只保证进程之间的信不会无限循环，不限制花费，也不是边界：从 bash 寄的信都是用户的信，`hops` 为 0。
-- 顺序委派（子进程不再委派，父进程每次等到回信再派下一个）：每派一个、收一封回信，`turn.hops` 加 2。第 k 次寄出的信跳数是 2k − 1，所以一封用户的信引出的顺序委派最多 16 次，第 17 次是 33，报跳数到上限。每多一层嵌套，约减半。安全点并入的旧回信，也会把用户新开的一轮的跳数抬高。真不够用时放宽 `HOPS_MAX`，放宽它不算改契约。
+- 跳数：用户的信 `hops` 为 0；`post`、`spawn` 寄出的信 `hops` = `turn.hops + 1`，超过 `HOPS_MAX`（1024）就失败；回信不受这个限制。跳数只保证进程之间的信不会无限循环，不限制花费，也不是边界：从 bash 寄的信都是用户的信，`hops` 为 0。
+- 顺序委派（子进程不再委派，父进程每次等到回信再派下一个）：每派一个、收一封回信，`turn.hops` 加 2。第 k 次寄出的信跳数是 2k − 1，所以一封用户的信引出的顺序委派最多 512 次，第 513 次是 1025，报跳数到上限。每多一层嵌套，约减半。安全点并入的旧回信，也会把用户新开的一轮的跳数抬高。真不够用时放宽 `HOPS_MAX`，放宽它不算改契约（为什么是 1024，见 [D50](kb-decisions.md#d50-hops_max-放宽到-1024)）。
 
 `spawn`：
 
@@ -412,18 +412,18 @@ CREATE TABLE blobs (
 | `src/store/db.ts` | `SCHEMA`、`SCHEMA_VERSION`、`openDb`、`tx`、行的读写 |
 | `src/store/inputs.ts` | `startProcess`、`forkProcess`、`send`、`handleNext`、同步副作用 |
 | `src/store/instore.ts` | `runInStore`：`self`、`handoff`、`memory_*`、`post`、`spawn`、`stop_process`；`spawnId`、`envFor`、`ReadPreset` |
-| `src/store/blobs.ts` | `letterContent`（信的内容块，存图片或换成说明）、`readBlob`、`resolveImages`（请求里的引用换成 base64）、`IMAGE_UNSUPPORTED` |
+| `src/store/blobs.ts` | `letterContent`（信的内容块，存图片或换成说明）、`readBlob`、`resolveImages`（请求里的引用换成 base64） |
 | `src/memory/kv.ts` | `Memory` 的 SQLite 实现，服务用它；规则见 [kb-memory.md](kb-memory.md) |
 | `test/store/db.test.ts` | 表、PRAGMA、表结构版本、主键和 `CHECK`、编号不复用、回滚 |
 | `test/store/inputs.test.ts` | `startProcess`、`send`、`handleNext` 三个事务、同步规则、库内工具、只读当前段（读取行数和查询计划） |
 | `test/store/blobs.test.ts` | 图片：存字节和引用、同一事务（反例：进程不存在、启动检查不过、ID 重复时不留 `blobs`）、不收图片的模型换说明、`resolveImages`、执行器调用模型前换成真数据、不变量能抓到缺行 |
 | `test/store/invariants.ts` | 存储层不变量（含 blob 引用完整性） |
-| `test/store/fork.test.ts` | `forkProcess`：新进程和复制的消息、源进程和库里别的东西不变；运行中带 `before` 可以、不带被拒；各种拒绝和启动检查不通过什么都不建；新 ID 被占用或写到一半失败时回滚；带图片引用的段不变量成立、`blobs` 不增 |
+| `test/store/fork.test.ts` | `forkProcess`：新进程和复制的消息、源进程和库里别的东西不变；运行中带 `before` 可以、不带被拒；各种拒绝和启动检查不通过什么都不建；新 ID 被占用或写到一半失败时回滚；带图片引用的段不变量成立、`blobs` 不增；带 `preset`：快照和记忆视图来自新预设，图片按新模型处理，放不进什么都不建 |
 | `test/store/regressions.test.ts` | 审查发现的缺陷的最小反例 |
 | `test/store/crash.test.ts` | 真库上的随机序列（含要回信的信和回信、带图片的信）；在每个事务之后崩溃 |
 | `test/store/longrun.test.ts` | 多次换段后，处理一条输入读取的行数不增长 |
 | `test/store/replies.test.ts` | 回信在处理那条输入的事务里投递（回滚时一起撤销）；同一轮合并的几封信只回一封 |
-| `test/store/agents.test.ts` | `post`、`spawn`、`stop_process` 的结果和失败；A 问 B、B 被停止；互相寄信停在 `HOPS_MAX`；顺序委派 16 次；`spawn` 的 ID 和记忆视图；回滚；在每一步之后崩溃，结果和不崩溃时一样 |
+| `test/store/agents.test.ts` | `post`、`spawn`、`stop_process` 的结果和失败；A 问 B、B 被停止；互相寄信停在 `HOPS_MAX`；顺序委派 512 次；`spawn` 的 ID 和记忆视图；回滚；在每一步之后崩溃，结果和不崩溃时一样 |
 | `test/store/executor.test.ts` | 执行器和竞态（见 [kb-executor.md](kb-executor.md)） |
 | `test/store/fixtures.ts` | 临时库、假记忆库、`countReads`、带种子的随机数 |
 

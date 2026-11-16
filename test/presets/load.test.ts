@@ -207,6 +207,29 @@ test("duplicate thinking is an error", () => {
   assert.throws(() => loadPreset(write("dupthink", valid(["thinking: low", "thinking: high"])), "dupthink", models, toolsRoot), /thinking/);
 });
 
+test("handoff is optional: absent means the snapshot has no handoff key", () => {
+  const snap = loadPreset(write("nohandoff", valid()), "nohandoff", models, toolsRoot);
+  assert.equal("handoff" in snap, false);
+});
+
+test("handoff is frozen into the snapshot as a number", () => {
+  const snap = loadPreset(write("handoff-ok", valid(["handoff: 50000"])), "handoff-ok", models, toolsRoot);
+  assert.equal(snap.handoff, 50000);
+  // 比算出的阈值大也照样冻结：取较小的是阈值函数的事。
+  assert.equal(loadPreset(write("handoff-big", valid(["handoff: 99999999"])), "handoff-big", models, toolsRoot).handoff, 99999999);
+});
+
+for (const bad of ["", "0", "-1", "1.5", "abc", "1e3", "1_000", "0x10", "+5", "007", "99999999999999999"]) {
+  test(`handoff "${bad}" is an error`, () => {
+    const id = `badhandoff-${bad || "empty"}`;
+    assert.throws(() => loadPreset(write(id, valid([`handoff: ${bad}`])), id, models, toolsRoot), /handoff 必须是正整数/);
+  });
+}
+
+test("duplicate handoff is an error", () => {
+  assert.throws(() => loadPreset(write("duphandoff", valid(["handoff: 1000", "handoff: 2000"])), "duphandoff", models, toolsRoot), /handoff/);
+});
+
 test("agents is a known tool, kept in order", () => {
   const dir = write("agents", front([`workdir: ${work}`, `model: ${modelStr}`, "tools: read, agents, memory"]));
   assert.deepEqual(loadPreset(dir, "agents", models, toolsRoot).tools, ["read", "agents", "memory"]);

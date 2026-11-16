@@ -37,7 +37,7 @@ MVP 清单还留着一项没核实：GPT-5 的 400K 条目的输入上限（[MVP
 **验收**
 
 - [x] 现有测试改名后全过。
-- [x] `SCHEMA_VERSION` 为 2。开发期间 `state_json` 的形状一变，就再加一。
+- [x] `SCHEMA_VERSION` 为 2（后来加到 5）。开发期间 `state_json` 的形状一变，就再加一。
 
 ## 第 2 步：信件、消息形状、累计用量
 
@@ -73,7 +73,7 @@ MVP 清单还留着一项没核实：GPT-5 的 400K 条目的输入上限（[MVP
 
 - [x] 崩溃测试通过。
 - [x] 互相寄信停在上限。
-- [x] 顺序委派第 17 次失败。
+- [x] 顺序委派第 513 次失败（`HOPS_MAX` 1024，[D50](../../.knowledge/kb-decisions.md#d50-hops_max-放宽到-1024)）。
 - [x] `spawn` 的 ID 确定，撞上能重算。
 - [x] 在测试服务里，bash 工具真的运行一次 `tau ps`，经 `TAU_PIPE` 连到测试服务。
 - [x] `bash()` 的环境测试通过。
@@ -125,6 +125,7 @@ MVP 清单还留着一项没核实：GPT-5 的 400K 条目的输入上限（[MVP
 - [x] 先做完第 7 节第 8 步的文档（kb-contract、kb-extras 等）并提交。
 - [x] `extras/` 的 import 扫描测试。
 - [x] fork 进内核（用户决定，冻结之前）：协议请求、纯函数 `fork`、事务 `forkProcess`、测试和文档，见 [D49](../../.knowledge/kb-decisions.md#d49-fork-进内核)。
+- [x] fork 加可选的 `preset`，带着完整上下文换角色（用户决定，冻结之前）：协议字段、纯函数 `fork` 的 `to`、事务、测试和文档，见 [D52](../../.knowledge/kb-decisions.md#d52-fork-带-preset给进程换角色)。
 - [ ] 推导测试：文档提交后再出题，Sonnet 和 Haiku 各答一次。
 
 **验收**：推导测试按事先写定的题目和标准通过。
