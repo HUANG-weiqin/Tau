@@ -14,7 +14,7 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 2. [`.knowledge/INDEX.md`](.knowledge/INDEX.md)：每类事实由哪个文件负责。
 3. [总览的认知模型](.knowledge/kb-overview.md#认知模型)：一屏讲完 tau 的最小心智模型。
 4. [`docs/design/mvp.md`](docs/design/mvp.md)：模块细节和“MVP 不做”清单。
-5. [`docs/plan/mvp-checklist.md`](docs/plan/mvp-checklist.md)：当前做到哪一步。
+5. [`docs/plan/kernel-v2-checklist.md`](docs/plan/kernel-v2-checklist.md)：当前做到哪一步。
 
 加功能前，按 [kb-extending 的推导顺序](.knowledge/kb-extending.md#推导顺序)逐条回答。
 
@@ -32,7 +32,11 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 | 换段 | 写交接说明，开一个新的工作段。 |
 | 信箱 | 发给一个进程的所有输入排成的队。 |
 | 输入 | 信箱里的一条：用户消息、模型结果、工具结果、停止。 |
-| 副作用 | 内核之外的动作。库内副作用（记忆工具、`self`）在事务里执行；库外副作用（模型、read、write、edit、bash）由执行器执行。 |
+| 内核 | tau 自己：`src/` 的代码，加上它的文件格式、协议和 CLI。和它相对的是上层。 |
+| 上层 | 建在内核之上的功能，不改内核。 |
+| 纯函数层 | `src/kernel/`。 |
+| 工具描述 | 请求里给模型看的工具名、说明和参数。 |
+| 副作用 | 纯函数层之外的动作。库内副作用（记忆工具、`self`）在事务里执行；库外副作用（模型、read、write、edit、bash）由执行器执行。 |
 | 记忆库 | 一个带版本号的键值存储，`ns` 等于预设 ID。 |
 | 投影 | 纯函数 `observe` 的结果。CLI 和 `self` 工具看的是同一份。 |
 
@@ -72,7 +76,8 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 
 - **YAGNI**：MVP 里没有用户的功能不做。“以后会用到”“很便宜”都不是理由。
 - 外部工具能完整替代的功能不做：Git 负责 diff 和历史，编辑器负责浏览和编辑文件，终端负责交互式 shell。
-- 新功能必须能写成“新的输入类型”或“新的阶段”，不能在状态之外加可变字段。
+- 上层能完整接管、不付出代价的功能，内核不做。取舍顺序见 [kb-extending](.knowledge/kb-extending.md#取舍顺序)。
+- 进内核的功能不加阶段，阶段固定是 3 个。不在状态之外加可变字段。不推翻[设计稿第 1 节的不变量](docs/design/kernel-v2.md#1-目标和不变量)。
 - 只调用依赖的公开、无状态函数。不碰私有 API，不打补丁。
 - 设计稿“MVP 不做”清单里的任何一项，要做之前先更新设计稿和清单。
 - 决定要做以后，接在哪里、按什么原则接，见 [kb-extending](.knowledge/kb-extending.md)的原则和推导顺序。

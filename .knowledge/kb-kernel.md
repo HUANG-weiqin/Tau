@@ -1,10 +1,10 @@
-# 内核
+# 纯函数层
 
-`updated: 2026-11-15`
+`updated: 2026-11-16`
 
 ## 这个模块是干什么的
 
-内核是 `src/kernel/` 里的类型和纯函数。它不存任何东西。
+纯函数层是 `src/kernel/` 里的类型和纯函数。它不存任何东西。
 
 它负责：
 
@@ -140,7 +140,7 @@ interface Env { now: Instant; memoryView: string }
 | 字节换成 token | `tokens(b)` | `ceil(b / BYTES_PER_TOKEN)`，只对总字节数取整一次 |
 | 一条助手消息的用量 | `usageOf(m)` | `usage.totalTokens`；为 0 时取 `input + output + cacheRead + cacheWrite` |
 | 上下文用量 | `contextUsed(p, seg)` | 段里最后一条用量不为 0 的助手消息（锚点）的用量，加上 `tokens(锚点之后各消息的 messageBytes 之和)` |
-| 上下文用量（没有锚点） | `contextUsed(p, seg)` | `tokens(系统提示词的字节 + 工具定义 JSON 的字节 + 全段 messageBytes 之和)` |
+| 上下文用量（没有锚点） | `contextUsed(p, seg)` | `tokens(系统提示词的字节 + 工具描述 JSON 的字节 + 全段 messageBytes 之和)` |
 | 一次回复的输出上限 | `outputMax(preset)` | `floor(contextWindow / 8)`。执行器请求 `min(model.maxTokens, outputMax)`（[kb-executor.md](kb-executor.md#调用模型actionsts)） |
 | 换段阈值 | `handoffThreshold(preset)` | `contextWindow − 2 × outputMax − tokens(MESSAGE_MAX_BYTES) − MARGIN_TOKENS`，见[换段阈值](#换段阈值) |
 | 是否到阈值 | 内部 `overThreshold` | `contextUsed >= handoffThreshold` |
@@ -191,7 +191,7 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 7. 停止、步数用完、交接失败多少次、后来的消息多大，都不改变这个上界。重试发的是同一个请求。
 8. `turn` 调用：T + OUT < W。
 
-前提：真实的分词至少 2 字节一个 token；系统提示词和工具定义本身远小于窗口。
+前提：真实的分词至少 2 字节一个 token；系统提示词和工具描述本身远小于窗口。
 
 | W | OUT | T（占 W） | 交接请求上界 T + OUT + R + I（不含 S） | 加交接说明 | 余下 | 提示词空间 |
 |---|---|---|---|---|---|---|
@@ -292,11 +292,13 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 
 ## 认知模型
 
-内核是一个状态机：3 个阶段、4 种输入、2 种副作用。处理一条输入只看进程记录和当前段。
+纯函数层是一个状态机：3 个阶段、4 种输入、2 种副作用。处理一条输入只看进程记录和当前段。
 
 判断一次修改是否越界：
 
-- 新功能只能是新的输入种类或新的阶段。
+- 进内核的功能不加阶段，阶段固定是 3 个。
+- 不在状态之外加可变字段。
+- 不推翻设计稿第 1 节的不变量（[设计稿](../docs/design/kernel-v2.md#1-目标和不变量)）。
 - 能从段算出的值不存。
 - 调用模型必须经过 `continueTurn`，这样才计步。
 - 结束一轮必须经过 `endTurn`，这样每个工具调用都有结果。
@@ -305,7 +307,7 @@ W 是 `preset.contextWindow`。快照里只冻结它，不冻结模型的输出�
 
 ### 不变量
 
-`test/invariants.ts` 的 `assertInvariants(p, seg)`。内核测试每处理一条输入就检查一次。存储层的不变量复用它，再检查待办副作用表和信箱，见 [kb-store.md](kb-store.md#存储层不变量)。
+`test/invariants.ts` 的 `assertInvariants(p, seg)`。纯函数层测试每处理一条输入就检查一次。存储层的不变量复用它，再检查待办副作用表和信箱，见 [kb-store.md](kb-store.md#存储层不变量)。
 
 总是成立：
 
@@ -353,8 +355,8 @@ type PhaseView =
 ```
 
 - 只给时刻和时长，单位毫秒。`age = now - createdAt`。`queued` 只给条数。
-- 本地时间、时区和文本格式在内核外：`self` 在事务里（[kb-store.md](kb-store.md#self)），`tau ps` 在 CLI 里（[kb-service.md](kb-service.md#tau-ps-的文字格式)）。
-- 内核不加命令。Agent 通过库内工具 `self` 看到投影。
+- 本地时间、时区和文本格式在纯函数层外：`self` 在事务里（[kb-store.md](kb-store.md#self)），`tau ps` 在 CLI 里（[kb-service.md](kb-service.md#tau-ps-的文字格式)）。
+- 纯函数层不加命令。Agent 通过库内工具 `self` 看到投影。
 
 ## 入口
 
@@ -377,13 +379,13 @@ type PhaseView =
 | `test/kernel/regressions.test.ts` | 审查发现的缺陷的最小反例 |
 | `test/kernel-imports.test.ts` | import 和纯度扫描 |
 
-只跑内核测试：`node --test "test/kernel/*.test.ts" test/kernel-imports.test.ts`。完成门槛见 AGENTS.md。
+只跑纯函数层测试：`node --test "test/kernel/*.test.ts" test/kernel-imports.test.ts`。完成门槛见 AGENTS.md。
 
 ## 坑点
 
 - **按 ID 配对。** 重复或为空的 ID 会让进程永远等一个“已有结果”的调用。`pendingCalls` 和 `endTurn` 都按位置算。验证：`regressions.test.ts` 的重复 ID 用例，`assertInvariants` 的配对检查。
 - **过时的结果。** 编号不对、进程 `idle`、种类不对的结果一律丢弃。每个工具都有新编号，所以上一个工具迟到的结果不会被当成下一个的。验证：`flow.test.ts` 的“4.2 丢弃过时和重复的结果”。
-- **换段循环靠步数收住。** 新段一开始就超过阈值时（例如系统提示词和工具定义已经超过），每次换段都成功，又立即再换段，直到 `stepLimit`。每条消息最多调用 `STEPS_PER_TURN` 次模型。不要让交接调用不计步。验证：`acceptance.test.ts`。
+- **换段循环靠步数收住。** 新段一开始就超过阈值时（例如系统提示词和工具描述已经超过），每次换段都成功，又立即再换段，直到 `stepLimit`。每条消息最多调用 `STEPS_PER_TURN` 次模型。不要让交接调用不计步。验证：`acceptance.test.ts`。
 - **小窗口。** 窗口小于 27,307 时阈值不大于 0，每次调用都是交接。空记忆、交接说明不超过 8 KiB 时，约从 36K 起能用。最坏的新段要约 63K 以上；64K 窗口只给预设提示词留约 2.6 到 4.9 KB（见[换段阈值](#换段阈值)）。加载预设时不检查。
 - **2 字节一个 token 是证明的前提。** 阈值检查只看估算。真实分词低于它时，误差按字节累加。误差只在两次真实用量之间累加。一次回复读回多个结果时，每个都少算。最后一次 `turn` 调用之前少算的部分，会让那次回复的用量超过 T + OUT。所以第 2、5、6、8 步都可能不成立，`turn` 调用本身也可能超过窗口。补的结果（S）里随机的 ID 也会被少算：在用的 opencode-go 的 ID 是 `call_` 加 24 个十六进制字符。超过窗口时，同一个请求每次重试都同样失败。量过的数见 [D24](kb-decisions.md#d24-真模型验收)，风险和应对见设计稿的[风险](../docs/design/mvp.md#风险)。
 - **在等模型时停止或失败，只靠下一条消息里的说明告诉模型。** 这时段里不写回复，也不写标记。排队的消息照常合并写入。段末是那条用户消息、合并的排队消息，或者最后的工具结果。不加说明时，模型可能把没做完的请求当成还要做的事（[D24](kb-decisions.md#d24-真模型验收)）。在工具运行中停止或被中断时，模型另外还能看到“被中断，结果未知”。

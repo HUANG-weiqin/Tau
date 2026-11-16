@@ -1,6 +1,6 @@
 # 存储
 
-`updated: 2026-11-15`
+`updated: 2026-11-16`
 
 ## 这个模块是干什么的
 
@@ -233,7 +233,7 @@ CREATE TABLE memory (
 `test/store/invariants.ts` 的 `assertStoreInvariants(db)`。它们在任何一个事务提交后都必须成立。存储层测试在事务之后调用它，崩溃测试每一步之后都调用：
 
 1. `effects` 的每一行都属于一个存在的进程。
-2. 每个进程的记录和当前段满足内核不变量（[kb-kernel.md](kb-kernel.md)）。
+2. 每个进程的记录和当前段满足纯函数层不变量（[kb-kernel.md](kb-kernel.md)）。
 3. 每个进程在 `effects` 里最多一行。
 4. `effectOf` 为空的进程一定是 `idle`。`idle` 的进程在 `effects` 里没有行。
 5. 运行中的进程有 `effects` 行时，行的编号就是 `effectOf` 的编号。
@@ -294,7 +294,7 @@ CREATE TABLE memory (
 - <id>：<阶段>，已运行 <时长>
 ```
 
-- 本地时间用 `toLocaleString("zh-CN", { hour12: false })`，时区用 `Intl.DateTimeFormat().resolvedOptions().timeZone`。两者都取服务所在机器的设置，在内核外格式化。
+- 本地时间用 `toLocaleString("zh-CN", { hour12: false })`，时区用 `Intl.DateTimeFormat().resolvedOptions().timeZone`。两者都取服务所在机器的设置，在纯函数层外格式化。
 - 没有兄弟进程时，最后两行换成 `同一个预设下没有其他运行中的进程。`。兄弟按进程 ID 排序。
 - 时长取最大的两个非零单位（天、小时、分、秒）。全为零时是 `0 秒`。
 - 阶段的写法：
@@ -339,7 +339,7 @@ CREATE TABLE memory (
 
 ## 关联模块
 
-- [kb-kernel.md](kb-kernel.md)：`decide`、`effectOf`、`observe`、内核不变量、工具结果的裁剪。
+- [kb-kernel.md](kb-kernel.md)：`decide`、`effectOf`、`observe`、纯函数层不变量、工具结果的裁剪。
 - [kb-executor.md](kb-executor.md)：`effects` 的另一半：开始、完成、中止、启动恢复。
 - [kb-memory.md](kb-memory.md)：`Memory` 接口、上限、视图格式、版本号；测试用的假记忆库和真的有什么不同。
 - [kb-service.md](kb-service.md)：服务、回执、`tau ps`。

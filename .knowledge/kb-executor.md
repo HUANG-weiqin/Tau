@@ -1,6 +1,6 @@
 # 执行器
 
-`updated: 2026-11-15`
+`updated: 2026-11-16`
 
 ## 这个模块是干什么的
 
@@ -96,7 +96,7 @@ abort(id, n)
 - 为什么是窗口的 1/8：换段阈值只给一次回复留 `outputMax` 的空间（[kb-kernel](kb-kernel.md#换段阈值)）。请求得更多，交接请求就可能放不进窗口。
 - 为什么取较小的：不向模型要它给不了的输出。快照只冻结窗口，`model.maxTokens` 调用时现查（[D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)）。
 - pi-ai 1.0.0 的 `buildBaseOptions` 取 `options.maxTokens ?? model.maxTokens`，再截到 `max(1, 窗口 − 它的估算 − 4096)`。这一步只会调低。
-- pi-ai 的估算是锚点用量加上之后的字符数 / 4，不超过内核的估算（字节数 / 2）。所以轮次调用时这一截不起作用。交接调用时，它最多把交接说明的上限压低“补的结果 + 交接指令”那么多。
+- pi-ai 的估算是锚点用量加上之后的字符数 / 4，不超过纯函数层的估算（字节数 / 2）。所以轮次调用时这一截不起作用。交接调用时，它最多把交接说明的上限压低“补的结果 + 交接指令”那么多。
 - tau 从不传 `reasoning`。不传时 Anthropic 和 Bedrock 不加思考预算，`maxTokens` 就是全部输出。
 
 ### 运行工具（`actions.ts`）
@@ -124,7 +124,7 @@ abort(id, n)
 | 停止删掉 `running` 行之后、动作结束之前 | 没有行，进程 `idle` | 什么都不送 |
 | 恢复提交之后 | 没有 `running` 行 | 再恢复一次什么都不改 |
 
-- 收到 `interrupted` 后内核结束本轮（[kb-kernel.md](kb-kernel.md)）。
+- 收到 `interrupted` 后纯函数层结束本轮（[kb-kernel.md](kb-kernel.md)）。
 - `running` 行属于 `idle` 或不存在的进程时，恢复抛出，服务不启动。
 - 服务正常退出时不中止动作（[kb-service.md](kb-service.md#退出)）。没跑完的动作效果和崩溃一样：行留在 `running`，下次启动作为 `interrupted` 送回。bash 和它的子孙进程继续运行（[kb-tools.md](kb-tools.md#坑点)）。
 
