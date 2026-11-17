@@ -280,3 +280,120 @@ test("一个预设用到的定义加起来超过 64 KiB：读预设失败", () =
   const three = write("three", front([`workdir: ${work}`, `model: ${modelStr}`, "tools: m1, m2, m3"]));
   assert.equal(loadPreset(three, "three", models, toolsRoot).toolDefs.length, 3);
 });
+
+// options（D64 第 11 组）
+
+function opts(id: string, json: string): ReturnType<typeof loadPreset> {
+  return loadPreset(write(id, valid([`options: ${json}`])), id, models, toolsRoot);
+}
+
+test("options 没写：快照没有这个键；{} 等于不写", () => {
+  assert.equal("options" in loadPreset(write("noopt", valid()), "noopt", models, toolsRoot), false);
+  assert.equal("options" in opts("emptyopt", "{}"), false);
+});
+
+const GOOD: [string, unknown][] = [
+  ["temperature", 0.7],
+  ["temperature", 0],
+  ["cacheRetention", "none"],
+  ["cacheRetention", "short"],
+  ["cacheRetention", "long"],
+  ["transport", "sse"],
+  ["transport", "websocket"],
+  ["transport", "websocket-cached"],
+  ["transport", "auto"],
+  ["timeoutMs", 30000],
+  ["websocketConnectTimeoutMs", 5000],
+  ["maxRetryDelayMs", 0],
+  ["maxRetryDelayMs", 1000],
+  ["metadata", { user_id: "u" }],
+  ["thinkingBudgets", { low: 1000, high: 8000 }],
+  ["samplingParams", { top_p: 0.9, service_tier: "priority" }],
+];
+for (const [key, value] of GOOD) {
+  test(`options ${key} = ${JSON.stringify(value)} 冻结进快照`, () => {
+    const snap = opts(`good-${key}`, JSON.stringify({ [key]: value }));
+    assert.deepEqual(snap.options, { [key]: value });
+  });
+}
+
+const BAD: [string, unknown][] = [
+  ["temperature", "hot"],
+  ["temperature", null],
+  ["cacheRetention", "forever"],
+  ["cacheRetention", 1],
+  ["transport", "grpc"],
+  ["timeoutMs", 0],
+  ["timeoutMs", 1.5],
+  ["timeoutMs", "5"],
+  ["websocketConnectTimeoutMs", -1],
+  ["maxRetryDelayMs", -1],
+  ["maxRetryDelayMs", 0.5],
+  ["metadata", []],
+  ["metadata", "x"],
+  ["metadata", null],
+  ["thinkingBudgets", { xhigh: 1000 }],
+  ["thinkingBudgets", { low: 0 }],
+  ["thinkingBudgets", { low: "1" }],
+  ["thinkingBudgets", []],
+  ["samplingParams", []],
+  ["samplingParams", "x"],
+];
+for (const [key, value] of BAD) {
+  test(`options ${key} = ${JSON.stringify(value)} 被拒绝并报键名`, () => {
+    assert.throws(() => opts(`bad-${key}`, JSON.stringify({ [key]: value })), new RegExp(`options.*${key}`));
+  });
+}
+
+const REJECT: [string, string][] = [
+  ["signal", "内核管"],
+  ["sessionId", "内核管"],
+  ["maxTokens", "内核管"],
+  ["maxRetries", "内核管"],
+  ["reasoning", "内核管"],
+  ["toolChoice", "一轮的语义"],
+  ["deferred", "一轮的语义"],
+  ["apiKey", "凭据"],
+  ["headers", "凭据"],
+  ["env", "凭据"],
+  ["fetch", "函数"],
+  ["onPayload", "函数"],
+  ["onResponse", "函数"],
+  ["onProviderStreamEvent", "函数"],
+  ["serviceTier", "不转发"],
+  ["unknownKey", "不转发"],
+];
+for (const [key, why] of REJECT) {
+  test(`options ${key} 被拒绝：报键名和类别 ${why}`, () => {
+    assert.throws(() => opts(`rej-${key}`, JSON.stringify({ [key]: 1 })), new RegExp(`options.*${key}.*${why}`));
+  });
+}
+
+const SAMPLING_RESERVED = ["model", "messages", "input", "instructions", "system", "tools", "tool_choice", "stream", "stream_options", "n", "max_tokens", "max_completion_tokens", "max_output_tokens", "previous_response_id", "store", "prompt_cache_key", "reasoning", "reasoning_effort", "thinking"];
+for (const k of SAMPLING_RESERVED) {
+  test(`options.samplingParams 不许有保留键 ${k}`, () => {
+    assert.throws(() => opts(`sp-${k}`, JSON.stringify({ samplingParams: { [k]: 1 } })), new RegExp(`samplingParams.*${k}`));
+  });
+}
+
+test("options 不是一个 JSON 对象就报错", () => {
+  for (const [i, bad] of ["[]", "null", "3", '"x"', "{oops", ""].entries()) {
+    assert.throws(() => opts(`notobj${i}`, bad), /options/);
+  }
+});
+
+test("options 超过 4096 字节报错；刚好 4096 字节可以", () => {
+  const over = JSON.stringify({ metadata: { v: "x".repeat(4100) } });
+  assert.throws(() => opts("big", over), /options.*4096/);
+  const fill = (n: number) => JSON.stringify({ metadata: { v: "x".repeat(n) } });
+  const exact = fill(4096 - Buffer.byteLength(fill(0)));
+  assert.equal(Buffer.byteLength(exact), 4096);
+  assert.ok(opts("exact", exact).options);
+  assert.throws(() => opts("exact1", fill(4096 - Buffer.byteLength(fill(0)) + 1)), /4096/);
+  // 按字节算，不按字符：多字节字符。
+  assert.throws(() => opts("big-cjk", JSON.stringify({ metadata: { v: "中".repeat(1400) } })), /4096/);
+});
+
+test("duplicate options 报错", () => {
+  assert.throws(() => loadPreset(write("dupopt", valid(["options: {}", "options: {}"])), "dupopt", models, toolsRoot), /options/);
+});

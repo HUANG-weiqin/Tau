@@ -234,3 +234,36 @@ test("重试：恰好 60 秒不算超过（只验证不被拒绝，用 retry-aft
   assert.equal(fetches, 1);
   assert.equal(reply.stopReason, "aborted");
 });
+
+// 预设的 options（D64 第 11 组）
+
+test("options 到了 streamSimple；内核的键赢，即使快照被手改成含 maxTokens、sessionId、reasoning", async () => {
+  const { models, calls } = recording();
+  const p = preset("anthropic/claude-haiku-4-5", "high");
+  const options = { temperature: 0.3, cacheRetention: "long", timeoutMs: 1234, thinkingBudgets: { high: 5000 }, samplingParams: { top_p: 0.5 } };
+  await createActions(models, noText, "test-pipe", () => undefined).callModel(job({ ...p, options: options as never }), new AbortController().signal);
+  const o = calls[0]!.options;
+  assert.equal(o.temperature, 0.3);
+  assert.equal(o.cacheRetention, "long");
+  assert.equal(o.timeoutMs, 1234);
+  assert.deepEqual(o.thinkingBudgets, { high: 5000 });
+  assert.deepEqual(o.samplingParams, { top_p: 0.5 });
+  assert.equal(o.maxTokens, 25_000);
+  assert.equal(o.reasoning, "high");
+
+  const evil = { maxTokens: 1, maxRetries: 99, sessionId: "evil", reasoning: "minimal", signal: null, toolChoice: "none" };
+  const signal = new AbortController().signal;
+  await createActions(models, noText, "test-pipe", () => undefined).callModel(job({ ...p, options: evil as never }), signal);
+  const e = calls[1]!.options;
+  assert.equal(e.maxTokens, 25_000);
+  assert.equal(e.maxRetries, MODEL_RETRIES);
+  assert.equal(e.sessionId, "p1");
+  assert.equal(e.reasoning, "high");
+  assert.equal(e.signal, signal);
+});
+
+test("预设没写 thinking 时，快照里的 reasoning 也不能漏进去", async () => {
+  const { models, calls } = recording();
+  await createActions(models, noText, "test-pipe", () => undefined).callModel(job({ ...preset("anthropic/claude-haiku-4-5"), options: { reasoning: "high" } as never }), new AbortController().signal);
+  assert.equal("reasoning" in calls[0]!.options, false);
+});

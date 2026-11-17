@@ -222,3 +222,16 @@ test("fork 带预设：估算放不进新阈值、新预设的启动检查不过
   assert.throws(() => forkProcess(db, memory, "b", "a", 0, 0, { ...PRESET, id: "tiny", handoff: 4000 }), /窗口太小/);
   assert.equal(dump(db), before);
 });
+
+test("fork 带预设用新预设的 options；不带预设时原样复制", (t) => {
+  const db = tempDb(t);
+  const mem = fakeMemory();
+  idleSource(db, { ...PRESET, options: { temperature: 0.2 } });
+  const target: PresetSnapshot = { ...PRESET, id: "other", options: { cacheRetention: "long" } };
+  assert.deepEqual(forkProcess(db, mem, "b", "a", undefined, 500, target).process.preset.options, { cacheRetention: "long" });
+  assert.deepEqual(loadProcess(db, "b")?.preset.options, { cacheRetention: "long" });
+  const noOpts: PresetSnapshot = { ...PRESET, id: "plain" };
+  assert.equal("options" in forkProcess(db, mem, "c", "a", undefined, 600, noOpts).process.preset, false);
+  assert.deepEqual(forkProcess(db, mem, "d", "a", undefined, 700).process.preset.options, { temperature: 0.2 });
+  assertStoreInvariants(db);
+});

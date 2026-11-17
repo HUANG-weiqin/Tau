@@ -85,7 +85,7 @@ abort(id, n)
 ### 调用模型（`actions.ts`）
 
 1. 按第一个 `/` 把快照里的模型 ID 拆成 provider 和模型 ID，用 `models.getModel` 现查。查不到就抛出 `模型目录里没有 <ID>`，执行器把它变成 `error` 回复。
-2. `models.streamSimple({ ...model, maxTokens: cap }, resolveImages(buildContext(process, segment), readBlob), { signal, sessionId: process.id, maxTokens: cap, maxRetries: MODEL_RETRIES, reasoning? })`。`cap` = `min(model.maxTokens, outputMax(preset))`，`outputMax` 是窗口的 1/8。快照有 `thinking` 才传 `reasoning`，没有就连键都不传。不传 `thinkingBudgets`。轮次调用和交接调用一样。
+2. `models.streamSimple({ ...model, maxTokens: cap }, resolveImages(buildContext(process, segment), readBlob), { ...preset.options, signal, sessionId: process.id, maxTokens: cap, maxRetries: MODEL_RETRIES, reasoning? })`。先铺预设的 `options`（[kb-kernel](kb-kernel.md#预设选项)），再铺内核自己的键，内核的键赢：快照被手改成含 `maxTokens`、`sessionId`、`reasoning` 也一样。`options` 不参与 `cap`、启动检查和阈值的计算。`cap` = `min(model.maxTokens, outputMax(preset))`，`outputMax` 是窗口的 1/8。快照有 `thinking` 才传 `reasoning`，没有就连键都不传（`options` 里的 `reasoning` 也会被去掉）。预设没写 `options.thinkingBudgets` 就不传，写了就照它传（也不参与 `cap` 的计算）。轮次调用和交接调用一样。
 3. 只把 `text_delta` 事件连同进程 ID 和副作用编号交给 `onText`。服务怎样转发，见 [kb-service.md](kb-service.md#流式文本)。
 4. 返回 `stream.result()`，也就是最终的助手消息。
 
@@ -120,13 +120,13 @@ abort(id, n)
 - 回答最坏剩 max(`cap` − 预算, 1,024)。`cap` 不大于“预算 + 1,024”时，pi-ai 把预算压到 `cap − 1,024`，回答只剩 1,024。
 - pi-ai 的默认预算：`minimal` 1,024，`low` 2,048，`medium` 8,192，`high` 及以上 16,384。所以回答只剩 1,024 的边界是：`high` 及以上 `cap` ≤ 17,408，`medium` ≤ 9,216，`low` ≤ 3,072，`minimal` ≤ 2,048。
 - pi-ai 1.0.0 的目录里，落在这里的是 vercel-ai-gateway 经 anthropic-messages 接入的 21 个非 Anthropic 模型，例如 zai/glm-4.5。其中 6 个连 `medium` 也落在范围里（`cap` 5,120 到 8,250）。Anthropic 自己的模型 `cap` 都不小于 25,000。在用的 haiku-4-5 在 `high` 及以上最坏剩 8,616。
-- 预设换到走预算路径的模型，先按上面的式子算。落在范围里，就把 `thinking` 降到不落在范围里的级别，或者不设 `thinking`，或者换模型。预设没有 `thinkingBudgets`，执行器也不传它。测试和核实表查不出这件事，只能靠算。
+- 预设换到走预算路径的模型，先按上面的式子算。落在范围里，就把 `thinking` 降到不落在范围里的级别，或者不设 `thinking`，或者换模型。预设的 `options.thinkingBudgets` 写了对应级别的值，预算就取它，式子里的“预算”换成实际用的那个（仍被压到“上限减 1,024”以内）；没写才用上面的默认预算。测试和核实表查不出这件事，只能靠算。
 
 重试：
 
-- 执行器传 `maxRetries: MODEL_RETRIES`（5）。pi-ai 1.0.0 的 `maxRetries` 默认是 0，所以必须显式传。`maxRetryDelayMs` 的默认就是 60,000，不传。
+- 执行器传 `maxRetries: MODEL_RETRIES`（5）。pi-ai 1.0.0 的 `maxRetries` 默认是 0，所以必须显式传。内核不传 `maxRetryDelayMs`；预设的 `options` 写了就照它传，没写时 pi-ai 的默认是 60,000。
 - pi-ai 只重试拿到成功的响应之前的失败：没有状态码的连接错误，以及 408、409、429 和 5xx 的错误响应，以错误响应的 `x-should-retry` 头为准。重试可以被中止。
-- 等多久：错误响应带 `retry-after-ms` 或 `retry-after` 时，按它等；超过 60 秒就直接失败，429 通常带这个头，5 次最坏约 5 分钟。不带时，退避从 0.5 秒起翻倍，乘 0.75 到 1 的随机数，单次最多 8 秒，5 次一共约 12 到 16 秒。等的时候，进程停在“等模型”。
+- 等多久：错误响应带 `retry-after-ms` 或 `retry-after` 时，按它等；超过 60 秒就直接失败（预设没写 `maxRetryDelayMs` 时；写 0 表示没有上限，会一直等到那个时间），429 通常带这个头，5 次最坏约 5 分钟（同样只在没写时成立）。不带时，退避从 0.5 秒起翻倍，乘 0.75 到 1 的随机数，单次最多 8 秒，5 次一共约 12 到 16 秒。等的时候，进程停在“等模型”。
 - 这不是重做副作用：还是同一个副作用，也还没有任何结果。崩溃后照样报“被中断”，不重做。
 - 流式输出开始以后出的错不重试，本轮出错结束。这比 Pi SDK 弱：它按最终消息判断要不要重试。
 - 状态：重试不存状态。

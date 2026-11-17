@@ -1,6 +1,6 @@
 // 真正的动作：调用模型、运行库外工具（见 .knowledge/kb-executor.md、.knowledge/kb-tools.md）。
 import { validateToolArguments } from "@earendil-works/pi-ai";
-import type { Models } from "@earendil-works/pi-ai";
+import type { Models, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { buildContext, toolDescriptions } from "../kernel/context.ts";
 import { outputMax } from "../kernel/derive.ts";
 import { textContent } from "../kernel/types.ts";
@@ -24,15 +24,13 @@ export function createActions(models: Models, onText: (id: ProcessId, n: number,
       if (!model) throw new Error(`模型目录里没有 ${name}`);
       // 一次回复的总输出（含思考）不超过 cap：窗口的 1/8，换段阈值按这个数留空间（kernel/derive.ts）。
       // 模型的 maxTokens 也换成 cap：按预算思考的路径把预算加到 maxTokens 上，再按模型的 maxTokens 截。
-      const { thinking } = job.process.preset;
+      const { thinking, options } = job.process.preset;
       const cap = Math.min(model.maxTokens, outputMax(job.process.preset));
-      const stream = models.streamSimple({ ...model, maxTokens: cap }, resolveImages(buildContext(job.process, job.segment), readBlob), {
-        signal,
-        sessionId: job.process.id,
-        maxTokens: cap,
-        maxRetries: MODEL_RETRIES,
-        ...(thinking === undefined ? {} : { reasoning: thinking }),
-      });
+      // 先铺预设的 options，再铺内核自己的键：内核的键赢，快照被手改也一样。
+      const o: SimpleStreamOptions = { ...options, signal, sessionId: job.process.id, maxTokens: cap, maxRetries: MODEL_RETRIES };
+      if (thinking === undefined) delete (o as { reasoning?: unknown }).reasoning;
+      else o.reasoning = thinking;
+      const stream = models.streamSimple({ ...model, maxTokens: cap }, resolveImages(buildContext(job.process, job.segment), readBlob), o);
       for await (const e of stream) if (e.type === "text_delta") onText(job.process.id, job.effect.n, e.delta);
       return stream.result();
     },

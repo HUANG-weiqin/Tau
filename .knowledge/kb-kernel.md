@@ -59,7 +59,7 @@ type Phase =
 type Ended = "done" | "stepLimit" | "stopped" | { error: string };
 ```
 
-- `PresetSnapshot` 有 `id`、`workdir`、`model`（`<provider>/<model-id>`）、`tools`、`prompt`、`contextWindow`、`input`（模型能收的输入，`text` 和 `image` 的子集），还有可选的 `thinking`（pi-ai 的思考级别，预设没写就没有这个键）和可选的 `handoff`（换段阈值的上限，正整数，单位 token，预设没写就没有这个键，见[换段阈值](#换段阈值)）。`tools` 是 `read`、`write`、`edit`、`bash`、`memory`、`agents` 的子集：`agents` 是一组工具（`post`、`spawn`、`stop_process`），不是单个工具。`toolDefs` 是预设 `tools` 里写的工具定义（`ToolDef`：`name`、`description`、`parameters`、`command`、`timeout`、`output`，默认值已补上），按写的顺序；没用时是空数组。预设的 `tools` 一行里，内置工具进 `tools`，其余的名字都是工具定义，进 `toolDefs`（[D43](kb-decisions.md#d43-第-7-步前一半工具定义的格式读取和冻结)）。预设文件的格式见[设计稿第 2 节](../docs/design/mvp.md#2-预设)，工具定义的格式见 [kb-tools](kb-tools.md#工具定义)。
+- `PresetSnapshot` 有 `id`、`workdir`、`model`（`<provider>/<model-id>`）、`tools`、`prompt`、`contextWindow`、`input`（模型能收的输入，`text` 和 `image` 的子集），还有可选的 `thinking`（pi-ai 的思考级别，预设没写就没有这个键）和可选的 `handoff`（换段阈值的上限，正整数，单位 token，预设没写就没有这个键，见[换段阈值](#换段阈值)）和可选的 `options`（见[预设选项](#预设选项)）。`tools` 是 `read`、`write`、`edit`、`bash`、`memory`、`agents` 的子集：`agents` 是一组工具（`post`、`spawn`、`stop_process`），不是单个工具。`toolDefs` 是预设 `tools` 里写的工具定义（`ToolDef`：`name`、`description`、`parameters`、`command`、`timeout`、`output`，默认值已补上），按写的顺序；没用时是空数组。预设的 `tools` 一行里，内置工具进 `tools`，其余的名字都是工具定义，进 `toolDefs`（[D43](kb-decisions.md#d43-第-7-步前一半工具定义的格式读取和冻结)）。预设文件的格式见[设计稿第 2 节](../docs/design/mvp.md#2-预设)，工具定义的格式见 [kb-tools](kb-tools.md#工具定义)。
 - `segment.memoryView` 是开段那一刻的记忆视图。以后算不出来，所以存。
 - `turn.steps` 必须存：一轮可以跨越换段。
 - `turn.queued` 存信件原样，写进段时才渲染。`turn.hops` 是本轮已经写进段的信的最大跳数，`turn.replyTo` 是本轮结束时要寄回信的进程，去重。并进 `turn` 的规则见[回信](#回信)。
@@ -130,7 +130,7 @@ interface Env { now: Instant; memoryView: string }
 
 新进程：
 
-- 预设快照：原样复制源进程的 `preset`（含 `toolDefs`、`input`、`thinking`、`handoff`），不重读预设文件。
+- 预设快照：原样复制源进程的 `preset`（含 `toolDefs`、`input`、`thinking`、`handoff`、`options`），不重读预设文件。
 - 第 1 段：`before` 是当前段里一条用户消息的段内序号，也就是 `history` 每行的 `seq`。带 `before` 时，消息是序号小于 `before` 的全部消息；不带时是当前段的全部消息。原样复制，图片的 `blob:` 引用照用。
 - `segment.memoryView`：复制源进程当前段的，所以系统提示词和源进程一样。
 - 阶段：带 `before` 时是不带结束原因的 `idle`。不带时复制源进程的 `idle`（含结束原因），下一封信前面的“上一轮的说明”就和源进程一样。
@@ -151,6 +151,13 @@ interface Env { now: Instant; memoryView: string }
 - `preset` 是新预设的快照，`segment.memoryView` 是 `to.memoryView`，都不用源进程的。其余字段和消息的取法同上，`before` 的规则也同上。
 - 新模型不收图片（`preset.input` 不含 `image`）：复制的用户消息和工具结果里，每张图在原位置换成 `IMAGE_UNSUPPORTED`，和同一条消息里的文字用换行连成一段。用户消息成字符串，工具结果成一个文本块，所以[消息的两种形状](#消息的两种形状)不变。没有图片的消息原样；新模型收图片也原样。
 - 大小检查：不带锚点的估算 `estimatedUsed`（系统提示词、工具描述和全段按 `BYTES_PER_TOKEN`，图片按 `IMAGE_TOKENS`，按新进程算），要低于新预设的 `handoffThreshold`（含 `handoff`）。否则抛错，报出估算和阈值。不用 `contextUsed` 的用量锚点：锚点是旧模型、旧固定部分的用量，和新进程的请求对不上。超过阈值时第一次调用就是交接调用，带着整段，换到小窗口会失败，所以在这里拒绝。
+
+### 预设选项
+
+- 预设的 `options` 是一行 JSON 对象，不超过 `OPTIONS_MAX_BYTES`（4096 字节，按字节算），冻结进快照的 `options`。`{}` 等于不写，快照里没有这个键。类型是 `PresetOptions`，从 pi-ai 的 `SimpleStreamOptions` 里 `Pick`。
+- 检查在 `loadPreset`，所以 `start`、`fork`、`spawn`、`check` 的拒绝一致。白名单和类型：`temperature`（有限数）、`cacheRetention`（`none`、`short`、`long`）、`transport`（`sse`、`websocket`、`websocket-cached`、`auto`）、`timeoutMs` 和 `websocketConnectTimeoutMs`（正整数）、`maxRetryDelayMs`（非负整数）、`metadata`（对象）、`thinkingBudgets`（键 `minimal`、`low`、`medium`、`high`，值正整数）、`samplingParams`（对象，不许有请求结构键和输出上限键，清单在 `presets/load.ts`）。
+- 白名单外的键报键名和类别：内核管的（`signal`、`sessionId`、`maxTokens`、`maxRetries`、`reasoning`）、一轮的语义（`toolChoice`、`deferred`）、凭据（`apiKey`、`headers`、`env`）、函数、`streamSimple` 不转发的（含 `serviceTier`）。
+- `fork` 带新预设时用新预设的 `options`，不带时随快照原样复制。执行器的铺法见 [kb-executor](kb-executor.md#调用模型actionsts)。
 
 ### 工具描述
 

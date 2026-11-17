@@ -1,5 +1,5 @@
 // 内核的全部类型。外部类型只能 import type（见 .knowledge/kb-kernel.md）。
-import type { AssistantMessage, Context, ImageContent, TextContent, ThinkingLevel, Tool, ToolCall, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Context, ImageContent, TextContent, SimpleStreamOptions, ThinkingLevel, Tool, ToolCall, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 
 export type { AssistantMessage, ImageContent, ToolCall, ToolResultMessage, UserMessage };
 
@@ -43,7 +43,12 @@ export interface PresetSnapshot {
   thinking?: ThinkingLevel;
   /** 换段阈值的上限，token，正整数。预设没写就没有这个键。只能把阈值调低：写得比算出的阈值大就等于没写。 */
   handoff?: number;
+  /** 预设里一行 JSON 写的调用参数，白名单见 `presets/load.ts`。执行器先铺它，再铺内核自己的键。预设没写（或写 `{}`）就没有这个键。 */
+  options?: PresetOptions;
 }
+
+/** 预设能带的 `streamSimple` 参数：pi-ai 转发、能用 JSON 写、又不归内核管的键。 */
+export type PresetOptions = Pick<SimpleStreamOptions, "temperature" | "cacheRetention" | "transport" | "timeoutMs" | "websocketConnectTimeoutMs" | "maxRetryDelayMs" | "metadata" | "thinkingBudgets" | "samplingParams">;
 
 /** 累计用量：这个进程所有模型调用的 token 之和（设计稿第 5.8 节）。 */
 export interface Usage {

@@ -1124,6 +1124,21 @@ test("check：读得出就回快照、限度和 error:null；快照和 start 冻
   assert.deepEqual(loadProcess(e.svc.db, id)?.preset, c.snapshot);
 });
 
+test("check：快照里有预设的 options", async (t) => {
+  const e = await setup(t);
+  writeFileSync(join(e.presetsDir, "opt.md"), `---
+workdir: ${e.work}
+model: ${e.faux.getModel().provider}/m
+tools: read
+options: {"temperature":0.4,"samplingParams":{"top_p":0.8}}
+---
+你是测试助手。
+`);
+  const c = (await collect(e.pipe, { op: "check", preset: "opt" }))[0] as Checked;
+  assert.equal(c.type, "check");
+  assert.deepEqual(c.snapshot.options, { temperature: 0.4, samplingParams: { top_p: 0.8 } });
+});
+
 test("check：读不出回 error，文字和 start 一字不差；装不下回 check，error 是启动检查的原文", async (t) => {
   const e = await setup(t);
   const preset = (id: string, extra: string) => writeFileSync(join(e.presetsDir, `${id}.md`), `---\nworkdir: ${e.work}\nmodel: ${e.faux.getModel().provider}/m\ntools: read\n${extra}---\n你是测试助手。\n`);
