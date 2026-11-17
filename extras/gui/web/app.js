@@ -22,6 +22,8 @@ import { CleanDialog } from "./ui/clean.js";
 import { NewProcDialog } from "./ui/newproc.js";
 import { OpenProjDialog } from "./ui/openproj.js";
 import { NewPresetDialog } from "./ui/newpreset.js";
+import { EditPresetDialog } from "./ui/editpreset.js";
+import { pushRecent } from "./lib/models.js";
 import { ConfirmLayer, confirmOpen } from "./ui/remove.js";
 
 /**
@@ -44,6 +46,8 @@ import { ConfirmLayer, confirmOpen } from "./ui/remove.js";
  * @property {Record<string, PresetInfo>} presets 预设文件，按预设 ID 查。读不懂的 `ok: false`。
  * @property {PresetInfo[]} presetList 预设文件，列表。
  * @property {GuiState} gui 界面数据（`~/.tau/extras/gui/state.json`）。改它用 `setGui` 和 `lib/state.js` 的补丁函数。
+ * @property {{ providers: import("./lib/models.js").CatalogProvider[], auth: { ok: true } | { ok: false, error: string } } | null} models 模型目录（供应商、模型、key 状态）。没读到前是 null。key 状态在打开相关弹窗时重读。
+ * @property {string | null} modelsError 模型目录读不到的原因。
  * @property {boolean} ready 界面数据和预设都读到了。
  * @property {boolean} procsReady 连着服务，并且收到过进程表。没到之前，“某个预设没有进程”不可信。
  * @property {Entry[]} entries 全部进程（含总管的），已按预设分好类：`kind` 是 `chief | team | temp | unknown`，`status` 是 `running | error | idle | fresh`。
@@ -62,7 +66,7 @@ import { ConfirmLayer, confirmOpen } from "./ui/remove.js";
  * @property {"all" | "running" | "error"} filter 进程栏的筛选。
  * @property {string} query 进程栏的搜索词。
  * @property {number} tab 详情栏现在的选项卡，0 到 2。聚焦进程时 0 概况、1 改动、2 后台；聚焦项目时 0 概况、1 分支、2 后台。
- * @property {{ name: string, rect: { left: number, top: number, right: number, bottom: number } | null, props: any } | null} dialog 打开着的弹窗：`chief | newproc | newpreset | openproj | projects | clean`。`props` 是打开时传的。
+ * @property {{ name: string, rect: { left: number, top: number, right: number, bottom: number } | null, props: any } | null} dialog 打开着的弹窗：`chief | newproc | newpreset | openproj | projects | clean | editpreset`。`props` 是打开时传的。
  *
  * 读取（函数）
  * @typedef {object} AppReaders
@@ -93,6 +97,9 @@ import { ConfirmLayer, confirmOpen } from "./ui/remove.js";
  * @property {(processes: string[]) => Promise<any[]>} bg 桥的 `/api/bg`。
  * @property {() => Promise<void>} reloadPresets 重读预设文件。
  * @property {(p: Record<string, unknown>) => Promise<void>} createPreset 建预设文件，成功后重读预设。
+ * @property {(p: Record<string, unknown>) => Promise<import("./lib/types.js").PresetInfo>} updatePreset 改预设文件（只发变了的字段，`id` 必带），成功后重读预设，回改完读到的样子。读不出时服务改回旧文件，抛错，原因是 `check` 的原文；不弹提示，由调用方写在弹窗里。
+ * @property {() => Promise<void>} reloadModels 重读模型目录和 key 状态。
+ * @property {(ref: string) => Promise<void>} rememberModel 把这个模型记进“最近用过”。
  * @property {(id: string) => Promise<void>} deletePreset 删预设文件，成功后重读预设。失败抛错，不弹提示，由调用方写在确认框里。
  * @property {() => Promise<string | null>} pickFolder 系统选文件夹的对话框。
  * @property {(hash: string) => Promise<string | null>} blob 一张图片的 data URL。
@@ -127,6 +134,10 @@ const S = {
   snaps: {},
   /** 这次连上以后读过全部快照。 */
   snapsReady: false,
+  /** @type {import("./app.js").App["models"]} */
+  models: null,
+  /** @type {string | null} */
+  modelsError: null,
   gui: gs.normalizeState({}),
   guiReady: false,
   presetsReady: false,
@@ -371,7 +382,7 @@ function writeHash() {
   const q = new URLSearchParams();
   if (S.route.proc) q.set("p", S.route.proc);
   else if (S.route.proj) q.set("proj", S.route.proj);
-  if (S.dialog) q.set("dlg", S.dialog.name);
+  if (S.dialog && HASH_DIALOGS.includes(S.dialog.name)) q.set("dlg", S.dialog.name);
   const s = q.toString();
   const next = s ? `#${s}` : location.pathname + location.search;
   try {
@@ -450,6 +461,8 @@ function compute() {
     presets: S.presets,
     presetList: S.presetList,
     gui: S.gui,
+    models: S.models,
+    modelsError: S.modelsError,
     ready: S.guiReady && S.presetsReady && S.snapsReady,
     procsReady: S.psFresh && S.status === "online",
     entries,
@@ -574,8 +587,18 @@ function compute() {
       loud(
         api.createPreset(p).then(async () => {
           await reloadPresets();
+          // 建的时候不查；建好以后读一遍，起不来就当场说原因。
+          const made = S.presets[String(p["id"])];
+          if (made && !made.ok) toast(`预设建好了，但现在起不来：${made.error}`);
         }),
       ),
+    updatePreset: async (p) => {
+      const info = await api.updatePreset(p);
+      await reloadPresets();
+      return info;
+    },
+    reloadModels,
+    rememberModel: (ref) => setGui((g) => ({ recentModels: pushRecent(g.recentModels, ref) })),
     deletePreset: async (id) => {
       await api.deletePreset(id);
       await reloadPresets();
@@ -622,14 +645,29 @@ function compute() {
 
 /* 弹窗的锚点：约定的按钮。 */
 const ANCHORS = { chief: "btn-chief", newproc: "btn-newproc", openproj: "btn-open", projects: "btn-all", clean: "btn-clean" };
+/** 写进地址栏 hash 的弹窗。别的弹窗要靠打开时传的东西，刷新以后还原不了。 */
+const HASH_DIALOGS = ["chief", "newproc", "newpreset", "openproj", "projects", "clean"];
 
 /** @param {string} name @param {Element | null} [anchor] @param {any} [props] */
 function openDialog(name, anchor, props) {
   const el = anchor ?? document.getElementById(/** @type {any} */ (ANCHORS)[name] ?? "") ?? null;
   const r = el ? el.getBoundingClientRect() : null;
-  if (name === "newproc" || name === "openproj" || name === "newpreset") reloadPresets();
+  if (name === "newproc" || name === "openproj" || name === "newpreset" || name === "editpreset") reloadPresets();
+  // 这几个弹窗显示 key 状态：打开时重读，pi 里改了就是新的。
+  if (["openproj", "newpreset", "editpreset"].includes(name)) reloadModels();
   S.dialog = { name, rect: r ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom } : null, props: props ?? null };
   writeHash();
+  schedule();
+}
+
+async function reloadModels() {
+  try {
+    const r = await api.models();
+    S.models = { providers: r.providers ?? [], auth: r.auth ?? { ok: true } };
+    S.modelsError = null;
+  } catch (e) {
+    S.modelsError = e instanceof Error ? e.message : String(e);
+  }
   schedule();
 }
 
@@ -739,6 +777,7 @@ function Root() {
       (e) => toast(`读不到界面数据：${e instanceof Error ? e.message : e}`),
     );
     reloadPresets();
+    reloadModels();
     const conn = createConn({
       reply: onReply,
       status: (s, msg) => {
@@ -831,6 +870,7 @@ function Root() {
     ${d && d.name === "openproj" && html`<${OpenProjDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "projects" && html`<${ProjectsDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "clean" && html`<${CleanDialog} app=${app} onClose=${close} />`}
+    ${d && d.name === "editpreset" && html`<${EditPresetDialog} app=${app} onClose=${close} />`}
     <${ConfirmLayer} app=${app} />
     <${TipLayer} />
     <${MenuLayer} />

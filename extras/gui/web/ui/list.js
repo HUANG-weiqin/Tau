@@ -69,11 +69,11 @@ function Ruler({ scrollRef, sig }) {
   </div>`;
 }
 
-/** 右键菜单：删这个进程，确认框贴着这一行。 @param {string} id */
-const processMenu = (id) => (/** @type {MouseEvent} */ ev) => {
+/** 右键菜单。`edit` 有就多一项“改预设”（常驻团队的行）。 @param {string} id @param {((row: Element) => void) | null} [edit] */
+const processMenu = (id, edit = null) => (/** @type {MouseEvent} */ ev) => {
   ev.preventDefault();
   const row = /** @type {Element} */ (ev.currentTarget);
-  showMenu(ev.clientX, ev.clientY, [{ label: "删除这个进程", run: () => askRemove(id, row) }]);
+  showMenu(ev.clientX, ev.clientY, [...(edit ? [{ label: "改预设", run: () => edit(row) }] : []), { label: "删除这个进程", run: () => askRemove(id, row) }]);
 };
 
 /** 组头：粘在顶上。 */
@@ -95,7 +95,7 @@ function TeamRow({ app, e, n, t, nested = false, tag }) {
   const kids = app.entries.filter((x) => x.status === "running" && x.self.parent !== undefined && app.byId[x.self.parent]?.preset === e.preset).length;
   const pct = contextPercent(e.self.context);
   const wait = e.status === "error" || e.status === "running";
-  return html`<button type="button" class=${`row team ${nested ? "nested" : ""}`} data-st=${e.status} aria-current=${cur ? "true" : undefined} onClick=${() => app.focusProcess(e.id)} onContextMenu=${processMenu(e.id)}>
+  return html`<button type="button" class=${`row team ${nested ? "nested" : ""}`} data-st=${e.status} aria-current=${cur ? "true" : undefined} onClick=${() => app.focusProcess(e.id)} onContextMenu=${processMenu(e.id, (row) => app.openDialog("editpreset", row, { preset: e.preset }))}>
     ${nested && html`<span class="tl" aria-hidden="true"></span>`}
     ${cur && html`<span class="rbar" aria-hidden="true"></span><span class="rnotch" aria-hidden="true"></span>`}
     <span class="num rn">${n}</span>
@@ -124,7 +124,7 @@ function TeamGroup({ app, t, i, searching }) {
       ev.preventDefault();
       if (t.presetId === app.gui.chief) return;
       const row = /** @type {Element} */ (ev.currentTarget);
-      showMenu(ev.clientX, ev.clientY, [{ label: "删除这个预设", run: () => askDeletePreset(t.presetId, row) }]);
+      showMenu(ev.clientX, ev.clientY, [{ label: "改预设", run: () => app.openDialog("editpreset", row, { preset: t.presetId }) }, { label: "删除这个预设", run: () => askDeletePreset(t.presetId, row) }]);
     };
     return html`<button type="button" class="row team empty" onContextMenu=${del} onClick=${(/** @type {Event} */ ev) => app.openDialog("newproc", /** @type {Element} */ (ev.currentTarget), { preset: t.presetId })}>
       <span class="num rn">${pad2(i + 1)}</span>

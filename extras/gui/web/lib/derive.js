@@ -15,7 +15,7 @@ const DAY = 24 * 60 * 60 * 1000;
 /**
  * @typedef {{
  *   id: string, preset: string, name: string, self: Self, status: Status, kind: Kind,
- *   workdir: string | null, tools: string[], memory: boolean,
+ *   workdir: string | null, tools: string[], memory: boolean, frozen: Frozen | null,
  *   createdAt: number, segmentStartedAt: number | null,
  * }} Entry
  */
@@ -39,7 +39,7 @@ export function displayName(state, presetId) {
 }
 
 /**
- * `inspect` 的一行 `process`：进程记录里冻结的预设快照，取界面要的三项。工具是内置的加工具定义的名字。
+ * `inspect` 的一行 `process`：进程记录里冻结的预设快照，取界面要的几项。工具是内置的加工具定义的名字。
  * 不是 `process` 行，或者没有快照，是 null。
  * @param {any} line
  * @returns {Frozen | null}
@@ -49,7 +49,15 @@ export function seenFromInspect(line) {
   if (!snap || typeof snap.workdir !== "string" || !Array.isArray(snap.tools)) return null;
   /** @type {string[]} */
   const tools = [...snap.tools, ...(Array.isArray(snap.toolDefs) ? snap.toolDefs.map((/** @type {any} */ d) => d?.name).filter((/** @type {unknown} */ n) => typeof n === "string") : [])];
-  return { workdir: snap.workdir, tools, memory: snap.tools.includes("memory") };
+  return {
+    workdir: snap.workdir,
+    tools,
+    memory: snap.tools.includes("memory"),
+    ...(typeof snap.model === "string" ? { model: snap.model } : {}),
+    ...(typeof snap.thinking === "string" ? { thinking: snap.thinking } : {}),
+    ...(typeof snap.handoff === "number" ? { handoff: snap.handoff } : {}),
+    ...(snap.options !== null && typeof snap.options === "object" && !Array.isArray(snap.options) ? { options: snap.options } : {}),
+  };
 }
 
 /**
@@ -80,6 +88,7 @@ export function buildEntries(procs, state, snaps) {
       workdir: info ? info.workdir : null,
       tools: info ? info.tools : [],
       memory: info ? info.memory : false,
+      frozen: info ?? null,
       createdAt: rec.createdAt,
       segmentStartedAt: rec.segmentStartedAt,
     });

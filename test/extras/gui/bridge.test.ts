@@ -354,11 +354,11 @@ test("转发：inspect 读到进程冻结的快照，预设文件之后改了也
   s.faux.setResponses([fauxAssistantMessage(fauxText("好"))]);
   const id: string = lines(await post(s.port, "/api/tau", { op: "start", preset: "p", text: "hi" }))[0].process;
   const before = lines(await post(s.port, "/api/tau", { op: "inspect", process: id }));
-  assert.deepEqual(seenFromInspect(before[0]), { workdir: s.work, tools: ["read"], memory: false });
+  assert.deepEqual(seenFromInspect(before[0]), { workdir: s.work, tools: ["read"], memory: false, model: s.model });
   // 预设文件改了：新进程读到新的，老进程的快照不变。
   writeFileSync(join(s.home, "presets", "p.md"), `---\nworkdir: ${s.home}\nmodel: ${s.model}\ntools: read, memory\n---\n新的。\n`);
   const all = lines(await post(s.port, "/api/tau", { op: "inspect" }));
-  assert.deepEqual(seenFromInspect(all[0]), { workdir: s.work, tools: ["read"], memory: false });
+  assert.deepEqual(seenFromInspect(all[0]), { workdir: s.work, tools: ["read"], memory: false, model: s.model });
   assert.equal(all.at(-1).type, "inspected");
   assert.deepEqual((await post(s.port, "/api/presets", {})).json.presets[0].tools, ["read", "memory"]);
 });
@@ -458,8 +458,8 @@ test("预设：读得出、读不出、能不能启动都和 start 一致；带 
   assert.equal(r.status, 200);
   const byId = new Map<string, any>(r.json.presets.map((x: any) => [x.id, x]));
   assert.deepEqual([...byId.keys()].sort(), ["badopt", "bom", "crlf", "good", "missing", "nodir", "nofm", "nomodel", "notool", "relative", "tiny", "unknown"]);
-  assert.deepEqual(byId.get("good"), { id: "good", ok: true, workdir: e.work, model: m, tools: ["read", "bash", "memory", "mytool"], memory: true, thinking: "low", handoff: 150000, options: { temperature: 0.2 } });
-  assert.deepEqual(byId.get("crlf"), { id: "crlf", ok: true, workdir: e.work, model: m, tools: ["read"], memory: false });
+  assert.deepEqual(byId.get("good"), { id: "good", ok: true, workdir: e.work, model: m, tools: ["read", "bash", "memory", "mytool"], memory: true, prompt: "提示词", thinking: "low", handoff: 150000, options: { temperature: 0.2 } });
+  assert.deepEqual(byId.get("crlf"), { id: "crlf", ok: true, workdir: e.work, model: m, tools: ["read"], memory: false, prompt: "提示词" });
   assert.deepEqual(byId.get("bom").tools, []);
   assert.match(byId.get("unknown").error, /color/);
   // 读不出和装不下：错误文字一字不差，和 start 回的一样；读得出的，start 也起得来。
@@ -905,6 +905,7 @@ test("改预设：只换收到的字段，别的行、顺序、换行符、正�
   assert.equal(r1.json.ok, true);
   assert.equal(r1.json.preset.id, "a");
   assert.equal(r1.json.preset.thinking, "high");
+  assert.equal(r1.json.preset.prompt, "提示词\n第二行", "改预设要显示提示词");
   assert.equal(read(e, "a"), file.replace('{"temperature":0.2}\n---', '{"temperature":0.2}\nthinking: high\n---'));
 
   // 改已有的行：留在原位。

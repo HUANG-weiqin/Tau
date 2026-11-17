@@ -10,6 +10,7 @@ import { addFork, movePinned, normalizeState, pathKey, pinFolder, prunePatch, se
 import { allProcs, childCounts, emptyStore, reduce, streamingText } from "../../../extras/gui/web/lib/store.js";
 import { extractTitle, processTitle } from "../../../extras/gui/web/lib/titles.js";
 import { newPace, paceArrive, paceStep } from "../../../extras/gui/web/lib/pace.js";
+import { buildCreate, buildUpdate, defaultModelRef, filterCatalog, findModel, formatWindow, keyHint, keyLabel, nearestLevel, parseOptions, pushRecent, recentEntries, sortProviders, splitModel } from "../../../extras/gui/web/lib/models.js";
 
 type Self = import("../../../extras/gui/web/lib/types.js").Self;
 type Msg = import("../../../extras/gui/web/lib/types.js").Message;
@@ -904,4 +905,150 @@ test("pace: 平稳地流到一半突然来 1000 字，1 秒后积压不到 150 �
   const frames = simulate(arrivals, 6000);
   const at = frames.find((f) => f[0] >= 6000)!;
   assert.ok(at[2] - at[1] < 150, `1 秒后还积压 ${Math.round(at[2] - at[1])} 字`);
+});
+
+// ---------- 模型选择、预设表 ----------
+
+const CATALOG = [
+  { id: "opencode-go", name: "OpenCode Go", key: "key", models: [
+    { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", window: 1_000_000, image: true, thinking: ["low", "high", "max"] },
+    { id: "qwen3.8-flash", name: "Qwen3.8 Flash", window: 128_000, image: false, thinking: [] },
+  ] },
+  { id: "anthropic", name: "Anthropic", key: "none", models: [
+    { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", window: 200_000, image: true, thinking: ["minimal", "low", "medium", "high"] },
+  ] },
+] as any[];
+
+test("models: 窗口写成 128K、1M；思考级别换成支持的最近一档", () => {
+  assert.equal(formatWindow(128_000), "128K");
+  assert.equal(formatWindow(200_000), "200K");
+  assert.equal(formatWindow(1_000_000), "1M");
+  assert.equal(formatWindow(2_000_000), "2M");
+  assert.equal(formatWindow(1_048_576), "1M");
+  assert.equal(formatWindow(1_500_000), "1.5M");
+  assert.equal(formatWindow(8192), "8K");
+  assert.equal(nearestLevel(["low", "high", "max"], "high"), "high");
+  assert.equal(nearestLevel(["low", "high", "max"], "medium"), "low", "距离一样取低的");
+  assert.equal(nearestLevel(["low", "high", "max"], "xhigh"), "high");
+  assert.equal(nearestLevel(["low", "high", "max"], "minimal"), "low");
+  assert.equal(nearestLevel(["high"], "max"), "high");
+  assert.equal(nearestLevel([], "high"), undefined, "不支持思考就是不思考");
+  assert.equal(nearestLevel(["low"], undefined), undefined);
+});
+
+test("models: 模型引用拆成供应商和模型 ID，目录里没有的返回 null", () => {
+  assert.deepEqual(splitModel("opencode-go/deepseek-v4.1-flash"), { provider: "opencode-go", id: "deepseek-v4.1-flash" });
+  assert.deepEqual(splitModel("a/b/c"), { provider: "a", id: "b/c" });
+  assert.equal(splitModel("nomodel"), null);
+  assert.equal(splitModel("/x"), null);
+  assert.equal(findModel(CATALOG, "anthropic/claude-haiku-4-5")?.model.name, "Claude Haiku 4.5");
+  assert.equal(findModel(CATALOG, "anthropic/ghost"), null);
+  assert.equal(findModel(CATALOG, "ghost/x"), null);
+  assert.equal(findModel(null, "anthropic/claude-haiku-4-5"), null);
+});
+
+test("models: 搜索按供应商和模型的名字、ID，每个词都要命中；没有命中的组去掉", () => {
+  assert.deepEqual(filterCatalog(CATALOG, "").map((p: any) => p.models.length), [2, 1]);
+  assert.deepEqual(filterCatalog(CATALOG, "flash").map((p: any) => p.id), ["opencode-go"]);
+  assert.deepEqual(filterCatalog(CATALOG, "FLASH qwen")[0]!.models.map((m: any) => m.id), ["qwen3.8-flash"]);
+  assert.deepEqual(filterCatalog(CATALOG, "anthropic")[0]!.models.length, 1, "供应商命中，整组都在");
+  assert.deepEqual(filterCatalog(CATALOG, "haiku 4.5").map((p: any) => p.id), ["anthropic"]);
+  assert.deepEqual(filterCatalog(CATALOG, "zzz"), []);
+});
+
+test("models: 供应商排序：配好的在前，读不了、OAuth 的次之，没配的最后，同样的按名字", () => {
+  const p = (id: string, key: string) => ({ id, name: id.toUpperCase(), key, models: [] }) as any;
+  const sorted = sortProviders([p("zed", "none"), p("beta", "oauth"), p("alpha", "none"), p("gamma", "key"), p("delta", "unreadable"), p("aaa", "key")]);
+  assert.deepEqual(sorted.map((x: any) => x.id), ["aaa", "gamma", "delta", "beta", "alpha", "zed"]);
+});
+
+test("models: 最近用过去重、最新在前、最多 6 个；只列目录里有的", () => {
+  let r: string[] = [];
+  for (const m of ["a/1", "a/2", "a/3", "a/4", "a/5", "a/6", "a/7"]) r = pushRecent(r, m);
+  assert.deepEqual(r, ["a/7", "a/6", "a/5", "a/4", "a/3", "a/2"]);
+  assert.deepEqual(pushRecent(r, "a/4"), ["a/4", "a/7", "a/6", "a/5", "a/3", "a/2"]);
+  assert.deepEqual(pushRecent([], "  "), []);
+  const e = recentEntries(CATALOG, ["anthropic/claude-haiku-4-5", "ghost/x", "opencode-go/qwen3.8-flash"]);
+  assert.deepEqual(e.map((x: any) => x.ref), ["anthropic/claude-haiku-4-5", "opencode-go/qwen3.8-flash"]);
+});
+
+test("models: key 状态的字", () => {
+  assert.equal(keyLabel("key"), "已配");
+  assert.equal(keyLabel("oauth"), "OAuth（tau 不支持）");
+  assert.equal(keyLabel("none"), "没配");
+  assert.equal(keyLabel("unreadable"), "tau 读不了");
+});
+
+test("models: 没配 key 的供应商，选中时给提示；配了的没有提示", () => {
+  assert.equal(keyHint("key"), null);
+  assert.match(keyHint("none")!, /还没配 key.*第一次调模型时会出错.*auth.json/);
+  assert.match(keyHint("oauth")!, /OAuth.*不支持/);
+  assert.match(keyHint("unreadable")!, /字面量/);
+});
+
+test("models: 默认模型：设置里的，再是最近用过的，再是第一家配了 key 的第一个，都没有是空", () => {
+  const g = (o: object = {}) => normalizeState(o);
+  assert.equal(defaultModelRef(g({ defaultModel: "x/hand-written" }), CATALOG), "x/hand-written");
+  assert.equal(defaultModelRef(g({ recentModels: ["ghost/x", "anthropic/claude-haiku-4-5"] }), CATALOG), "anthropic/claude-haiku-4-5");
+  assert.equal(defaultModelRef(g(), CATALOG), "opencode-go/deepseek-v4.1-flash", "anthropic 没配 key，跳过");
+  assert.equal(defaultModelRef(g(), CATALOG.map((p: any) => ({ ...p, key: "none" }))), "");
+  assert.equal(defaultModelRef(g(), null), "");
+});
+
+test("models: options 一行 JSON：空是没有，只收对象，错了给原因", () => {
+  assert.deepEqual(parseOptions(""), { ok: true, value: undefined });
+  assert.deepEqual(parseOptions("  "), { ok: true, value: undefined });
+  assert.deepEqual(parseOptions('{"temperature":0.2}'), { ok: true, value: { temperature: 0.2 } });
+  for (const bad of ["{", "[]", "3", '"x"', "null"]) {
+    const r = parseOptions(bad);
+    assert.equal(r.ok, false, bad);
+  }
+});
+
+const ORIG = { id: "a", ok: true, workdir: "E:\\w", model: "x/m", tools: ["read", "bash", "mytool"], memory: false, thinking: "low", handoff: 150000, options: { temperature: 0.2 } } as any;
+const DRAFT = { model: "x/m", thinking: "low", tools: ["read", "bash", "mytool"], handoff: "150000", options: '{"temperature":0.2}', prompt: "p" };
+
+test("预设表: 改预设只发变了的字段；没变就是空补丁；提示词没动不发", () => {
+  assert.deepEqual(buildUpdate(ORIG, "p", DRAFT), { ok: true, patch: {} });
+  assert.deepEqual(buildUpdate(ORIG, "p", { ...DRAFT, model: "y/n", thinking: "high" }), { ok: true, patch: { model: "y/n", thinking: "high" } });
+  assert.deepEqual(buildUpdate(ORIG, "p", { ...DRAFT, thinking: undefined }), { ok: true, patch: { thinking: null } });
+  assert.deepEqual(buildUpdate(ORIG, "p", { ...DRAFT, tools: ["read", "mytool"] }), { ok: true, patch: { tools: ["read", "mytool"] } });
+  assert.deepEqual(buildUpdate(ORIG, "p", { ...DRAFT, handoff: "" }), { ok: true, patch: { handoff: null } });
+  assert.deepEqual(buildUpdate(ORIG, "p", { ...DRAFT, handoff: "160000" }), { ok: true, patch: { handoff: 160000 } });
+  assert.deepEqual(buildUpdate(ORIG, "p", { ...DRAFT, options: "" }), { ok: true, patch: { options: null } });
+  assert.deepEqual(buildUpdate(ORIG, "p", { ...DRAFT, options: '{"temperature":0.5}' }), { ok: true, patch: { options: { temperature: 0.5 } } });
+  assert.deepEqual(buildUpdate(ORIG, "p", { ...DRAFT, prompt: "新" }), { ok: true, patch: { prompt: "新" } });
+  assert.deepEqual(buildUpdate({ id: "b", ok: true, workdir: "w", model: "x/m", tools: [], memory: false } as any, "", { ...DRAFT, tools: [], thinking: undefined, handoff: "", options: "", prompt: "" }), { ok: true, patch: {} });
+  for (const bad of [{ handoff: "0" }, { handoff: "1.5" }, { handoff: "abc" }, { options: "[" }, { model: " " }]) {
+    assert.equal(buildUpdate(ORIG, "p", { ...DRAFT, ...bad }).ok, false, JSON.stringify(bad));
+  }
+});
+
+test("预设表: 新建只带填了的 thinking、handoff、options", () => {
+  assert.deepEqual(buildCreate({ ...DRAFT, thinking: undefined, handoff: "", options: "" }), { ok: true, fields: {} });
+  assert.deepEqual(buildCreate(DRAFT), { ok: true, fields: { thinking: "low", handoff: 150000, options: { temperature: 0.2 } } });
+  assert.equal(buildCreate({ ...DRAFT, handoff: "-3" }).ok, false);
+  assert.equal(buildCreate({ ...DRAFT, options: "{" }).ok, false);
+});
+
+test("界面数据: 最近用过的模型、默认模型和思考强度有默认值，坏的当没有", () => {
+  const g = normalizeState({});
+  assert.deepEqual(g.recentModels, []);
+  assert.equal(g.defaultModel, undefined);
+  assert.equal(g.defaultThinking, undefined);
+  const h = normalizeState({ recentModels: ["a/b", 3, "c/d"], defaultModel: "x/y", defaultThinking: "high" });
+  assert.deepEqual(h.recentModels, ["a/b", "c/d"]);
+  assert.equal(h.defaultModel, "x/y");
+  assert.equal(h.defaultThinking, "high");
+  const bad = normalizeState({ defaultModel: 5, defaultThinking: "huge", recentModels: "x" });
+  assert.equal(bad.defaultModel, undefined);
+  assert.equal(bad.defaultThinking, undefined);
+  assert.deepEqual(bad.recentModels, []);
+});
+
+test("inspect: 快照里还带模型、思考强度、换段阈值和 options", () => {
+  const f = seenFromInspect({ type: "process", process: { preset: { workdir: "E:\\w", tools: ["read", "memory"], toolDefs: [{ name: "t" }], model: "x/m", thinking: "high", handoff: 90000, options: { temperature: 0.1 } } } });
+  assert.deepEqual(f, { workdir: "E:\\w", tools: ["read", "memory", "t"], memory: true, model: "x/m", thinking: "high", handoff: 90000, options: { temperature: 0.1 } });
+  const g = seenFromInspect({ type: "process", process: { preset: { workdir: "E:\\w", tools: ["read"], model: "x/m" } } });
+  assert.deepEqual(g, { workdir: "E:\\w", tools: ["read"], memory: false, model: "x/m" });
 });

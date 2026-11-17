@@ -18,6 +18,8 @@ export interface PresetOk {
   thinking?: string;
   handoff?: number;
   options?: Record<string, unknown>;
+  /** 提示词，改预设时要显示。 */
+  prompt: string;
 }
 export type PresetInfo = PresetOk | { id: string; ok: false; error: string };
 
@@ -74,6 +76,7 @@ function infoOf(id: string, r: Checked): PresetInfo {
     model: s.model,
     tools,
     memory: tools.includes("memory"),
+    prompt: s.prompt,
     ...(s.thinking === undefined ? {} : { thinking: s.thinking }),
     ...(s.handoff === undefined ? {} : { handoff: s.handoff }),
     ...(s.options === undefined ? {} : { options: s.options }),

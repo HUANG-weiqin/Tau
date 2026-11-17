@@ -1,7 +1,7 @@
 // 打开项目：选文件夹。文件夹里还没有预设就当场建一个项目 Agent 的预设，或者只记下文件夹。
 import { html, Popover, DlgHead, SecHead, Pill, Icon, useState, Fragment } from "./common.js";
 import { pathKey, addFolder, pinFolder } from "../lib/state.js";
-import { PresetFields, usePresetForm } from "./presetform.js";
+import { CheckStrip, PresetFields, usePresetForm } from "./presetform.js";
 
 /** @param {string} p */
 const isAbs = (p) => /^[A-Za-z]:[\\/]/.test(p) || p.startsWith("\\\\") || p.startsWith("/");
@@ -15,7 +15,8 @@ function suggestId(p) {
 export function OpenProjDialog({ app, onClose }) {
   const [folder, setFolder] = useState(/** @type {string} */ (app.dialog?.props?.folder ?? ""));
   const [busy, setBusy] = useState(false);
-  const form = usePresetForm({ suggest: suggestId(folder) });
+  const form = usePresetForm({ app, suggest: suggestId(folder) });
+  const extra = form.create();
 
   const key = folder.trim() === "" ? "" : pathKey(folder.trim());
   const existing = app.presetList.filter((p) => p.ok && p.id !== app.gui.chief && pathKey(p.workdir) === key);
@@ -37,7 +38,9 @@ export function OpenProjDialog({ app, onClose }) {
     try {
       const path = folder.trim();
       if (create) {
-        await app.createPreset({ id: idFinal, workdir: path, model: form.model.trim(), tools: form.tools, prompt: form.prompt });
+        if (!extra.ok) throw new Error(extra.error);
+        await app.createPreset({ id: idFinal, workdir: path, model: form.model.trim(), tools: form.tools, prompt: form.prompt, ...extra.fields });
+        app.rememberModel(form.model.trim()).catch(() => {});
       }
       await app.setGui((g) => {
         const withFolder = addFolder(g, path);
@@ -67,8 +70,9 @@ export function OpenProjDialog({ app, onClose }) {
         ${existing.length > 0
           ? html`<div class="callout">${existing.map((p) => app.gui.names[p.id] ?? p.id).join("、")}：项目里的进程会按这些预设归到一起。</div>`
           : html`<div class="callout">没有预设就开不了进程。先建一个项目 Agent 的预设，以后还能再加。</div>
-            <${PresetFields} form=${form} />
-            <p class="dnote">建好以后，用编辑器打开这个文件补上提示词。只记下文件夹不建预设也行，项目会先空着。</p>`}
+            <${PresetFields} form=${form} app=${app} />
+            <p class="dnote">建好以后，随时可以在预设入口里“改预设”。只记下文件夹不建预设也行，项目会先空着。</p>
+            <${CheckStrip} ok=${false} text=${extra.ok ? null : extra.error} label="input" />`}
         ${opened && html`<p class="dnote" style="color:var(--acc)">这个文件夹已经是一个项目了。</p>`}
       </div>
       <div class="dlg-foot">

@@ -141,6 +141,8 @@ export async function tauCommand(request) {
 
 export const presets = () => post("/api/presets", {}).then((r) => /** @type {any[]} */ (r.presets ?? []));
 export const createPreset = (/** @type {any} */ p) => post("/api/presets/create", p);
+export const updatePreset = (/** @type {Record<string, unknown>} */ p) => post("/api/presets/update", p).then((r) => /** @type {any} */ (r.preset));
+export const models = () => post("/api/models", {});
 export const deletePreset = (/** @type {string} */ id) => post("/api/presets/delete", { id });
 export const getState = () => post("/api/state", {}).then((r) => r.state ?? {});
 export const setState = (/** @type {Record<string, unknown>} */ set) => post("/api/state", { set }).then((r) => r.state ?? {});

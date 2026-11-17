@@ -52,11 +52,11 @@
  *   | { type: "error", message: string }} Reply
  */
 
-/** 进程冻结的预设快照里界面要的三项（`inspect` 读来）。 @typedef {{ workdir: string, tools: string[], memory: boolean }} Frozen */
+/** 进程冻结的预设快照里界面要的几项（`inspect` 读来）。 @typedef {{ workdir: string, tools: string[], memory: boolean, model?: string, thinking?: string, handoff?: number, options?: Record<string, unknown> }} Frozen */
 
 /**
  * `/api/presets` 回的一项。
- * @typedef {{ id: string, ok: true, workdir: string, model: string, tools: string[], memory: boolean, thinking?: string, handoff?: number, options?: Record<string, unknown> }
+ * @typedef {{ id: string, ok: true, workdir: string, model: string, tools: string[], memory: boolean, thinking?: string, handoff?: number, options?: Record<string, unknown>, prompt?: string }
  *   | { id: string, ok: false, error: string }} PresetInfo
  */
 
@@ -74,6 +74,9 @@
  *   titles: Record<string, string>,
  *   collapsed: Record<string, boolean>,
  *   cleanDays: number,
+ *   recentModels: string[],
+ *   defaultModel?: string,
+ *   defaultThinking?: string,
  * }} GuiState
  */
 

@@ -1,0 +1,92 @@
+/* 模型选择器、思考强度、检查条、高级区、设置、换模型。弹窗是暗面，选中的行反成浅色，黄色只做小块。 */
+
+/* 模型字段：左边一格供应商的拉宽小标签，中间名字，右边事实 */
+.mp { position: relative; }
+.mp-cur { position: relative; display: flex; align-items: stretch; gap: 0; width: 100%; min-height: 56px; padding: 0; border: 0; text-align: left; background: var(--ink0); box-shadow: inset 0 0 0 1px var(--fg3); color: var(--fg); transition: box-shadow var(--t-fast) var(--ease-in), background-color var(--t-fast) var(--ease-in); }
+.mp-cur:hover { background: var(--ink3); }
+.mp-cur[aria-expanded="true"] { box-shadow: inset 0 0 0 1px var(--acc); }
+.mp-prov { flex: none; width: 84px; display: flex; align-items: center; justify-content: center; padding: 6px; text-align: center; line-height: 1.25; color: var(--ink); background: var(--sel); overflow-wrap: anywhere; font-size: 9.5px; }
+.mp-cur.off .mp-prov { background: var(--ink5); color: var(--fg); }
+.mp-main { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 3px; padding: 8px 14px; }
+.mp-name { font-size: 17px; font-weight: 900; line-height: 1.15; letter-spacing: .02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-ref { font-size: 11px; color: var(--fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-cur > .tag { align-self: center; margin-right: 8px; }
+.mp-chev { flex: none; align-self: center; padding: 0 14px 0 8px; color: var(--fg2); }
+
+.mp-facts { flex: none; display: inline-flex; align-items: center; gap: 10px; align-self: center; margin-right: 6px; }
+.mp-win { font-size: 22px; min-width: 40px; text-align: right; }
+.mp-img { display: inline-block; min-width: 31px; text-align: center; font-size: 10px !important; }
+.mp-lv { display: inline-grid; grid-template-columns: repeat(6, 18px); gap: 2px; }
+.mp-lv i { display: grid; place-items: center; height: 18px; font-style: normal; font-family: var(--mono); font-size: 8.5px; line-height: 1; color: var(--fg3); box-shadow: inset 0 0 0 1px var(--ink4); }
+.mp-lv i.on { background: var(--fg); color: var(--ink); box-shadow: none; font-weight: 700; }
+
+.mp-hint { padding: 9px 12px; background: var(--ink3); box-shadow: inset 3px 0 0 var(--warn); font-size: 12.5px; line-height: 1.6; color: var(--fg); }
+.mp-hint.plain { box-shadow: inset 3px 0 0 var(--fg3); color: var(--fg2); }
+.mp-note { padding: 7px 12px; background: var(--ink3); box-shadow: inset 3px 0 0 var(--acc); font-size: 12px; line-height: 1.6; color: var(--fg); }
+
+/* 面板 */
+.mp-panel { display: flex; flex-direction: column; background: var(--ink0); box-shadow: inset 0 0 0 1px var(--ink4); animation: tau-rise var(--t-mid) var(--ease-in) both; }
+.mp-search { display: flex; align-items: center; gap: 10px; padding: 0 12px; border-bottom: 1px solid var(--ink4); color: var(--fg2); }
+.mp-search input { flex: 1; min-width: 0; min-height: 42px; border: 0; background: transparent; color: var(--fg); font-size: 14px; outline: none; }
+.mp-search input:focus-visible { outline: none; }
+.mp-search:focus-within { box-shadow: inset 0 -2px 0 var(--acc); }
+.mp-count { font-size: 11px; }
+.mp-recent { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 9px 12px; border-bottom: 1px solid var(--ink4); }
+.mp-recent .label { color: var(--acc); margin-right: 4px; }
+.mp-recent button { border: 0; background: var(--ink3); color: var(--fg); font-size: 12px; font-weight: 700; padding: 5px 10px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-recent button:hover { background: var(--ink5); }
+.mp-recent button.on { background: var(--sel); color: var(--ink); box-shadow: inset 3px 0 0 var(--acc); }
+.mp-list { max-height: 340px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--fg3) transparent; overscroll-behavior: contain; }
+.mp-none { padding: 18px 14px; font-size: 12.5px; color: var(--fg2); }
+.mp-gh { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--ink2); box-shadow: inset 0 -1px 0 var(--ink4); }
+.mp-gn { font-size: 12.5px; font-weight: 900; }
+.mp-gh.off .mp-gn { color: var(--fg2); }
+.mp-row { position: relative; display: flex; align-items: center; gap: 10px; width: 100%; min-height: 46px; padding: 6px 12px 6px 16px; border: 0; background: transparent; color: var(--fg); text-align: left; transition: background-color var(--t-fast) var(--ease-in); }
+.mp-row + .mp-row { box-shadow: inset 0 1px 0 var(--ink3); }
+.mp-row:hover { background: var(--ink3); }
+.mp-row:active { background: var(--ink5); }
+.mp-row.off { opacity: .55; }
+.mp-row.off:hover { opacity: .85; }
+.mp-row[aria-selected="true"] { background: var(--sel); color: var(--ink); opacity: 1; }
+.mp-row[aria-selected="true"]::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--acc); }
+.mp-row[aria-selected="true"] .mp-lv i { color: var(--ink-2); box-shadow: inset 0 0 0 1px #A9AAA6; }
+.mp-row[aria-selected="true"] .mp-lv i.on { background: var(--ink); color: var(--fg); }
+.mp-row[aria-selected="true"] .mono { color: var(--ink-2); }
+.mp-rn { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.mp-rn b { font-size: 13.5px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-rn .mono { font-size: 10.5px; color: var(--fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-row .mp-win { font-size: 18px; min-width: 34px; }
+.mp-row .mp-facts { margin-right: 0; gap: 8px; }
+
+/* 思考强度：一排分段按钮，选中的是黄块 */
+.seg3 { display: flex; flex-wrap: wrap; gap: 2px; }
+.seg3 button { flex: 1 1 0; min-width: 64px; min-height: 40px; padding: 0 10px; border: 0; background: var(--ink3); color: var(--fg); font-family: var(--mono); font-size: 12px; transition: background-color var(--t-fast) var(--ease-in), color var(--t-fast) var(--ease-in); }
+.seg3 button:hover { background: var(--ink5); }
+.seg3 button:active { background: var(--ink4); }
+.seg3 button[aria-pressed="true"] { background: var(--acc); color: var(--ink); font-weight: 800; --bk: var(--ink); }
+
+/* 检查条：能启动，或者警示色的错误原文 */
+.chk { display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; background: var(--ink0); box-shadow: inset 3px 0 0 var(--acc); font-size: 12.5px; line-height: 1.6; }
+.chk .label { flex: none; padding-top: 2px; color: var(--acc); }
+.chk-t { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.chk.bad { box-shadow: inset 3px 0 0 var(--warn); }
+.chk.bad .label { color: var(--warn); }
+.chk.bad .chk-t { color: var(--warn); }
+
+/* 高级区 */
+.adv-h { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 0 2px; border: 0; background: transparent; color: var(--fg); }
+.adv-h:hover .label { color: var(--acc); }
+.input.ro { display: flex; align-items: center; color: var(--fg2); box-shadow: inset 0 0 0 1px var(--ink4); border: 0; font-weight: 400; }
+.input[aria-invalid="true"] { box-shadow: inset 0 0 0 2px var(--warn); }
+
+/* 改预设：头部压一条斜纹，和别的弹窗区分 */
+.dlg.editpreset::before { height: 8px; background: repeating-linear-gradient(-45deg, var(--acc) 0 10px, var(--ink0) 10px 20px); }
+.ep-keep { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; color: var(--fg2); }
+
+
+@media (max-width: 759px) {
+  .mp-facts .mp-lv { display: none; }
+  .mp-win { font-size: 18px; }
+  .mp-prov { width: 64px; }
+  .seg3 button { min-width: 52px; }
+}

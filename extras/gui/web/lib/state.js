@@ -1,6 +1,7 @@
 // @ts-check
 // 界面数据文件的读法和改法。改法都回一个补丁：顶层键整个覆盖进文件（`/api/state` 的 `set`）。
 /** @typedef {import("./types.js").GuiState} GuiState */
+import { LEVELS } from "./models.js";
 
 export const MAX_PINNED = 9;
 export const DEFAULT_CLEAN_DAYS = 7;
@@ -36,6 +37,9 @@ export function normalizeState(raw) {
     forkedFrom: rec(r["forkedFrom"], (x) => typeof x === "string"),
     titles: rec(r["titles"], (x) => typeof x === "string"),
     collapsed: rec(r["collapsed"], (x) => typeof x === "boolean"),
+    recentModels: strings(r["recentModels"]),
+    ...(typeof r["defaultModel"] === "string" && r["defaultModel"] !== "" ? { defaultModel: r["defaultModel"] } : {}),
+    ...(typeof r["defaultThinking"] === "string" && LEVELS.includes(r["defaultThinking"]) ? { defaultThinking: r["defaultThinking"] } : {}),
     cleanDays: typeof days === "number" && Number.isFinite(days) && days >= 1 ? Math.floor(days) : DEFAULT_CLEAN_DAYS,
   };
 }
