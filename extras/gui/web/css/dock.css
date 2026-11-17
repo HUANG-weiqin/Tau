@@ -65,10 +65,13 @@
 .dk-in::placeholder { color: var(--fg3); }
 
 /* 自动加在信前的说明：印在墨井顶上，最多两行，全文在悬停提示里。 */
-.dk-pre { display: flex; align-items: flex-start; gap: 10px; margin: 6px 12px 0 16px; padding: 0 0 6px 10px; border-left: 3px solid var(--fg3); border-bottom: 1px dashed var(--ink5); min-width: 0; }
+.dk-pre { display: flex; align-items: center; gap: 10px; margin: 6px 12px 0 16px; padding: 0 0 6px 10px; border-left: 3px solid var(--fg3); border-bottom: 1px dashed var(--ink5); min-width: 0; }
 .dk-pre.err { border-left-color: var(--warn); }
 .dk-pre .tag { flex: none; margin-top: 1px; }
-.dk-pre p { min-width: 0; font-size: 11.5px; line-height: 1.5; color: var(--fg2); overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+/* 说明只占一行，全文在悬停提示里：出错时最要紧的是消息区，写信框不能因为它长高。 */
+.dk-pre p { flex: 1; min-width: 0; font-size: 11.5px; line-height: 1.5; color: var(--fg2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 有说明时，空着的墨井只露一行；写起来照样往上长。 */
+.dk-well.pre .dk-in { min-height: calc(1.5 * 15px + 12px); }
 
 .dk-thumbs { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 16px 0; }
 .dk-thumbs .cthumb img { height: 48px; }

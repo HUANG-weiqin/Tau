@@ -101,7 +101,7 @@ export function Compose({ app, e, name, note = null }) {
         </div>
       </div>
 
-      <div class="dk-well">
+      <div class=${`dk-well ${note ? "pre" : ""}`}>
         <span class="dk-br g" aria-hidden="true"></span><span class="dk-br y" aria-hidden="true"></span>
         <${Tex} kind="tx-grid-d" mask="radial-gradient(ellipse 90% 120% at 100% 100%, #000 0%, transparent 75%)" />
         ${note && html`<div class=${`dk-pre ${noteErr ? "err" : ""}`}>
