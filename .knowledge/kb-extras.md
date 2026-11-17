@@ -152,8 +152,11 @@ mkdir -p "$HOME/.tau/extras/bg"
 ### HTTP 桥要做的检查
 
 - 只在 `127.0.0.1` 上监听。
-- 只收 POST，并且要求 `Content-Type: application/json`。跨站请求因此必须先预检。
-- `Host` 只认 `127.0.0.1:<端口>`、`localhost:<端口>` 和 Tailscale 给的名字。
+- 接口只收 POST，并且要求 `Content-Type: application/json`。跨站请求因此必须先预检。
+- 页面和它的静态文件走 GET（[界面设计稿](../docs/design/gui.md#1-定位)）。只送一个固定目录里的文件，路径解析以后不许出这个目录。GET 只读文件，不做别的事，不带用户的数据。
+- 页面带 `Content-Security-Policy`：脚本、字体和连接只许自己的源，不许内联脚本；样式允许内联；图片另外允许 `data:` 和 `blob:`；`frame-ancestors 'none'`，别的网站不能把页面嵌进框里骗点击。再带 `X-Content-Type-Options: nosniff`。
+- 别的方法回 405。
+- 所有请求的 `Host` 只认 `127.0.0.1:<端口>`、`localhost:<端口>` 和 Tailscale 给的名字。
 - 带 `Origin` 时，按完整的源比较，含协议和端口。`null` 拒绝。
 - 先查头，再读正文。正文有大小上限。
 - 响应分块发送，不设 `Content-Length`。否则代理会攒着不发，`watch` 就不实时。

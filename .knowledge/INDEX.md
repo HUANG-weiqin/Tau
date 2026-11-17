@@ -23,7 +23,7 @@
 | 改记忆：接口、上限、视图格式、版本号 | [kb-memory.md](kb-memory.md) |
 | 改内核契约、判断一个改动算不算改契约 | [kb-contract.md](kb-contract.md) |
 | 做上层建筑（`extras/`） | [kb-extras.md](kb-extras.md) |
-| 做图形界面（调度台） | [界面设计稿](../docs/design/gui.md)，再读 [kb-extras.md](kb-extras.md) |
+| 做图形界面（调度台） | [界面设计稿](../docs/design/gui.md)，再读 [kb-extras.md](kb-extras.md)；按什么顺序做见[界面执行清单](../docs/plan/gui-checklist.md) |
 | 改预设的格式和读取规则 | [设计稿第 2 节](../docs/design/mvp.md#2-预设) |
 | v2 为什么这样设计、冻结了什么、每个原语为什么在内核 | [kb-contract.md](kb-contract.md)、[D47](kb-decisions.md#d47-v2-的来由六个缺口和-v1v2-的对照) |
 | 下一步做什么 | [v2 执行清单](../docs/plan/kernel-v2-checklist.md) |
@@ -37,8 +37,9 @@
 | [AGENTS.md](../AGENTS.md) | 用词、必须遵守的规则、准入规则、依赖和工具链、工作习惯、完成门槛 |
 | [设计稿](../docs/design/mvp.md) | 还没有模块页的模块细节：预设（含读取规则）、总体结构、自省的内容；“MVP 不做”清单；风险 |
 | [内核 v2 设计稿](../docs/design/kernel-v2.md) | 已冻结，只留链接：每节标题保留，指向负责的 kb 页。不负责任何事实 |
-| [界面设计稿](../docs/design/gui.md) | 图形界面（调度台，上层）的布局、各块的规则、弹窗、视觉、交互和动效、每块数据从哪来、内核现在给不了的数据 |
+| [界面设计稿](../docs/design/gui.md) | 图形界面（调度台，上层）的定位和前端用什么、布局、各块的规则、弹窗、视觉、交互和动效、每块数据从哪来、内核现在给不了的数据 |
 | [v2 执行清单](../docs/plan/kernel-v2-checklist.md) | v2 的步骤顺序、每步的任务和验收、当前进度 |
+| [界面执行清单](../docs/plan/gui-checklist.md) | 图形界面的步骤顺序、每步的任务和验收、要用户点头的地方、当前进度 |
 | [MVP 执行清单](../docs/plan/mvp-checklist.md) | 已完成，留作记录 |
 | [kb-overview.md](kb-overview.md) | 产品边界、运行循环、状态分层、最小心智模型（含模型知道事情的三个入口）、源码入口 |
 | [kb-kernel.md](kb-kernel.md) | 纯函数层的类型、`start`、`fork`、`decide`、`effectOf`、`buildContext`、`observe` 和投影的字段、派生值、常量、工具描述、第 5 节的流程、纯函数层不变量 |
