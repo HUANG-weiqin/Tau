@@ -45,6 +45,7 @@ import { ConfirmLayer, confirmOpen } from "./ui/remove.js";
  * @property {PresetInfo[]} presetList 预设文件，列表。
  * @property {GuiState} gui 界面数据（`~/.tau/extras/gui/state.json`）。改它用 `setGui` 和 `lib/state.js` 的补丁函数。
  * @property {boolean} ready 界面数据和预设都读到了。
+ * @property {boolean} procsReady 连着服务，并且收到过进程表。没到之前，“某个预设没有进程”不可信。
  * @property {Entry[]} entries 全部进程（含总管的），已按预设分好类：`kind` 是 `chief | team | temp | unknown`，`status` 是 `running | error | idle | fresh`。
  * @property {Record<string, Entry>} byId 同上，按进程 ID 查。
  * @property {Record<string, number>} lastAt 进程最后动静的时刻（页面时钟）。没读到的进程没有。
@@ -138,6 +139,8 @@ const S = {
   /** 第一次拿到进程表后，界面数据里没人认的 ID 都清掉。 */
   firstPrune: false,
   gotPs: false,
+  /** 这次连上以后收到过进程表。断开就清掉：重连后、新进程表到之前，旧表里没有别处新建的进程。 */
+  psFresh: false,
   /** 界面数据写失败后，这个时刻之前不再自动写（seen、清理）。 */
   guiFailUntil: 0,
   /** @type {"all" | "running" | "error"} */
@@ -290,6 +293,7 @@ function onReply(r) {
   if (r.type === "ps") {
     if (!S.gotPs) S.firstPrune = true;
     S.gotPs = true;
+    S.psFresh = true;
     for (const p of r.processes) S.ever.add(p.self.id);
     for (const id of Object.keys(S.hist)) if (!S.store.procs[id]) delete S.hist[id];
     for (const p of r.processes) onSelf(p.self);
@@ -407,6 +411,7 @@ function compute() {
     presetList: S.presetList,
     gui: S.gui,
     ready: S.guiReady && S.presetsReady,
+    procsReady: S.psFresh && S.status === "online",
     entries,
     byId,
     lastAt,
@@ -696,6 +701,7 @@ function Root() {
     const conn = createConn({
       reply: onReply,
       status: (s, msg) => {
+        if (s !== "online") S.psFresh = false;
         S.status = s;
         S.statusMsg = msg ?? "";
         schedule();

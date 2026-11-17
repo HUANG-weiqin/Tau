@@ -85,7 +85,7 @@
 | `/api/tau` | 一条协议请求 | 管道回的每一行原样分块写回，管道关闭就结束。浏览器断开，桥就断开管道。连不上管道回 503 |
 | `/api/presets` | `{}` | `{ presets }`，见下 |
 | `/api/presets/create` | `{ id, workdir, model, tools, thinking?, prompt }` | `{ ok: true }`。文件已经存在回 409，不覆盖 |
-| `/api/presets/delete` | `{ id }` | `{ ok: true }`。ID 的检查和新建一样；没有这个文件回 404。只删 `presets/<ID>.md`，记忆库不动 |
+| `/api/presets/delete` | `{ id }` | `{ ok: true }`。ID 的检查和新建一样；没有这个文件回 404。只删 `presets/<ID>.md`，记忆库不动。桥不查这个预设还有没有进程，由页面拦：连着服务、这次连上以后收到过进程表，才让删 |
 | `/api/git` | `{ workdir, what, file? }` | 见下 |
 | `/api/bg` | `{ processes }` | `{ logs }`，见下 |
 | `/api/state` | `{ set? }` | `{ state }`。`set` 的每个顶层键覆盖进文件，再回整个文件 |

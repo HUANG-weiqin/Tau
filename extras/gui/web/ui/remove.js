@@ -165,10 +165,12 @@ function DeletePresetBox({ app, id, rect, onClose }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const used = app.entries.filter((e) => e.preset === id).length;
+  // 进程表还没从服务到（刚打开、断开或重启中），“没有进程”就不可信，不让删。
+  const known = app.procsReady;
   const name = app.gui.names[id];
 
   const go = async (/** @type {() => void} */ close) => {
-    if (used > 0 || busy) return;
+    if (used > 0 || !known || busy) return;
     setBusy(true);
     setErr("");
     try {
@@ -183,12 +185,13 @@ function DeletePresetBox({ app, id, rect, onClose }) {
   return html`<${Box} rect=${rect} onClose=${onClose} label="删除预设" title="删除预设" sub=${id}
     foot=${(/** @type {() => void} */ close) => html`<${Fragment}>
       <${Pill} label="取消" onClick=${close} />
-      <${Pill} kind="warn" icon="trash" label=${busy ? "删除中" : "删除"} disabled=${used > 0 || busy} onClick=${() => go(close)} />
+      <${Pill} kind="warn" icon="trash" label=${busy ? "删除中" : "删除"} disabled=${used > 0 || !known || busy} onClick=${() => go(close)} />
     </${Fragment}>`}>
     <p style="margin:0;font-size:15px;font-weight:900;overflow-wrap:anywhere">${name ?? id}</p>
     <p class="mono dim" style="margin:0">~/.tau/presets/${id}.md</p>
     <p class="dnote" style="color:var(--fg)">只删这个预设文件。删了找不回。记忆库不动：以后用同一个 ID 建预设，记忆还在。</p>
     ${used > 0 && html`<div class="callout" role="status" style="box-shadow:inset 3px 0 0 var(--warn)">它还有 ${used} 个进程。先删掉它们。</div>`}
+    ${used === 0 && !known && html`<div class="callout" role="status" style="box-shadow:inset 3px 0 0 var(--warn)">还没连上 tau 服务，不知道它还有没有进程。连上以后再删。</div>`}
     ${err !== "" && html`<div class="callout" role="alert" style="box-shadow:inset 3px 0 0 var(--warn)">删不掉：${err}</div>`}
   </${Box}>`;
 }
