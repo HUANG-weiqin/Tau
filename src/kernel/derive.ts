@@ -4,8 +4,8 @@ import { MEMORY_VIEW_MAX_BYTES } from "./tools.ts";
 import { unreachable } from "./types.ts";
 import type { AssistantMessage, Ended, Instant, Message, PresetSnapshot, Process, ToolCall } from "./types.ts";
 
-/** 每轮最多调用多少次模型。 */
-export const STEPS_PER_TURN = 100;
+/** 每轮最多调用多少次模型（D68）。 */
+export const STEPS_PER_TURN = 1024;
 /** 按字节估算用量时，多少字节算一个 token。常见文本至少约 2 字节一个 token，所以宁可估高。 */
 export const BYTES_PER_TOKEN = 2;
 /** 工具结果和 decide 写入的用户消息共用的字节上限，超出时保留头尾。 */

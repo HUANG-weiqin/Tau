@@ -216,7 +216,7 @@ interface Env { now: Instant; memoryView: string }
 
 | 常量 | 值 | 状态 | 用途 |
 |---|---|---|---|
-| `STEPS_PER_TURN` | 100 | 占位值 | 每轮最多调用多少次模型。它是收住换段循环的最后一道保险（见坑点） |
+| `STEPS_PER_TURN` | 1024 | 已定（[D68](kb-decisions.md#d68-steps_per_turn-定成-1024)） | 每轮最多调用多少次模型。它是收住换段循环的最后一道保险（见坑点） |
 | `BYTES_PER_TOKEN` | 2 | 已定 | 按字节估算用量时，多少字节算一个 token |
 | `MESSAGE_MAX_BYTES` | 32 KiB | 已定 | 每个工具结果和 `decide` 写入的每条用户消息的字节上限，超出时保留头尾 |
 | `MARGIN_TOKENS` | 4096 | 已定 | 阈值之上的余量：交接指令、补的结果、ID、消息框架和估算误差 |

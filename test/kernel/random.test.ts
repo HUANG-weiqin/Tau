@@ -92,7 +92,7 @@ const PROFILES: Profile[] = [
     hugeResult: 0.08,
   },
   {
-    // 模型几乎总是要求调用工具，没人按停止：步数上限和连续换段。
+    // 模型几乎总是要求调用工具，没人按停止，窗口小：连续换段、换段失败。
     name: "失控",
     seeds: [101, 102, 103],
     steps: 4_000,
@@ -100,6 +100,18 @@ const PROFILES: Profile[] = [
     actions: { user: 2, stop: 0, complete: 60, deliver: 35, duplicate: 1, drop: 0, forge: 1, crash: 0 },
     replies: { toolUse: 99, noCalls: 0, stop: 1, stopWithCalls: 0, length: 0, error: 0, aborted: 0, pending: 0, deferred: 0 },
     handoffs: { note: 97, lengthNote: 0, empty: 3, toolUse: 0, error: 0, aborted: 0 },
+    toolInterrupted: 0,
+    hugeResult: 0.05,
+  },
+  {
+    // 模型从不自己停，窗口大到换段不会失败：一轮只能以步数用完结束（STEPS_PER_TURN 是 1024，见 D68）。
+    name: "长轮",
+    seeds: [301],
+    steps: 30_000,
+    windows: [400_000],
+    actions: { user: 2, stop: 0, complete: 60, deliver: 35, duplicate: 1, drop: 0, forge: 1, crash: 0 },
+    replies: { toolUse: 100, noCalls: 0, stop: 0, stopWithCalls: 0, length: 0, error: 0, aborted: 0, pending: 0, deferred: 0 },
+    handoffs: { note: 100, lengthNote: 0, empty: 0, toolUse: 0, error: 0, aborted: 0 },
     toolInterrupted: 0,
     hugeResult: 0.05,
   },
@@ -469,6 +481,8 @@ for (const profile of PROFILES) {
     assert.ok(stats.handoffOk > 0, "没有成功换段");
     assert.ok(stats.dropped > 0, "没有丢弃过输入");
     if (profile.name === "失控") {
+      assert.ok(stats.handoffFailed > 0, "没有换段失败");
+    } else if (profile.name === "长轮") {
       assert.ok(stats.stepLimit > 0, "没有用完步数");
     } else {
       for (const k of ["handoffFailed", "done", "stopped", "errors", "skipped", "interrupted", "queuedMerged", "duplicates", "usageAdded", "processLetters", "images", "safePoints", "handoffByCall", "handoffByLetter", "replies", "emptyReplies"] as const) {
