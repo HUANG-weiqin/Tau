@@ -1,6 +1,6 @@
 # 上层建筑
 
-`updated: 2026-11-16`
+`updated: 2026-11-17`
 
 ## 这个模块是干什么的
 
@@ -21,6 +21,7 @@
 - 不做的功能：[决策记录 D46](kb-decisions.md#d46-v2-也不做的)。
 - 内核的契约：[kb-contract](kb-contract.md)。
 - 线协议和 CLI：[kb-service](kb-service.md)。工具定义的格式和运行：[kb-tools](kb-tools.md#工具定义)。
+- 图形界面（调度台）：[界面设计稿](../docs/design/gui.md)。
 
 ## 架构
 
