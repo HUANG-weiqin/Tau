@@ -22,6 +22,7 @@ import type { ServiceOps } from "./service.ts";
 import { generateTitle } from "./title.ts";
 import { contentType, readStatic, routeStatic } from "./static.ts";
 import { installTool, listTools, removeTool } from "./tools.ts";
+import { checkDir, installTools, relayStatus, serverList, toolList } from "./mcp.ts";
 import { createStateStore } from "./state.ts";
 import { HttpError, isObject } from "./util.ts";
 import type { Models } from "@earendil-works/pi-ai";
@@ -56,6 +57,8 @@ export interface BridgeOptions {
   repo?: string;
   /** 桥的启动时间（毫秒）。测试注入。 */
   bridgeStartedAt?: number;
+  /** MCP 中转的管道。默认 TAU_MCP_PIPE，再默认 \\.\pipe\tau-mcp。桥只查它，不拉起。 */
+  mcpPipe?: string;
 }
 
 export interface Bridge {
@@ -99,10 +102,13 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
   const html = readFileSync(path.join(webDir, "index.html"));
   const csp = buildCsp(importMapHash(html.toString("utf8")));
   const state = createStateStore(home);
-  const git = createGit(opts.git ?? runGit, async () => {
+  // 已知的项目目录：预设的工作目录，加界面里登记的文件夹。git 和 MCP 两边都用它。
+  const knownDirs = async (): Promise<string[]> => {
     const folders = state.read().folders;
     return [...(await presetWorkdirs(home, pipe)), ...(Array.isArray(folders) ? folders.filter((f): f is string => typeof f === "string") : [])];
-  });
+  };
+  const git = createGit(opts.git ?? runGit, knownDirs);
+  const mcpPipe = opts.mcpPipe ?? process.env.TAU_MCP_PIPE ?? "\\\\.\\pipe\\tau-mcp";
   const authFile = opts.authFile ?? path.join(os.homedir(), ".pi", "agent", "auth.json");
   let catalog: CatalogProvider[] | null = null;
   let titleModels: Models | null = opts.titleModels ?? null;
@@ -181,6 +187,20 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
       case "tools/remove":
         removeTool(home, body);
         return json(res, 200, { ok: true });
+      case "mcp/servers":
+        return json(res, 200, serverList(await checkDir(body.workdir, knownDirs)));
+      case "mcp/tools": {
+        const dir = await checkDir(body.workdir, knownDirs);
+        if (typeof body.server !== "string" || body.server === "") throw new HttpError(400, "server 必须是字符串");
+        return json(res, 200, await toolList(home, dir, body.server));
+      }
+      case "mcp/install": {
+        const dir = await checkDir(body.workdir, knownDirs);
+        if (typeof body.server !== "string" || body.server === "") throw new HttpError(400, "server 必须是字符串");
+        return json(res, 200, { ok: true, ...(await installTools(home, dir, body.server, body.tools)) });
+      }
+      case "mcp/status":
+        return json(res, 200, await relayStatus(mcpPipe));
       case "git":
         return json(res, 200, await git(body));
       case "bg": {

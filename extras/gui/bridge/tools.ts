@@ -4,6 +4,7 @@ import { mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFile
 import path from "node:path";
 import { CATALOG, definitionOf } from "../../tools/catalog.ts";
 import type { ToolEntry } from "../../tools/catalog.ts";
+import { parseCommand } from "../../mcp/gen.ts";
 import { HttpError } from "./util.ts";
 
 const NAME = /^[A-Za-z0-9_-]{1,64}$/;
@@ -24,6 +25,8 @@ export interface InstalledTool {
   error?: string;
   /** 用到它的预设 ID。 */
   usedBy: string[];
+  /** MCP 生成的定义：命令指向 `extras/mcp/call.ts` 时才有，读出服务器名和工具名。 */
+  mcp?: { server: string; tool: string };
 }
 
 export interface LibraryTool {
@@ -42,7 +45,7 @@ const paramNames = (parameters: unknown): string[] => {
 };
 
 /** 键排序后的 JSON，用来比较两个定义。 */
-function canon(v: unknown): string {
+export function canon(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(canon).join(",")}]`;
   if (typeof v === "object" && v !== null) {
     return `{${Object.keys(v)
@@ -54,7 +57,7 @@ function canon(v: unknown): string {
 }
 
 /** 读 `<dir>/<name>.json`：文本和解析结果。没有这个文件是 null。 */
-function readDef(dir: string, name: string): { value: unknown } | { error: string } | null {
+export function readDef(dir: string, name: string): { value: unknown } | { error: string } | null {
   let text: string;
   try {
     text = readFileSync(path.join(dir, `${name}.json`), "utf8");
@@ -121,6 +124,7 @@ export function listTools(home: string): { installed: InstalledTool[]; library: 
       const v = r.value;
       if (typeof v !== "object" || v === null || Array.isArray(v)) return { name, error: "不是 JSON 对象", usedBy: used(name) };
       const d = v as Record<string, unknown>;
+      const mcp = typeof d.command === "string" ? parseCommand(d.command) : null;
       return {
         name,
         ...(typeof d.description === "string" ? { description: d.description } : {}),
@@ -128,6 +132,7 @@ export function listTools(home: string): { installed: InstalledTool[]; library: 
         ...(typeof d.timeout === "number" ? { timeout: d.timeout } : {}),
         ...(typeof d.output === "string" ? { output: d.output } : {}),
         ...(typeof d.command === "string" ? { command: d.command } : {}),
+        ...(mcp === null ? {} : { mcp }),
         usedBy: used(name),
       };
     });

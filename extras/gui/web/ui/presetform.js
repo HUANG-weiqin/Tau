@@ -4,6 +4,7 @@ import { html, Icon, useEffect, useState, Fragment } from "./common.js";
 import { tools as loadTools, agentsMd as loadAgentsMd } from "../api.js";
 import { ModelPicker, ThinkingBar, thinkingFor } from "./modelpicker.js";
 import { buildCreate, buildUpdate, defaultModelRef, findModel, nearestLevel } from "../lib/models.js";
+import { groupByServer, withGroup } from "../lib/mcp.js";
 import { formatBytes } from "../lib/format.js";
 
 export const TOOLS = ["read", "write", "edit", "bash", "memory", "agents"];
@@ -27,12 +28,12 @@ export function usePresetForm(o) {
   const [options, setOptions] = useState(orig?.options !== undefined ? JSON.stringify(orig.options) : "");
   const [prompt, setPrompt] = useState(orig?.prompt ?? "");
   const [advanced, setAdvanced] = useState(orig?.options !== undefined);
-  /** 已装的工具定义的名字；还没读到或读不到是 null。 */
-  const [defs, setDefs] = useState(/** @type {string[] | null} */ (null));
+  /** 已装的工具定义（`/api/tools` 的 installed，MCP 生成的带 `mcp`）；还没读到或读不到是 null。 */
+  const [defs, setDefs] = useState(/** @type {import("../lib/mcp.js").InstalledDef[] | null} */ (null));
   useEffect(() => {
     let alive = true;
     loadTools().then(
-      (r) => alive && setDefs((r.installed ?? []).map((/** @type {{ name: string }} */ t) => t.name)),
+      (r) => alive && setDefs(r.installed ?? []),
       () => {},
     );
     return () => {
@@ -115,6 +116,8 @@ export function usePresetForm(o) {
       return r.ok && agents && agentsInfo?.exists ? { ok: /** @type {const} */ (true), fields: { ...r.fields, agentsMd: true } } : r;
     },
     toggle: (/** @type {string} */ t) => setTools(tools.includes(t) ? tools.filter((x) => x !== t) : [...tools, t]),
+    /** 一组一起开关（MCP 的小组头“全选”“全不选”）。 @param {readonly string[]} names @param {boolean} on */
+    setMany: (names, on) => setTools((now) => withGroup(now, names, on)),
     /** ID 合法、没被占（Windows 不分大小写）、模型填了、几个输入框填得对。 @param {Record<string, unknown>} presets */
     valid(presets) {
       return (
@@ -145,8 +148,22 @@ export function PresetFields({ form, app, placeholder = "my-project", promptHint
   const { memory, toggle, tools, orig } = form;
   const edit = !!orig;
   const info = findModel(app.models?.providers, form.model)?.model ?? null;
-  // 工具定义：已装的，加上预设里写了、但 tools/ 下没有的（原样保留，可以取消）。
-  const defNames = [...(form.defs ?? []), ...tools.filter((t) => !TOOLS.includes(t) && !(form.defs ?? []).includes(t))];
+  // 已装的工具定义，加上预设里写了、但 tools/ 下没有的（原样保留，可以取消）。
+  const defs = form.defs ?? [];
+  const have = new Set(defs.map((d) => d.name));
+  const orphans = tools.filter((t) => !TOOLS.includes(t) && !have.has(t));
+  const { groups, others } = groupByServer(defs);
+  /** 一组工具的小组头：服务器名，带“全选”“全不选”。 @param {string} title @param {string[]} names */
+  const groupHead = (title, names) => {
+    const on = names.filter((n) => tools.includes(n)).length;
+    return html`<div class="def-group" key=${title}>
+      <span class="def-group-h"><b>${title}</b><span class="dnote" style="font-size:11px">${on}/${names.length}</span></span>
+      <button type="button" class="link" onClick=${() => form.setMany(names, true)}>全选</button>
+      <button type="button" class="link" onClick=${() => form.setMany(names, false)}>全不选</button>
+    </div>`;
+  };
+  const toggleOf = (t) =>
+    html`<button type="button" key=${t} class="toggle" aria-pressed=${tools.includes(t)} title=${have.has(t) ? undefined : "tools/ 下没有这个定义，原样保留"} onClick=${() => toggle(t)}>${t}</button>`;
   const optErr = (() => {
     const b = form.draft().options.trim();
     if (b === "") return "";
@@ -174,9 +191,23 @@ export function PresetFields({ form, app, placeholder = "my-project", promptHint
       </div>
     </div>
     <div class="field">工具定义
-      ${defNames.length === 0
-        ? html`<span class="dnote">${form.defs === null ? "正在读…" : "还没有装工具定义。在设置里打开“工具定义”装。"}</span>`
-        : html`<div class="toggles" role="group" aria-label="工具定义">${defNames.map((t) => html`<button type="button" key=${t} class="toggle" aria-pressed=${tools.includes(t)} title=${(form.defs ?? []).includes(t) ? undefined : "tools/ 下没有这个定义，原样保留"} onClick=${() => toggle(t)}>${t}</button>`)}</div>`}
+      ${form.defs === null
+        ? html`<span class="dnote">正在读…</span>`
+        : defs.length === 0 && orphans.length === 0
+          ? html`<span class="dnote">还没有装工具定义。在设置里打开“工具定义”装。</span>`
+          : html`<${Fragment}>
+              ${groups.map(
+                (g) => html`<div class="def-mcp" key=${g.server}>
+                  ${groupHead(`MCP · ${g.server}`, g.defs.map((d) => d.name))}
+                  <div class="toggles" role="group" aria-label=${`MCP ${g.server} 的工具定义`}>${g.defs.map((d) => toggleOf(d.name))}</div>
+                </div>`,
+              )}
+              ${(others.length > 0 || orphans.length > 0) &&
+              html`<div class="def-mcp">
+                ${others.length > 0 && groupHead("工具库和手写的", others.map((d) => d.name))}
+                <div class="toggles" role="group" aria-label="工具定义">${others.map((d) => toggleOf(d.name))}${orphans.map((t) => toggleOf(t))}</div>
+              </div>`}
+            </${Fragment}>`}
       ${tools.includes("shell") && tools.includes("bash") && html`<span class="dnote" style="font-size:11.5px">shell 和 bash 同时开着：两个都能运行命令，通常只留一个。</span>`}
     </div>
     <label class="field">换段阈值（token，可以不填）

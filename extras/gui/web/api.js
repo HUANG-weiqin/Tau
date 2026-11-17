@@ -157,6 +157,13 @@ export const installTool = (/** @type {string} */ name, /** @type {boolean} */ r
 export const removeTool = (/** @type {string} */ name) => post("/api/tools/remove", { name });
 export const pickFolder =() => post("/api/pick-folder", {}).then((r) => /** @type {string | null} */ (r.path ?? null));
 
+/** MCP：项目里的服务器、一个服务器上的工具（生成的，不写盘）、装选中的、中转的状态。 */
+export const mcpServers = (/** @type {string} */ workdir) => post("/api/mcp/servers", { workdir });
+export const mcpTools = (/** @type {string} */ workdir, /** @type {string} */ server) => post("/api/mcp/tools", { workdir, server });
+export const mcpInstall = (/** @type {string} */ workdir, /** @type {string} */ server, /** @type {string[]} */ tools) => post("/api/mcp/install", { workdir, server, tools });
+/** relay 的状态。桥只查，不拉起。 */
+export const mcpStatus = () => post("/api/mcp/status", {});
+
 /** @type {Map<string, Promise<string | null>>} */
 const blobs = new Map();
 /**

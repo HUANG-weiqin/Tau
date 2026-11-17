@@ -30,7 +30,7 @@
 | `extras/package.json` | 上层的依赖，精确锁定（[D63](kb-decisions.md#d63-上层的依赖随便加)）。`@earendil-works/pi-ai` 和根目录同一个版本，桥只用它的公开函数读模型目录 |
 | `extras/gui/bridge/main.ts` | 桥的入口，Node 直接运行 |
 | `extras/gui/bridge/server.ts` | `createBridge`：检查和路由。测试用它在进程里起桥，可以换掉 git 和选文件夹 |
-| `extras/gui/bridge/*.ts` | 其余各部分：`forward.ts` 转发，`static.ts` 静态文件，`presets.ts`（经 `check` 列预设，写、改和删预设文件）、`models.ts`（模型目录和 key 状态）、`git.ts`、`bg.ts`、`tools.ts`（列、装、删工具定义）、`state.ts`、`pick.ts`，`pipe.ts`（一次性的管道请求、管道在不在）、`service.ts`（服务和桥的状态、旧代码的判断、起重启脚本）、`title.ts`（自动标题）、`credentials.ts`（只读的 auth.json 凭据库），`util.ts` 放公用的小函数 |
+| `extras/gui/bridge/*.ts` | 其余各部分：`forward.ts` 转发，`static.ts` 静态文件，`presets.ts`（经 `check` 列预设，写、改和删预设文件）、`models.ts`（模型目录和 key 状态）、`git.ts`、`bg.ts`、`tools.ts`（列、装、删工具定义）、`state.ts`、`pick.ts`，`pipe.ts`（一次性的管道请求、管道在不在）、`service.ts`（服务和桥的状态、旧代码的判断、起重启脚本）、`title.ts`（自动标题）、`mcp.ts`（MCP 的服务器、工具定义和 relay 状态）、`credentials.ts`（只读的 auth.json 凭据库），`util.ts` 放公用的小函数 |
 | `extras/gui/web/index.html` | 页面 |
 | `extras/gui/web/lib/*.js` | 页面的纯逻辑。不碰 DOM，不发请求。文件头写 `// @ts-check`，类型用 JSDoc |
 | `extras/gui/web/ui/*.js` | 组件 |
@@ -100,6 +100,10 @@
 | `/api/tools` | `{}` | `{ installed, library }`，见下 |
 | `/api/tools/install` | `{ name, replace? }` | `{ ok: true, status }`。`name` 必须是工具库里的；同名文件已有且内容不同，没有 `replace` 回 409，不覆盖；内容一样直接成功。写 `<home>/tools/<name>.json`，先写临时文件再改名 |
 | `/api/tools/remove` | `{ name }` | `{ ok: true }`。有预设的 `tools:` 一行用到它回 409，错误里写是哪些预设；没有这个文件回 404 |
+| `/api/mcp/servers` | `{ workdir }` | `{ file, servers }`，见下“MCP 页” |
+| `/api/mcp/tools` | `{ workdir, server }` | `{ instructions, tools, gone, totalBytes }`，见下 |
+| `/api/mcp/install` | `{ workdir, server, tools }` | `{ ok: true, installed, bytes }`，见下 |
+| `/api/mcp/status` | `{}` | `{ running: false }`，或 relay 的 `{ running: true, pid, instances }` |
 | `/api/service` | `{}` | 见下“重启和旧代码” |
 | `/api/service/restart` | `{ service?, bridge?, force? }` | 202 `{ ok: true }`，或 409，见下 |
 | `/api/title` | `{ process, model }` | `{ title }`，见下“自动标题” |
@@ -161,6 +165,31 @@ git：
   - 局限：只比修改时间，改了又改回去也算旧；`extras/gui/web/` 不算，页面文件每次现读。
 - `/api/service/restart`：`service` 和 `bridge` 至少一个是 `true`，否则 400。要重启服务、有进程在跑、没带 `force`：回 409 `{ error, running }`，什么都不做。否则用 detached 的 `powershell.exe` 跑 `restart.ps1`，立刻回 202。只重启桥不动进程，所以不拦。重启桥会把桥自己停掉，页面靠 `conn.js` 的重连回来。
 - 测试里 `createBridge` 的 `serviceOps`、`bridgeStartedAt`、`repo` 注入假的，不真的起停进程。
+
+MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mcp-中转)）：桥只列、生成、装定义和看 relay 的状态，不拉起 relay。
+
+- `workdir` 必须是已知的项目目录（预设的工作目录，加界面里登记的文件夹），检查和 `/api/git` 一样，不是就 403。
+- `/api/mcp/servers`：`file` 是配置文件路径（`.pi/mcp.json`，没有就 `.mcp.json`，都没有是 `null`）；`servers` 每项 `{ name, command?, description?, timeout?, error? }`，一项写错了只标记那一项。配置文件整体不是合法 JSON 时回 400。
+- `/api/mcp/tools`：起一次服务器、列完工具就关掉（不写盘）。每个工具 `{ tool, name, description, bytes, status, skip? }`，`status` 是 `none`、`installed`、`differs`（和刚生成的定义逐项比较）；`gone` 是装着的、命令指向这个服务器的 `call.ts`、但服务器上已经没有的定义名；`totalBytes` 是能装的定义的字节数之和。配置读不出回 400，起不来服务器回 502。
+- `/api/mcp/install`：重新列一次、重新生成，只装 `tools` 里选中的（用原工具名），不信客户端送来的定义。先写临时文件再改名。同名文件已存在、又不是这个服务器生成的 MCP 定义：一个都不写，回 409 并列出名字。服务器上没有的工具、装不了的工具回 400。
+- `/api/mcp/status`：连 relay 的管道（`TAU_MCP_PIPE` 有值就用它，再默认 `\\.\pipe\tau-mcp`）发 `status`。连不上回 `{ running: false }`，不拉起 relay。
+- 删定义不另做接口，用 `/api/tools/remove`（被预设用到时会拒绝）。
+- `/api/tools` 的 `installed` 多一个可选字段 `mcp: { server, tool }`：命令指向 `extras/mcp/call.ts` 时才有（`bridge/tools.ts` 用 `gen.ts` 的 `parseCommand` 认）。库里的和手写的没有这个字段。预设表靠它把 MCP 的定义分小组。
+- 测试：`test/extras/gui/mcp.test.ts`。
+
+界面（`ui/mcp.js`，是工具定义弹窗的第三节“03 MCP”）：
+
+- 项目：一个 `<select>`，选项是 `app.projects`，默认聚焦的那个。换项目就重读 `/api/mcp/servers`。
+- 服务器：每个一张 `.td-row` 卡，写名字、命令、说明、超时；写错的项是 `bad` 卡，写错误原文，不给“列出工具”。
+- 列工具：卡上的按钮，等的时候写“正在列…”，期间别的按钮都不可用。结果一进来就按默认勾选重置（`lib/mcp.js` 的 `defaultPicked`）。
+- 工具清单：`.mcp-row`，`<input type="checkbox">`（跳过的不能勾）、定义名、原名（不同时才有）、状态 tag（未装、已装、和现在的不同）、字节数。跳过的写原因。
+- 大小条：`sizeOf` 的字节数对着 64 KiB；超了整条变警示橙，写“一个预设用不下这么多，少勾几个”，但不拦安装。
+- 安装：调 `/api/mcp/install`，成功后让上面“01 已装的定义”重读（`onChanged`），再重列一次把状态刷新成“已装”。409 的错误原文写在检查条里。
+- 服务器上已经没有的（`gone`）：单独一组，每个一个“删除”，走 `/api/tools/remove`。被预设用到的（父弹窗给的 `usedBy`）不显示删除，写是哪些预设。
+- 服务器的说明（`instructions`）：折在工具清单上面，点开看全文（`.mcp-instr-t`），带“复制”（`navigator.clipboard`，不是安全上下文时没有）。写一句：工具描述里不带它，要模型知道就贴进预设的提示词。
+- 中转：`/api/mcp/status` 的一行。没在跑写“第一次调用时自动起来”；在跑写几个实例，每个的进程、服务器、`idleText(idleMs)`、在跑的调用数。打开弹窗读一次，每次列工具、装、删以后读一次，**不轮询**；旁边一个“刷新”。
+- 预设表（`ui/presetform.js`）：已装的定义按服务器分小组（`lib/mcp.js` 的 `groupByServer`），小组头写服务器名和 `已选/总数`，带“全选”“全不选”（`withGroup`）。不是 MCP 的和 `tools/` 下已经没有的原样留在后面一组。
+- 纯逻辑在 `extras/gui/web/lib/mcp.js`（`defaultPicked`、`sizeOf`、`groupByServer`、`withGroup`、`idleText`、`LIMIT`），测试 `test/extras/gui/mcp-lib.test.ts`。
 
 自动标题（`bridge/title.ts`）：
 

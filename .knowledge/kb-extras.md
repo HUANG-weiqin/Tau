@@ -14,6 +14,7 @@
 - 多 Agent 等待的两条出路。
 - 后台命令和完成通知的配方。
 - 工具库：四个现成的工具定义。
+- MCP 中转怎么做。
 - HTTP 桥要做的检查。
 
 本页不负责：
@@ -86,7 +87,7 @@
 | bash 截断时存完整输出（Pi 的 bash 存进临时目录，结果里给路径） | 工具定义：运行给定的命令，完整输出写进 `~/.tau/extras/<名字>/` 下的文件，返回截断的输出和路径。预设不给内置的 `bash`，改给它，同沙箱的做法（[D46](kb-decisions.md#d46-v2-也不做的) 第一张表）。已做成[工具库的 `shell`](#工具库) | 没有：内核版改内置的 `bash`，也是库外工具，崩溃时一样报“被中断”。本机带路径的截断 42 次，事后用到存下的文件 5 次（[D56](kb-decisions.md#d56-推导测试第二次)） | 3 |
 | 看图片文件、桌面截图、桌面控制 | `output: content` 的工具定义。图片先缩到宽和高都不超过 2000 像素，再压到 1.5 MiB 以内，例如存成 JPEG。点击、按键、输入也是工具定义，命令调外部程序，例如 PowerShell（本机 `computer` 163 次） | 没有：点击和输入也是库外工具，崩溃时报“被中断”，不自动重做，内核版也一样。图片照样走入口检查。内核版让 `read` 读图片，也是库外工具。缩图要外部命令，例如 PowerShell 的 System.Drawing（见上面的依赖规则） | 3 |
 | 列出、读取角色定义（Pi Web 的 `list_roles`、`read_role`） | 预设是 `~/.tau/presets/` 下的文件：用 `read`，或者一个列目录的工具定义（和 grep、find、ls 一类） | 没有：库外只读工具，崩溃时报“被中断”，重做无害。本机 `list_roles` 52 次、`read_role` 18 次（含脚本里） | 3 |
-| MCP | 上层的中转进程，第一次调用时拉起、常驻，按 tau 进程（`TAU_PROCESS`）持有有状态的 stdio 服务器。它为每个 MCP 工具生成一个工具定义，规整 schema，把服务器的说明写进工具描述。工具定义的命令先连中转，连不上就拉起它，再转发调用。常驻进程要脱离调用命令的进程树和 msys 进程组、不继承它的输出管道，否则超时或停止时会被一起结束（[kb-tools 的结束进程](kb-tools.md#结束进程)）。带图的结果写成文件，缩到入口条件以内，用 `output: content` 返回 | 没有：内核版也要常驻的服务器进程，崩溃或服务重启时一样丢服务器的状态；工具清单在进程启动时冻结（不变量 6），两边一样。每次调用多约 0.11 秒：本机 MCP 调用的中位数是 0.15 秒，两次模型调用相隔的中位数是 7.7 秒。本机用过 491 次（直接 321、脚本里 170），两个有状态的 stdio 服务器：godbrave 的 godbrave-game、pixel-art | 3 |
+| MCP | 见 [MCP 中转](#mcp-中转)。一个常驻的 relay 替 tau 进程持有有状态的 stdio 服务器，每个 MCP 工具一个 `output: content` 的工具定义 | 没有：内核版也要常驻的服务器进程，崩溃或服务重启时一样丢服务器的状态；工具清单在进程启动时冻结（不变量 6），两边一样。每次调用多约 0.11 秒：本机 MCP 调用的中位数是 0.15 秒，两次模型调用相隔的中位数是 7.7 秒。本机用过 491 次（直接 321、脚本里 170），两个有状态的 stdio 服务器：godbrave 的 godbrave-game、pixel-art | 3 |
 | 外部程序寄信（如 Claude Code） | 直接连管道发 `send`，正文前加前缀，例如 `[Claude Code] `。发完请求不能半关闭（[5.9](kb-service.md#线协议srcprotocolts)） | 没有：内核里只差一行头，前缀就是这行头 | 3 |
 | skills、提示词模板 | 文本文件，用 `read`。上层把技能清单生成进预设提示词；模板由上层拼进信里 | 没有：清单随预设在进程启动时冻结，内核版也一样 | 3 |
 | 项目的上下文文件（Pi 默认把 AGENTS.md 放进系统提示词）、一个角色用在多个项目 | 上层用预设组合，例如按项目生成预设：`workdir` 是项目目录，提示词里拼上项目的 AGENTS.md。已做在界面里，做法见 [kb-gui 的拼 AGENTS.md](kb-gui.md#拼-agentsmd)（[D58](kb-decisions.md#d58-项目的上下文由上层拼)） | 没有：预设在进程启动时冻结（不变量 6），内核版在启动时读 AGENTS.md 也一样冻结。本机 11 个项目有 AGENTS.md，占 191 个会话里的 173 个；Agent 派生的 120 个会话分布在 10 个项目，一个角色最多用在 8 个项目 | 3 |
@@ -181,6 +182,88 @@ mkdir -p "$HOME/.tau/extras/bg"
 - 都只在 tau 的工具调用里运行：没有 `TAU_PROCESS` 或 `TAU_PIPE` 时报错。连管道的小客户端是 `extras/tools/client.ts`，发完请求不半关闭。
 - 测试：`test/extras/tools/tools.test.ts`，真的服务、真的 Git Bash；数据目录靠 `USERPROFILE` 指到临时目录。
 
+### MCP 中转
+
+`extras/mcp/` 是 MCP 的中转：一个常驻进程替 tau 进程持有有状态的 stdio 服务器，工具调用的命令转发给它。读配置（`config.ts`）、起服务器（`server.ts`，relay 和生成共用）、中转进程（`relay.ts`）、调用脚本（`call.ts`）、生成工具定义（`gen.ts`）。界面（工具定义弹窗的 MCP 一节、预设表按服务器分组）见 [kb-gui 的 MCP 页](kb-gui.md#mcp-页bridgemcpts)。
+
+只支持 stdio 的服务器。命令模板是 `node "<仓库>/extras/mcp/call.ts" <服务器> <工具>`，`output: content`，参数照工具定义的约定从标准输入来（[kb-tools](kb-tools.md#运行工具定义)）。
+
+**配置**
+
+- 读工作目录下的 `.pi/mcp.json`，没有就读 `.mcp.json`。
+- 认 `mcpServers` 下每项的 `command`、`args`、`env`、`cwd`。
+- `type` 写了且不是 `stdio`：报错，说只支持 stdio。
+- 找不到文件、找不到这个服务器名：报错，消息给模型看。
+
+**管道和请求**
+
+- relay 在命名管道上监听。默认 `\\.\pipe\tau-mcp`，`TAU_MCP_PIPE` 可以改（测试用临时管道）。
+- 按行分帧：一行一个 JSON 请求，一行一个 JSON 回复。一个连接上可以连着发。
+- `{op:"call", process, workdir, server, tool, arguments}`：回 `{ok:true, content, isError?, restarted?}`，或者 `{ok:false, error}`。
+- `{op:"list", process, workdir, server}`：回 `{ok:true, tools:[{name, description, inputSchema}]}`，分页由 relay 自己走完。
+- `{op:"status"}`：回 relay 自己的 PID 和现在的实例（服务器 PID、在跑的调用数、空闲多久、死没死），给测试和界面用。`status` 不算活动：不重置任何空闲计时。
+- 管道已经被占着：新起的 relay 直接退出，调用方连占着的那一个。两个调用同时拉起时只会活下来一个。
+
+**实例**
+
+- 键是 `(进程 ID, 工作目录, 服务器名)`。工作目录按 Windows 的规矩不分大小写。
+- 同一个键的请求串行排队：有状态的服务器不并发打。不同键互不等待。
+- 第一次用到时用 SDK 的 `Client` 加 `StdioClientTransport` 起服务器，并做完初始化。`cwd` 是工作目录，配置写了 `cwd` 就用它；环境是 relay 的环境加上配置里的 `env`。
+- 服务器的 stderr 一直有人读，留最后一小段。起不来、列工具失败、调用失败时，这段接在错误后面：真正的原因常常只在这里（例如 python 的 `ModuleNotFoundError`）。relay 另外把 stderr 写进日志。
+- MCP 请求的时间上限是 600 秒，不是 SDK 默认的 60 秒。不然慢调用（渲染、模拟一步）会被判超时，服务器还在做，队列却放行了，状态和模型以为的对不上。真正的上限是工具定义的 `timeout` 和内核结束进程树。
+- 服务器自己退出了：下次调用时重起，回复带 `restarted`，`call.ts` 在结果开头加一行“服务器重启过，之前的状态没了。”
+
+**回收**
+
+- 一个实例空闲超过 `TAU_MCP_IDLE_MS`（默认 30 分钟），关掉它的服务器。
+- 一个实例都没有、又没有在途的 `call`/`list`、且空闲超过 `TAU_MCP_EXIT_MS`（默认 10 分钟），relay 自己退出。起服务器要几秒，这几秒里实例表还是空的，所以在途的请求也算“在用”。
+- 关服务器时先 `taskkill /F /T /PID` 结束进程树，再 `client.close()`。父进程先没了，`taskkill /T` 就找不到它的子孙：回 128，孙进程留着。SDK 的 close 只结束直接子进程。
+- 只在服务器还活着时结束进程树（没收到过它的 close）。已经自己退出的不碰：PID 很快会被复用，按进程树杀会误伤别人。
+- 起服务器失败时也一样：PID 要在 `connect` 之前记下。`connect` 失败时 SDK 已经关掉了 transport，那时 `transport.pid` 是 null，按进程树结束就成了空操作。
+- 本机以前有 88 个 python 进程、约 3.8 GB 没人回收，这三条要做实。
+
+**怎样脱离进程树**
+
+`call.ts` 不直接 spawn relay，中间隔一层 `cmd /c start "" /b node relay.ts`：
+
+- cmd 起完 relay 立刻退出，relay 的父进程消失，`taskkill /T` 顺着父进程链找不到它。
+- cmd 用 `detached: true`、`stdio: "ignore"`、`windowsHide: true` 起：relay 不继承调用者的输出管道，也不在调用者所在的进程组里。
+- `call.ts` 等 cmd 退出再走，几十毫秒。不等的话，Windows 上偶尔这个 relay 根本没起来。
+- 不这样做，工具调用超时或被停时，内核按进程树和 msys 进程组结束命令（[kb-tools 的结束进程](kb-tools.md#结束进程)），会把 relay 和所有 MCP 服务器一起杀掉。
+- 日志在 `~/.tau/extras/mcp/relay.log`，由 relay 自己写（见坑点）。
+
+**结果**
+
+- MCP 的 `text` 项原样变成 `{"type":"text","text":…}`。
+- `image` 项先写成文件 `~/.tau/extras/mcp/images/<进程 ID>/<时间>-<序号>.<扩展名>`，再变成 `{"type":"image","path":"<Windows 绝对路径>"}`。
+- 长边超过 2000 像素、超过 1.5 MiB、或者类型不是 png/jpeg/gif/webp 的图片不放进 image 项，改成一行文字写出路径。一次结果最多放 2 张，多的也改成文字写路径。长边读图片头算，png、jpeg、gif、webp 都支持。
+- 其它类型（`resource`、`audio` 等）转成一行文字说明。
+- `isError` 或者 `ok:false`：文字打到标准输出，退出码 1。
+- 标准输出截到 30 KiB 以内并写明截断了：内核的上限约 32 KiB，整份不合法等于没有结果。
+
+**代价**
+
+- 服务器状态在 relay 或服务器重启时丢：游戏状态、画布都没了，只能重来。
+- 每次调用多一次管道往返。本机 MCP 调用的中位数是 0.15 秒，两次模型调用相隔的中位数是 7.7 秒，这一份基本看不见。
+- 工具清单在进程启动时冻结（不变量 6），relay 重起也不会让已经开始的进程看到新清单。
+- 测试：`test/extras/mcp/mcp.test.ts`（范围、图片、分页、重起、回收、并发拉起）、`test/extras/mcp/detach.test.ts`（内核超时结束命令以后 relay 还活着）。
+
+**工具定义**
+
+`gen.ts` 由一次列工具的结果生成工具定义；命名、规整参数、拼说明、算大小都是纯函数。桥的 `/api/mcp/tools` 用它，`/api/mcp/install` 重新生成一遍再写盘（客户端送来的定义不算）。
+
+- 名字是 `<服务器>_<工具>`。不合 `^[A-Za-z0-9_-]{1,64}$` 的字符换成 `_`。
+- 太长、去掉非法字符以后互相重名、或者和内置工具、工具组重名：截短并加一段由 `(服务器, 原名)` 算出的 8 位哈希。同样的输入永远得到同样的名字，和顺序无关。
+- 参数：`inputSchema` 规整成 tau 能用的样子。顶层一定是 `type: "object"`（没有 `properties` 就补空对象）。本地 `$ref`（`#/$defs/…`、`#/definitions/…`）就地展开，嵌套层级的 `$defs` 也认；递归的引用展开到 8 层以后换成 `{}`。`$defs`、`definitions`、`$schema`、`$id` 去掉，`title`、`default`、`anyOf`（包括带 `null` 的分支）原样留。
+- 说明：工具自己的说明在前，空一行，后面一行写 `MCP 服务器 <名字>`，配置里有 `description` 就接在后面。服务器的 `instructions` 不进每个工具的定义：它由接口单独返回，给界面看。
+- 大小按内核的规则算：`JSON.stringify({ description, parameters })` 不超过 16 KiB。超了先截说明（结尾写“说明太长，已截断”）；只靠参数就超了，跳过这个工具并给出原因。
+- 命令是 `node "<仓库>/extras/mcp/call.ts" '<服务器>' '<原始工具名>'`，仓库路径用正斜杠。工具名里有单引号或控制字符、仓库路径里有引号、`$`、反引号：写不出命令，跳过这个工具。
+- `timeout` 取配置里的秒数截到 1 到 600，没写是 120。`output` 是 `content`。
+- 工具定义不许多余字段，所以“这个定义是 MCP 生成的”靠命令认：命令指向 `extras/mcp/call.ts`，从里面读出服务器名和工具名。装了但服务器上已经没有的工具，靠这个认出来列进 `gone`。
+- 起服务器加列工具整体限时 30 秒，超时也结束整棵进程树；列完在 `finally` 里关掉，一次列工具不留服务器进程。
+- `status` 不算活动：不重置实例和 relay 的空闲计时。界面会一直看它，不能因为界面开着 relay 就永远不退。
+- 测试：`test/extras/mcp/gen.test.ts`（名字、规整、大小、命令、超时；生成的定义交给内核的 `loadToolDef` 和 pi-ai 的 `validateToolArguments` 过一遍）。
+
 ### HTTP 桥要做的检查
 
 - 只在 `127.0.0.1` 上监听。
@@ -217,6 +300,7 @@ mkdir -p "$HOME/.tau/extras/bg"
 |---|---|
 | `extras/` | 上层的代码 |
 | `extras/tools/` | 工具库：`catalog.ts` 是目录，每个工具一个脚本（[工具库](#工具库)） |
+| `extras/mcp/` | MCP 中转：`config.ts` 读配置、`server.ts` 起和关服务器、`relay.ts` 是中转进程、`call.ts` 是调用脚本、`gen.ts` 生成工具定义（[MCP 中转](#mcp-中转)） |
 | `test/extras-imports.test.ts` | 扫描 `extras/`，不许导入仓库里 `extras/` 之外的文件 |
 
 ## 坑点
@@ -224,6 +308,8 @@ mkdir -p "$HOME/.tau/extras/bg"
 - **`tau.cmd` 经 cmd.exe 解析参数。** 上层寄信要直接连管道，或者经 bash 用 `tau` 脚本（[kb-service](kb-service.md#坑点)）。
 - **相对路径也能越界。** `../src/…`、`file:` 和绝对路径，扫描测试都会查。npm 包名不查：上层的依赖随便加（D63）。
 - **上层没在运行时，它的功能不生效。** 提醒、续跑、HTTP 桥都是这样。信在库里，不丢。
+- **`start` 起来的进程拿不到调用者的标准输出。** `cmd /c start /b` 里写 `1>文件` 不起作用：重定向留在 start 那一层。所以 relay 自己打开日志文件写，代码里别再用 `console.log` 打日志。
+- **cmd 的重定向独占文件。** 谁在 cmd 里 `1>>x.log`，别的进程再打开 `x.log` 写就是 `EBUSY`。relay 的日志只有一个写者，就是这个原因。
 
 ## 关联模块
 

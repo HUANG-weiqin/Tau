@@ -1,7 +1,8 @@
-// 工具定义弹窗（设计稿 7.12）：上半是 ~/.tau/tools/ 里已装的定义，下半是工具库，可以装、更新、删。
+// 工具定义弹窗（设计稿 7.12）：01 已装的定义、02 工具库、03 MCP。
 // 删和覆盖都在行里二次确认。工具定义只对新开的进程生效。
 import { html, Popover, DlgHead, SecHead, Pill, useState, useEffect, useRef, Fragment } from "./common.js";
 import { CheckStrip } from "./presetform.js";
+import { McpSection } from "./mcp.js";
 import * as api from "../api.js";
 
 /** @typedef {{ name: string, description?: string, params?: string[], timeout?: number, output?: string, command?: string, error?: string, usedBy: string[] }} Installed */
@@ -124,8 +125,9 @@ export function ToolsDialog({ app, onClose }) {
                 </li>`;
               })}
             </ul>`}
+        <${McpSection} app=${app} installed=${installed} onChanged=${load} />
         ${err !== "" && html`<${CheckStrip} ok=${false} text=${err} label="tools" />`}
-        <p class="dnote">工具定义只对新开的进程生效。库里的工具装在 <span class="mono">~/.tau/tools/</span>，命令指向这个仓库的 <span class="mono">extras/tools/</span>；仓库挪了位置，点“更新”重装。要用哪个，在预设的工具里勾选。</p>
+        <p class="dnote">工具定义只对新开的进程生效。库里的工具和 MCP 的定义都装在 <span class="mono">~/.tau/tools/</span>；仓库挪了位置，点“更新”或“列出工具”重装。要用哪个，在预设的工具里勾选。</p>
       </div>
       <div class="dlg-foot">
         <span class="cmdline">${data === null ? "" : `${installed.length} 个已装，工具库 ${library.length} 个`}</span>
