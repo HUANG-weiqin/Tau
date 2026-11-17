@@ -62,10 +62,10 @@ export async function serve(opts: ServeOptions): Promise<Service> {
     createActions(
       opts.models,
       (id, n, delta, kind) => {
-        // 带 kind 的（思考、工具调用）只推给订阅：start、send 的连接只收正文。
+        // 带 kind 的（思考、工具调用）只推给带 messages 的订阅：start、send 的连接和普通订阅只收正文。
         const text: Reply = { type: "text", process: id, n, delta, ...(kind === undefined ? {} : { kind }) };
         if (kind === undefined) watchers.get(id)?.forEach((s) => reply(s, text));
-        push(id, text);
+        push(id, text, kind !== undefined);
       },
       opts.pipe,
       (hash) => readBlob(db, hash),
@@ -104,7 +104,7 @@ export async function serve(opts: ServeOptions): Promise<Service> {
     for (const s of set) reply(s, final).end();
   }
 
-  /** 给订阅这个进程的连接推一条回复；`onlyMessages` 时只推给要消息的订阅。写缓冲超过上限的订阅就断开。 */
+  /** 给订阅这个进程的连接推一条回复；`onlyMessages` 时只推给带 `messages: true` 的订阅。写缓冲超过上限的订阅就断开。 */
   function push(id: ProcessId, r: Reply, onlyMessages = false): void {
     for (const sub of subscriptions) {
       if ((sub.process !== undefined && sub.process !== id) || (onlyMessages && !sub.messages)) continue;

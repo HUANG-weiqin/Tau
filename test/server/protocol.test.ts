@@ -1489,11 +1489,12 @@ test("watch messages：fork 只推新进程的 update，不推复制来的消息
   w.socket.destroy();
 });
 
-test("text 的 kind：思考和工具调用的流只推给 watch 的订阅；start、send 的连接只收正文，不带 kind", async (t) => {
+test("text 的 kind：思考和工具调用的流只推给带 messages 的订阅；start、send 的连接和普通订阅只收正文，不带 kind", async (t) => {
   const e = await setup(t);
   const a = await startIdle(e);
-  const sub = open(e.pipe, { op: "watch", process: a });
-  await until(() => sub.replies.length === 1, "快照");
+  const plain = open(e.pipe, { op: "watch", process: a });
+  const sub = open(e.pipe, { op: "watch", process: a, messages: true });
+  await until(() => plain.replies.length === 1 && sub.replies.length === 1, "快照");
   e.faux.appendResponses([
     fauxAssistantMessage([fauxThinking("先想一想"), fauxToolCall("read", { path: "a.txt" })], { stopReason: "toolUse" }),
     fauxAssistantMessage(fauxText("好了。")),
@@ -1515,5 +1516,10 @@ test("text 的 kind：思考和工具调用的流只推给 watch 的订阅；sta
   const body = subTexts.filter((r) => r.kind === undefined);
   assert.equal(body.map((r) => r.delta).join(""), "好了。");
   assert.ok(body.every((r) => r.n === 4));
+  // 不带 messages 的订阅（旧客户端）：只有正文，没有 kind。
+  const plainTexts = plain.replies.filter((r) => r.type === "text");
+  assert.equal(plainTexts.some((r) => "kind" in r), false, "旧订阅收不到带 kind 的 text");
+  assert.equal(plainTexts.map((r) => r.delta).join(""), "好了。");
+  plain.socket.destroy();
   sub.socket.destroy();
 });
