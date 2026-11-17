@@ -1,5 +1,5 @@
 // 新进程：第一步选预设，第二步写第一封信，等于 `tau start <预设> "<信>"`。
-import { html, Popover, DlgHead, SecHead, Pill, useState, Fragment } from "./common.js";
+import { html, Popover, DlgHead, SecHead, Pill, useState, Fragment, letterKey } from "./common.js";
 import { pathKey } from "../lib/state.js";
 import { clipText } from "../lib/messages.js";
 
@@ -50,8 +50,8 @@ export function NewProcDialog({ app, onClose }) {
         <${SecHead} n="02" title="第一封信" en="FIRST LETTER" />
         <textarea class="letter-in" rows="3" placeholder=${sel ? `给 ${app.gui.names[sel.id] ?? sel.id} 的第一封信` : "先选一个预设"} value=${text} disabled=${!sel}
           onInput=${(/** @type {any} */ e) => setText(e.currentTarget.value)}
-          onKeyDown=${(/** @type {KeyboardEvent} */ e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go(close); } }}></textarea>
-        <p class="dnote" style="margin-top:-6px;font-size:12px">进程从这封信开始跑第一轮。内核建进程要两样：预设和第一封信。Ctrl+Enter 开始。</p>
+          onKeyDown=${(/** @type {KeyboardEvent} */ e) => letterKey(e, () => go(close), setText)}></textarea>
+        <p class="dnote" style="margin-top:-6px;font-size:12px">进程从这封信开始跑第一轮。内核建进程要两样：预设和第一封信。Enter 开始，Ctrl+Enter 换行。</p>
       </div>
       <div class="dlg-foot">
         <span class="cmdline">$ tau start ${sel?.id ?? "<预设>"} "${clipText(text.replace(/\s+/g, " "), 40) || "…"}"</span>

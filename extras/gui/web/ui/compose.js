@@ -1,6 +1,6 @@
 // 写信框：调度台底座。左边写给谁、它在哪个阶段；右边是墨井，墨井底行是“寄出以后会怎样”、快捷键和寄出键。
-// Ctrl+Enter 寄出，Enter 换行，/ 跳过来，Esc 离开（全局键在 app.js）。能贴图片（base64 放进 images）。
-import { html, Icon, Lamp, Pill, Tex, pad2, useState, useRef, useEffect, useLayoutEffect } from "./common.js";
+// Enter 寄出，Ctrl+Enter 换行，/ 跳过来，Esc 离开（全局键在 app.js）。能贴图片（base64 放进 images）。
+import { html, Icon, Lamp, Pill, Tex, pad2, letterKey, useState, useRef, useEffect, useLayoutEffect } from "./common.js";
 import { contextPercent } from "../lib/format.js";
 import { useAttach, AttachBar, Thumbs } from "./attach.js";
 import { refusesImages } from "../lib/derive.js";
@@ -100,12 +100,7 @@ export function Compose({ app, e, name, note = null }) {
           id="compose-input" ref=${area} rows="2" class="dk-in" value=${text}
           placeholder=${fate.k === "run" ? `${name} 在跑。写下要补充的话，寄出后排队…` : `写给 ${name}…`}
           onInput=${(/** @type {any} */ ev) => setText(ev.currentTarget.value)} onPaste=${at.onPaste}
-          onKeyDown=${(/** @type {KeyboardEvent} */ ev) => {
-            if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
-              ev.preventDefault();
-              send();
-            }
-          }}
+          onKeyDown=${(/** @type {KeyboardEvent} */ ev) => letterKey(ev, send, setText)}
         ></textarea>
         <div class="dk-att"><${AttachBar} at=${at} count=${images.length} noImage=${refusesImages(e.frozen)} /></div>
         <div class="dk-row">
@@ -114,11 +109,10 @@ export function Compose({ app, e, name, note = null }) {
             <p title=${fate.line}>${fate.line}</p>
           </div>
           <div class="dk-hints" aria-hidden="true">
-            <span><kbd>Enter</kbd>换行</span><span><kbd>/</kbd>跳到这里</span><span><kbd>Esc</kbd>离开</span><span class="dk-xl">能贴、拖图片</span>
+            <span><kbd>Enter</kbd>寄出</span><span><kbd>Ctrl+Enter</kbd>换行</span><span><kbd>/</kbd>跳到这里</span><span><kbd>Esc</kbd>离开</span><span class="dk-xl">能贴、拖图片</span>
             <span class="dk-count mono"><b>${String(chars).padStart(4, "0")}</b> 字${images.length > 0 ? ` · ${images.length} 图` : ""}</span>
           </div>
-          <div class="dk-keys" aria-hidden="true"><kbd>CTRL</kbd><i>+</i><kbd class="ent">↵</kbd></div>
-          <${Pill} type="submit" kind=${can ? "accent" : ""} class="dk-go" icon="arrow" disabled=${!can} title="Ctrl+Enter" label=${busy ? "寄出中" : "寄出"} />
+          <${Pill} type="submit" kind=${can ? "accent" : ""} class="dk-go" icon="arrow" disabled=${!can} title="Enter" label=${busy ? "寄出中" : "寄出"} />
         </div>
       </div>
     </div>

@@ -8,6 +8,25 @@ export const html = htm.bind(h);
 export { h, Fragment, useEffect, useLayoutEffect, useRef, useState, useCallback };
 
 /**
+ * 写信框的回车键：Enter 寄出，Ctrl/Meta+Enter 换行，Shift+Enter 交给浏览器换行。
+ * 输入法在选词时不管；触屏手机没有 Ctrl，Enter 保持换行，用按钮寄出。
+ * @param {KeyboardEvent} ev @param {() => void} send @param {(v: string) => void} setText
+ */
+export function letterKey(ev, send, setText) {
+  if (ev.key !== "Enter" || ev.isComposing || ev.keyCode === 229) return;
+  if (window.matchMedia("(pointer: coarse)").matches) return;
+  if (ev.ctrlKey || ev.metaKey) {
+    ev.preventDefault();
+    const el = /** @type {HTMLTextAreaElement} */ (ev.currentTarget);
+    el.setRangeText("\n", el.selectionStart, el.selectionEnd, "end");
+    setText(el.value);
+  } else if (!ev.shiftKey && !ev.altKey) {
+    ev.preventDefault();
+    send();
+  }
+}
+
+/**
  * 项目的大标题和小标签。起了简称的，简称是大标题，文件夹名是小标签；没起的，文件夹名是大标题。
  * @param {{ gui: { short: Record<string, string> } }} app @param {{ key: string, name: string, short: string }} p
  * @returns {{ big: string, small: string, custom: boolean }}

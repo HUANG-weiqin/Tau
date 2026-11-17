@@ -291,15 +291,10 @@ function ComposeBox({ app, chiefId, e, target }) {
     <${Thumbs} images=${images} class="ch-thumbs" onRemove=${(/** @type {number} */ i) => setImages(images.filter((_, j) => j !== i))} />
     <div class="ch-row">
       <label for="chief-input" class="sr">对总管说</label>
-      <textarea id="chief-input" ref=${area} rows="1" autofocus class="ch-in" value=${text} placeholder=${e ? "对总管说…（Ctrl+Enter 寄出）" : "对总管说第一句话…（Ctrl+Enter 寄出）"}
+      <textarea id="chief-input" ref=${area} rows="1" autofocus class="ch-in" value=${text} placeholder=${e ? "对总管说…（Enter 寄出，Ctrl+Enter 换行）" : "对总管说第一句话…（Enter 寄出，Ctrl+Enter 换行）"}
         onInput=${(/** @type {any} */ ev) => setText(ev.currentTarget.value)} onPaste=${at.onPaste}
-        onKeyDown=${(/** @type {KeyboardEvent} */ ev) => {
-          if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
-            ev.preventDefault();
-            send();
-          }
-        }}></textarea>
-      <button type="submit" class="ch-go" aria-label=${busy ? "寄出中" : "寄出"} title="Ctrl+Enter" disabled=${!can}><${Icon} name="arrow" size=${20} sw=${2.8} /></button>
+        onKeyDown=${(/** @type {KeyboardEvent} */ ev) => letterKey(ev, send, setText)}></textarea>
+      <button type="submit" class="ch-go" aria-label=${busy ? "寄出中" : "寄出"} title="Enter" disabled=${!can}><${Icon} name="arrow" size=${20} sw=${2.8} /></button>
     </div>
     <${AttachBar} at=${at} count=${images.length} noImage=${!!noImage} />
   </form>`;
