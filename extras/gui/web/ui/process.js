@@ -1,6 +1,6 @@
 // 聚焦的进程：铭牌、消息流、写信框。出错时铭牌变橙，流的末尾是结束带。
 import { html, Icon, Pill, Tex, Contour, pad2, useRef, useState, useLayoutEffect, Fragment } from "./common.js";
-import { toItems, foldMiddle, forkPoints, turnStart, clipText, phaseStartedAt, HANDOFF_LETTER } from "../lib/messages.js";
+import { toItems, foldMiddle, forkPoints, turnStart, clipText, phaseStartedAt, describeStart, canHandoff } from "../lib/messages.js";
 import { askRemove } from "./remove.js";
 import { segmentMessages } from "../lib/history.js";
 import { contextPercent, formatClock } from "../lib/format.js";
@@ -67,7 +67,7 @@ function Plate({ app, e }) {
       <${Ctx} e=${e} error=${error} segMessages=${e.self.messages} />
       <div class="plate-act">
         <${Pill} label="分叉" icon="fork" disabled=${running} title=${running ? "进程在跑时不能复制整个段。可以在某条消息上分叉" : "复制整个当前段，开一个新进程"} onClick=${() => app.fork(e.id)} />
-        <${Pill} label="换段" icon="reply" disabled=${running} title=${running ? "进程在跑时不能换段" : "请模型调用 handoff 换段：下一轮只带交接说明，不用按整段重新算"} onClick=${() => app.send(e.id, HANDOFF_LETTER)} />
+        <${Pill} label="换段" icon="reply" disabled=${running || !canHandoff(app.messages(e.id))} title=${running ? "进程在跑时不能换段" : !canHandoff(app.messages(e.id)) ? "这一段里还没有助手的回复，没有可交接的内容" : "寄一封换段信：下一轮只带交接说明，不用按整段重新算"} onClick=${() => app.handoff(e.id)} />
         <${Pill} label="停止" icon="stop" chip="red" disabled=${!running} title="Ctrl+. 按两次" onClick=${() => app.stop(e.id)} />
         <${Pill} label="删除" icon="trash" chip="red" disabled=${running} title=${running ? "进程在跑时不能删除" : "删掉这个进程和它的全部段"} onClick=${(/** @type {Event} */ ev) => askRemove(e.id, /** @type {Element} */ (ev.currentTarget))} />
       </div>
@@ -215,14 +215,6 @@ function Stream({ app, e }) {
     </div>
     ${fresh && html`<button type="button" class="jump" onClick=${() => follow.current?.attach()}><${Icon} name="down" size=${14} sw=${3} />有新消息</button>`}
   </div>`;
-}
-
-/** 这一轮是谁开的：看开头那封信。 @param {any} m */
-function describeStart(m) {
-  const text = typeof m.content === "string" ? m.content : m.content.map((/** @type {any} */ b) => (b.type === "text" ? b.text : "")).join("\n");
-  const x = /^（来自进程 (\S+?)，预设 (.+?)(。它在等回信：.*)?）/.exec(text);
-  if (x) return `由 ${x[2]} 的来信开始`;
-  return text.startsWith("（来自用户）") || !text.startsWith("（") ? "由你的来信开始" : "开始";
 }
 
 /**

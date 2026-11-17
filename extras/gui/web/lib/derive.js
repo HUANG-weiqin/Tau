@@ -4,7 +4,7 @@ import { pathKey } from "./state.js";
 /** @typedef {import("./types.js").Self} Self */
 /** @typedef {import("./types.js").GuiState} GuiState */
 /** @typedef {import("./types.js").PresetInfo} PresetInfo */
-/** @typedef {import("./types.js").Seen} Seen */
+/** @typedef {import("./types.js").Frozen} Frozen */
 /** @typedef {import("./store.js").ProcRecord} ProcRecord */
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -39,31 +39,35 @@ export function displayName(state, presetId) {
 }
 
 /**
- * 每个进程的分类。进程归到哪个项目、常驻还是临时：先看 `seen`，没有就用当前的预设文件。
- * 第一次见到的记进 `seenPatch`，调用方写回界面数据。两边都没有的进程是 `unknown`，不归进任何项目。
+ * `inspect` 的一行 `process`：进程记录里冻结的预设快照，取界面要的三项。工具是内置的加工具定义的名字。
+ * 不是 `process` 行，或者没有快照，是 null。
+ * @param {any} line
+ * @returns {Frozen | null}
+ */
+export function seenFromInspect(line) {
+  const snap = line?.type === "process" ? line.process?.preset : null;
+  if (!snap || typeof snap.workdir !== "string" || !Array.isArray(snap.tools)) return null;
+  /** @type {string[]} */
+  const tools = [...snap.tools, ...(Array.isArray(snap.toolDefs) ? snap.toolDefs.map((/** @type {any} */ d) => d?.name).filter((/** @type {unknown} */ n) => typeof n === "string") : [])];
+  return { workdir: snap.workdir, tools, memory: snap.tools.includes("memory") };
+}
+
+/**
+ * 每个进程的分类。进程归到哪个项目、常驻还是临时：看它冻结的快照（`snaps`，来自 `inspect`），不看预设文件现在写什么。
+ * 还没读到快照的进程是 `unknown`，不归进任何项目。
  * @param {Record<string, ProcRecord>} procs
  * @param {GuiState} state
- * @param {Record<string, PresetInfo>} presets
- * @returns {{ entries: Entry[], seenPatch: Record<string, Seen> }}
+ * @param {Record<string, Frozen>} snaps 进程 ID → 快照
+ * @returns {{ entries: Entry[] }}
  */
-export function buildEntries(procs, state, presets) {
-  /** @type {Record<string, Seen>} */
-  const seenPatch = {};
+export function buildEntries(procs, state, snaps) {
   /** @type {Entry[]} */
   const entries = [];
   for (const id of Object.keys(procs).sort()) {
     const rec = procs[id];
     if (!rec) continue;
     const { self } = rec;
-    /** @type {Seen | undefined} */
-    let info = state.seen[id];
-    if (!info) {
-      const p = presets[self.preset];
-      if (p && p.ok) {
-        info = { workdir: p.workdir, tools: p.tools, memory: p.memory };
-        seenPatch[id] = info;
-      }
-    }
+    const info = snaps[id];
     /** @type {Kind} */
     const kind = self.preset === state.chief ? "chief" : !info ? "unknown" : info.memory ? "team" : "temp";
     entries.push({
@@ -80,7 +84,7 @@ export function buildEntries(procs, state, presets) {
       segmentStartedAt: rec.segmentStartedAt,
     });
   }
-  return { entries, seenPatch };
+  return { entries };
 }
 
 /**

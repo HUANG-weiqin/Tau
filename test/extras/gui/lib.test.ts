@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { activityAt, applyFilter, attention, buildEntries, buildProjects, classify, currentOf, filterCounts, indexPresets, projectView, railSections } from "../../../extras/gui/web/lib/derive.js";
+import { activityAt, applyFilter, attention, buildEntries, buildProjects, classify, currentOf, filterCounts, indexPresets, projectView, railSections, seenFromInspect } from "../../../extras/gui/web/lib/derive.js";
 import { formatAgo, formatBytes, formatClock, formatContext, formatDuration, formatElapsed } from "../../../extras/gui/web/lib/format.js";
 import { applyEnd, applyMessage, emptyHistory, giveUp, known, lastTimestamp, noteSelf, plan, segmentMessages } from "../../../extras/gui/web/lib/history.js";
-import { CARRY_HEADER, describeNow, HANDOFF_LETTER, foldMiddle, forkPoints, HANDOFF_HEADER, INTERRUPTED, parseUser, phaseStartedAt, SKIPPED, splitLetters, summarizeCall, toItems, turnStart } from "../../../extras/gui/web/lib/messages.js";
+import { canHandoff, CARRY_HEADER, describeNow, describeStart, foldMiddle, forkPoints, HANDOFF_HEADER, parseUser, phaseStartedAt, summarizeCall, toItems, turnStart } from "../../../extras/gui/web/lib/messages.js";
 import { cleanPlan, stopOrder } from "../../../extras/gui/web/lib/order.js";
 import { removePlan, skippedFor } from "../../../extras/gui/web/lib/remove.js";
-import { addFork, mergeSeen, movePinned, normalizeState, pathKey, pinFolder, prunePatch, setCurrent } from "../../../extras/gui/web/lib/state.js";
+import { addFork, movePinned, normalizeState, pathKey, pinFolder, prunePatch, setCurrent } from "../../../extras/gui/web/lib/state.js";
 import { allProcs, childCounts, emptyStore, reduce, streamingText } from "../../../extras/gui/web/lib/store.js";
 import { extractTitle, processTitle } from "../../../extras/gui/web/lib/titles.js";
 import { newPace, paceArrive, paceStep } from "../../../extras/gui/web/lib/pace.js";
@@ -28,8 +28,28 @@ const proj = (s: Self) => ({ now: 0, self: s, siblings: [], children: [], idleCh
 const user = (text: string, timestamp = 1): Msg => ({ role: "user", content: text, timestamp });
 const asst = (content: any[], timestamp = 2): Msg => ({ role: "assistant", content, timestamp });
 const result = (id: string, text: string, isError = false, timestamp = 3): Msg => ({ role: "toolResult", toolCallId: id, toolName: "bash", content: [{ type: "text", text }], isError, timestamp });
+/** 内核补的工具结果：带 `tau.filled`。 */
+const filled = (id: string, kind: "interrupted" | "skipped", timestamp = 3): Msg => ({ ...result(id, kind === "interrupted" ? "被中断，结果未知" : "未执行", true, timestamp), tau: { filled: kind } } as Msg);
 const call = (id: string, name: string, args: Record<string, unknown>) => ({ type: "toolCall", id, name, arguments: args });
 const text = (t: string) => ({ type: "text", text: t });
+
+/** 内核写的用户消息：文本是各封信（可带头）用空行连起来的，`tau.letters[i].at` 指它的正文。头的文字界面不看。 */
+type Part = { from: any; head?: string; body: string; hops?: number; replyTo?: string };
+function tauMsg(parts: Part[], extra: { after?: any; handoff?: true; prefix?: string } = {}, timestamp = 1): Msg {
+  let text = extra.prefix ?? "";
+  const letters: any[] = [];
+  for (const p of parts) {
+    if (text !== "") text += "\n\n";
+    if (p.head !== undefined) text += `${p.head}\n`;
+    const start = text.length;
+    text += p.body;
+    letters.push({ from: p.from, hops: p.hops ?? 0, ...(p.replyTo === undefined ? {} : { replyTo: p.replyTo }), at: [start, start + p.body.length] });
+  }
+  return { role: "user", content: text, timestamp, tau: { letters, ...(extra.after === undefined ? {} : { after: extra.after }), ...(extra.handoff ? { handoff: true } : {}) } } as Msg;
+}
+const U = { kind: "user" };
+const P = (id: string, preset: string) => ({ kind: "process", id, preset });
+const R = (id: string, preset: string, ended: any) => ({ kind: "process", id, preset, reply: { ended } });
 
 // ---------- store ----------
 
@@ -169,12 +189,13 @@ test("history: 过时的 update 不会把段号拉回去", () => {
 
 // ---------- titles ----------
 
-test("titles: 第一条用户消息的第一行，有无信头", () => {
+test("titles: 第一封信正文的第一行；信头和说明不算，没有 tau 的旧消息取整段文字的第一行", () => {
+  assert.equal(extractTitle([tauMsg([{ from: U, body: "修登录\n细节在下面" }])]), "修登录");
+  assert.equal(extractTitle([tauMsg([{ from: P("ab12", "worker"), head: "（来自进程 ab12，预设 worker）", body: "整理日志\n更多" }])]), "整理日志");
+  assert.equal(extractTitle([tauMsg([{ from: U, body: "\n\n  先空行\n后面" }], { after: "stopped", prefix: "（说明）" })]), "先空行");
   assert.equal(extractTitle([user("修登录\n细节在下面")]), "修登录");
-  assert.equal(extractTitle([user("（来自进程 ab12，预设 worker）\n整理日志\n更多")]), "整理日志");
-  assert.equal(extractTitle([user("\n\n  先空行\n后面")]), "先空行");
   assert.equal(extractTitle([]), null);
-  assert.equal(extractTitle([user("（来自进程 ab12，预设 worker）")]), null);
+  assert.equal(extractTitle([tauMsg([{ from: U, body: "" }])]), null);
 });
 
 test("titles: 分叉自、缓存、进程 ID", () => {
@@ -189,40 +210,88 @@ test("titles: 分叉自、缓存、进程 ID", () => {
 
 // ---------- messages ----------
 
-test("messages: 拆信，每一种信头", () => {
-  assert.deepEqual(splitLetters("你好"), [{ from: "user", text: "你好" }]);
-  assert.deepEqual(splitLetters("（来自进程 ab12，预设 worker）\n帮我看看\n\n第二段"), [{ from: "process", id: "ab12", preset: "worker", waiting: false, text: "帮我看看\n\n第二段" }]);
-  const waiting = "（来自进程 ab12，预设 worker。它在等回信：你这一轮结束时，最终回复会寄给它，之后的几轮不会。）\n做完告诉我";
-  assert.deepEqual(splitLetters(waiting), [{ from: "process", id: "ab12", preset: "worker", waiting: true, text: "做完告诉我" }]);
-  assert.deepEqual(splitLetters("（进程 cd34 的回信，这一轮正常结束）\n结果在这"), [{ from: "reply", id: "cd34", endedText: "正常结束", ended: "done", text: "结果在这" }]);
-  assert.deepEqual(splitLetters("（进程 cd34 的回信，这一轮出错：网断了）\n"), [{ from: "reply", id: "cd34", endedText: "出错：网断了", ended: { error: "网断了" }, text: "" }]);
-  assert.equal((splitLetters("（进程 cd34 的回信，这一轮被停止）\n")[0] as any).ended, "stopped");
-  assert.equal((splitLetters("（进程 cd34 的回信，这一轮步数用完）\nx")[0] as any).ended, "stepLimit");
+test("messages: 信的来历读 tau：发送者、跳数、等回信、回信和结束原因", () => {
+  const m = tauMsg([
+    { from: U, head: "（来自用户）", body: "先看这个" },
+    { from: P("ab12", "worker"), head: "（来自进程 ab12，预设 worker）", body: "报告\n\n两段", hops: 2 },
+    { from: P("ab12", "worker"), head: "（头的文字随便写）", body: "做完告诉我", replyTo: "ab12", hops: 1 },
+    { from: R("cd34", "worker", "stopped"), head: "x", body: "", hops: 3 },
+    { from: R("cd34", "worker", { error: "网断了" }), head: "y", body: "半截" },
+    { from: U, head: "（来自用户）", body: "还有\n\n一个空行" },
+  ]);
+  assert.deepEqual(parseUser(m as any).letters, [
+    { from: "user", text: "先看这个", hops: 0 },
+    { from: "process", id: "ab12", preset: "worker", waiting: false, text: "报告\n\n两段", hops: 2 },
+    { from: "process", id: "ab12", preset: "worker", waiting: true, text: "做完告诉我", hops: 1 },
+    { from: "reply", id: "cd34", endedText: "被停止", ended: "stopped", text: "", hops: 3 },
+    { from: "reply", id: "cd34", endedText: "出错：网断了", ended: { error: "网断了" }, text: "半截", hops: 0 },
+    { from: "user", text: "还有\n\n一个空行", hops: 0 },
+  ]);
+  assert.equal((parseUser(tauMsg([{ from: R("c", "p", "done"), body: "x" }]) as any).letters[0] as any).endedText, "正常结束");
+  assert.equal((parseUser(tauMsg([{ from: R("c", "p", "stepLimit"), body: "x" }]) as any).letters[0] as any).endedText, "步数用完");
 });
 
-test("messages: 一批信，用户的信带（来自用户），回信正文为空", () => {
-  const batch = ["（来自用户）\n先看这个", "（来自进程 ab12，预设 worker）\n报告", "（进程 cd34 的回信，这一轮被停止）\n", "（来自用户）\n还有\n\n一个空行"].join("\n\n");
-  assert.deepEqual(
-    splitLetters(batch).map((l) => [l.from, l.text]),
-    [["user", "先看这个"], ["process", "报告"], ["reply", ""], ["user", "还有\n\n一个空行"]],
-  );
+test("messages: 正文里长得像信头的行不是信头，信的边界只看 tau", () => {
+  const body = "引用：\n\n（来自进程 ab12，预设 worker）\n还是同一封\n\n（进程 cd34 的回信，这一轮被停止）\n也是";
+  const p = parseUser(tauMsg([{ from: U, body }]) as any);
+  assert.deepEqual(p.letters, [{ from: "user", text: body, hops: 0 }]);
 });
 
-test("messages: 正文里像信头的行，前面不是空行就不算", () => {
-  const t = "（来自进程 ab12，预设 worker）\n引用：\n（来自用户）\n还是同一封";
-  assert.equal(splitLetters(t).length, 1);
+test("messages: 没有 tau 的旧消息按普通用户消息显示，整段文字当一封信", () => {
+  const old = "（来自进程 ab12，预设 worker）\n帮我看看\n\n第二段";
+  const p = parseUser(user(old) as any);
+  assert.deepEqual(p.letters, [{ from: "user", text: old }]);
+  assert.equal(p.note, null);
+  assert.equal(p.handoff, null);
+  // 旧的新段第一条也只是一条普通消息。
+  assert.equal(parseUser(user(HANDOFF_HEADER + "目标是 X") as any).handoff, null);
 });
 
-test("messages: 上一轮的说明、交接说明和带过来的消息", () => {
-  const note = "（上一轮被停止。上面还没回复的消息都已取消：不要回应它们，只回应下面的信。）";
-  const p = parseUser(user(`${note}\n\n继续`) as any);
-  assert.equal(p.note, note);
-  assert.deepEqual(p.letters, [{ from: "user", text: "继续" }]);
-  const err = "（上一轮出错，没有做完：炸了。如果有进程在等你回信，它们已经收到上一轮的结束通知，之后的回复不会寄给它们。）";
-  assert.equal(parseUser(user(`${err}\n\n（来自进程 a，预设 b）\n x`) as any).note, err);
-  assert.deepEqual(parseUser(user(HANDOFF_HEADER + "目标是 X") as any).handoff, { note: "目标是 X", carried: null });
-  assert.deepEqual(parseUser(user(HANDOFF_HEADER + "目标是 X\n\n第二行\n\n" + CARRY_HEADER + "\n\n用户又说了") as any).handoff, { note: "目标是 X\n\n第二行", carried: "用户又说了" });
-  assert.deepEqual(parseUser(user(HANDOFF_HEADER + "说明\n\n" + CARRY_HEADER) as any).handoff, { note: "说明", carried: "" });
+test("messages: 文字被截过没有 at 时，整段文字当一封信，发送者取第一封", () => {
+  const m = { role: "user", content: "被截断的很长的文字", timestamp: 1, tau: { letters: [{ from: P("ab12", "worker"), hops: 1 }, { from: U, hops: 0 }] } } as Msg;
+  assert.deepEqual(parseUser(m as any).letters, [{ from: "process", id: "ab12", preset: "worker", waiting: false, text: "被截断的很长的文字", hops: 1 }]);
+});
+
+test("messages: 数组内容只看第一个文本块；图片信的正文是空的", () => {
+  const m = tauMsg([{ from: U, body: "看图" }]) as any;
+  m.content = [{ type: "text", text: m.content }, { type: "image", data: "blob:abc", mimeType: "image/png" }];
+  assert.deepEqual(parseUser(m).letters.map((l: any) => l.text), ["看图"]);
+  const onlyImage = { role: "user", content: [{ type: "image", data: "blob:abc", mimeType: "image/png" }], timestamp: 1, tau: { letters: [{ from: U, hops: 0 }] } } as any;
+  assert.deepEqual(parseUser(onlyImage).letters, [{ from: "user", text: "", hops: 0 }]);
+});
+
+test("messages: 上一轮的说明读 tau.after，不看文字", () => {
+  const prefix = "（上一轮被停止。上面还没回复的消息都已取消：不要回应它们，只回应下面的信。）";
+  const p = parseUser(tauMsg([{ from: U, body: "继续" }], { after: "stopped", prefix }) as any);
+  assert.equal(p.note, "上一轮被停止");
+  assert.deepEqual(p.letters, [{ from: "user", text: "继续", hops: 0 }]);
+  assert.equal(parseUser(tauMsg([{ from: U, body: "x" }], { after: { error: "炸了" }, prefix: "任意文字" }) as any).note, "上一轮出错：炸了");
+  assert.equal(parseUser(tauMsg([{ from: U, body: "x" }], { after: "stepLimit", prefix: "说明" }) as any).note, "上一轮步数用完");
+  assert.equal(parseUser(tauMsg([{ from: U, body: "x" }]) as any).note, null);
+  // 没有 after，开头像说明的文字也不是说明。
+  assert.equal(parseUser(tauMsg([{ from: U, body: "（上一轮被停止了。）看起来像说明的正文" }]) as any).note, null);
+});
+
+test("messages: 换段后的第一条读 tau.handoff：说明，和带过来的信", () => {
+  const plain = { role: "user", content: HANDOFF_HEADER + "目标是 X\n\n第二行", timestamp: 1, tau: { letters: [], handoff: true } } as any;
+  assert.deepEqual(parseUser(plain).handoff, { note: "目标是 X\n\n第二行", carried: null });
+  assert.deepEqual(parseUser(plain).letters, []);
+  const head = HANDOFF_HEADER + "目标是 X\n\n第二行\n\n" + CARRY_HEADER + "\n\n";
+  const text = head + "用户又说了\n\n还有一句";
+  const carried = { role: "user", content: text, timestamp: 1, tau: { handoff: true, letters: [{ from: U, hops: 0, at: [head.length, head.length + 5] }, { from: P("ab", "w"), hops: 1, at: [head.length + 7, text.length] }] } } as any;
+  const p = parseUser(carried);
+  assert.deepEqual(p.handoff, { note: "目标是 X\n\n第二行", carried: "用户又说了\n\n还有一句" });
+  assert.equal(toItems([carried])[0]!.kind, "handoff");
+  // 带过来的消息只有图片：说明后面有标题，没有正文。
+  const noBody = { role: "user", content: HANDOFF_HEADER + "说明\n\n" + CARRY_HEADER, timestamp: 1, tau: { handoff: true, letters: [{ from: U, hops: 0 }] } } as any;
+  assert.deepEqual(parseUser(noBody).handoff, { note: "说明", carried: null });
+});
+
+test("messages: describeStart 看开头那封信的发送者", () => {
+  assert.equal(describeStart(tauMsg([{ from: P("ab", "worker"), body: "x" }]) as any), "由 worker 的来信开始");
+  assert.equal(describeStart(tauMsg([{ from: U, body: "x" }]) as any), "由你的来信开始");
+  assert.equal(describeStart(tauMsg([{ from: R("ab", "worker", "done"), body: "x" }]) as any), "开始");
+  assert.equal(describeStart(user("（来自进程 a，预设 b）\nx") as any), "由你的来信开始");
 });
 
 test("messages: 图片块是 blob:hash", () => {
@@ -238,8 +307,8 @@ test("messages: 工具调用和结果配对，含被中断和未执行", () => {
     asst([text("先看看"), call("c1", "bash", { command: "ls -la\necho hi" }), call("c2", "read", { path: "a.txt" }), call("c3", "bash", { command: "sleep 9" }), call("c4", "edit", { path: "x" })], 5),
     result("c1", "total 0\nfile", false, 6),
     result("c2", "boom", true, 7),
-    result("c3", INTERRUPTED, true, 8),
-    result("c4", SKIPPED, true, 9),
+    filled("c3", "interrupted", 8),
+    filled("c4", "skipped", 9),
     asst([call("c5", "bash", { command: "pwd" })], 10),
   ];
   const items = toItems(msgs);
@@ -255,8 +324,8 @@ test("messages: 工具调用和结果配对，含被中断和未执行", () => {
   assert.equal(a.calls[1].summary, "a.txt");
   assert.equal((items[2] as any).calls[0].status, "pending");
   assert.equal((items[2] as any).calls[0].result, null);
-  // 文字不是内核补的原文，就只是工具报错。
-  const other = toItems([asst([call("z", "bash", {})]), result("z", "被中断", true)])[0] as any;
+  // 看 tau.filled，不看文字：同样的文字没有 tau，就只是工具报错。
+  const other = toItems([asst([call("z", "bash", {})]), result("z", "被中断，结果未知", true)])[0] as any;
   assert.equal(other.calls[0].status, "error");
 });
 
@@ -280,7 +349,6 @@ test("messages: summarizeCall、describeNow、phaseStartedAt、forkPoints、turn
   const mid: Msg[] = [user("开头"), asst([call("c", "bash", {})]), result("c", "x"), user("插话", 9), asst([text("完")])];
   assert.equal(turnStart(mid), 0);
   assert.equal(turnStart([user("一"), asst([text("好")]), user("二"), user("三"), asst([text("好")])]), 2);
-  assert.equal(turnStart([user(HANDOFF_HEADER + "x"), asst([call("c", "bash", {})]), result("c", "x")]), null);
   assert.equal(turnStart([]), null);
 });
 
@@ -304,10 +372,25 @@ const presetList = indexPresets([
 ]);
 const gstate = (o: object = {}) => normalizeState({ chief: "boss", names: { dev: "渲染" }, ...o });
 
-function world(list: Self[], st = gstate()) {
+/** 进程冻结的快照：`inspect` 里进程记录的 `preset`，界面只取三项。 */
+const snapOf = (workdir: string, tools: string[], toolDefs: string[] = []) => seenFromInspect({ type: "process", process: { id: "x", preset: { workdir, tools, toolDefs: toolDefs.map((name) => ({ name })) } }, messages: 0, limits: {} })!;
+
+/** 默认：每个进程建的时候，预设文件就是现在这样；`frozen` 里写的进程例外。 */
+function world(list: Self[], st = gstate(), frozen: Record<string, ReturnType<typeof snapOf>> = {}) {
   const s = reduce(emptyStore(), { type: "ps", processes: list.map(proj) }, NOW);
-  return buildEntries(s.procs, st, presetList);
+  const snaps = { ...frozen };
+  for (const x of list) {
+    const p = presetList[x.preset];
+    if (!(x.id in snaps) && p && p.ok) snaps[x.id] = snapOf(p.workdir, p.tools);
+  }
+  return buildEntries(s.procs, st, snaps);
 }
+
+test("derive: seenFromInspect 只取工作目录、工具（内置加工具定义）、有没有记忆", () => {
+  assert.deepEqual(snapOf("C:\\w", ["read", "memory"], ["mytool"]), { workdir: "C:\\w", tools: ["read", "memory", "mytool"], memory: true });
+  assert.deepEqual(snapOf("C:\\w", ["bash"]), { workdir: "C:\\w", tools: ["bash"], memory: false });
+  assert.equal(seenFromInspect({ type: "process" } as any), null);
+});
 
 test("derive: classify", () => {
   assert.equal(classify(self("a", { phase: running })), "running");
@@ -318,9 +401,10 @@ test("derive: classify", () => {
   assert.equal(classify(self("a")), "fresh");
 });
 
-test("derive: seen 优先，没有就用预设文件并记下，总管不归项目", () => {
-  const st = gstate({ seen: { a: { workdir: "C:\\old", tools: ["read"], memory: false } } });
-  const { entries, seenPatch } = world([self("a", { preset: "dev" }), self("b", { preset: "dev" }), self("c", { preset: "boss" }), self("d", { preset: "gone" })], st);
+test("derive: 进程用冻结的快照归类，不看预设文件现在写什么；没有快照的是 unknown；总管不归项目", () => {
+  const st = gstate();
+  // 预设文件现在说 dev 在 Alpha、带记忆；a 建的时候不是：快照说它在 C:\old、不带记忆。
+  const { entries } = world([self("a", { preset: "dev" }), self("b", { preset: "dev" }), self("c", { preset: "boss" }), self("d", { preset: "gone" })], st, { a: snapOf("C:\\old", ["read"]) });
   const by = Object.fromEntries(entries.map((e) => [e.id, e]));
   assert.equal(by["a"]!.workdir, "C:\\old");
   assert.equal(by["a"]!.kind, "temp");
@@ -328,8 +412,7 @@ test("derive: seen 优先，没有就用预设文件并记下，总管不归项�
   assert.equal(by["b"]!.name, "渲染");
   assert.equal(by["c"]!.kind, "chief");
   assert.equal(by["d"]!.kind, "unknown");
-  assert.deepEqual(Object.keys(seenPatch).sort(), ["b", "c"]);
-  assert.equal(mergeSeen(st, { a: { workdir: "x", tools: [], memory: true }, b: seenPatch["b"]! }).seen["a"]!.workdir, "C:\\old");
+  assert.equal(by["d"]!.workdir, null);
   const projects = buildProjects(entries, st, presetList);
   assert.ok(!projects.some((p) => p.entries.some((e) => e.id === "c")));
   assert.ok(!projects.some((p) => p.key === pathKey("C:\\Users\\me")));
@@ -532,12 +615,12 @@ test("order: 刚分叉出来的进程消息是旧的，也不进清理名单", (
 // ---------- state ----------
 
 test("state: normalizeState 补默认值，坏的键当没有", () => {
-  const s = normalizeState({ pinned: ["a", 3], cleanDays: -1, names: [], current: { x: "y", z: 1 }, seen: { a: { workdir: "w", tools: [], memory: true }, b: 1 } });
+  const s = normalizeState({ pinned: ["a", 3], cleanDays: -1, names: [], current: { x: "y", z: 1 } });
   assert.deepEqual(s.pinned, ["a"]);
   assert.equal(s.cleanDays, 7);
   assert.deepEqual(s.names, {});
   assert.deepEqual(s.current, { x: "y" });
-  assert.deepEqual(Object.keys(s.seen), ["a"]);
+  assert.equal("seen" in s, false, "进程用的快照从 inspect 读，不再存");
   assert.equal(s.chief, undefined);
   assert.equal(normalizeState(null).cleanDays, 7);
   assert.equal(normalizeState({ chief: "boss" }).chief, "boss");
@@ -601,7 +684,7 @@ test("messages: 空的和重复的调用 ID 按位置配对", () => {
   assert.equal(a2.calls[0].status, "pending");
   assert.equal(a2.calls[0].result, null);
   assert.equal((pending[1] as any).calls[0].result.text, "file-list");
-  const two = toItems([asst([call("", "bash", { command: "ls" }), call("", "bash", { command: "rm x" })]), result("", "file-list", false, 3), result("", INTERRUPTED, true, 4)]);
+  const two = toItems([asst([call("", "bash", { command: "ls" }), call("", "bash", { command: "rm x" })]), result("", "file-list", false, 3), filled("", "interrupted", 4)]);
   assert.equal(two.length, 1);
   assert.deepEqual((two[0] as any).calls.map((c: any) => [c.summary, c.status]), [["ls", "ok"], ["rm x", "interrupted"]]);
   // 多出来的结果单列。
@@ -609,14 +692,22 @@ test("messages: 空的和重复的调用 ID 按位置配对", () => {
   assert.deepEqual(extra.map((i) => i.kind), ["assistant", "orphanResult"]);
 });
 
-test("messages: turnStart 非正常结束后的下一封信开新的一轮", () => {
-  const note = "（上一轮的步数用完了，停在中途。）\n\n";
-  const afterLimit: Msg[] = [user("L1"), asst([call("a", "bash", {})]), result("a", "x"), user(note + "L2", 9), asst([call("b", "bash", {})]), result("b", "y")];
+test("messages: turnStart 非正常结束后的下一封信（tau.after）开新的一轮", () => {
+  const afterLimit: Msg[] = [user("L1"), asst([call("a", "bash", {})]), result("a", "x"), tauMsg([{ from: U, body: "L2" }], { after: "stepLimit", prefix: "（说明）" }, 9), asst([call("b", "bash", {})]), result("b", "y")];
   assert.equal(turnStart(afterLimit), 3);
-  const afterError: Msg[] = [user("L1"), asst([call("a", "bash", {})]), result("a", "x"), user("（上一轮出错了：炸了。）\n\n继续", 9)];
+  const afterError: Msg[] = [user("L1"), asst([call("a", "bash", {})]), result("a", "x"), tauMsg([{ from: U, body: "继续" }], { after: { error: "炸了" }, prefix: "（说明）" }, 9)];
   assert.equal(turnStart(afterError), 3);
-  const afterStop: Msg[] = [user("L1"), asst([call("a", "bash", {})]), result("a", INTERRUPTED, true), user("（上一轮被停止了。）\n\n继续", 9), asst([text("好")])];
+  const afterStop: Msg[] = [user("L1"), asst([call("a", "bash", {})]), filled("a", "interrupted"), tauMsg([{ from: U, body: "继续" }], { after: "stopped", prefix: "（说明）" }, 9), asst([text("好")])];
   assert.equal(turnStart(afterStop), 3);
+  // 只看 tau：开头像说明、没有 after 的，是安全点并进来的信，不开新的一轮。
+  const merged: Msg[] = [user("L1"), asst([call("a", "bash", {})]), result("a", "x"), user("（上一轮被停止了。）插话", 9), asst([text("完")])];
+  assert.equal(turnStart(merged), 0);
+});
+
+test("messages: 换段后的第一条不是一轮的开头，轮的开头在上一段", () => {
+  const first = { role: "user", content: HANDOFF_HEADER + "x", timestamp: 1, tau: { letters: [], handoff: true } } as Msg;
+  assert.equal(turnStart([first, asst([call("c", "bash", {})]), result("c", "x")]), null);
+  assert.equal(turnStart([user(HANDOFF_HEADER + "x"), asst([call("c", "bash", {})]), result("c", "x")]), 0, "没有 tau 的旧消息是普通消息");
 });
 
 test("history: 断开期间段号跳了不止一段，中间的段也要读", () => {
@@ -695,7 +786,6 @@ test("state: prunePatch 清掉没了的进程，被还在的分叉指着的标�
     forkedFrom: { fork: "src", gone: "old", f2: "mid" },
     mine: ["fork", "gone"],
     current: { team: "gone", other: "fork" },
-    seen: { gone: { preset: "p", workdir: "E:/x", tools: [] } },
   });
   const stale = (id: string) => ["src", "old", "mid", "gone"].includes(id);
   const patch = prunePatch(g, stale) as any;
@@ -703,15 +793,19 @@ test("state: prunePatch 清掉没了的进程，被还在的分叉指着的标�
   assert.deepEqual(patch.forkedFrom, { fork: "src", f2: "mid" });
   assert.deepEqual(patch.mine, ["fork"]);
   assert.deepEqual(patch.current, { other: "fork" });
-  assert.deepEqual(patch.seen, {});
   assert.deepEqual(prunePatch(g, () => false), {});
   // 分叉也没了：标题跟着清。
-  const g2 = { ...g, forkedFrom: {}, titles: { src: "标题" }, mine: [], current: {}, seen: {} };
+  const g2 = { ...g, forkedFrom: {}, titles: { src: "标题" }, mine: [], current: {} };
   assert.deepEqual(prunePatch(g2, stale), { titles: {} });
 });
 
-test("messages: 换段的信是固定的一句，点名 handoff 工具", () => {
-  assert.equal(HANDOFF_LETTER, "请现在调用 handoff 工具换段，这一轮不做别的事。换段以后回一句“已换段”就结束。");
+test("messages: canHandoff 段里要已有助手消息，换段信才生效", () => {
+  assert.equal(canHandoff([]), false);
+  assert.equal(canHandoff([user("刚开始")]), false);
+  const fresh = { role: "user", content: HANDOFF_HEADER + "说明", timestamp: 1, tau: { letters: [], handoff: true } } as Msg;
+  assert.equal(canHandoff([fresh]), false, "刚换段的新段开头");
+  assert.equal(canHandoff([user("a"), asst([text("好")])]), true);
+  assert.equal(canHandoff([fresh, asst([text("好")])]), true);
 });
 
 // ---------- pace ----------

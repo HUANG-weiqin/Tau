@@ -76,9 +76,9 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
   const html = readFileSync(path.join(webDir, "index.html"));
   const csp = buildCsp(importMapHash(html.toString("utf8")));
   const state = createStateStore(home);
-  const git = createGit(opts.git ?? runGit, () => {
+  const git = createGit(opts.git ?? runGit, async () => {
     const folders = state.read().folders;
-    return [...presetWorkdirs(home), ...(Array.isArray(folders) ? folders.filter((f): f is string => typeof f === "string") : [])];
+    return [...(await presetWorkdirs(home, pipe)), ...(Array.isArray(folders) ? folders.filter((f): f is string => typeof f === "string") : [])];
   });
   const pick = opts.pickFolder ?? realPick;
   let picking = false;
@@ -114,7 +114,7 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
         forward(pipe, body, req, res);
         return;
       case "presets":
-        return json(res, 200, { presets: listPresets(home) });
+        return json(res, 200, { presets: await listPresets(home, pipe) });
       case "presets/create":
         createPreset(home, body);
         return json(res, 200, { ok: true });

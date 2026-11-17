@@ -80,15 +80,15 @@ function branchOfHeader(header: string): string | undefined {
   return i >= 0 ? h.slice(0, i) : h.split(" ")[0];
 }
 
-export function createGit(run: GitRunner, allowed: () => string[]) {
+export function createGit(run: GitRunner, allowed: () => Promise<string[]>) {
   async function git(dir: string, args: string[]) {
     return run(["--no-optional-locks", "-c", "core.fsmonitor=false", "-C", dir, ...args]);
   }
 
-  function checkDir(v: unknown): string {
+  async function checkDir(v: unknown): Promise<string> {
     if (typeof v !== "string" || v === "" || v.includes("\0")) throw new HttpError(400, "workdir 必须是字符串");
     const n = norm(v);
-    if (!allowed().some((a) => norm(a) === n)) throw new HttpError(403, "这个目录不是已知的项目目录");
+    if (!(await allowed()).some((a) => norm(a) === n)) throw new HttpError(403, "这个目录不是已知的项目目录");
     return path.resolve(v);
   }
 
@@ -205,7 +205,7 @@ export function createGit(run: GitRunner, allowed: () => string[]) {
   }
 
   return async function handle(body: Record<string, unknown>): Promise<unknown> {
-    const dir = checkDir(body.workdir);
+    const dir = await checkDir(body.workdir);
     switch (body.what) {
       case "status":
         return status(dir);

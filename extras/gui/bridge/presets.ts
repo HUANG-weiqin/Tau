@@ -1,11 +1,12 @@
-// 预设的读取和新建。自己写解析，不导入 src/；规则照内核（设计稿第 2 节），但不查模型目录和工具定义。
-import { mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+// 预设的列出和新建、删除。读预设不自己解析：经管道问服务的 `check`，读得出、能不能启动、错误文字都和 `start` 一致。
+// 这里只写文件，不导入 src/。
+import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { createConnection } from "node:net";
 import path from "node:path";
 import { HttpError, isAbsoluteWinPath } from "./util.ts";
 
-const KEYS = ["workdir", "model", "tools", "thinking", "handoff"];
-const REQUIRED = ["workdir", "model", "tools"];
 const THINKING = ["minimal", "low", "medium", "high", "xhigh", "max"];
+const CHECK_TIMEOUT_MS = 10_000;
 
 export interface PresetOk {
   id: string;
@@ -16,83 +17,78 @@ export interface PresetOk {
   memory: boolean;
   thinking?: string;
   handoff?: number;
+  options?: Record<string, unknown>;
 }
 export type PresetInfo = PresetOk | { id: string; ok: false; error: string };
 
-export function parsePreset(id: string, raw: string): PresetInfo {
-  try {
-    return { id, ...parseFields(id, raw) };
-  } catch (e) {
-    return { id, ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
+/** 问服务一次 `check`。回 `check` 行，或者 `error` 的原文。连不上抛 503。 */
+function check(pipe: string, id: string): Promise<{ snapshot: any; error: string | null } | { fail: string }> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection(pipe);
+    let buf = "";
+    let done = false;
+    const finish = (f: () => void) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      socket.destroy();
+      f();
+    };
+    const timer = setTimeout(() => finish(() => reject(new HttpError(504, "tau 服务没有回应 check"))), CHECK_TIMEOUT_MS);
+    socket.once("connect", () => socket.write(`${JSON.stringify({ op: "check", preset: id })}\n`));
+    socket.on("data", (chunk) => {
+      buf += chunk.toString("utf8");
+      const nl = buf.indexOf("\n");
+      if (nl < 0) return;
+      let r: any;
+      try {
+        r = JSON.parse(buf.slice(0, nl));
+      } catch {
+        return finish(() => reject(new HttpError(502, "tau 服务回的不是 JSON")));
+      }
+      if (r.type === "check") finish(() => resolve({ snapshot: r.snapshot, error: typeof r.error === "string" ? r.error : null }));
+      else if (r.type === "error") finish(() => resolve({ fail: String(r.message) }));
+      else finish(() => reject(new HttpError(502, "tau 服务回了意外的内容")));
+    });
+    socket.on("error", () => finish(() => reject(new HttpError(503, "连不上 tau 服务，先运行 tau serve"))));
+    socket.on("close", () => finish(() => reject(new HttpError(503, "tau 服务在回复前断开了"))));
+  });
 }
 
-function parseFields(id: string, raw: string): Omit<PresetOk, "id"> {
-  const text = raw.startsWith("﻿") ? raw.slice(1) : raw;
-  const lines = text.split(/\r?\n/);
-  if (lines[0] !== "---") throw new Error("缺少开头的 ---");
-  const end = lines.indexOf("---", 1);
-  if (end < 0) throw new Error("缺少结束的 ---");
-  const fields = new Map<string, string>();
-  for (const line of lines.slice(1, end)) {
-    if (line.trim() === "") continue;
-    const at = line.indexOf(":");
-    if (at < 0) throw new Error(`前置信息格式错误：${line}`);
-    const key = line.slice(0, at).trim();
-    if (!KEYS.includes(key)) throw new Error(`未知字段：${key}`);
-    if (fields.has(key)) throw new Error(`重复的字段：${key}`);
-    fields.set(key, line.slice(at + 1).trim());
-  }
-  for (const key of REQUIRED) if (!fields.has(key)) throw new Error(`缺少字段：${key}`);
-  const rawDir = fields.get("workdir") ?? "";
-  if (!isAbsoluteWinPath(rawDir)) throw new Error(`工作目录必须是绝对路径：${rawDir}`);
-  const workdir = path.resolve(rawDir);
-  try {
-    if (!statSync(workdir).isDirectory()) throw new Error();
-  } catch {
-    throw new Error(`工作目录不存在：${workdir}`);
-  }
-  const model = fields.get("model") ?? "";
-  const slash = model.indexOf("/");
-  if (slash <= 0 || slash === model.length - 1) throw new Error(`模型格式应为 <provider>/<model-id>：${model}`);
-  const tools = (fields.get("tools") ?? "").split(",").map((s) => s.trim()).filter((s) => s !== "");
-  const thinking = fields.get("thinking");
-  if (thinking !== undefined && !THINKING.includes(thinking)) throw new Error(`thinking 只能是 ${THINKING.join(", ")}：${thinking}`);
-  const handoff = fields.get("handoff");
-  if (handoff !== undefined && !/^[1-9][0-9]{0,14}$/.test(handoff)) throw new Error(`handoff 必须是正整数：${handoff}`);
+/** 一个预设此刻读成什么。读不出或者装不下，都是 `ok: false`，文字和 `start` 的一样。 */
+export async function presetInfo(pipe: string, id: string): Promise<PresetInfo> {
+  const r = await check(pipe, id);
+  if ("fail" in r) return { id, ok: false, error: r.fail };
+  if (r.error !== null) return { id, ok: false, error: r.error };
+  const s = r.snapshot;
+  const tools: string[] = [...s.tools, ...s.toolDefs.map((d: { name: string }) => d.name)];
   return {
+    id,
     ok: true,
-    workdir,
-    model,
+    workdir: s.workdir,
+    model: s.model,
     tools,
     memory: tools.includes("memory"),
-    ...(thinking === undefined ? {} : { thinking }),
-    ...(handoff === undefined ? {} : { handoff: Number(handoff) }),
+    ...(s.thinking === undefined ? {} : { thinking: s.thinking }),
+    ...(s.handoff === undefined ? {} : { handoff: s.handoff }),
+    ...(s.options === undefined ? {} : { options: s.options }),
   };
 }
 
-export function listPresets(home: string): PresetInfo[] {
-  const dir = path.join(home, "presets");
+/** `presets/` 下每个 `.md` 一项，按 ID 排序。没有目录是空列表。 */
+export async function listPresets(home: string, pipe: string): Promise<PresetInfo[]> {
   let names: string[];
   try {
-    names = readdirSync(dir);
+    names = readdirSync(path.join(home, "presets"));
   } catch {
     return [];
   }
-  const out: PresetInfo[] = [];
-  for (const name of names.filter((n) => n.endsWith(".md")).sort()) {
-    const id = name.slice(0, -3);
-    try {
-      out.push(parsePreset(id, readFileSync(path.join(dir, name), "utf8")));
-    } catch (e) {
-      out.push({ id, ok: false, error: e instanceof Error ? e.message : String(e) });
-    }
-  }
-  return out;
+  const ids = names.filter((n) => n.endsWith(".md")).sort().map((n) => n.slice(0, -3));
+  return Promise.all(ids.map((id) => presetInfo(pipe, id)));
 }
 
-export function presetWorkdirs(home: string): string[] {
-  return listPresets(home).flatMap((p) => (p.ok ? [p.workdir] : []));
+export async function presetWorkdirs(home: string, pipe: string): Promise<string[]> {
+  return (await listPresets(home, pipe)).flatMap((p) => (p.ok ? [p.workdir] : []));
 }
 
 function line(name: string, v: unknown): string {

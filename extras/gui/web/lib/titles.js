@@ -1,11 +1,11 @@
 // @ts-check
 // 进程的标题。
-import { clipText, textOf } from "./messages.js";
+import { clipText, parseUser } from "./messages.js";
 /** @typedef {import("./types.js").Message} Message */
 /** @typedef {import("./types.js").GuiState} GuiState */
 
 /**
- * 第 1 段第一条用户消息的第一行。第一行是信头 `（来自…）` 时取下一个非空行。没有可用的行是 null。
+ * 第 1 段第一条用户消息里第一封信正文的第一个非空行（信头和说明不在正文里）。没有可用的行是 null。
  * 调用方把结果缓存进界面数据的 `titles`。
  * @param {readonly Message[]} segment1
  * @returns {string | null}
@@ -13,11 +13,10 @@ import { clipText, textOf } from "./messages.js";
 export function extractTitle(segment1) {
   const first = segment1.find((m) => m.role === "user");
   if (!first || first.role !== "user") return null;
-  const lines = textOf(first.content)
+  const line = (parseUser(first).letters[0]?.text ?? "")
     .split(/\r?\n/)
     .map((l) => l.trim())
-    .filter((l) => l !== "");
-  const line = lines[0]?.startsWith("（来自") ? lines[1] : lines[0];
+    .find((l) => l !== "");
   return line === undefined ? null : clipText(line, 80);
 }
 

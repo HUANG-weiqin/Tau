@@ -30,7 +30,7 @@
 | `extras/package.json` | 上层的依赖，精确锁定（[D63](kb-decisions.md#d63-上层的依赖随便加)） |
 | `extras/gui/bridge/main.ts` | 桥的入口，Node 直接运行 |
 | `extras/gui/bridge/server.ts` | `createBridge`：检查和路由。测试用它在进程里起桥，可以换掉 git 和选文件夹 |
-| `extras/gui/bridge/*.ts` | 其余各部分：`forward.ts` 转发，`static.ts` 静态文件，`presets.ts`、`git.ts`、`bg.ts`、`state.ts`、`pick.ts`，`util.ts` 放公用的小函数 |
+| `extras/gui/bridge/*.ts` | 其余各部分：`forward.ts` 转发，`static.ts` 静态文件，`presets.ts`（经 `check` 列预设，写和删预设文件）、`git.ts`、`bg.ts`、`state.ts`、`pick.ts`，`util.ts` 放公用的小函数 |
 | `extras/gui/web/index.html` | 页面 |
 | `extras/gui/web/lib/*.js` | 页面的纯逻辑。不碰 DOM，不发请求。文件头写 `// @ts-check`，类型用 JSDoc |
 | `extras/gui/web/ui/*.js` | 组件 |
@@ -83,7 +83,7 @@
 | 路径 | 请求 | 回 |
 |---|---|---|
 | `/api/tau` | 一条协议请求 | 管道回的每一行原样分块写回，管道关闭就结束。浏览器断开，桥就断开管道。连不上管道回 503 |
-| `/api/presets` | `{}` | `{ presets }`，见下 |
+| `/api/presets` | `{}` | `{ presets }`，见下。服务不在回 503 |
 | `/api/presets/create` | `{ id, workdir, model, tools, thinking?, prompt }` | `{ ok: true }`。文件已经存在回 409，不覆盖 |
 | `/api/presets/delete` | `{ id }` | `{ ok: true }`。ID 的检查和新建一样；没有这个文件回 404。只删 `presets/<ID>.md`，记忆库不动。桥不查这个预设还有没有进程，由页面拦：连着服务、这次连上以后收到过进程表，才让删 |
 | `/api/git` | `{ workdir, what, file? }` | 见下 |
@@ -95,16 +95,17 @@
 
 预设：
 
-- 解析照内核的读取规则（[设计稿第 2 节](../docs/design/mvp.md#2-预设)）：两行 `---` 之间是 `键: 值`，认 `workdir`、`model`、`tools`、`thinking`、`handoff`。不查模型目录。
-- 每个预设回 `{ id, ok: true, workdir, model, tools, memory, thinking?, handoff? }`。`memory` 是 `tools` 里有没有 `memory`。读不懂的回 `{ id, ok: false, error }`，照样列出。
-- 新建时只写认识的字段，提示词写在第二个 `---` 后面。ID 只许字母、数字、`.`、`_`、`-`，工作目录必须是存在的绝对路径。
+- 读预设不自己解析：列出 `presets/` 下的每个 `.md`，对每个文件名发一次 `check`（经管道，和 `/api/tau` 同一条管道）。读得出、能不能启动、错误文字都和 `start` 一致（[kb-service 的 `check`](kb-service.md#读记录和干跑inspectcheck)），预设以后加字段（例如 `options`）桥不用改。
+- 每个预设回 `{ id, ok: true, workdir, model, tools, memory, thinking?, handoff?, options? }`。`tools` 是内置工具加工具定义的名字，`memory` 是 `tools` 里有没有 `memory`。读不出，或者读得出但此刻起不来（`check` 的 `error` 不是 `null`，例如窗口装不下），回 `{ id, ok: false, error }`，照样列出，`error` 是服务给的原文。
+- 连不上服务回 503，不当成每个预设都读不出：页面连上以后再读。
+- 新建时只写认识的字段，提示词写在第二个 `---` 后面。ID 只许字母、数字、`.`、`_`、`-`，工作目录必须是存在的绝对路径。模型、工具名只查格式，不查模型目录和工具定义：写出来的文件能不能用，由 `check` 说了算。
 - 删除只认 ID，检查和新建一样。桥不查这个预设有没有进程，也不查是不是总管的预设；这两条由页面拦（[设计稿 7.7](../docs/design/gui.md#77-删除)）。
 
 git：
 
 - 一律 `git --no-optional-locks -c core.fsmonitor=false -C <目录> …`，不经 shell，有超时。diff 另加 `--no-ext-diff` 和 `--no-textconv`，不跑仓库里配置的外部程序。
 - 输出超过缓冲上限时：`diff` 截断并标 `truncated`；`status` 回 500，不解析半截输出。
-- 工作目录必须是某个预设的 `workdir`，或者界面数据 `folders` 里的文件夹。否则回 403。比较时不分大小写。
+- 工作目录必须是某个预设的 `workdir`（读法同上，经 `check`），或者界面数据 `folders` 里的文件夹。否则回 403。比较时不分大小写。
 - `what`：
   - `status`：`{ repo, branch?, files }`。每个文件 `{ path, status, add, del }`，`status` 是 porcelain 的两个字母，`add`、`del` 来自 `diff --numstat HEAD`，拿不到时是 `null`。不是仓库时 `{ repo: false }`。
   - `diff`：`{ text, truncated }`。`file` 是 `status` 给的路径，相对仓库根，所以在仓库根上跑。未跟踪的文件用 `diff --no-index`，其余用 `diff HEAD -- <文件>`，还没有提交时退回 `diff --cached`。超过 256 KB 截断。
@@ -131,7 +132,6 @@ git：
 | `mine` | 界面建的进程 ID |
 | `forkedFrom` | 界面分叉出的进程 ID → 源进程 ID |
 | `titles` | 进程 ID → 标题 |
-| `seen` | 进程 ID → 第一次见到时的预设：`{ workdir, tools, memory }` |
 | `collapsed` | 折叠状态 |
 | `cleanDays` | 清理的天数，默认 7 |
 
@@ -150,23 +150,31 @@ git：
   - 内容底部的内边距由它设，是台面高的四成。
   - 只认用户自己的操作。它自己写的 `scrollTop` 记在 `lastSet`，引起的 scroll 事件不算。
   - 滚动容器带 `tabindex="0"`：点正文以后焦点落在它上面，键盘翻页的事件才到得了它。
-- 进程归到哪个项目、常驻还是临时：先看 `seen`，没有就用当前的预设文件，并记进 `seen`。
-- 段号从 1 开始。临时进程的标题取第 1 段第一条用户消息的第一行；第一行是信头 `（来自…）` 时取第二行。
+- 进程归到哪个项目、常驻还是临时：看进程记录里冻结的预设快照，经 `/api/tau` 转发 `inspect` 读（`lib/derive.js` 的 `seenFromInspect` 取 `workdir`、`tools`、`memory`），存在页面内存里，不写界面数据。
+  - 连上以后 `ps` 一到，读一次全部；之后 `update` 里出现没读过的进程，再单独读它。进程被删就丢掉它的快照。
+  - 读全部之前页面不就绪；没读到快照的进程是 `unknown`，不归进任何项目。
+- 段号从 1 开始。临时进程的标题取第 1 段第一条用户消息里第一封信正文的第一个非空行，信头不在正文里。
 - 模块：`app.js` 是根组件，组装一个只读的 `app` 对象给各块用（数据、读法和动作，JSDoc 写在文件开头）；`conn.js` 管连接和增量读；`api.js` 发请求；`ui/` 每块一个文件；`css/` 每块一个文件，`styles.css` 只 `@import` 它们。
 - 地址栏的 hash 记聚焦的对象和开着的弹窗：`#p=<进程 ID>`、`#proj=<项目键>`、`#dlg=chief|newproc|newpreset|openproj|projects|clean`。删除的确认框不进 hash，可以用 `&` 连起来。项目键是 `lib/state.js` 的 `pathKey`。
 - 改界面数据时先重读文件，在新读到的内容上改，再写回去，几个页面同时开着也不互相覆盖。页面回到前台时和每 30 秒也重读一次。
-- 进程在 `ps` 里没了，就从 `seen`、`titles`、`mine`、`forkedFrom`、`current` 里删掉它的键，文件不会一直长。例外：还在的分叉指着的那个标题留着（`lib/state.js` 的 `prunePatch`）。
+- 进程在 `ps` 里没了，就从 `titles`、`mine`、`forkedFrom`、`current` 里删掉它的键，文件不会一直长。例外：还在的分叉指着的那个标题留着（`lib/state.js` 的 `prunePatch`）。
 - 删进程：`ui/remove.js` 的确认框贴着点的按钮或行，状态不在 `app` 里，也不进 hash。确认框列出整棵子树，从叶子删起（`lib/remove.js` 的 `removePlan`、`skippedFor`）；子树里有在跑的就不让删；被服务拒绝的，只跳过它的祖先；框中途关掉就停在删完手上这个。删之前，子树里的临时进程和被分叉指着的进程，标题先缓存（`ui/titlecache.js`，清理旧进程共用）。`app.remove` 和 `app.deletePreset` 不弹提示，被拒绝时原因写在确认框里。收到 `removed` 时，删的是聚焦的进程就聚焦它的项目。
 - 建预设：`ui/presetform.js` 是“打开项目”和“新预设”共用的表。显示名写进 `names`，不写预设文件。从“新进程”弹窗进“新预设”时，建好以后回到“新进程”，选中新建的预设。
-- “换段”：`lib/messages.js` 的 `HANDOFF_LETTER` 是固定的一封信，用 `send` 寄，请模型调用 `handoff`。内核没有从外面强制换段的请求。写失败以后 30 秒内不再自动写，不会反复重试。
+- 界面数据写失败以后 30 秒内不再自动写（清理旧键），不会反复重试。
+- 信的来历读段里消息的 `tau`（`lib/messages.js` 的 `parseUser`），不解析文字：
+  - 一封信的发送者、跳数、`replyTo`（写信时它在等回信）、回信的结束原因来自 `tau.letters`；正文是消息文本里 `at` 指的那段。
+  - 上一轮的说明来自 `tau.after`，换段后的第一条来自 `tau.handoff`（说明和带过来的信用 `at` 切），被中断和未执行的工具结果来自 `tau.filled`，一轮的开头看 `tau.after` 和 `tau.handoff`。
+  - 没有 `tau` 的旧消息按普通用户消息显示，整段文字一封信。文字被截过的消息没有 `at`，整段文字当一封信，发送者取第一封。
+  - 唯一还认的固定文字是 `HANDOFF_HEADER` 和 `CARRY_HEADER`，只用来从新段第一条里切出交接说明。
+- “换段”：`app.handoff` 用 `send` 带 `handoff: true` 寄 `HANDOFF_LETTER`（一封说明没有别的事要做的信）。段里已有助手消息才生效（`lib/messages.js` 的 `canHandoff`，[kb-kernel 的换段信](kb-kernel.md#换段信)）；进程在跑、或者段里还没有助手消息时按钮禁用。
 - 只跟最近看过的几个进程读全部历史。别的进程只读当前段最后一条消息，拿到最后动静的时间。
 
 ## 测试
 
 | 文件 | 测什么 |
 |---|---|
-| `test/extras/gui/bridge.test.ts` | 每条检查的反例；GET 不出目录；转发对着测试服务（临时目录、测试管道、faux 模型），含 `watch` 分块推送和浏览器断开；预设的解析、新建不覆盖和删除；git 带 `--no-optional-locks`、工作目录不对时拒绝；界面数据改名写入 |
-| `test/extras/gui/lib.test.ts` | 纯逻辑：增量读跨换段、重连后不丢不重、标题、当前进程、筛选计数、全部停止和清理的顺序、删进程的拒绝条件、`prunePatch`；吐字的节奏（平稳的小块、成批到、收尾追平、一次来一大块）和 `latestSeq` |
+| `test/extras/gui/bridge.test.ts` | 每条检查的反例；GET 不出目录；转发对着测试服务（临时目录、测试管道、faux 模型），含 `watch` 分块推送和浏览器断开；预设经 `check` 读（带 `options` 的读得出、读不出和装不下的错误文字和 `start` 一字不差、服务不在回 503）、新建不覆盖和删除；`inspect` 转发读到冻结的快照；换段信真的换段、信带进新段；git 带 `--no-optional-locks`、工作目录不对时拒绝；界面数据改名写入 |
+| `test/extras/gui/lib.test.ts` | 纯逻辑：信的来历读 `tau`（发送者、跳数、回信、`after`、换段、`filled`，旧消息、被截过的消息）、`canHandoff`、进程按冻结的快照归类、增量读跨换段、重连后不丢不重、标题、当前进程、筛选计数、全部停止和清理的顺序、删进程的拒绝条件、`prunePatch`；吐字的节奏（平稳的小块、成批到、收尾追平、一次来一大块）和 `latestSeq` |
 
 ## 坑点
 

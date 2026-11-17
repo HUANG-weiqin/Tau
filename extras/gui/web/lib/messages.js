@@ -1,24 +1,22 @@
 // @ts-check
-// 把一段的 pi-ai 消息变成界面要显示的条目。信头的格式照内核的 `decide.ts` 的 `header` 和 `render`。
+// 把一段的 pi-ai 消息变成界面要显示的条目。信的来历读消息的 `tau`（内核写的结构），不解析文字。
 /** @typedef {import("./types.js").Message} Message */
 /** @typedef {import("./types.js").Ended} Ended */
 /** @typedef {import("./types.js").PhaseView} PhaseView */
 
-/** 内核补的工具结果原文（`src/kernel/decide.ts`）。 */
-export const INTERRUPTED = "被中断，结果未知";
-export const SKIPPED = "未执行";
-/** 新段第一条消息的开头和带过来的用户消息前的一行（`src/kernel/context.ts`）。 */
+/** 新段第一条消息的开头和带过来的用户消息前的一行（`src/kernel/context.ts`）：只用来切出交接说明和带过来的消息。 */
 export const HANDOFF_HEADER = "（这是你在上一个工作段结束时写的交接说明。）\n\n";
 export const CARRY_HEADER = "（下面是写交接说明时还没处理的用户消息。）";
 
 /**
- * 一封信。`user`：用户的信；`process`：别的进程的信，`waiting` 是信头说它在等回信；`reply`：回信，`ended` 是那一轮的结束原因。
- * @typedef {{ from: "user", text: string }
- *   | { from: "process", id: string, preset: string, waiting: boolean, text: string }
- *   | { from: "reply", id: string, endedText: string, ended: Ended | null, text: string }} Letter
+ * 一封信，来自消息的 `tau.letters`。`user`：用户的信；`process`：别的进程的信，`waiting` 是写信时它在等回信（有 `replyTo`）；
+ * `reply`：回信，`ended` 是那一轮的结束原因。`hops` 是跳数；没有 `tau` 的旧消息没有它。
+ * @typedef {{ from: "user", text: string, hops?: number }
+ *   | { from: "process", id: string, preset: string, waiting: boolean, text: string, hops?: number }
+ *   | { from: "reply", id: string, endedText: string, ended: Ended, text: string, hops?: number }} Letter
  */
 /** @typedef {{ hash: string, mimeType: string }} ImageRef */
-/** @typedef {{ seq: number, ts: number, text: string, summary: string, images: ImageRef[], isError: boolean }} CallResult */
+/** `filled`：内核补的结果，`interrupted` 被中断，`skipped` 未执行；真实的工具结果是 null。 @typedef {{ seq: number, ts: number, text: string, summary: string, images: ImageRef[], isError: boolean, filled: "interrupted" | "skipped" | null }} CallResult */
 /** `status`：`pending` 还没有结果，`ok`，`error`（工具报错），`interrupted`（被中断，结果未知），`skipped`（未执行）。 @typedef {{ id: string, name: string, args: Record<string, unknown>, summary: string, status: "pending" | "ok" | "error" | "interrupted" | "skipped", result: CallResult | null }} Call */
 /**
  * @typedef {{ kind: "user", seq: number, ts: number, note: string | null, letters: Letter[], images: ImageRef[] }
@@ -65,70 +63,78 @@ export function imagesOf(content) {
   return content.flatMap((c) => (c.type === "image" && typeof c.data === "string" && c.data.startsWith("blob:") ? [{ hash: c.data.slice(5), mimeType: c.mimeType ?? "image/png" }] : []));
 }
 
-const HEADER_LINE = /^（(?:(来自用户)|来自进程 (\S+?)，预设 (.+?)(。它在等回信：.*)?|进程 (\S+) 的回信，这一轮(.*))）$/;
-
 /**
- * 结束原因的文字（`endedText`）还原成结束原因。认不出时是 null。
- * @param {string} t
- * @returns {Ended | null}
+ * 结束原因的界面文字。出错带原因（回信里的出错原因内核已经截短）。
+ * @param {Ended} ended
  */
-export function endedFromText(t) {
-  if (t === "正常结束") return "done";
-  if (t === "步数用完") return "stepLimit";
-  if (t === "被停止") return "stopped";
-  if (t.startsWith("出错：")) return { error: t.slice(3) };
-  return null;
+export function endedLabel(ended) {
+  if (ended === "done") return "正常结束";
+  if (ended === "stepLimit") return "步数用完";
+  if (ended === "stopped") return "被停止";
+  return `出错：${ended.error}`;
 }
 
 /**
- * 一条用户消息的正文拆成信。一批里有进程的信时，每封信前面有一行信头，信之间空一行；
- * 没有信头就是用户的一封信。信头只认写在行首、前面是空行（或开头）的整行。
+ * 一条用户消息的文本：`content` 是字符串就是它，是数组就是第一个文本块（`tau.letters[].at` 指的就是它）。
+ * @param {import("./types.js").UserMessage} m
+ */
+function tauText(m) {
+  if (typeof m.content === "string") return m.content;
+  const first = m.content.find((c) => c.type === "text");
+  return first && first.type === "text" ? first.text : "";
+}
+
+/**
+ * 一封信的视图。
+ * @param {import("./types.js").LetterMeta} meta
  * @param {string} text
- * @returns {Letter[]}
+ * @returns {Letter}
  */
-export function splitLetters(text) {
-  const lines = text.split("\n");
-  /** @type {number[]} */
-  const heads = [];
-  lines.forEach((line, i) => {
-    if ((i === 0 || lines[i - 1] === "") && HEADER_LINE.test(line)) heads.push(i);
-  });
-  if (heads[0] !== 0) return [{ from: "user", text }];
-  return heads.map((h, k) => {
-    const next = heads[k + 1];
-    const body = lines.slice(h + 1, next === undefined ? lines.length : next - 1).join("\n");
-    const m = HEADER_LINE.exec(lines[h] ?? "");
-    if (!m) return { from: "user", text: body };
-    if (m[1]) return { from: "user", text: body };
-    if (m[2] !== undefined) return { from: "process", id: m[2], preset: m[3] ?? "", waiting: m[4] !== undefined, text: body };
-    const endedText = m[6] ?? "";
-    return { from: "reply", id: m[5] ?? "", endedText, ended: endedFromText(endedText), text: body };
-  });
+function letterOf(meta, text) {
+  const f = meta.from;
+  if (f.kind === "user") return { from: "user", text, hops: meta.hops };
+  if (f.reply) return { from: "reply", id: f.id, endedText: endedLabel(f.reply.ended), ended: f.reply.ended, text, hops: meta.hops };
+  return { from: "process", id: f.id, preset: f.preset, waiting: meta.replyTo !== undefined, text, hops: meta.hops };
 }
 
 /**
- * 一条用户消息：开头的“上一轮…”说明、交接说明、信。
+ * 一条用户消息：上一轮的说明、交接说明、信。全部读 `tau`，不解析文字。没有 `tau` 的旧消息是普通用户消息：整段文字一封用户的信。
+ * 文字被截过的消息，`tau.letters` 没有 `at`：整段文字当成一封信，发送者取第一封。
  * @param {import("./types.js").UserMessage} m
  * @returns {{ note: string | null, handoff: { note: string, carried: string | null } | null, letters: Letter[], images: ImageRef[] }}
  */
 export function parseUser(m) {
-  let text = textOf(m.content);
+  const text = tauText(m);
   const images = imagesOf(m.content);
-  if (text.startsWith(HANDOFF_HEADER)) {
-    const rest = text.slice(HANDOFF_HEADER.length);
-    const at = rest.indexOf("\n\n" + CARRY_HEADER);
-    if (at < 0) return { note: null, handoff: { note: rest, carried: null }, letters: [], images };
-    const carried = rest.slice(at + 2 + CARRY_HEADER.length).replace(/^\n\n/, "");
-    return { note: null, handoff: { note: rest.slice(0, at), carried }, letters: [], images };
+  const tau = m.tau;
+  if (!tau) return { note: null, handoff: null, letters: [{ from: "user", text }], images };
+  const note = tau.after === undefined ? null : `上一轮${endedLabel(tau.after)}`;
+  const ats = tau.letters.flatMap((l) => (l.at ? [l.at] : []));
+  // 没有文字的信（只有图片）没有 `at`；有文字却一封都没有 `at`，是文字被截过。
+  const clipped = ats.length === 0 && text !== "";
+  /** @type {Letter[]} */
+  const letters = clipped ? (tau.letters[0] ? [letterOf(tau.letters[0], text)] : []) : tau.letters.map((l) => letterOf(l, l.at ? text.slice(l.at[0], l.at[1]) : ""));
+  if (tau.handoff !== true) return { note, handoff: null, letters, images };
+  // 换段后的第一条：说明在前，带过来的消息（有正文的信）在后。
+  const from = text.startsWith(HANDOFF_HEADER) ? HANDOFF_HEADER.length : 0;
+  if (ats.length === 0) {
+    const at = text.indexOf("\n\n" + CARRY_HEADER, from);
+    return { note: null, handoff: { note: text.slice(from, at < 0 ? text.length : at), carried: null }, letters: [], images };
   }
-  /** @type {string | null} */
-  let note = null;
-  const m1 = /^（上一轮[^\n]*）\n\n/.exec(text);
-  if (m1) {
-    note = m1[0].slice(0, -2);
-    text = text.slice(m1[0].length);
-  }
-  return { note, handoff: null, letters: splitLetters(text), images };
+  const first = Math.min(...ats.map((a) => a[0]));
+  const last = Math.max(...ats.map((a) => a[1]));
+  const at = text.lastIndexOf("\n\n" + CARRY_HEADER, first);
+  return { note: null, handoff: { note: text.slice(from, at < 0 ? first : at), carried: text.slice(first, last) }, letters: [], images };
+}
+
+/**
+ * 这一轮是谁开的：看开头那封信的发送者。
+ * @param {import("./types.js").UserMessage} m
+ */
+export function describeStart(m) {
+  const l = parseUser(m).letters[0];
+  if (l?.from === "process") return `由 ${l.preset} 的来信开始`;
+  return l?.from === "reply" ? "开始" : "由你的来信开始";
 }
 
 /**
@@ -149,14 +155,13 @@ export function summarizeCall(name, args) {
 /** @param {import("./types.js").ToolResultMessage} m @param {number} seq @returns {CallResult} */
 function resultOf(m, seq) {
   const text = textOf(m.content);
-  return { seq, ts: m.timestamp, text, summary: clipText(firstLine(text), 100), images: imagesOf(m.content), isError: m.isError };
+  return { seq, ts: m.timestamp, text, summary: clipText(firstLine(text), 100), images: imagesOf(m.content), isError: m.isError, filled: m.tau?.filled ?? null };
 }
 
 /** @param {CallResult | null} r @returns {Call["status"]} */
 function statusOf(r) {
   if (r === null) return "pending";
-  if (r.isError && r.text === INTERRUPTED) return "interrupted";
-  if (r.isError && r.text === SKIPPED) return "skipped";
+  if (r.filled) return r.filled;
   return r.isError ? "error" : "ok";
 }
 
@@ -290,7 +295,7 @@ export function forkPoints(messages) {
 }
 
 /**
- * 第 `i` 条是不是一轮的开头：用户消息，前面不是工具结果；或者前面是工具结果但开头带“上一轮…”说明
+ * 第 `i` 条是不是一轮的开头：用户消息，前面不是工具结果；或者前面是工具结果但带 `tau.after`
  * （上一轮没正常结束，停在工具结果上，下一封信带说明开新的一轮）。
  * @param {readonly Message[]} messages
  * @param {number} i
@@ -299,7 +304,7 @@ function opensTurn(messages, i) {
   const m = messages[i];
   if (m?.role !== "user") return false;
   if (messages[i - 1]?.role !== "toolResult") return true;
-  return textOf(m.content).startsWith("（上一轮");
+  return m.tau?.after !== undefined;
 }
 
 /**
@@ -314,12 +319,21 @@ export function turnStart(messages) {
   if (i < 0) return null;
   while (i > 0 && messages[i - 1]?.role === "user") i--;
   const first = messages[i];
-  if (i === 0 && first?.role === "user" && textOf(first.content).startsWith(HANDOFF_HEADER)) return null;
+  if (i === 0 && first?.role === "user" && first.tau?.handoff === true) return null;
   return i;
 }
 
 /**
- * “换段”按钮寄的信。内核没有从外面强制换段的请求，只有模型自己调用 `handoff` 工具才换段，
- * 所以界面请模型去调。它和写信框寄的信一样走 `send`，消息流里看得见。
+ * 换段信（`send` 带 `handoff`）要生效，段里得已有助手消息：新进程的第一封信、刚换段的新段开头，标记都作废
+ * （[kb-kernel 的换段信](../../../../.knowledge/kb-kernel.md#换段信)）。界面在这两种情形下禁用“换段”。
+ * @param {readonly Message[]} messages 当前段
  */
-export const HANDOFF_LETTER = "请现在调用 handoff 工具换段，这一轮不做别的事。换段以后回一句“已换段”就结束。";
+export function canHandoff(messages) {
+  return messages.some((m) => m.role === "assistant");
+}
+
+/**
+ * “换段”按钮寄的信的正文。换段信原样带进新段，模型在新段里接着处理它，所以写明不用做别的事。
+ * 它和写信框寄的信一样写进段，消息流里看得见（在交接说明下面“带过来的用户消息”里）。
+ */
+export const HANDOFF_LETTER = "这封信是界面为了换段寄的，换段已经完成。没有别的事要做，回一句“已换段”就结束。";

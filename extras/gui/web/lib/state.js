@@ -1,7 +1,6 @@
 // @ts-check
 // 界面数据文件的读法和改法。改法都回一个补丁：顶层键整个覆盖进文件（`/api/state` 的 `set`）。
 /** @typedef {import("./types.js").GuiState} GuiState */
-/** @typedef {import("./types.js").Seen} Seen */
 
 export const MAX_PINNED = 9;
 export const DEFAULT_CLEAN_DAYS = 7;
@@ -36,7 +35,6 @@ export function normalizeState(raw) {
     mine: strings(r["mine"]),
     forkedFrom: rec(r["forkedFrom"], (x) => typeof x === "string"),
     titles: rec(r["titles"], (x) => typeof x === "string"),
-    seen: rec(r["seen"], (x) => x !== null && typeof x === "object" && typeof /** @type {any} */ (x).workdir === "string" && Array.isArray(/** @type {any} */ (x).tools)),
     collapsed: rec(r["collapsed"], (x) => typeof x === "boolean"),
     cleanDays: typeof days === "number" && Number.isFinite(days) && days >= 1 ? Math.floor(days) : DEFAULT_CLEAN_DAYS,
   };
@@ -64,14 +62,6 @@ export function addMine(s, pid) {
 /** 记下界面分叉出的进程。 @param {GuiState} s @param {string} pid @param {string} source */
 export function addFork(s, pid, source) {
   return { forkedFrom: { ...s.forkedFrom, [pid]: source }, ...addMine(s, pid) };
-}
-
-/** 记下第一次见到的进程的预设；已经记过的不动。 @param {GuiState} s @param {Record<string, Seen>} patch */
-export function mergeSeen(s, patch) {
-  /** @type {Record<string, Seen>} */
-  const seen = { ...s.seen };
-  for (const [id, v] of Object.entries(patch)) if (!seen[id]) seen[id] = v;
-  return { seen };
 }
 
 /** 钉住一个文件夹。已经钉了或者满 9 个，原样。 @param {GuiState} s @param {string} path */
@@ -118,9 +108,7 @@ export function prunePatch(g, stale) {
   /** @param {Record<string, any>} r @param {(k: string, v: any) => boolean} drop */
   const filt = (r, drop) => Object.fromEntries(Object.entries(r).filter(([k, v]) => !drop(k, v)));
   const used = new Set(Object.entries(g.forkedFrom).flatMap(([k, v]) => (stale(k) ? [] : [v])));
-  for (const key of /** @type {const} */ (["seen", "forkedFrom"])) {
-    if (Object.keys(g[key]).some(stale)) patch[key] = filt(g[key], (k) => stale(k));
-  }
+  if (Object.keys(g.forkedFrom).some(stale)) patch["forkedFrom"] = filt(g.forkedFrom, (k) => stale(k));
   if (Object.keys(g.titles).some((k) => stale(k) && !used.has(k))) patch["titles"] = filt(g.titles, (k) => stale(k) && !used.has(k));
   if (g.mine.some(stale)) patch["mine"] = g.mine.filter((x) => !stale(x));
   if (Object.values(g.current).some(stale)) patch["current"] = filt(g.current, (_k, v) => stale(v));

@@ -19,6 +19,8 @@ import { createBridge } from "../../../extras/gui/bridge/server.ts";
 import type { BridgeOptions } from "../../../extras/gui/bridge/server.ts";
 import { DIFF_MAX_BYTES, runGit } from "../../../extras/gui/bridge/git.ts";
 import { parseExit } from "../../../extras/gui/bridge/bg.ts";
+import { seenFromInspect } from "../../../extras/gui/web/lib/derive.js";
+import { canHandoff, HANDOFF_LETTER, parseUser } from "../../../extras/gui/web/lib/messages.js";
 
 interface Res {
   status: number;
@@ -70,21 +72,35 @@ interface Env {
   port: number;
   gitCalls: string[][];
   server: http.Server;
+  /** 预设里能写的模型：带服务时是 faux 的，否则随便写。 */
+  model: string;
 }
 
 const MISSING_PIPE = () => `\\\\.\\pipe\\tau-test-gui-${process.pid}-${Math.random().toString(16).slice(2)}`;
 
-async function setupBridge(t: TestContext, o: Partial<BridgeOptions> = {}): Promise<Env> {
+/** `service: true`：桥连一个真的测试服务（读预设经它的 `check`）。 */
+async function setupBridge(t: TestContext, o: Partial<BridgeOptions> & { service?: boolean } = {}): Promise<Env> {
+  const { service, ...opts } = o;
   const dir = mkdtempSync(join(tmpdir(), "tau-gui-"));
   const home = join(dir, "home");
   const work = join(dir, "work");
   mkdirSync(join(home, "presets"), { recursive: true });
   mkdirSync(work);
+  let pipe = MISSING_PIPE();
+  let model = "x/m";
+  if (service) {
+    const faux = fauxProvider({ models: [{ id: "m", contextWindow: 200_000 }] });
+    const models = createModels();
+    models.setProvider(faux.provider);
+    model = `${faux.getModel().provider}/m`;
+    const svc = await serve({ pipe, dbPath: join(dir, "tau.db"), presetsDir: join(home, "presets"), toolsDir: join(home, "tools"), models, memory: sqliteMemory });
+    t.after(() => svc.close());
+  }
   const gitCalls: string[][] = [];
   const bridge = await createBridge({
     port: 0,
     home,
-    pipe: MISSING_PIPE(),
+    pipe,
     git: async (args) => {
       gitCalls.push(args);
       return runGit(args);
@@ -92,17 +108,23 @@ async function setupBridge(t: TestContext, o: Partial<BridgeOptions> = {}): Prom
     pickFolder: async () => {
       throw new Error("测试里不该弹对话框");
     },
-    ...o,
+    ...opts,
   });
   t.after(async () => {
     await bridge.close();
     rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
-  return { dir, home, work, port: bridge.port, gitCalls, server: bridge.server };
+  return { dir, home, work, port: bridge.port, gitCalls, server: bridge.server, model };
 }
 
-function writePreset(env: Env, id: string, workdir = env.work, model = "x/m", tools = "read"): void {
-  writeFileSync(join(env.home, "presets", `${id}.md`), `---\nworkdir: ${workdir}\nmodel: ${model}\ntools: ${tools}\n---\n提示词。\n`);
+function writePreset(env: Env, id: string, workdir = env.work, model = env.model, tools = "read"): void {
+  writeFileSync(join(env.home, "presets", `${id}.md`), `---
+workdir: ${workdir}
+model: ${model}
+tools: ${tools}
+---
+提示词。
+`);
 }
 
 // 检查的反例
@@ -286,7 +308,7 @@ async function setupService(t: TestContext, fauxOptions: RegisterFauxProviderOpt
     await svc.close();
     rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
-  return { faux, svc, port: bridge.port, open, pipe };
+  return { faux, svc, port: bridge.port, open, pipe, work, home, model: `${faux.getModel().provider}/m` };
 }
 
 function lines(res: Res): any[] {
@@ -325,6 +347,41 @@ test("转发：ps、start 加最终回复、history；/api/tau 的响应是分�
   // 桥只查 op 是字符串。
   assert.equal((await post(s.port, "/api/tau", { nope: 1 })).status, 400);
   assert.equal((await post(s.port, "/api/tau", { op: 5 })).status, 400);
+});
+
+test("转发：inspect 读到进程冻结的快照，预设文件之后改了也不变（界面据此归类）", async (t) => {
+  const s = await setupService(t);
+  s.faux.setResponses([fauxAssistantMessage(fauxText("好"))]);
+  const id: string = lines(await post(s.port, "/api/tau", { op: "start", preset: "p", text: "hi" }))[0].process;
+  const before = lines(await post(s.port, "/api/tau", { op: "inspect", process: id }));
+  assert.deepEqual(seenFromInspect(before[0]), { workdir: s.work, tools: ["read"], memory: false });
+  // 预设文件改了：新进程读到新的，老进程的快照不变。
+  writeFileSync(join(s.home, "presets", "p.md"), `---\nworkdir: ${s.home}\nmodel: ${s.model}\ntools: read, memory\n---\n新的。\n`);
+  const all = lines(await post(s.port, "/api/tau", { op: "inspect" }));
+  assert.deepEqual(seenFromInspect(all[0]), { workdir: s.work, tools: ["read"], memory: false });
+  assert.equal(all.at(-1).type, "inspected");
+  assert.deepEqual((await post(s.port, "/api/presets", {})).json.presets[0].tools, ["read", "memory"]);
+});
+
+test("换段按钮：send 带 handoff 换段，信带进新段；信、段号、交接说明都能用 tau 读出来", async (t) => {
+  const s = await setupService(t);
+  s.faux.setResponses([fauxAssistantMessage(fauxText("第一轮的回复。")), fauxAssistantMessage(fauxText("目标是 X，做到一半。")), fauxAssistantMessage(fauxText("已换段"))]);
+  const id: string = lines(await post(s.port, "/api/tau", { op: "start", preset: "p", text: "开工" }))[0].process;
+  const sent = lines(await post(s.port, "/api/tau", { op: "send", process: id, text: HANDOFF_LETTER, handoff: true }));
+  assert.deepEqual(sent.at(-1), { type: "final", reply: "已换段", ended: "done" });
+  const ps = lines(await post(s.port, "/api/tau", { op: "ps" }));
+  assert.equal(ps[0].processes[0].self.segment, 2, "换了一段");
+  const hist = lines(await post(s.port, "/api/tau", { op: "history", process: id, segment: 2 })).filter((l) => l.type === "message");
+  const first = hist[0].message;
+  assert.equal(first.tau.handoff, true);
+  const parsed = parseUser(first);
+  assert.deepEqual(parsed.handoff, { note: "目标是 X，做到一半。", carried: HANDOFF_LETTER });
+  // 在新段里，换段信读不出“用户的信”以外的东西；canHandoff 此时还要等助手说话。
+  assert.equal(canHandoff([first]), false);
+  assert.equal(canHandoff(hist.map((h) => h.message)), true);
+  // 旧段里那封信还是用户的信，正文是“开工”。
+  const old = lines(await post(s.port, "/api/tau", { op: "history", process: id, segment: 1 })).filter((l) => l.type === "message");
+  assert.deepEqual(parseUser(old[0].message).letters.map((l: any) => [l.from, l.text]), [["user", "开工"]]);
 });
 
 test("转发：watch 分块实时推送；浏览器断开后桥断开管道，服务仍然可用", { timeout: 20_000 }, async (t) => {
@@ -378,31 +435,53 @@ test("转发：连不上管道回 503 和错误原因", async (t) => {
 
 // 预设
 
-test("预设：正常、未知字段、BOM、CRLF、缺字段都列出；读不懂的标 ok: false", async (t) => {
-  const e = await setupBridge(t);
+test("预设：读得出、读不出、能不能启动都和 start 一致；带 options 的读得出", async (t) => {
+  const e = await setupBridge(t, { service: true });
+  const m = e.model;
   const p = (id: string, text: string) => writeFileSync(join(e.home, "presets", `${id}.md`), text);
-  p("good", `---\nworkdir: ${e.work}\nmodel: anthropic/haiku\ntools: read, bash, memory, mytool\nthinking: low\nhandoff: 5000\n---\n提示词\n`);
-  p("crlf", `---\r\nworkdir: ${e.work}\r\nmodel: a/b\r\ntools: read\r\n---\r\n提示词\r\n`);
-  p("bom", `\uFEFF---\nworkdir: ${e.work}\nmodel: a/b\ntools:\n---\n`);
-  p("unknown", `---\nworkdir: ${e.work}\nmodel: a/b\ntools: read\ncolor: red\n---\n`);
-  p("relative", `---\nworkdir: rel/dir\nmodel: a/b\ntools: read\n---\n`);
-  p("missing", `---\nworkdir: ${e.work}\nmodel: a/b\n---\n`);
-  p("nodir", `---\nworkdir: ${join(e.dir, "nope")}\nmodel: a/b\ntools: read\n---\n`);
+  mkdirSync(join(e.home, "tools"), { recursive: true });
+  writeFileSync(join(e.home, "tools", "mytool.json"), JSON.stringify({ description: "d", parameters: { type: "object", properties: {} }, command: "echo" }));
+  p("good", `---\nworkdir: ${e.work}\nmodel: ${m}\ntools: read, bash, memory, mytool\nthinking: low\nhandoff: 150000\noptions: {"temperature":0.2}\n---\n提示词\n`);
+  p("crlf", `---\r\nworkdir: ${e.work}\r\nmodel: ${m}\r\ntools: read\r\n---\r\n提示词\r\n`);
+  p("bom", `﻿---\nworkdir: ${e.work}\nmodel: ${m}\ntools:\n---\n`);
+  p("unknown", `---\nworkdir: ${e.work}\nmodel: ${m}\ntools: read\ncolor: red\n---\n`);
+  p("relative", `---\nworkdir: rel/dir\nmodel: ${m}\ntools: read\n---\n`);
+  p("missing", `---\nworkdir: ${e.work}\nmodel: ${m}\n---\n`);
+  p("nodir", `---\nworkdir: ${join(e.dir, "nope")}\nmodel: ${m}\ntools: read\n---\n`);
   p("nofm", "只有正文\n");
+  p("badopt", `---\nworkdir: ${e.work}\nmodel: ${m}\ntools: read\noptions: {"model":"x"}\n---\n`);
+  p("nomodel", `---\nworkdir: ${e.work}\nmodel: nobody/none\ntools: read\n---\n`);
+  p("notool", `---\nworkdir: ${e.work}\nmodel: ${m}\ntools: read, ghost\n---\n`);
+  p("tiny", `---\nworkdir: ${e.work}\nmodel: ${m}\ntools: read, bash, memory\nhandoff: 5000\n---\n`);
   writeFileSync(join(e.home, "presets", "ignored.txt"), "x");
   const r = await post(e.port, "/api/presets", {});
   assert.equal(r.status, 200);
   const byId = new Map<string, any>(r.json.presets.map((x: any) => [x.id, x]));
-  assert.deepEqual([...byId.keys()].sort(), ["bom", "crlf", "good", "missing", "nodir", "nofm", "relative", "unknown"]);
-  assert.deepEqual(byId.get("good"), { id: "good", ok: true, workdir: e.work, model: "anthropic/haiku", tools: ["read", "bash", "memory", "mytool"], memory: true, thinking: "low", handoff: 5000 });
-  assert.deepEqual(byId.get("crlf"), { id: "crlf", ok: true, workdir: e.work, model: "a/b", tools: ["read"], memory: false });
-  assert.equal(byId.get("bom").ok, true);
+  assert.deepEqual([...byId.keys()].sort(), ["badopt", "bom", "crlf", "good", "missing", "nodir", "nofm", "nomodel", "notool", "relative", "tiny", "unknown"]);
+  assert.deepEqual(byId.get("good"), { id: "good", ok: true, workdir: e.work, model: m, tools: ["read", "bash", "memory", "mytool"], memory: true, thinking: "low", handoff: 150000, options: { temperature: 0.2 } });
+  assert.deepEqual(byId.get("crlf"), { id: "crlf", ok: true, workdir: e.work, model: m, tools: ["read"], memory: false });
   assert.deepEqual(byId.get("bom").tools, []);
-  for (const id of ["unknown", "relative", "missing", "nodir", "nofm"]) {
-    assert.equal(byId.get(id).ok, false, id);
-    assert.equal(typeof byId.get(id).error, "string");
-  }
   assert.match(byId.get("unknown").error, /color/);
+  // 读不出和装不下：错误文字一字不差，和 start 回的一样；读得出的，start 也起得来。
+  for (const [id, info] of byId) {
+    const started = lines(await post(e.port, "/api/tau", { op: "start", preset: id, text: "hi", id: `t-${id}` }))[0];
+    if (info.ok) {
+      assert.equal(started.type, "receipt", id);
+      continue;
+    }
+    assert.equal(typeof info.error, "string", id);
+    assert.equal(started.type, "error", id);
+    assert.equal(info.error, started.message, id);
+  }
+  assert.match(byId.get("tiny").error, /窗口太小/);
+});
+
+test("预设：服务不在时回 503，不当成读不出", async (t) => {
+  const e = await setupBridge(t);
+  writePreset(e, "p");
+  const r = await post(e.port, "/api/presets", {});
+  assert.equal(r.status, 503);
+  assert.equal(typeof r.json.error, "string");
 });
 
 test("预设：没有 presets 目录时是空列表", async (t) => {
@@ -412,12 +491,14 @@ test("预设：没有 presets 目录时是空列表", async (t) => {
 });
 
 test("新建预设：只写认识的字段；不覆盖已有的；ID 和工作目录要合法", async (t) => {
-  const e = await setupBridge(t);
-  const ok = await post(e.port, "/api/presets/create", { id: "proj.a-1_x", workdir: e.work, model: "anthropic/haiku", tools: ["read", "memory"], thinking: "low", prompt: "你好\n第二行\n", extra: "忽略" });
+  const e = await setupBridge(t, { service: true });
+  const ok = await post(e.port, "/api/presets/create", { id: "proj.a-1_x", workdir: e.work, model: e.model, tools: ["read", "memory"], thinking: "low", prompt: "你好\n第二行\n", extra: "忽略" });
   assert.deepEqual(ok.json, { ok: true });
   const file = readFileSync(join(e.home, "presets", "proj.a-1_x.md"), "utf8");
-  assert.equal(file, `---\nworkdir: ${e.work}\nmodel: anthropic/haiku\ntools: read, memory\nthinking: low\n---\n你好\n第二行\n`);
-  const listed = (await post(e.port, "/api/presets", {})).json.presets[0];
+  assert.equal(file, `---\nworkdir: ${e.work}\nmodel: ${e.model}\ntools: read, memory\nthinking: low\n---\n你好\n第二行\n`);
+  const lst = await post(e.port, "/api/presets", {});
+  assert.equal(lst.status, 200, lst.text);
+  const listed = lst.json.presets[0];
   assert.equal(listed.ok, true);
   assert.equal(listed.memory, true);
 
@@ -492,7 +573,7 @@ function makeRepo(root: string): string {
 }
 
 test("git：status、diff、log、branches 的结果；每条 git 命令的第一个参数都是 --no-optional-locks", async (t) => {
-  const e = await setupBridge(t);
+  const e = await setupBridge(t, { service: true });
   const repo = makeRepo(e.dir);
   writePreset(e, "proj", repo);
   const git = (what: string, extra: object = {}, workdir = repo) => post(e.port, "/api/git", { workdir, what, ...extra });
@@ -541,7 +622,7 @@ test("git：status、diff、log、branches 的结果；每条 git 命令的第�
 });
 
 test("git：diff 超过 256 KB 截断；坏的 file 参数 400；不是仓库回 repo: false；what 不认识 400", async (t) => {
-  const e = await setupBridge(t);
+  const e = await setupBridge(t, { service: true });
   const repo = makeRepo(e.dir);
   writePreset(e, "proj", repo);
   writeFileSync(join(repo, "big.txt"), "x".repeat(79) + "\n".repeat(1) + ("y".repeat(79) + "\n").repeat(5000));
@@ -559,7 +640,7 @@ test("git：diff 超过 256 KB 截断；坏的 file 参数 400；不是仓库回
 });
 
 test("git：工作目录必须是预设的 workdir 或界面数据里的文件夹，比较不分大小写；否则 403 且不跑 git", async (t) => {
-  const e = await setupBridge(t);
+  const e = await setupBridge(t, { service: true });
   const repo = makeRepo(e.dir);
   const other = join(e.dir, "other");
   mkdirSync(other);
@@ -683,7 +764,7 @@ test("选文件夹：回对话框给的路径；取消是 null；同时只开一
 });
 
 test("git：暂存的删除（git rm）也能取到 diff", async (t) => {
-  const e = await setupBridge(t);
+  const e = await setupBridge(t, { service: true });
   const repo = join(e.dir, "rm");
   mkdirSync(repo);
   sh(repo, "init", "-b", "main");
@@ -697,7 +778,7 @@ test("git：暂存的删除（git rm）也能取到 diff", async (t) => {
 });
 
 test("git：工作目录是仓库的子目录时，status 给的路径能直接取 diff", async (t) => {
-  const e = await setupBridge(t);
+  const e = await setupBridge(t, { service: true });
   const repo = join(e.dir, "mono");
   const pkg = join(repo, "pkg");
   mkdirSync(pkg, { recursive: true });
@@ -717,7 +798,7 @@ test("git：工作目录是仓库的子目录时，status 给的路径能直接�
 });
 
 test("git：输出超过缓冲上限时，diff 照常截断，status 回 500", async (t) => {
-  const e = await setupBridge(t);
+  const e = await setupBridge(t, { service: true });
   const repo = join(e.dir, "huge");
   mkdirSync(repo);
   sh(repo, "init", "-b", "main");
@@ -731,7 +812,7 @@ test("git：输出超过缓冲上限时，diff 照常截断，status 回 500", a
   const all = (await post(e.port, "/api/git", { workdir: repo, what: "diff" })).json;
   assert.equal(all.truncated, false, "整体 diff 只看已跟踪文件，这里没有改动");
 
-  const e2 = await setupBridge(t, { git: async (args) => (args.includes("status") ? { code: 0, stdout: "## main\0", overflow: true } : { code: 0, stdout: "" }) });
+  const e2 = await setupBridge(t, { service: true, git: async (args) => (args.includes("status") ? { code: 0, stdout: "## main\0", overflow: true } : { code: 0, stdout: "" }) });
   writePreset(e2, "huge", repo);
   assert.equal((await post(e2.port, "/api/git", { workdir: repo, what: "status" })).status, 500);
 });

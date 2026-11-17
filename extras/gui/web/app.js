@@ -5,8 +5,8 @@ import * as api from "./api.js";
 import { createConn, createHistoryReader, createPeeker } from "./conn.js";
 import { emptyStore, reduce, streamingText, childCounts } from "./lib/store.js";
 import { emptyHistory, segmentMessages, lastTimestamp } from "./lib/history.js";
-import { buildEntries, buildProjects, railSections, projectView, currentOf, attention } from "./lib/derive.js";
-import { describeNow, phaseStartedAt } from "./lib/messages.js";
+import { buildEntries, buildProjects, railSections, projectView, currentOf, attention, seenFromInspect } from "./lib/derive.js";
+import { describeNow, phaseStartedAt, HANDOFF_LETTER } from "./lib/messages.js";
 import { processTitle } from "./lib/titles.js";
 import { stopOrder } from "./lib/order.js";
 import { formatDuration } from "./lib/format.js";
@@ -81,6 +81,7 @@ import { ConfirmLayer, confirmOpen } from "./ui/remove.js";
  * @property {(key: string | null) => void} focusProject 项目的 `key`。传 null 回到默认项目。
  * @property {(id: string) => void} follow 让这个进程的完整历史被读到并保持更新。聚焦的进程自动 follow。
  * @property {(id: string, text: string, images?: string[]) => Promise<void>} send 寄信。界面寄过信的常驻进程成为当前进程。
+ * @property {(id: string) => Promise<void>} handoff 换段：寄一封换段信（`send` 带 `handoff`）。段里已有助手消息才生效，见 `canHandoff`。
  * @property {(preset: string, text: string, images?: string[]) => Promise<string>} start 建进程，回进程 ID。记进 `mine`，常驻预设成为当前进程，并聚焦它。
  * @property {(id: string, before?: number) => Promise<string>} fork 分叉，回新进程 ID。`before` 是当前段里一条用户消息的段内序号；不给就复制整个当前段（源进程必须空闲）。
  * @property {(id: string) => Promise<void>} stop 停这一轮。
@@ -122,6 +123,10 @@ const S = {
   presets: {},
   /** @type {PresetInfo[]} */
   presetList: [],
+  /** 进程冻结的预设快照（`inspect`），进程 ID → 三项。 @type {Record<string, import("./lib/types.js").Frozen>} */
+  snaps: {},
+  /** 这次连上以后读过全部快照。 */
+  snapsReady: false,
   gui: gs.normalizeState({}),
   guiReady: false,
   presetsReady: false,
@@ -141,7 +146,7 @@ const S = {
   gotPs: false,
   /** 这次连上以后收到过进程表。断开就清掉：重连后、新进程表到之前，旧表里没有别处新建的进程。 */
   psFresh: false,
-  /** 界面数据写失败后，这个时刻之前不再自动写（seen、清理）。 */
+  /** 界面数据写失败后，这个时刻之前不再自动写（清理）。 */
   guiFailUntil: 0,
   /** @type {"all" | "running" | "error"} */
   filter: "all",
@@ -287,7 +292,7 @@ function follow(id) {
 function onReply(r) {
   const now = Date.now();
   // 删的是正在看的进程时，主区回到它的项目。先在进程还在表里时算出项目。
-  const home = r.type === "removed" && S.route.proc === r.process ? buildEntries(S.store.procs, S.gui, S.presets).entries.find((e) => e.id === r.process)?.workdir : undefined;
+  const home = r.type === "removed" && S.route.proc === r.process ? buildEntries(S.store.procs, S.gui, S.snaps).entries.find((e) => e.id === r.process)?.workdir : undefined;
   if (r.type === "ps" && r.processes[0]) S.skew = r.processes[0].now - now;
   S.store = reduce(S.store, r, now);
   if (r.type === "ps") {
@@ -297,19 +302,54 @@ function onReply(r) {
     for (const p of r.processes) S.ever.add(p.self.id);
     for (const id of Object.keys(S.hist)) if (!S.store.procs[id]) delete S.hist[id];
     for (const p of r.processes) onSelf(p.self);
+    loadSnaps(null);
     const want = S.route.proc;
     if (want && !S.store.procs[want]) setRoute({ proc: null });
   } else if (r.type === "update") {
     S.ever.add(r.self.id);
     onSelf(r.self);
+    if (S.snapsReady && !S.snaps[r.self.id]) loadSnaps(r.self.id);
   }
   else if (r.type === "removed") {
+    delete S.snaps[r.process];
     delete S.hist[r.process];
     delete S.peek[r.process];
     peeker.forget(r.process);
     S.followed = S.followed.filter((x) => x !== r.process);
     if (S.route.proc === r.process) setRoute({ proc: null, proj: home ? gs.pathKey(home) : S.route.proj });
   }
+  schedule();
+}
+
+/** 正在单独读快照的进程 ID。 @type {Set<string>} */
+const snapAsked = new Set();
+
+/**
+ * 读进程记录里冻结的预设快照（`inspect`）。`id` 为 null 读全部，并把不在表里的丢掉；否则只读这一个。
+ * 一个进程的快照建好以后不变，所以收到 `update` 时只补没读过的。
+ * @param {string | null} id
+ */
+async function loadSnaps(id) {
+  if (id !== null) {
+    if (snapAsked.has(id)) return;
+    snapAsked.add(id);
+  }
+  try {
+    const rs = await api.tauAll(id === null ? { op: "inspect" } : { op: "inspect", process: id });
+    /** @type {Record<string, import("./lib/types.js").Frozen>} */
+    const got = {};
+    for (const x of rs) {
+      const f = seenFromInspect(x);
+      if (f) got[x.process.id] = f;
+    }
+    S.snaps = id === null ? Object.fromEntries(Object.entries({ ...S.snaps, ...got }).filter(([k]) => S.store.procs[k])) : { ...S.snaps, ...got };
+    if (id === null) S.snapsReady = true;
+  } catch (e) {
+    if (id === null) toast(`读不到进程的预设快照：${e instanceof Error ? e.message : e}`);
+  }
+  if (id !== null) snapAsked.delete(id);
+  // 读全部的时候新建的进程可能没在里面：补上。
+  else for (const k of Object.keys(S.store.procs)) if (!S.snaps[k]) loadSnaps(k);
   schedule();
 }
 
@@ -374,7 +414,7 @@ function endedText(ended) {
 function compute() {
   const now = S.now;
   const procs = S.store.procs;
-  const { entries, seenPatch } = buildEntries(procs, S.gui, S.presets);
+  const { entries } = buildEntries(procs, S.gui, S.snaps);
   /** @type {Record<string, number>} */
   const lastAt = {};
   for (const [id, p] of Object.entries(S.peek)) if (p.lastAt !== null) lastAt[id] = p.lastAt - S.skew;
@@ -410,7 +450,7 @@ function compute() {
     presets: S.presets,
     presetList: S.presetList,
     gui: S.gui,
-    ready: S.guiReady && S.presetsReady,
+    ready: S.guiReady && S.presetsReady && S.snapsReady,
     procsReady: S.psFresh && S.status === "online",
     entries,
     byId,
@@ -478,6 +518,7 @@ function compute() {
           if (e && e.kind === "team" && S.gui.current[e.preset] !== id) await setGui((g) => gs.setCurrent(g, e.preset, id));
         })(),
       ),
+    handoff: (id) => loud(api.tauCommand({ op: "send", process: id, text: HANDOFF_LETTER, handoff: true }).then(() => {})),
     start: (preset, text, images) =>
       loud(
         (async () => {
@@ -510,7 +551,7 @@ function compute() {
         (async () => {
           for (let round = 0; round < 12; round++) {
             // 每一轮都按项目路径重新算成员：停的过程中新冒出来的子进程也要停。
-            const ents = buildEntries(S.store.procs, S.gui, S.presets).entries.filter((e) => e.workdir !== null && gs.pathKey(e.workdir) === proj.key);
+            const ents = buildEntries(S.store.procs, S.gui, S.snaps).entries.filter((e) => e.workdir !== null && gs.pathKey(e.workdir) === proj.key);
             const order = stopOrder(ents);
             if (order.length === 0) return;
             for (const id of order) {
@@ -576,7 +617,7 @@ function compute() {
     makeCurrent: (preset, pid) => setGui((g) => gs.setCurrent(g, preset, pid)),
     toast,
   };
-  return { app, seenPatch, entries };
+  return { app, entries };
 }
 
 /* 弹窗的锚点：约定的按钮。 */
@@ -702,6 +743,8 @@ function Root() {
       reply: onReply,
       status: (s, msg) => {
         if (s !== "online") S.psFresh = false;
+        // 预设经服务的 check 读：服务不在时读不到，连上了再读。
+        if (s === "online" && !S.presetsReady) reloadPresets();
         S.status = s;
         S.statusMsg = msg ?? "";
         schedule();
@@ -735,14 +778,9 @@ function Root() {
     };
   }, []);
 
-  const { app, seenPatch, entries } = compute();
+  const { app, entries } = compute();
   LAST = app;
 
-  // 第一次见到的进程，把当时读到的预设记下来（界面数据和预设都读到了才记）。
-  useEffect(() => {
-    if (!app.ready || Object.keys(seenPatch).length === 0 || Date.now() < S.guiFailUntil) return;
-    setGui((g) => gs.mergeSeen(g, seenPatch));
-  });
   // 已经删掉的进程，清掉界面数据里它们的键，文件才不会越长越大。
   useEffect(() => {
     if (!app.ready || !S.gotPs || Date.now() < S.guiFailUntil) return;

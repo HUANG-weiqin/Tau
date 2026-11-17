@@ -32,9 +32,12 @@
 /** @typedef {{ type: "thinking", thinking: string }} ThinkingBlock */
 /** @typedef {{ type: "toolCall", id: string, name: string, arguments: Record<string, unknown> }} ToolCallBlock */
 
-/** @typedef {{ role: "user", content: string | (TextBlock | ImageBlock)[], timestamp: number }} UserMessage */
+/** 发信的人：用户，或者另一个进程；`reply` 有值表示是回信（`src/kernel/types.ts` 的 `Sender`）。 @typedef {{ kind: "user" } | { kind: "process", id: string, preset: string, reply?: { ended: Ended } }} Sender */
+/** 一封信在用户消息里的结构；`at` 是正文在消息文本里的起止位置（UTF-16），文本被截过的消息没有。 @typedef {{ from: Sender, hops: number, replyTo?: string, handoff?: true, at?: [number, number] }} LetterMeta */
+/** 内核写的用户消息带的结构；旧消息没有。`after` 是上一轮的结束原因，`handoff` 表示换段后的第一条。 @typedef {{ letters: LetterMeta[], after?: Ended, handoff?: true }} UserTau */
+/** @typedef {{ role: "user", content: string | (TextBlock | ImageBlock)[], timestamp: number, tau?: UserTau }} UserMessage */
 /** @typedef {{ role: "assistant", content: (TextBlock | ThinkingBlock | ToolCallBlock)[], timestamp: number, stopReason?: string, errorMessage?: string }} AssistantMessage */
-/** @typedef {{ role: "toolResult", toolCallId: string, toolName: string, content: (TextBlock | ImageBlock)[], isError: boolean, timestamp: number }} ToolResultMessage */
+/** @typedef {{ role: "toolResult", toolCallId: string, toolName: string, content: (TextBlock | ImageBlock)[], isError: boolean, timestamp: number, tau?: { filled: "interrupted" | "skipped" } }} ToolResultMessage */
 /** @typedef {UserMessage | AssistantMessage | ToolResultMessage} Message */
 
 /**
@@ -49,11 +52,11 @@
  *   | { type: "error", message: string }} Reply
  */
 
-/** @typedef {{ workdir: string, tools: string[], memory: boolean }} Seen */
+/** 进程冻结的预设快照里界面要的三项（`inspect` 读来）。 @typedef {{ workdir: string, tools: string[], memory: boolean }} Frozen */
 
 /**
  * `/api/presets` 回的一项。
- * @typedef {{ id: string, ok: true, workdir: string, model: string, tools: string[], memory: boolean, thinking?: string, handoff?: number }
+ * @typedef {{ id: string, ok: true, workdir: string, model: string, tools: string[], memory: boolean, thinking?: string, handoff?: number, options?: Record<string, unknown> }
  *   | { id: string, ok: false, error: string }} PresetInfo
  */
 
@@ -69,7 +72,6 @@
  *   mine: string[],
  *   forkedFrom: Record<string, string>,
  *   titles: Record<string, string>,
- *   seen: Record<string, Seen>,
  *   collapsed: Record<string, boolean>,
  *   cleanDays: number,
  * }} GuiState
