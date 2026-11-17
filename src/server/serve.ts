@@ -9,13 +9,13 @@ import { createExecutor } from "../executor/executor.ts";
 import { finalReply, limits, startError } from "../kernel/derive.ts";
 import { observe } from "../kernel/observe.ts";
 import { unreachable, userLetter } from "../kernel/types.ts";
-import type { Instant, Memory, Process, ProcessId } from "../kernel/types.ts";
+import type { Instant, Memory, MemoryOp, Process, ProcessId } from "../kernel/types.ts";
 import { checkImages, imageType } from "../images.ts";
-import { loadPreset } from "../presets/load.ts";
+import { checkPresetId, loadPreset } from "../presets/load.ts";
 import type { Reply, Request } from "../protocol.ts";
 import { countMessages, loadProcess, loadProcesses, loadSegment, openDb, readSegment } from "../store/db.ts";
 import { readBlob } from "../store/blobs.ts";
-import { forkProcess, handleNext, pruneSegments, removeProcess, send, startProcess, sweepBlobs } from "../store/inputs.ts";
+import { forkProcess, handleNext, pruneSegments, removeProcess, send, startProcess, sweepBlobs, writeMemory } from "../store/inputs.ts";
 import type { Handled } from "../store/inputs.ts";
 import { listen } from "./listen.ts";
 
@@ -165,6 +165,15 @@ export async function serve(opts: ServeOptions): Promise<Service> {
         reply(s, { type: "check", snapshot, limits: limits(snapshot), error: startError(snapshot) }).end();
         return;
       }
+      case "memory": {
+        reply(s, req.ns === undefined ? { type: "namespaces", ns: memory.namespaces() } : { type: "memory", ns: req.ns, entries: memory.entries(req.ns) }).end();
+        return;
+      }
+      case "memory_write": {
+        const r = writeMemory(db, memory, req.ops);
+        reply(s, r.ok ? { type: "memory_written", versions: r.versions } : { type: "memory_rejected", index: r.index, result: r.result }).end();
+        return;
+      }
       case "history": {
         const p = loadProcess(db, req.process);
         if (!p) throw new Error(`没有这个进程：${req.process}`);
@@ -263,6 +272,15 @@ function reply(s: Socket, r: Reply): Socket {
   return s;
 }
 
+/** 一项记忆写入的形状：set 的 expected 是 null 或正整数，delete 的是正整数。 */
+function memoryOp(x: unknown): x is MemoryOp {
+  if (typeof x !== "object" || x === null) return false;
+  const o = x as Record<string, unknown>;
+  const version = typeof o.expected === "number" && Number.isSafeInteger(o.expected) && o.expected > 0;
+  if (typeof o.ns !== "string" || typeof o.key !== "string") return false;
+  return o.kind === "set" ? typeof o.value === "string" && (o.expected === null || version) : o.kind === "delete" && version;
+}
+
 function parseRequest(line: string): Request {
   const r: unknown = JSON.parse(line);
   const str = (o: object, k: string): boolean => typeof (o as Record<string, unknown>)[k] === "string";
@@ -271,6 +289,14 @@ function parseRequest(line: string): Request {
       const v = (r as Record<string, unknown>)[k];
       return v === undefined || (typeof v === "number" && Number.isSafeInteger(v) && v >= 0);
     };
+    if (r.op === "memory" && (!("ns" in r) || str(r, "ns"))) {
+      if ("ns" in r) checkPresetId((r as { ns: string }).ns);
+      return r as Request;
+    }
+    if (r.op === "memory_write" && "ops" in r && Array.isArray(r.ops) && r.ops.length > 0 && r.ops.every(memoryOp)) {
+      for (const op of r.ops as MemoryOp[]) checkPresetId(op.ns);
+      return r as Request;
+    }
     if (r.op === "ps") return { op: "ps" };
     if (r.op === "sweep") return { op: "sweep" };
     if (r.op === "inspect" && (!("process" in r) || str(r, "process"))) return r as Request;

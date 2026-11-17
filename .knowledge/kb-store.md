@@ -9,7 +9,7 @@
 它负责：
 
 - `~/.tau/tau.db` 的位置、表结构和 PRAGMA。
-- 七个存储事务：启动进程、分叉进程、收一条命令、处理一条输入，以及三个删除（删旧段、删进程、清图片）。图片和引用它的信在同一个事务里写入 `blobs`。
+- 八个存储事务：启动进程、分叉进程、收一条命令、处理一条输入、三个删除（删旧段、删进程、清图片），以及写记忆（协议的 `memory_write`）。图片和引用它的信在同一个事务里写入 `blobs`。
 - 处理输入时同步待办副作用表（`effects`）。
 - 在事务里执行库内工具：`self`、`handoff`、`memory_*`，以及预设含 `agents` 时的 `post`、`spawn`、`stop_process`；还有工具定义在结果里声明的库内动作，它们不看 `agents`（D64）。
 
@@ -125,7 +125,7 @@ CREATE TABLE blobs (
 
 ### 存储事务
 
-一共七个：`startProcess`、`forkProcess`、`send`、`handleNext`、`pruneSegments`、`removeProcess`、`sweepBlobs`。都在 `src/store/inputs.ts`，每个函数恰好一个 `tx`。
+一共八个：`startProcess`、`forkProcess`、`send`、`handleNext`、`pruneSegments`、`removeProcess`、`sweepBlobs`、`writeMemory`。都在 `src/store/inputs.ts`，每个函数恰好一个 `tx`。
 
 | 函数 | 做什么 | 失败时 |
 |---|---|---|
@@ -136,6 +136,7 @@ CREATE TABLE blobs (
 | `pruneSegments(db, id, before)` | 删这个进程段号小于 `before` 的全部旧段。`before` ≤ 1 什么都不删，照样成功 | 没有这个进程、`before` 大于当前段号：抛错，什么都不删 |
 | `removeProcess(db, id)` | 删一个空闲、没人引用的进程的记录和全部段。不碰记忆、`blobs`、`effects` | 没有这个进程、不是 `idle`、信箱里有它的输入、有进程的 `parent` 是它、它在任何 `turn.replyTo` 或排队的信的 `replyTo` 里：抛错，什么都不删 |
 | `sweepBlobs(db)` | 删没人引用的 `blobs` 行，返回删掉的行数 | 抛出时整个事务回滚 |
+| `writeMemory(db, memory, ops)` | 按顺序执行一批记忆写入（`MemoryOp`：`set` 带 `expected`（`null` 或版本号），`delete` 带版本号），整批一个事务。成功返回每一项的版本，`delete` 是 `null`。不写进程记录、段、信箱、`effects`，不看预设存不存在、有没有 `memory` | 第一个失败（版本冲突或超出上限）：整批回滚，包括前面已成功的，`AUTOINCREMENT` 的版本号序列也不前进。事务内抛一个私有错误触发回滚，在 `tx` 之外捕获，返回 `{ ok: false, index, result }`，`result` 是 `Memory` 的失败形状。失败是返回值，不抛。其它异常照常抛出 |
 
 `Env` 怎样算：`now` 由调用方传入；预设 `tools` 含 `memory` 时，`memoryView` 是 `memory.view(preset.id)`，否则是空串，不碰记忆。
 
@@ -224,7 +225,7 @@ CREATE TABLE blobs (
 
 处理一条输入和 `forkProcess` 不读旧段，也不读别的进程的工作段。
 
-三个删除事务也不是处理一条输入，读什么见[删除](#删除)。
+三个删除事务也不是处理一条输入，读什么见[删除](#删除)。`writeMemory` 只经 `Memory` 接口读写记忆，不读进程记录和段。
 
 ### 为什么处理输入不会随时间变慢
 
@@ -269,7 +270,7 @@ CREATE TABLE blobs (
 | 记忆 | `memory` |
 | 图片的字节 | `blobs`；引用在信、`turn.queued` 和段里，写成 `blob:<hash>` |
 
-存储有七个事务：`startProcess`、`forkProcess`、`send`、`handleNext`、`pruneSegments`、`removeProcess`、`sweepBlobs`。`startProcess` 和 `send` 还写 `blobs`。`pruneSegments`、`removeProcess` 删段和进程，`sweepBlobs` 删 `blobs`。执行器另有三个事务，只写 `effects` 和 `mailbox`；上报结果的事务还插入 `blobs`（带图的工具结果的图片）。记忆的写入发生在 `handleNext` 的事务里。除了 `openDb` 建表，`src/` 里没有别的代码写库。
+存储有八个事务：`startProcess`、`forkProcess`、`send`、`handleNext`、`pruneSegments`、`removeProcess`、`sweepBlobs`、`writeMemory`。`startProcess` 和 `send` 还写 `blobs`。`pruneSegments`、`removeProcess` 删段和进程，`sweepBlobs` 删 `blobs`。执行器另有三个事务，只写 `effects` 和 `mailbox`；上报结果的事务还插入 `blobs`（带图的工具结果的图片）。记忆的写入发生在 `handleNext` 的事务里，或者 `writeMemory` 的事务里。除了 `openDb` 建表，`src/` 里没有别的代码写库。
 
 判断一次修改是否越界：
 

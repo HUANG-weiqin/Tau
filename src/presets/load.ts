@@ -22,9 +22,14 @@ function isTool(s: string): s is PresetTool {
   return (TOOLS as readonly string[]).includes(s);
 }
 
+/** 预设 ID 的检查：记忆的 `ns` 也用它。不合法就抛错。 */
+export function checkPresetId(id: string): void {
+  if (id === "" || /[/\\:]|\.\./.test(id)) throw new Error(`预设 ID 不合法：${id}`);
+}
+
 /** `dir` 是预设目录，`toolsDir` 是工具定义目录；预设的 tools 里不是内置工具的名字，都按工具定义读，一起冻结进快照。 */
 export function loadPreset(dir: string, id: string, models: Models, toolsDir: string): PresetSnapshot {
-  if (id === "" || /[/\\:]|\.\./.test(id)) throw new Error(`预设 ID 不合法：${id}`);
+  checkPresetId(id);
   const file = `${id}.md`;
   let text: string;
   try {

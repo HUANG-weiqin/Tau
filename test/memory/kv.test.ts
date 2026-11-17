@@ -146,3 +146,38 @@ test("库里还有别的键，被删的键持有最大的版本号：删掉再�
   assert.deepEqual(memory.set(NS, "k", "新", null), { ok: true, version: 3 });
   assert.deepEqual(memory.set(NS, "k", "拿旧版本号", 2), { ok: false, current: { value: "新", version: 3 } });
 });
+
+test("entries：按键的 UTF-8 字节序排，带值和版本；只给这个 ns；空库给空数组", (t) => {
+  const { memory } = setup(t);
+  assert.deepEqual(memory.entries(NS), []);
+  memory.set(NS, "b", "2", null);
+  memory.set(NS, "\u{1F600}", "表情", null); // U+1F600：UTF-8 字节序里排在 U+FF5E 之后，UTF-16 码元序里排在前面
+  memory.set(NS, "～", "全角", null);
+  memory.set(NS, "a", "1", null);
+  memory.set("other", "z", "别的", null);
+  assert.deepEqual(memory.entries(NS), [
+    { key: "a", value: "1", version: 4 },
+    { key: "b", value: "2", version: 1 },
+    { key: "～", value: "全角", version: 3 },
+    { key: "\u{1F600}", value: "表情", version: 2 },
+  ]);
+});
+
+test("entries 和 namespaces：值和键里的 U+0000 不被截断", (t) => {
+  const { memory } = setup(t);
+  memory.set(NS, "k\u0000尾", "前\u0000后", null);
+  memory.set("n\u0000s", "x", "y", null);
+  assert.deepEqual(memory.entries(NS), [{ key: "k\u0000尾", value: "前\u0000后", version: 1 }]);
+  assert.deepEqual(memory.namespaces(), [NS, "n\u0000s"]);
+});
+
+test("namespaces：只列有键的 ns，去重，按字节序；键删光以后不再出现；空库给空数组", (t) => {
+  const { memory } = setup(t);
+  assert.deepEqual(memory.namespaces(), []);
+  memory.set("zeta", "a", "1", null);
+  memory.set("alpha", "a", "1", null);
+  memory.set("alpha", "b", "2", null);
+  assert.deepEqual(memory.namespaces(), ["alpha", "zeta"]);
+  memory.delete("zeta", "a", 1);
+  assert.deepEqual(memory.namespaces(), ["alpha"]);
+});

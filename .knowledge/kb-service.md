@@ -4,7 +4,7 @@
 
 ## 这个模块是干什么的
 
-服务是 `tau serve` 这个常驻进程。它持有单实例锁，打开库，做启动恢复，再用一个同步的 `pump` 推进全部进程。CLI 是它自己的客户端；协议还有 `history`、`watch`、`fork`、`inspect`、`check` 和三个删除（`prune`、`remove`、`sweep`），给上层用。
+服务是 `tau serve` 这个常驻进程。它持有单实例锁，打开库，做启动恢复，再用一个同步的 `pump` 推进全部进程。CLI 是它自己的客户端；协议还有 `history`、`watch`、`fork`、`inspect`、`check`、`memory`、`memory_write` 和三个删除（`prune`、`remove`、`sweep`），给上层用。
 
 它负责：
 
@@ -14,6 +14,7 @@
 - 观察者：哪些连接在等哪个进程，最终回复什么时候发、内容怎么算。
 - `history` 和 `watch`：读历史，订阅变化，订阅的写缓冲上限。
 - `inspect` 和 `check`：原样读进程记录；干跑预设的读取和启动检查。
+- `memory` 和 `memory_write`：读写记忆库。
 - 图片：`start`、`send` 的入口检查，`blob` 请求。
 - `fork`：请求的参数、什么时候拒绝、回执和订阅的推送。复制什么在[纯函数层](kb-kernel.md#fork)。
 - 删除：`prune`、`remove`、`sweep` 的请求、拒绝、回执和 `removed` 推送。
@@ -71,7 +72,7 @@ pump()
 | 动作结束（`complete`） | `run.then(pump)` |
 | 库内工具的结果 | 同一个 `handleNext` 循环接着处理 |
 
-- `ps`、`inspect`、`check` 不调用 `pump`。`prune`、`remove`、`sweep` 也不调用：不放输入。
+- `ps`、`inspect`、`check`、`memory`、`memory_write` 不调用 `pump`。`prune`、`remove`、`sweep` 也不调用：不放输入。
 - `fatal`：动作的 promise 被拒绝（例如 `complete` 写库失败）时，打印“tau 服务遇到无法继续的错误，退出。重启时会恢复。”，退出码 1。服务正在关闭时忽略。
 
 ### 观察者和最终回复
@@ -139,6 +140,23 @@ pump()
 - 不读库，不开事务。它只描述此刻的文件；已有进程的限度看 `inspect` 的 `limits`。
 - 契约：读预设时的任何拒绝，只许加在 `loadPreset`、`loadToolDefs`、`startError` 里。这样 `check` 和 `start` 永远一致。
 
+### 读写记忆（`memory`、`memory_write`）
+
+D64 第 6 组。服务不直接写 SQL，也不直接调 `memory.set`：读经 `Memory` 的 `entries`、`namespaces`，写经存储事务 `writeMemory`（[kb-store](kb-store.md#存储事务)）。两个都不调用 `pump`：不放输入，也不动进程。
+
+`memory`（可选的 `ns`）：
+
+- 带 `ns`：回一行 `memory`（`ns`、`entries: { key, value, version }[]`，按键的 UTF-8 字节序），然后关闭。没有键时 `entries` 是空数组。
+- 不带 `ns`：回一行 `namespaces`（`ns: string[]`，有键的全部 ns，按字节序），然后关闭。
+
+`memory_write`（`ops`）：
+
+- `ops` 是非空数组。每项是 `{ kind: "set", ns, key, value, expected }`（`expected` 是 `null` 或正整数）或 `{ kind: "delete", ns, key, expected }`（`expected` 是正整数，不能是 `null`）。没有不带版本号的强写。
+- 整批在 `writeMemory` 一个事务里，按顺序执行，所以顺序有关（库满时先删后写才行）。成功回 `memory_written`（`versions`：每项的版本，`delete` 是 `null`）。
+- 失败回 `memory_rejected`（`index` 是第一个失败的项，`result` 是 `Memory` 的失败形状：版本冲突带 `current`，超出上限带 `over` 和 `bytes`）。整批已回滚。版本冲突和超出上限是正常回复，不是 `error`。
+- 请求不合格（形状不对、`ns` 不合法、`ops` 为空）回 `error`，什么都不写：整批先校验，再执行。
+- `ns` 要过 `checkPresetId`（和 `loadPreset` 同一个函数），不要求预设存在。
+
 ### 线协议（`src/protocol.ts`）
 
 每个连接：客户端发一行 JSON 请求，服务回若干行 JSON，然后关闭连接。
@@ -155,6 +173,8 @@ type Request =
   | { op: "watch"; process?: string }
   | { op: "inspect"; process?: string }                // 原样读进程记录
   | { op: "check"; preset: string }                    // 干跑预设的读取和启动检查
+  | { op: "memory"; ns?: string }                      // 读记忆；不带 ns 列 ns
+  | { op: "memory_write"; ops: MemoryOp[] }            // 整批一个事务
   | { op: "prune"; process: string; before: number }   // 删段号小于 before 的旧段
   | { op: "remove"; process: string }                  // 删一个空闲、没人引用的进程
   | { op: "sweep" };                                   // 清掉没人引用的图片
@@ -169,6 +189,10 @@ type Reply =
   | { type: "process"; process: Process; messages: number; limits: Limits } // inspect 的一行
   | { type: "inspected"; count: number; now: Instant }      // inspect 的结束行
   | { type: "check"; snapshot: PresetSnapshot; limits: Limits; error: string | null }
+  | { type: "memory"; ns: string; entries: { key: string; value: string; version: number }[] }
+  | { type: "namespaces"; ns: string[] }
+  | { type: "memory_written"; versions: (number | null)[] }
+  | { type: "memory_rejected"; index: number; result: MemoryFailure } // 正常回复，不是 error
   | { type: "blob"; mimeType: string; data: string }        // data 是 base64
   | { type: "update"; self: Projection["self"] }            // watch 的快照和增量
   | { type: "removed"; process: string }                    // watch 推送：这个进程已删
@@ -186,6 +210,8 @@ type Reply =
 | `history` | 读一段的消息 | 若干 `message`，一行 `end`，然后关闭 |
 | `inspect` | 读进程记录和当前段条数；`limits(快照)` | 若干 `process`，一行 `inspected`，然后关闭。没有这个进程回 `error` |
 | `check` | `loadPreset`，`limits`，`startError` | 一行 `check`，然后关闭。读不出回 `error` |
+| `memory` | `memory.entries(ns)` 或 `memory.namespaces()`；不开事务 | 一行 `memory` 或 `namespaces`，然后关闭 |
+| `memory_write` | `writeMemory`（见[读写记忆](#读写记忆memorymemory_write)） | 一行 `memory_written` 或 `memory_rejected`，然后关闭；请求不合格回 `error` |
 | `blob` | 读一张图片：`hash` 不带 `blob:` 前缀。不开写事务 | 一行 `blob`，然后关闭。`hash` 不存在回 `error` |
 | `watch` | 推快照，登记订阅 | 一直推 `update` 和 `text`，直到客户端断开 |
 | `prune` | `pruneSegments`（见[删除](#删除)） | `receipt`，然后关闭；拒绝回 `error` |
@@ -208,7 +234,7 @@ type Reply =
 
 - 每个连接只读第一行。`\r\n` 算一个换行。
 - 不是合法 JSON：`error`，内容是 `JSON.parse` 的错误信息。
-- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`；`stop` 要字符串 `process`；`fork` 要字符串 `process`，可选的 `before` 要是非负整数，可选的 `preset` 要是字符串；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`blob` 要字符串 `hash`；`start`、`send` 的 `images` 可以没有，有就要是字符串数组；`watch`、`inspect` 的 `process` 可以没有，有就要是字符串；`check` 要字符串 `preset`；`prune` 要字符串 `process`、非负整数 `before`；`remove` 要字符串 `process`；`sweep` 不要字段。否则 `error`：“无法识别的请求：<原文>”。
+- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`；`stop` 要字符串 `process`；`fork` 要字符串 `process`，可选的 `before` 要是非负整数，可选的 `preset` 要是字符串；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`blob` 要字符串 `hash`；`start`、`send` 的 `images` 可以没有，有就要是字符串数组；`watch`、`inspect` 的 `process` 可以没有，有就要是字符串；`check` 要字符串 `preset`；`memory` 的 `ns` 可以没有，有就要是字符串、过预设 ID 的检查（不合法回“预设 ID 不合法：<ns>”）；`memory_write` 要非空数组 `ops`，每项是上面的两种形状之一，每项的 `ns` 也过预设 ID 的检查；`prune` 要字符串 `process`、非负整数 `before`；`remove` 要字符串 `process`；`sweep` 不要字段。否则 `error`：“无法识别的请求：<原文>”。
 - 只查类型。空串能通过，多余的字段被忽略。空预设 ID 由 `loadPreset` 拒绝；空消息会成为一条用户消息。CLI 不发空消息。
 - 预设读不出、进程不存在、进程 ID 冲突，都回 `error`。这些情况下库里什么都没写。
 
@@ -387,7 +413,7 @@ tau stop <进程>
 | `src/server/credentials.ts` | `piCredentials`：只读 pi 的凭据文件，只交出 `api_key` 条目 |
 | `src/protocol.ts` | `PIPE`、`Request`、`Reply` |
 | `src/images.ts` | `checkImages`、`imageType`、`imageSize`、`IMAGE_MAX_BYTES`、`IMAGE_MAX_EDGE` |
-| `test/server/protocol.test.ts` | `history`、`watch`、`text` 的进程和编号、图片和 `blob`、`fork`、`prune`、`remove`、`sweep`、`inspect`、`check` |
+| `test/server/protocol.test.ts` | `history`、`watch`、`text` 的进程和编号、图片和 `blob`、`fork`、`prune`、`remove`、`sweep`、`inspect`、`check`、`memory`、`memory_write` |
 | `test/images.test.ts` | 入口检查：常量、魔数、每种格式的尺寸、张数、大小、类型、尺寸、顺序、base64 |
 | `src/cli/main.ts` | `main`（命令和退出码）、`request`（连接、发一行、逐行交出回复）、`formatPs`、`ago` |
 | `src/main.ts` | 入口：`serve` 或 CLI；`~/.tau` 的位置；信号处理 |
@@ -427,6 +453,7 @@ tau stop <进程>
 | protocol：`watch` 写缓冲上限 | 快照大于管道缓冲、订阅方一直不读：到上限才断开，读的订阅不受影响；快照很小、订阅方不读：少量推送不断开，超过上限才断开 |
 | protocol：`inspect` | 全部按 ID 升序、一进程一行加结束行；带 `process` 一行加结束行；没有进程回 `error` 且无结束行；记录原样，加 `history` 前 `messages` 条等于当前状态；出错原因不截短；读请求不写库、不动信箱；请求校验 |
 | protocol：`check` | 读得出回快照、限度和 `null`；装不下回 `check`，`error` 是启动检查的原文；读不出回 `error`，和 `start` 一字不差；不写库；请求校验。表驱动：读不出、工具定义坏、装不下、能启动，`check` 和 `start` 结论一致 |
+| protocol：`memory`、`memory_write` | 不带 `ns` 列 ns、带 `ns` 给键；成功给每项版本；冲突、超限、删除不存在的键都回 `memory_rejected` 且整批回滚；一长串不合格请求（ns 不合法、`expected` 缺失或不是正整数、`delete` 的 `expected` 为 `null`、`ops` 为空、好项后跟坏项）都回 `error`，库不变；写入后同预设新开的进程视图看得到，已有进程的 `memoryView` 不变 |
 | protocol：图片 | `start`、`send` 带图：段里是引用，`blob` 取回原字节和类型，`history` 不带字节；`images` 的校验；不合格回 `error`、什么都不建；不收图片的模型先检查、再换说明；执行器发给模型的是真数据；`blob` 不存在、带前缀回 `error`，读请求不写库 |
 | protocol：`fork` | 回执带新 ID 并关闭；带 `preset`：新进程用新预设，之后 `send` 模型收到新系统提示词和工具描述；读不出的预设、放不进的预设回 `error`；`history` 读新进程等于源进程的前缀；之后对新进程 `send`，模型收到复制的消息，系统提示词和源进程一样；各种 `error`（没有进程、越界、不是用户消息、运行中不带 `before`、启动检查、请求校验）；订阅在回执之前收到新进程的 `update`；带图片引用的段 |
 | protocol：删除 | `prune`：回执，旧段读不到，当前段在，`before` 越界回 `error`；`history` 读已删的段回 `error`，当前段 0 条回 `end`。`remove`：每条拒绝回 `error` 且库不变；执行器还有该进程的动作时回 `error`；成功时订阅这个进程的连接和订阅全部的连接都先收到 `removed`（断言两种都收到），订阅这个进程的随后关闭，订阅全部的照常订阅，回执在 `removed` 之后。`sweep`：回 `swept`，数目对。请求校验。三个请求不调用 `pump` |

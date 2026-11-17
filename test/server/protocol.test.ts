@@ -1179,3 +1179,99 @@ test("check 和 start 结论一致：读不出、工具定义坏、装不下、�
     }
   }
 });
+
+// memory、memory_write（D64 第 6 组）
+
+type MemoryReply = Extract<Reply, { type: "memory" | "namespaces" | "memory_written" | "memory_rejected" }>;
+const w = (ops: unknown[]) => ({ op: "memory_write", ops }) as unknown as Request;
+const setOp = (ns: string, key: string, value: string, expected: unknown) => ({ kind: "set", ns, key, value, expected });
+
+test("memory：不带 ns 列出有键的 ns，带 ns 给键、值、版本；没有键给空数组", async (t) => {
+  const e = await setup(t);
+  assert.deepEqual(await collect(e.pipe, { op: "memory" }), [{ type: "namespaces", ns: [] }]);
+  assert.deepEqual(await collect(e.pipe, { op: "memory", ns: "m" }), [{ type: "memory", ns: "m", entries: [] }]);
+  await collect(e.pipe, w([setOp("m", "b", "2", null), setOp("m", "a", "1", null), setOp("zz", "k", "v", null)]));
+  assert.deepEqual(await collect(e.pipe, { op: "memory" }), [{ type: "namespaces", ns: ["m", "zz"] }]);
+  assert.deepEqual(await collect(e.pipe, { op: "memory", ns: "m" }), [
+    { type: "memory", ns: "m", entries: [{ key: "a", value: "1", version: 2 }, { key: "b", value: "2", version: 1 }] },
+  ]);
+});
+
+test("memory_write：成功回 memory_written 和每项的版本；不要求预设存在；读和写不开事务不调 pump", async (t) => {
+  const e = await setup(t);
+  const r = await collect(e.pipe, w([setOp("没有这个预设", "k", "v", null), setOp("m", "k", "v", null)]));
+  assert.deepEqual(r, [{ type: "memory_written", versions: [1, 2] }]);
+  const del = await collect(e.pipe, w([{ kind: "delete", ns: "m", key: "k", expected: 2 }]));
+  assert.deepEqual(del, [{ type: "memory_written", versions: [null] }]);
+  assert.equal(e.svc.db.isTransaction, false);
+});
+
+test("memory_write：版本冲突和超限是正常回复不是 error，整批回滚", async (t) => {
+  const e = await setup(t);
+  await collect(e.pipe, w([setOp("m", "k", "旧", null)]));
+  const conflict = await collect(e.pipe, w([setOp("m", "new", "1", null), setOp("m", "k", "新", 7)]));
+  assert.deepEqual(conflict, [{ type: "memory_rejected", index: 1, result: { ok: false, current: { value: "旧", version: 1 } } }]);
+  const over = await collect(e.pipe, w([setOp("m", "big", "x".repeat(5000), null)]));
+  assert.deepEqual(over, [{ type: "memory_rejected", index: 0, result: { ok: false, over: "value", bytes: 5000 } }]);
+  const gone = await collect(e.pipe, w([{ kind: "delete", ns: "m", key: "none", expected: 3 }]));
+  assert.deepEqual(gone, [{ type: "memory_rejected", index: 0, result: { ok: false, current: null } }]);
+  const mem = (await collect(e.pipe, { op: "memory", ns: "m" }))[0] as MemoryReply;
+  assert.deepEqual(mem.type === "memory" && mem.entries, [{ key: "k", value: "旧", version: 1 }]);
+});
+
+test("memory、memory_write 的校验：ns 不合法、expected 缺失或不是正整数、delete 的 expected 为 null、ops 为空，都回 error，库不变", async (t) => {
+  const e = await setup(t);
+  const bads: unknown[] = [
+    { op: "memory", ns: "" },
+    { op: "memory", ns: "a/b" },
+    { op: "memory", ns: "a:b" },
+    { op: "memory", ns: "a..b" },
+    { op: "memory", ns: 1 },
+    { op: "memory", ns: null },
+    w([]),
+    { op: "memory_write" },
+    { op: "memory_write", ops: "x" },
+    w([setOp("", "k", "v", null)]),
+    w([setOp("a/b", "k", "v", null)]),
+    w([setOp("m", "k", "v", 0)]),
+    w([setOp("m", "k", "v", -1)]),
+    w([setOp("m", "k", "v", 1.5)]),
+    w([setOp("m", "k", "v", "1")]),
+    w([{ kind: "set", ns: "m", key: "k", value: "v" }]),
+    w([{ kind: "set", ns: "m", key: 1, value: "v", expected: null }]),
+    w([{ kind: "set", ns: "m", key: "k", value: 1, expected: null }]),
+    w([{ kind: "delete", ns: "m", key: "k", expected: null }]),
+    w([{ kind: "delete", ns: "m", key: "k" }]),
+    w([{ kind: "delete", ns: "m", key: "k", expected: 0 }]),
+    w([{ kind: "nope", ns: "m", key: "k" }]),
+    w([null]),
+    // 好的一项后面跟坏的一项：整批拒绝，好的也不写。
+    w([setOp("m", "good", "v", null), { kind: "delete", ns: "m", key: "k", expected: null }]),
+  ];
+  const before = dumpDb(e);
+  for (const req of bads) {
+    const r = await collect(e.pipe, req as Request);
+    assert.equal(r.length, 1, JSON.stringify(req));
+    assert.equal(r[0]?.type, "error", JSON.stringify(req));
+  }
+  assert.match(errorOf(await collect(e.pipe, { op: "memory", ns: "a/b" })), /预设 ID 不合法/);
+  assert.match(errorOf(await collect(e.pipe, w([])) ), /^无法识别的请求/);
+  assert.equal(dumpDb(e), before);
+});
+
+test("memory_write 之后：同预设新开的进程视图看得到，已有进程当前段的 memoryView 不变", async (t) => {
+  const e = await setup(t);
+  writeFileSync(join(e.presetsDir, "mem.md"), `---\nworkdir: ${e.work}\nmodel: ${e.faux.getModel().provider}/m\ntools: read, memory\n---\n你是测试助手。\n`);
+  const viewOf = async (id: string) => rowsOf(await collect(e.pipe, { op: "inspect", process: id }))[0]!.process.segment.memoryView;
+  const start = async () => {
+    e.faux.appendResponses([fauxAssistantMessage(fauxText("好"))]);
+    return ((await collect(e.pipe, { op: "start", preset: "mem", text: "hi" }))[0] as { process: string }).process;
+  };
+  const old = await start();
+  assert.equal(await viewOf(old), "");
+  assert.deepEqual(await collect(e.pipe, w([setOp("mem", "城市", "北京", null)])), [{ type: "memory_written", versions: [1] }]);
+  const fresh = await start();
+  assert.match(await viewOf(fresh), /城市/);
+  assert.equal(await viewOf(old), "", "运行中的进程当前段的视图是开段时的快照");
+  assert.equal(old === fresh, false);
+});

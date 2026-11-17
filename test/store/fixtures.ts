@@ -65,6 +65,17 @@ export function fakeMemory(): FakeMemory {
         .map((r) => `${r.key}: ${r.value}`)
         .join("\n");
     },
+    entries(ns) {
+      calls.push("entries");
+      return [...rows.values()]
+        .filter((r) => r.ns === ns)
+        .sort((a, b) => Buffer.compare(Buffer.from(a.key), Buffer.from(b.key)))
+        .map((r) => ({ key: r.key, value: r.value, version: r.version }));
+    },
+    namespaces() {
+      calls.push("namespaces");
+      return [...new Set([...rows.values()].map((r) => r.ns))].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+    },
     get(ns, key) {
       calls.push("get");
       return current(ns, key);

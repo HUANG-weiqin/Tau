@@ -1,10 +1,10 @@
-// 进程的事务：启动、分叉、收一条命令、处理一条输入、三个删除（见 .knowledge/kb-store.md）。每个函数恰好一个事务。
+// 进程的事务：启动、分叉、收一条命令、处理一条输入、三个删除、写记忆（见 .knowledge/kb-store.md）。每个函数恰好一个事务。
 import { decide, effectOf, fork, start } from "../kernel/decide.ts";
 import { startError } from "../kernel/derive.ts";
 import { findTool } from "../kernel/tools.ts";
 import { textContent, unreachable } from "../kernel/types.ts";
 import type { DatabaseSync } from "node:sqlite";
-import type { Effect, Input, Instant, Memory, Message, PresetSnapshot, Process, ProcessId, ToolResultContent } from "../kernel/types.ts";
+import type { Effect, Input, Instant, Memory, MemoryFailure, MemoryOp, Message, PresetSnapshot, Process, ProcessId, ToolResultContent } from "../kernel/types.ts";
 import type { Image } from "../images.ts";
 import { letterContent } from "./blobs.ts";
 import { appendMessages, loadProcess, loadProcesses, loadSegment, putMail, saveProcess, tx } from "./db.ts";
@@ -100,6 +100,42 @@ export function sweepBlobs(db: DatabaseSync): number {
     for (const row of db.prepare("SELECT hash FROM blobs").all()) if (!used.has(row.hash as string)) swept += Number(drop.run(row.hash as string).changes);
     return swept;
   });
+}
+
+/** 一批记忆写入里第一个失败的那项：只在事务里用来触发回滚。 */
+class Rejected extends Error {
+  index: number;
+  result: MemoryFailure;
+  constructor(index: number, result: MemoryFailure) {
+    super("记忆写入被拒绝");
+    this.index = index;
+    this.result = result;
+  }
+}
+
+/**
+ * 按顺序执行一批记忆写入，整批一个事务：第一个失败就整批回滚（版本号序列也不前进），返回它的下标和 `Memory` 的失败形状。成功时给每一项的版本，删除是 null。
+ * 不看预设是否存在、有没有 `memory`；不写进程记录、段和信箱。
+ */
+export function writeMemory(db: DatabaseSync, memory: Memory, ops: readonly MemoryOp[]): { ok: true; versions: (number | null)[] } | { ok: false; index: number; result: MemoryFailure } {
+  try {
+    const versions = tx(db, () =>
+      ops.map((op, i): number | null => {
+        if (op.kind === "delete") {
+          const r = memory.delete(op.ns, op.key, op.expected);
+          if (!r.ok) throw new Rejected(i, r);
+          return null;
+        }
+        const r = memory.set(op.ns, op.key, op.value, op.expected);
+        if (!r.ok) throw new Rejected(i, r);
+        return r.version;
+      }),
+    );
+    return { ok: true, versions };
+  } catch (e) {
+    if (e instanceof Rejected) return { ok: false, index: e.index, result: e.result };
+    throw e;
+  }
 }
 
 export interface Handled {

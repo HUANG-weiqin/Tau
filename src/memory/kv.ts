@@ -33,6 +33,12 @@ export function sqliteMemory(db: DatabaseSync): Memory {
     view(ns) {
       return render(rows(ns));
     },
+    entries: (ns) => rows(ns),
+    namespaces: () =>
+      db
+        .prepare("SELECT DISTINCT CAST(ns AS BLOB) AS ns FROM memory ORDER BY memory.ns")
+        .all()
+        .map((r) => text(r.ns)),
     get,
     set(ns, k, v, expected) {
       // 孤立的代理项存进库时变成替换字符：先换好，量的和存的才是同一份文本。

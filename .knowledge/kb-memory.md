@@ -37,6 +37,8 @@ interface Versioned { value: string; version: number }
 
 interface Memory {
   view(ns: string): string;
+  entries(ns: string): (Versioned & { key: string })[]; // 按键的 UTF-8 字节序
+  namespaces(): string[];                                // 有键的全部 ns，按字节序
   get(ns: string, key: string): Versioned | null;
   set(ns: string, key: string, value: string, expected: number | null):
     | { ok: true; version: number }
@@ -47,17 +49,19 @@ interface Memory {
 }
 ```
 
-- 所有函数都是同步的，在存储的事务里执行。哪个事务调用它们，见 [kb-store](kb-store.md#处理一条输入读什么)。
+- 写（`set`、`delete`）在调用方的事务里执行，随事务提交或回滚；读（`view`、`get`、`entries`、`namespaces`）也可以由服务在事务外直接调，比如协议的 `memory`。哪个事务调用它们，见 [kb-store](kb-store.md#处理一条输入读什么)。
 - `ns` 参数的理由：一张表里存着多个库。
 - `expected: null` 表示“这个键现在必须不存在”。`delete` 的 `expected` 必填。
 - 版本对不上：返回 `current`，即现在的值和版本号。键不存在时是 `null`。工具层把它放进结果，由模型合并。
 - 超出上限：`over` 说是哪一项超了。`bytes` 是那一项的 UTF-8 字节数；`view` 时是写入后整个视图的字节数。
 - 失败不带原因文字。给模型看的文字由工具层写（[kb-store](kb-store.md#记忆工具)）。
 - 被拒绝的 `set` 和 `delete` 不改库。
-- 处理输入的事务只通过这个接口访问记忆。以后换成分层设计，只换实现。
+- 处理输入的事务和 `writeMemory` 只通过这个接口访问记忆。以后换成分层设计，只换实现。
+- `entries(ns)`、`namespaces()` 给协议的 `memory` 读。键和 ns 都按 `CAST(... AS BLOB)` 读出再解码，所以 U+0000 不截断；排序是 SQLite 的 `BINARY`，即 UTF-8 字节序。
 
 契约，写在接口的注释里：
 
+> 全部同步。写（set、delete）在调用方的事务里执行，随事务提交或回滚；读（view、get、entries、namespaces）也可以由服务在事务外直接调。
 > `view(ns)` 的 UTF-8 字节数永远不超过 `MEMORY_VIEW_MAX_BYTES`；`set` 拒绝会超出的写入。
 
 换段阈值的算术依赖这条契约。换实现时也要守住它。
@@ -69,6 +73,9 @@ interface Memory {
 - 同一个预设的进程共用一个库。并行写同一个键，靠版本号发现冲突。
 - 视图是开段时的快照。要拿到现在的值和版本号，用 `memory_get`。
 - 记忆变化不通知兄弟进程。
+- 协议也能读写任何 `ns` 的记忆（D64 第 6 组），不要求预设存在、也不要求有 `memory`：`memory`、`memory_write`（[kb-service](kb-service.md#读写记忆memorymemory_write)）。`ns` 过预设 ID 的检查（`checkPresetId`，和 `loadPreset` 同一个函数）。
+- 协议写入和兄弟进程的 `memory_set` 效果一样：改库，不写任何进程记录、段和信箱。已有进程当前段的 `memoryView` 不变；同预设之后开的新段（`start`、换段、`spawn`、带 `preset` 的 `fork`）看得到，前提是预设含 `memory`；不带 `preset` 的 `fork` 复制源进程段里的视图，看不到。记忆不是进程状态，它像 `now` 一样经 `Env` 进 `decide`。
+- 没有不带版本号的强写，没有 `memory_view`（视图是渲染的结论，进程的在 `segment.memoryView`，`inspect` 能给），没有单键的读（`entries` 一次全给，带版本）。
 
 ### 上限
 
@@ -194,7 +201,7 @@ interface Memory {
 ## 投影与命令
 
 - 记忆不进 `observe` 的投影。`self` 不显示记忆统计（设计稿的 [MVP 不做](../docs/design/mvp.md#mvp-不做)）。
-- 记忆不加 CLI 命令。
+- 记忆不加 CLI 命令。协议的 `memory`、`memory_write` 给上层用。
 - Agent 用 `memory_get`、`memory_set`、`memory_delete` 访问记忆（[kb-store](kb-store.md#记忆工具)）。
 - Agent 在系统提示词里看到开段时的视图（[kb-kernel](kb-kernel.md#函数)）。
 
@@ -207,7 +214,9 @@ interface Memory {
 | `src/kernel/tools.ts` | 三个上限常量；`memory_set` 的描述引用它们 |
 | `src/kernel/derive.ts` | `utf8Bytes` |
 | `src/store/instore.ts` | 记忆工具：把 `Memory` 的结果翻译成文字（[kb-store](kb-store.md#记忆工具)） |
+| `src/store/inputs.ts` | `writeMemory`：整批一个事务（[kb-store](kb-store.md#存储事务)） |
 | `test/memory/kv.test.ts` | 真库上的实现，见下 |
+| `test/store/memory-write.test.ts` | `writeMemory`：整批回滚、顺序有关 |
 | `test/kernel/context.test.ts` | `memory_set` 的描述引用三个上限，三个常量的值 |
 | `test/store/fixtures.ts` | `fakeMemory`：不检查上限，视图格式不是真的 |
 
@@ -219,6 +228,7 @@ interface Memory {
 - U+0000 原样存取；孤立的代理项按替换字符存。
 - 视图的格式和排序；`memory_get` 给原值。
 - 检查顺序。
+- `entries`：字节序（和 UTF-16 码元序不同的字符）、只给这个 ns、空库；`namespaces`：去重、按字节序、键删光后消失、空库；键、值、ns 里的 U+0000 不截断。
 - 第 4 步的验收：两个进程写同一个键，后写的得到冲突和最新值，重试后成功；删掉再重建持有最大版本号的键，拿旧版本号写入失败。
 
 只跑记忆测试：`node --test "test/memory/*.test.ts"`。完成门槛见 AGENTS.md。

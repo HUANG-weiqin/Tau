@@ -124,9 +124,13 @@ export interface Versioned {
   version: number;
 }
 
-/** 记忆接口（见 .knowledge/kb-memory.md）。全部同步，在事务里执行。view(ns) 的 UTF-8 字节数永远不超过 MEMORY_VIEW_MAX_BYTES；set 拒绝会超出的写入。 */
+/** 记忆接口（见 .knowledge/kb-memory.md）。全部同步。写（set、delete）在调用方的事务里执行，随事务提交或回滚；读（view、get、entries、namespaces）也可以由服务在事务外直接调。view(ns) 的 UTF-8 字节数永远不超过 MEMORY_VIEW_MAX_BYTES；set 拒绝会超出的写入。 */
 export interface Memory {
   view(ns: string): string;
+  /** 这个 ns 的全部键，按键的 UTF-8 字节序排。 */
+  entries(ns: string): (Versioned & { key: string })[];
+  /** 有键的全部 ns，按 UTF-8 字节序排。 */
+  namespaces(): string[];
   get(ns: string, key: string): Versioned | null;
   /** `expected: null` 表示这个键现在必须不存在。按键、值、版本、视图的顺序检查；`bytes` 是超出的那一项的字节数。 */
   set(
@@ -137,6 +141,12 @@ export interface Memory {
   ): { ok: true; version: number } | { ok: false; current: Versioned | null } | { ok: false; over: "key" | "value" | "view"; bytes: number };
   delete(ns: string, key: string, expected: number): { ok: true } | { ok: false; current: Versioned | null };
 }
+
+/** `Memory` 的写入失败形状：版本冲突（带最新值），或超出上限。 */
+export type MemoryFailure = Extract<ReturnType<Memory["set"]>, { ok: false }>;
+
+/** 协议的一项记忆写入（见 .knowledge/kb-memory.md）。 */
+export type MemoryOp = { kind: "set"; ns: string; key: string; value: string; expected: number | null } | { kind: "delete"; ns: string; key: string; expected: number };
 
 /** CLI 寄来的信：用户的信，一个文本块，跳数 0，不要回信。 */
 export function userLetter(text: string): Extract<Input, { kind: "letter" }> {
