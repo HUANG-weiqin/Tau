@@ -11,7 +11,7 @@
 - `~/.tau/tau.db` 的位置、表结构和 PRAGMA。
 - 七个存储事务：启动进程、分叉进程、收一条命令、处理一条输入，以及三个删除（删旧段、删进程、清图片）。图片和引用它的信在同一个事务里写入 `blobs`。
 - 处理输入时同步待办副作用表（`effects`）。
-- 在事务里执行库内工具：`self`、`handoff`、`memory_*`，以及预设含 `agents` 时的 `post`、`spawn`、`stop_process`。
+- 在事务里执行库内工具：`self`、`handoff`、`memory_*`，以及预设含 `agents` 时的 `post`、`spawn`、`stop_process`；还有工具定义在结果里声明的库内动作，它们不看 `agents`（D64）。
 
 它不负责：
 

@@ -34,10 +34,11 @@ tools: read, write, edit, bash, memory
 
 - 前置信息有 `workdir`、`model`、`tools` 和可选的 `thinking`、`handoff`，每行一个 `key: value`。`thinking` 只收 `minimal`、`low`、`medium`、`high`、`xhigh`、`max`（pi-ai 的思考级别）；不写就不传给模型，值不对就报错。怎么用见 [kb-executor](../../.knowledge/kb-executor.md#调用模型actionsts)。
 - `handoff` 是正整数，单位 token：把换段阈值调低到它。写得比算出的阈值大就等于没写；不写就用算出的阈值；不是正整数就报错。怎么用见 [kb-kernel 的换段阈值](../../.knowledge/kb-kernel.md#换段阈值)。
+- `options` 是可选的一行 JSON 对象：调用模型的其它参数，原样交给 pi-ai。只收白名单里的键，键的类型不对、白名单外的键、超过 4096 字节都报错；`{}` 等于不写。白名单和理由见 [D64](../../.knowledge/kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作) 的第 11 组。
 - `tools` 里除了内置工具和工具组，还能写工具定义的名字（`~/.tau/tools/<name>.json`，格式见 [kb-tools](../../.knowledge/kb-tools.md#工具定义)）。
-- `tools` 里的 `memory` 表示进程有记忆库。`agents` 表示进程能给别的进程寄信、建进程、停进程（`post`、`spawn`、`stop_process`，[kb-store](../../.knowledge/kb-store.md#进程之间的工具)）。
+- `tools` 里的 `memory` 表示进程有记忆库。`agents` 表示模型能调用 `post`、`spawn`、`stop_process` 给别的进程寄信、建进程、停进程（[kb-store](../../.knowledge/kb-store.md#进程之间的工具)）。工具定义在结果里声明这些动作，不看 `agents`（[D64](../../.knowledge/kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)）。
 - 进程启动时，预设被冻结成快照存进进程记录，用到的工具定义也一起冻结（快照的 `toolDefs`）。之后修改预设文件或工具定义文件，只影响新启动的进程。
-- 快照里还有两项：从 pi-ai 模型目录查到的这个模型的 `contextWindow` 和 `input`（模型能收的输入）。查不到就启动失败。冻结它们，是为了让 `decide` 不做 I/O。预设写了的 `thinking`、`handoff` 也冻结进快照。调用模型时，执行器仍从模型目录取模型（第 6 节）。
+- 快照里还有两项：从 pi-ai 模型目录查到的这个模型的 `contextWindow` 和 `input`（模型能收的输入）。查不到就启动失败。冻结它们，是为了让 `decide` 不做 I/O。预设写了的 `thinking`、`handoff`、`options` 也冻结进快照。调用模型时，执行器仍从模型目录取模型（第 6 节）。
 
 读取预设（`src/presets/load.ts`）的规则：
 
@@ -46,7 +47,8 @@ tools: read, write, edit, bash, memory
 - 文件开头的 UTF-8 BOM 被忽略。行尾可以是 LF，也可以是 CRLF。
 - 第一行必须是 `---`。前置信息到下一行 `---` 为止。
 - 每行在第一个 `:` 处拆成键和值，两边去掉空白。空行跳过。
-- 没有 `:` 的行、未知字段、重复字段、缺少的字段，都报错。`thinking` 和 `handoff` 可以不写，其余字段缺了报错。
+- 没有 `:` 的行、未知字段、重复字段、缺少的字段，都报错。`thinking`、`handoff`、`options` 可以不写，其余字段缺了报错。
+- 读预设时的一切拒绝，只在 `loadPreset`、`loadToolDefs` 和启动检查里做。协议的 `check` 走同一条路径，所以它和 `start` 的结论永远一致（D64）。
 - `workdir` 必须是绝对路径，而且是一个存在的目录。绝对路径只认两种：盘符开头（`E:/x`、`E:\x`）和 UNC（`\\server\share`）。不带盘符的 `/foo` 会落在服务当前目录所在的盘上，所以拒绝。
 - `model` 在第一个 `/` 处拆成 provider 和模型 ID，两边都不能为空。模型 ID 里可以再有 `/`。
 - `tools` 按逗号拆开，去掉空白，跳过空项。不是内置工具和工具组的名字，都按工具定义读，读不出就报错（找不到、格式不对、重名、超过大小上限）。重复的去掉，保留第一次出现的顺序。

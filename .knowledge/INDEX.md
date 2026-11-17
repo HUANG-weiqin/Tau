@@ -11,7 +11,7 @@
 | 你要解决的问题 | 先读 |
 |---|---|
 | 初次接手 | [AGENTS.md](../AGENTS.md)，再读[总览的认知模型](kb-overview.md#认知模型) |
-| 判断一个功能该不该做、放在内核还是上层 | [kb-extending.md 的取舍顺序](kb-extending.md#取舍顺序)，AGENTS.md 的“准入规则”，设计稿的 [MVP 不做](../docs/design/mvp.md#mvp-不做)，[D46 v2 也不做的](kb-decisions.md#d46-v2-也不做的)，上层的做法 [kb-extras.md](kb-extras.md) |
+| 判断一个功能该不该做、放在内核还是上层 | [kb-extending.md 的取舍顺序](kb-extending.md#取舍顺序)和[核心原则 8（给上层的自由度）](kb-extending.md#核心原则)，AGENTS.md 的“准入规则”，设计稿的 [MVP 不做](../docs/design/mvp.md#mvp-不做)，[D46 v2 也不做的](kb-decisions.md#d46-v2-也不做的)，上层的做法 [kb-extras.md](kb-extras.md) |
 | 加功能：接在哪里，按什么原则接 | [kb-extending.md 的推导顺序](kb-extending.md#推导顺序) |
 | 某个设计为什么是这样，当初放弃过什么 | [决策记录](kb-decisions.md) |
 | 想加一个看起来合理的机制（压缩、wait 工具、只读 bash 审查、按项目存数据） | 先读 [Pi Web 的教训](kb-piweb-lessons.md) |
@@ -37,7 +37,7 @@
 | [AGENTS.md](../AGENTS.md) | 用词、必须遵守的规则、准入规则、依赖和工具链、工作习惯、完成门槛 |
 | [设计稿](../docs/design/mvp.md) | 还没有模块页的模块细节：预设（含读取规则）、总体结构、自省的内容；“MVP 不做”清单；风险 |
 | [内核 v2 设计稿](../docs/design/kernel-v2.md) | 已冻结，只留链接：每节标题保留，指向负责的 kb 页。不负责任何事实 |
-| [界面设计稿](../docs/design/gui.md) | 图形界面（调度台，上层）的定位和前端用什么、布局、各块的规则、弹窗、视觉、交互和动效、每块数据从哪来、内核现在给不了的数据 |
+| [界面设计稿](../docs/design/gui.md) | 图形界面（调度台，上层）的定位和前端用什么、布局、各块的规则、弹窗、视觉、交互和动效、每块数据从哪来、界面还没接或内核给不了的数据 |
 | [v2 执行清单](../docs/plan/kernel-v2-checklist.md) | v2 的步骤顺序、每步的任务和验收、当前进度 |
 | [界面执行清单](../docs/plan/gui-checklist.md) | 图形界面的步骤顺序、每步的任务和验收、要用户点头的地方、当前进度 |
 | [MVP 执行清单](../docs/plan/mvp-checklist.md) | 已完成，留作记录 |
