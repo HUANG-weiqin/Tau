@@ -72,7 +72,7 @@
 - `output: content`：
   - 标准输出和标准错误分开收。
   - 退出码不是 0：结果是错误，文字和 `text` 时一样。
-  - 退出码是 0：丢掉标准错误。标准输出必须是一个 JSON 数组，每项是 `{ "type": "text", "text": … }` 或 `{ "type": "image", "path": … }`。
+  - 退出码是 0：丢掉标准错误。标准输出必须是一个 JSON 数组，每项是 `{ "type": "text", "text": … }` 或 `{ "type": "image", "path": … }`。[D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作) 第 10 组加了第三种项 `{ "type": "call", "name": …, "arguments"?: … }`：在结果里声明库内动作（`post`、`spawn`、`stop_process`、记忆工具），和工具结果在同一个事务里执行。工具里要寄信、建进程、停进程，用声明，不在命令里跑 `tau send`、`tau start`、`tau stop`：那样不原子，崩溃后重做会重复，`start` 建的进程也没有父进程。
   - 先解析 JSON，检查每一项的格式和图片的张数（不超过 `IMAGES_PER_MESSAGE`），再读图片文件。读之前先看大小，超过 `IMAGE_MAX_BYTES` 就不读。
   - `path` 只认 Windows 的绝对路径：盘符开头或 UNC。msys 的 `/tmp/x.png` 不认，和预设的 `workdir` 一样。
   - 文本项按顺序用换行连起来，成为结果的文本块。图片按[入口检查](kb-service.md#图片)检查，存进 `blobs`。

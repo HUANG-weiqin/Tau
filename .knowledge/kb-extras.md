@@ -31,7 +31,7 @@
 
 - 读事实：`inspect`（原样的进程记录）、`check`（预设读成什么快照、限度）、段里消息的 `tau` 结构、记录的 `since`、`watch` 带 `messages` 推追加的消息、流式预览的种类、`memory`。
 - 控制：`memory_write`、`send` 带 `handoff`、`send` 带 `from` 和 `reply`、`start` 和 `fork` 带 `id`。
-- 组合：工具定义在结果里声明库内动作。
+- 组合：工具定义在结果里声明库内动作（[kb-tools 的运行工具定义](kb-tools.md#运行工具定义)）。工具调用里要寄信、建进程、停进程，用声明，不在命令里跑 `send`、`start`、`stop`：那样不原子。`send` 带 `from` 是给不在工具调用里的调用方用的（上层程序、界面、计划任务）。
 - 参数：预设的 `options`。
 
 判一个上层功能的代价时，先看这些原语能不能去掉它（[取舍顺序](kb-extending.md#取舍顺序)的“怎样用这个顺序”）。
