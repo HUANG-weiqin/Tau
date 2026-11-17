@@ -38,6 +38,7 @@
 | `extras/gui/web/*.css` | 样式 |
 | `extras/gui/start.ps1` | 起服务和桥，打开页面 |
 | `extras/gui/restart.ps1` | 重启服务、桥，或者两个都重启 |
+| `extras/gui/shortcut.ps1` | 画图标，在桌面放 “tau” 快捷方式（点它跑 `start.ps1`） |
 | `extras/gui/cleanenv.ps1` | 干净的环境和起停的小件，上面两个点号引入 |
 | `test/extras/gui/*.test.ts` | 测试 |
 
@@ -51,7 +52,11 @@
   - `--host`：额外认的 `Host` 名字，可以写多次，给 Tailscale 用。
   - 凭据文件 `~/.pi/agent/auth.json` 的路径是 `createBridge` 的选项 `authFile`，没有命令行参数；测试用临时文件。
 - 管道：`TAU_PIPE` 有值就用它，否则用 `\\.\pipe\tau`，和 CLI 一样。
-- `start.ps1`：管道不在就起服务，端口没人听就起桥，都和终端脱开，日志写进 `~/.tau/extras/gui/`。然后打开页面。不做开机自启。
+- `start.ps1`：管道不在就起服务，端口没人听就起桥，都和终端脱开，日志写进 `~/.tau/extras/gui/`。然后打开页面。不做开机自启。带 `-Popup` 时，出错弹一个对话框，写原因。
+- 桌面快捷方式：`shortcut.ps1` 画图标 `~/.tau/extras/gui/tau.ico`（黄底黑字的 τ，和左上角的标志一样），在桌面放 `tau.lnk`。仓库挪了位置就重新运行它。
+  - 快捷方式的目标是 `conhost.exe --headless powershell.exe … start.ps1 -Popup`：没有窗口。默认终端是 Windows Terminal 时，`-WindowStyle Hidden` 还是会闪一下，`conhost --headless` 不会。
+  - 没有窗口，出错就看不到，所以带 `-Popup`。
+- 别从 Claude 桌面版的进程树里起服务和桥：那棵树里读写 `AppData` 都被重定向进 Claude 包自己的目录，Agent 装的东西（`pip --user`、`npm -g`）外面看不到。从桌面快捷方式、自己的终端或者界面的按钮起都没有这个问题。
 - 服务和桥都用干净的环境起（`cleanenv.ps1` 的 `Start-Clean`）：环境按注册表的机器和用户变量、`Volatile Environment` 和系统固定的几个重建，清空进程自己的环境再填。服务把自己的环境交给 Agent 的 bash，所以从哪里运行脚本（包括另一个 Agent 的会话）都不会把调用方的变量和令牌带进去。
 - `restart.ps1`：`-Service` 只重启服务，`-Bridge` 只重启桥，都不写就两个都重启。按命令行找到正在运行的 node 进程，停掉，用干净的环境再起，等管道或端口起来。服务先于桥重启，桥最后。界面的按钮也是跑它，多带 `-BridgePid`（桥自己的 PID）和 `-BridgeArgs`（桥原来的命令行参数，新桥原样带上）。
 - 脚本文件带 UTF-8 BOM：桥用 Windows PowerShell 5.1 跑 `restart.ps1`，没有 BOM 会把中文读成乱码。
