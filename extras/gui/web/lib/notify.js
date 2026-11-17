@@ -1,5 +1,6 @@
 // @ts-check
 // 完成通知、标签页标题的纯逻辑。“待你看”的定义在 derive.js 的 `attention`，这里不重写。
+import { plainFirstLine } from "./plain.js";
 
 /** 标签页标题：有待你看的进程时 “(N) tau”。 @param {number} n */
 export function tabTitle(n) {
@@ -30,7 +31,7 @@ export function shouldNotify(o) {
 
 /** 第一个非空行，超过 `max` 个字就截短。 @param {string} text @param {number} [max] */
 export function firstLine(text, max = 80) {
-  const line = text.split(/\r?\n/).map((l) => l.trim()).find((l) => l !== "") ?? "";
+  const line = plainFirstLine(text);
   const chars = Array.from(line);
   return chars.length > max ? chars.slice(0, max).join("") + "…" : line;
 }

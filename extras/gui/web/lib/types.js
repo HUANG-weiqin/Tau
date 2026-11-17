@@ -45,14 +45,14 @@
  * @typedef {{ type: "ps", processes: Projection[] }
  *   | { type: "update", self: Self }
  *   | { type: "removed", process: string }
- *   | { type: "text", process: string, n: number, delta: string }
- *   | { type: "message", segment: number, seq: number, message: Message }
+ *   | { type: "text", process: string, n: number, delta: string, kind?: "thinking" | "toolCall" }
+ *   | { type: "message", process?: string, segment: number, seq: number, message: Message }
  *   | { type: "end", segment: number, messages: number }
  *   | { type: "receipt", process: string }
  *   | { type: "error", message: string }} Reply
  */
 
-/** 进程冻结的预设快照里界面要的几项（`inspect` 读来）。 @typedef {{ workdir: string, tools: string[], memory: boolean, model?: string, thinking?: string, handoff?: number, options?: Record<string, unknown> }} Frozen */
+/** 进程冻结的预设快照里界面要的几项（`inspect` 读来）。 @typedef {{ workdir: string, tools: string[], memory: boolean, model?: string, thinking?: string, handoff?: number, options?: Record<string, unknown>, input?: string[], threshold?: number }} Frozen */
 
 /**
  * `/api/presets` 回的一项。
@@ -72,11 +72,13 @@
  *   mine: string[],
  *   forkedFrom: Record<string, string>,
  *   titles: Record<string, string>,
+ *   titled: string[],
  *   collapsed: Record<string, boolean>,
  *   cleanDays: number,
  *   recentModels: string[],
  *   defaultModel?: string,
  *   defaultThinking?: string,
+ *   titleModel?: string,
  *   notify?: boolean,
  * }} GuiState
  */

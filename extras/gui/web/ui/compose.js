@@ -2,6 +2,8 @@
 // Ctrl+Enter 寄出，Enter 换行，/ 跳过来，Esc 离开（全局键在 app.js）。能贴图片（base64 放进 images）。
 import { html, Icon, Lamp, Tex, pad2, useState, useRef, useEffect, useLayoutEffect } from "./common.js";
 import { contextPercent } from "../lib/format.js";
+import { useAttach, AttachBar, Thumbs } from "./attach.js";
+import { refusesImages } from "../lib/derive.js";
 
 /** 草稿按进程记着，切走再回来还在。 @type {Map<string, { text: string, images: { data: string, url: string }[] }>} */
 const drafts = new Map();
@@ -46,7 +48,9 @@ export function Compose({ app, e, name, note = null }) {
     a.style.flex = "";
   }, [text, images.length]);
 
-  const can = (text.trim() !== "" || images.length > 0) && !busy;
+  const at = useAttach(images, setImages);
+  // 图片还在压缩时不许寄：不然信不带图寄出，图随后落进清空了的草稿。
+  const can = (text.trim() !== "" || images.length > 0) && !busy && at.busy === 0;
   const send = async () => {
     if (!can) return;
     setBusy(true);
@@ -59,23 +63,6 @@ export function Compose({ app, e, name, note = null }) {
       // 提示已经弹了，草稿留着。
     } finally {
       setBusy(false);
-    }
-  };
-
-  /** @param {ClipboardEvent} ev */
-  const onPaste = (ev) => {
-    const files = [...(ev.clipboardData?.items ?? [])].filter((i) => i.kind === "file" && i.type.startsWith("image/")).map((i) => i.getAsFile());
-    if (files.length === 0) return;
-    ev.preventDefault();
-    for (const f of files) {
-      if (!f) continue;
-      const r = new FileReader();
-      r.onload = () => {
-        const url = String(r.result);
-        const data = url.slice(url.indexOf(",") + 1);
-        setImages((xs) => [...xs, { data, url }]);
-      };
-      r.readAsDataURL(f);
     }
   };
 
@@ -101,18 +88,18 @@ export function Compose({ app, e, name, note = null }) {
         </div>
       </div>
 
-      <div class=${`dk-well ${note ? "pre" : ""}`}>
+      <div class=${`dk-well ${note ? "pre" : ""} ${at.over ? "over" : ""}`} ...${at.drop}>
         <span class="dk-br g" aria-hidden="true"></span><span class="dk-br y" aria-hidden="true"></span>
         <${Tex} kind="tx-grid-d" mask="radial-gradient(ellipse 90% 120% at 100% 100%, #000 0%, transparent 75%)" />
         ${note && html`<div class=${`dk-pre ${noteErr ? "err" : ""}`}>
           <span class=${`tag ${noteErr ? "warn" : "acc"}`}>自动加在信前</span>
           <p class="mono" title=${note}>${note}</p>
         </div>`}
-        ${images.length > 0 && html`<div class="dk-thumbs">${images.map((im, i) => html`<span class="cthumb"><img src=${im.url} alt="要寄出的图片" /><button type="button" aria-label="去掉这张图片" onClick=${() => setImages(images.filter((_, j) => j !== i))}><${Icon} name="close" size=${12} sw=${3} /></button></span>`)}</div>`}
+        <${Thumbs} images=${images} onRemove=${(/** @type {number} */ i) => setImages(images.filter((_, j) => j !== i))} />
         <textarea
           id="compose-input" ref=${area} rows="2" class="dk-in" value=${text}
           placeholder=${fate.k === "run" ? `${name} 在跑。写下要补充的话，寄出后排队…` : `写给 ${name}…`}
-          onInput=${(/** @type {any} */ ev) => setText(ev.currentTarget.value)} onPaste=${onPaste}
+          onInput=${(/** @type {any} */ ev) => setText(ev.currentTarget.value)} onPaste=${at.onPaste}
           onKeyDown=${(/** @type {KeyboardEvent} */ ev) => {
             if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
               ev.preventDefault();
@@ -120,13 +107,14 @@ export function Compose({ app, e, name, note = null }) {
             }
           }}
         ></textarea>
+        <div class="dk-att"><${AttachBar} at=${at} count=${images.length} noImage=${refusesImages(e.frozen)} /></div>
         <div class="dk-row">
           <div class="dk-fate" role="status">
             <span class="dk-tok">${fate.token}</span>${fate.cap && html`<span class="dk-tcap">${fate.cap}</span>`}
             <p title=${fate.line}>${fate.line}</p>
           </div>
           <div class="dk-hints" aria-hidden="true">
-            <span><kbd>Enter</kbd>换行</span><span><kbd>/</kbd>跳到这里</span><span><kbd>Esc</kbd>离开</span><span class="dk-xl">能直接贴图片</span>
+            <span><kbd>Enter</kbd>换行</span><span><kbd>/</kbd>跳到这里</span><span><kbd>Esc</kbd>离开</span><span class="dk-xl">能贴、拖图片</span>
             <span class="dk-count mono"><b>${String(chars).padStart(4, "0")}</b> 字${images.length > 0 ? ` · ${images.length} 图` : ""}</span>
           </div>
           <div class="dk-keys" aria-hidden="true"><kbd>CTRL</kbd><i>+</i><kbd class="ent">↵</kbd></div>

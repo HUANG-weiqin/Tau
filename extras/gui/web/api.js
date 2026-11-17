@@ -1,7 +1,10 @@
 // 页面和桥之间的请求。所有接口都是 POST；线协议的回复是一行一个 JSON。
 
 /** 桥回的错误：带中文原因。 */
-export class ApiError extends Error {}
+export class ApiError extends Error {
+  /** 桥回的 HTTP 状态；没连上时没有。 @type {number | undefined} */
+  status;
+}
 
 /**
  * @param {string} path
@@ -23,7 +26,7 @@ export async function post(path, body = {}) {
   } catch {
     // 不是 JSON，当没有内容。
   }
-  if (!res.ok) throw new ApiError(json && typeof json.error === "string" ? json.error : `请求失败（${res.status}）`);
+  if (!res.ok) throw Object.assign(new ApiError(json && typeof json.error === "string" ? json.error : `请求失败（${res.status}）`), { status: res.status });
   return json ?? {};
 }
 
@@ -205,3 +208,10 @@ export async function memoryWrite(ops) {
  * @returns {Promise<{ exists: boolean, bytes?: number }>}
  */
 export const agentsMd = (workdir) => post("/api/agents-md", { workdir });
+
+/** 服务和桥的状态：在不在、启动时间、是不是旧代码、几个进程在跑。 */
+export const serviceStatus = () => post("/api/service", {});
+/** 重启服务和（或）桥。有进程在跑又没带 force，桥回 409（抛的 ApiError 的 status 是 409）。 */
+export const restartService = (/** @type {{ service?: boolean, bridge?: boolean, force?: boolean }} */ o) => post("/api/service/restart", o);
+/** 让桥给进程起标题。model 是 供应商/模型。 */
+export const makeTitle = (/** @type {string} */ process, /** @type {string} */ model) => post("/api/title", { process, model }).then((r) => /** @type {string} */ (r.title));

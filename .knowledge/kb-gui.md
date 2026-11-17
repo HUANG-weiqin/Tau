@@ -30,13 +30,15 @@
 | `extras/package.json` | 上层的依赖，精确锁定（[D63](kb-decisions.md#d63-上层的依赖随便加)）。`@earendil-works/pi-ai` 和根目录同一个版本，桥只用它的公开函数读模型目录 |
 | `extras/gui/bridge/main.ts` | 桥的入口，Node 直接运行 |
 | `extras/gui/bridge/server.ts` | `createBridge`：检查和路由。测试用它在进程里起桥，可以换掉 git 和选文件夹 |
-| `extras/gui/bridge/*.ts` | 其余各部分：`forward.ts` 转发，`static.ts` 静态文件，`presets.ts`（经 `check` 列预设，写、改和删预设文件）、`models.ts`（模型目录和 key 状态）、`git.ts`、`bg.ts`、`tools.ts`（列、装、删工具定义）、`state.ts`、`pick.ts`，`util.ts` 放公用的小函数 |
+| `extras/gui/bridge/*.ts` | 其余各部分：`forward.ts` 转发，`static.ts` 静态文件，`presets.ts`（经 `check` 列预设，写、改和删预设文件）、`models.ts`（模型目录和 key 状态）、`git.ts`、`bg.ts`、`tools.ts`（列、装、删工具定义）、`state.ts`、`pick.ts`，`pipe.ts`（一次性的管道请求、管道在不在）、`service.ts`（服务和桥的状态、旧代码的判断、起重启脚本）、`title.ts`（自动标题）、`credentials.ts`（只读的 auth.json 凭据库），`util.ts` 放公用的小函数 |
 | `extras/gui/web/index.html` | 页面 |
 | `extras/gui/web/lib/*.js` | 页面的纯逻辑。不碰 DOM，不发请求。文件头写 `// @ts-check`，类型用 JSDoc |
 | `extras/gui/web/ui/*.js` | 组件 |
 | `extras/gui/web/*.js` | 根组件、请求、连接 |
 | `extras/gui/web/*.css` | 样式 |
 | `extras/gui/start.ps1` | 起服务和桥，打开页面 |
+| `extras/gui/restart.ps1` | 重启服务、桥，或者两个都重启 |
+| `extras/gui/cleanenv.ps1` | 干净的环境和起停的小件，上面两个点号引入 |
 | `test/extras/gui/*.test.ts` | 测试 |
 
 页面的代码是浏览器直接加载的 `.js`，不转译。桥是 `.ts`，和 `src/` 一样只用可擦除的语法。
@@ -50,7 +52,9 @@
   - 凭据文件 `~/.pi/agent/auth.json` 的路径是 `createBridge` 的选项 `authFile`，没有命令行参数；测试用临时文件。
 - 管道：`TAU_PIPE` 有值就用它，否则用 `\\.\pipe\tau`，和 CLI 一样。
 - `start.ps1`：管道不在就起服务，端口没人听就起桥，都和终端脱开，日志写进 `~/.tau/extras/gui/`。然后打开页面。不做开机自启。
-- 从自己的终端运行 `start.ps1`。服务把自己的环境变量交给 Agent 的 bash，在别的程序（例如另一个 Agent 的会话）里起，会把那个程序的变量和令牌带进去。
+- 服务和桥都用干净的环境起（`cleanenv.ps1` 的 `Start-Clean`）：环境按注册表的机器和用户变量、`Volatile Environment` 和系统固定的几个重建，清空进程自己的环境再填。服务把自己的环境交给 Agent 的 bash，所以从哪里运行脚本（包括另一个 Agent 的会话）都不会把调用方的变量和令牌带进去。
+- `restart.ps1`：`-Service` 只重启服务，`-Bridge` 只重启桥，都不写就两个都重启。按命令行找到正在运行的 node 进程，停掉，用干净的环境再起，等管道或端口起来。服务先于桥重启，桥最后。界面的按钮也是跑它，多带 `-BridgePid`（桥自己的 PID）和 `-BridgeArgs`（桥原来的命令行参数，新桥原样带上）。
+- 脚本文件带 UTF-8 BOM：桥用 Windows PowerShell 5.1 跑 `restart.ps1`，没有 BOM 会把中文读成乱码。
 
 ### 路径
 
@@ -72,6 +76,7 @@
 | `/vendor/<包>/<路径>` | `extras/node_modules/<包>/` 下的文件。包只认 `preact`、`htm`、`@fontsource-variable/archivo`、`@fontsource-variable/jetbrains-mono`、`@fontsource-variable/noto-sans-sc`、`marked`、`dompurify` |
 
 - 路径解析以后不许出对应的目录。找不到回 404。
+- 缓存头：`/web/` 和 `/` 是 `Cache-Control: no-cache`，浏览器每次都校验，改了代码不用强制刷新；`/vendor/` 是 `public, max-age=86400`。
 - `Content-Type` 按扩展名定。
 - `index.html` 里的 import map 是内联脚本。桥启动时算出它的 SHA-256，写进 `Content-Security-Policy` 的 `script-src`。其余见 [kb-extras 的检查](kb-extras.md#http-桥要做的检查)。
 
@@ -95,6 +100,9 @@
 | `/api/tools` | `{}` | `{ installed, library }`，见下 |
 | `/api/tools/install` | `{ name, replace? }` | `{ ok: true, status }`。`name` 必须是工具库里的；同名文件已有且内容不同，没有 `replace` 回 409，不覆盖；内容一样直接成功。写 `<home>/tools/<name>.json`，先写临时文件再改名 |
 | `/api/tools/remove` | `{ name }` | `{ ok: true }`。有预设的 `tools:` 一行用到它回 409，错误里写是哪些预设；没有这个文件回 404 |
+| `/api/service` | `{}` | 见下“重启和旧代码” |
+| `/api/service/restart` | `{ service?, bridge?, force? }` | 202 `{ ok: true }`，或 409，见下 |
+| `/api/title` | `{ process, model }` | `{ title }`，见下“自动标题” |
 | `/api/state` | `{ set? }` | `{ state }`。`set` 的每个顶层键覆盖进文件，再回整个文件 |
 | `/api/pick-folder` | `{}` | `{ path }`，取消时是 `null`。同时只开一个对话框，第二个请求回 409 |
 
@@ -143,6 +151,25 @@ git：
 - `library`：`extras/tools/catalog.ts` 的每一项，`{ name, description, params, timeout, output, command, status }`。`status` 是 `none`、`installed`、`differs`：把装在 `tools/` 里的内容和库里生成的定义逐项比较（键排序后），一样才是 `installed`。工具定义格式不许多余字段，没有别的办法认出是库装的。
 - 写进文件的 `command` 里是仓库的绝对路径（正斜杠，由桥文件的位置推出）。库的位置含引号、`$` 或反引号时拒绝安装。
 
+重启和旧代码（`bridge/service.ts`）：
+
+- `/api/service` 回 `{ service: { up, startedAt, stale }, bridge: { startedAt, stale }, running, newestSource, newestBridge }`，时间是毫秒。
+  - `up`：管道连得上。`running`：`ps` 里阶段不是 `idle` 的个数；服务不在是 `null`。
+  - `service.startedAt`：PowerShell 的 `Get-CimInstance` 按命令行（`src/main.ts serve`）找 node 进程的创建时间，结果缓存 30 秒，重启请求会清掉缓存。服务不在时不查。
+  - `bridge.startedAt`：桥自己的启动时间（`Date.now() - process.uptime()`），不用查。
+  - 旧代码：`service.stale` = `newestSource > service.startedAt`，`newestSource` 是 `src/`、`package.json`、`package-lock.json` 里 `.ts`、`.js`、`.json` 的最新修改时间；`bridge.stale` = `newestBridge > bridge.startedAt`，`newestBridge` 是 `extras/gui/bridge/` 和 `extras/tools/` 的。都跳过 `node_modules` 和点开头的目录。查不到服务的启动时间就不算旧。
+  - 局限：只比修改时间，改了又改回去也算旧；`extras/gui/web/` 不算，页面文件每次现读。
+- `/api/service/restart`：`service` 和 `bridge` 至少一个是 `true`，否则 400。要重启服务、有进程在跑、没带 `force`：回 409 `{ error, running }`，什么都不做。否则用 detached 的 `powershell.exe` 跑 `restart.ps1`，立刻回 202。只重启桥不动进程，所以不拦。重启桥会把桥自己停掉，页面靠 `conn.js` 的重连回来。
+- 测试里 `createBridge` 的 `serviceOps`、`bridgeStartedAt`、`repo` 注入假的，不真的起停进程。
+
+自动标题（`bridge/title.ts`）：
+
+- 对象：页面里没有 `parent`、`kind` 是临时的进程。桥通过管道读第 1 段第一条用户消息（`history`），取第一封信的正文，截到 2000 字。
+- 用 pi-ai 的 `completeSimple` 调一次模型：不传 `reasoning`（思考关掉），`maxTokens` 是 100，超时 30 秒，`maxRetries` 是 1。`model` 是请求里的 `<供应商>/<模型 ID>`，页面按“标题用的模型、默认模型、进程自己的模型”的顺序填。
+- 凭据：`bridge/credentials.ts` 的只读凭据库，规则和 `src/server/credentials.ts` 一样（[D23](kb-decisions.md#d23-凭据只读复用-pi-的凭据文件)）：只认 `api_key`，`!` 开头或含 `$` 的 key 不认，每次现读。`extras/` 不许导入 `src/`，所以抄了一份。
+- 回 `{ title }`：模型的第一个非空行，去掉两头的引号和结尾标点，最多 16 个字。参数不对 400，没有这个进程 404，模型不在目录 422，模型出错或给不出标题 502，服务不在 503。
+- 桥不写界面数据：标题由页面存进 `titles`，并把进程 ID 记进 `titled`。写入只有页面一个来源，不和页面自己的写入抢。
+
 ### 拼 AGENTS.md
 
 D58：项目的上下文由上层拼。界面把 `<工作目录>/AGENTS.md` 拼进预设提示词的末尾，只认这个文件名，不认 CLAUDE.md。代码在 `bridge/agentsmd.ts`，`presets.ts` 调它。
@@ -177,6 +204,8 @@ D58：项目的上下文由上层拼。界面把 `<工作目录>/AGENTS.md` 拼�
 | `mine` | 界面建的进程 ID |
 | `forkedFrom` | 界面分叉出的进程 ID → 源进程 ID |
 | `titles` | 进程 ID → 标题 |
+| `titled` | 已经自动起过标题的进程 ID |
+| `titleModel` | 设置里的标题用的模型。空字符串或没有就是跟默认模型一样 |
 | `collapsed` | 折叠状态 |
 | `cleanDays` | 清理的天数，默认 7 |
 | `recentModels` | 最近用过的模型（`<供应商>/<模型 ID>`），最新在前，最多 6 个 |
@@ -186,9 +215,14 @@ D58：项目的上下文由上层拼。界面把 `<工作目录>/AGENTS.md` 拼�
 
 ### 页面
 
-- 打开时先读界面数据和预设，再 `ps`，再 `watch`（不带 `process`）。被断开就等一会儿重连，从 `ps` 重来。
-- 每条 `update` 换掉这个进程的 `self`。聚焦的进程段号或条数变了，就按设计稿第 10 节增量读 `history`。
-- `text` 按进程存，`n` 变了就清掉重来。进程离开 `awaitingModel`，就清掉它的流式文本。
+- 打开时先读界面数据和预设，再 `ps`，再 `watch`（不带 `process`，带 `messages: true`）。被断开就等一会儿重连，从 `ps` 重来。
+- 数据流：
+  - 每条 `update` 换掉这个进程的 `self`。追加的消息紧跟着推来（带 `process` 的 `message`），`app.js` 的 `onPushed` 用 `lib/history.js` 的 `applyPushed` 并进被跟着的进程的缓存，用 `createPeeker().push` 并进别的进程的末尾几条。
+  - `applyPushed` 只收正好接在缓存末尾后面的一条：已有的丢掉，跳号的丢掉，没读过的段丢掉；换段时先 `noteSelf`，新段从 0 起。
+  - `history` 只补缺：缓存比 `self.messages` 少就读。收到 `update` 以后先等 `PUSH_GRACE`（250ms）再决定读不读，推来的消息接得上就一次都不读（`createHistoryReader` 和 `createPeeker` 的 `grace`）。`ps`（首次和重连）、`follow` 切进程不等。
+  - 读 `history` 的同时推送也在往同一份缓存里追加：读的每一行都从缓存里取最新的再并，不用手里的旧副本盖掉。
+- 流式文本按进程存成 `Live`：`n`、正文、思考、工具调用参数（`lib/stream.js` 的 `appendDelta` 按 `kind` 分开；不认识的 `kind` 丢掉，不当正文）。`n` 变了三样一起清掉重来，进程离开 `awaitingModel` 也清。参数只存最后 2000 字，总字数另记。
+- 思考和参数（`ui/messages.js`）：`LiveRow` 在正文上面画思考块 `ThinkLive`，下面画参数块 `ArgsLive`。思考不走 `Typer`，直接追加。一步写完、消息还没读到时，`HeldRow` 用模块里留的思考画收起的样子，10 秒后清掉。正文的吐字衔接不变。
 - 吐字（设计稿第 5.1 节）：
   - `ui/typer.js` 的 `Typer` 自己管 `.atext` 里的 DOM，Preact 不给它子节点。匀速的节奏是 `lib/pace.js` 的纯函数。所有 `Typer` 共用一个 rAF，没有在动的就停。
   - 衔接按序号：等模型时正在写的字，将来是当前段第 `self.messages` 条消息。记录的键是“进程、段、序号”（`slotKey`）。正在写的行、写完后留住的行（`HeldRow`）、最后读到的消息行，依次接手同一条记录，字接着出，不重来。
@@ -232,6 +266,12 @@ D58：项目的上下文由上层拼。界面把 `<工作目录>/AGENTS.md` 拼�
   - 没有 `tau` 的旧消息按普通用户消息显示，整段文字一封信。文字被截过的消息没有 `at`，整段文字当一封信，发送者取第一封。
   - 唯一还认的固定文字是 `HANDOFF_HEADER` 和 `CARRY_HEADER`，只用来从新段第一条里切出交接说明。
 - “换段”：`app.handoff` 用 `send` 带 `handoff: true` 寄 `HANDOFF_LETTER`（一封说明没有别的事要做的信）。段里已有助手消息才生效（`lib/messages.js` 的 `canHandoff`，[kb-kernel 的换段信](kb-kernel.md#换段信)）；进程在跑、或者段里还没有助手消息时按钮禁用。
+- 详情栏的数据（`lib/derive.js`，都用 `inspect` 的原样记录和 `limits`，不读别的）：
+  - 段尺的刻线：`limits.threshold`（随快照冻结，进程建好后读一次，存在 `Frozen.threshold`）。位置是 `threshold / context.window`，已用到阈值的 `NEAR_RATIO`（0.9）以上变警告色（`rulerOf`）。`context.window` 和已用来自 `update` 的 `self.context`。
+  - 排队的信：`process.phase.turn.queued`。只有在跑的阶段才有。信本身没有时间，所以不显示时间（`mailOf`）。
+  - 等它回信的：它这一轮的 `turn.replyTo`，加排队的信里的 `replyTo`。它在等的：别的在跑的进程，`turn.replyTo` 或排队的信的 `replyTo` 是它。推不出来的不写。
+  - 概况页开着时每 10 秒读一次全部 `inspect`，阶段、排队数、消息数变了马上再读。
+- 图片：`lib/image.js` 放常量和纯函数（`fitSize`、`isFit`、`attempts`、`room`），`prepare` 里是 canvas，只在浏览器跑。`ui/attach.js` 是贴、拖、选文件共用的钩子和小件，写信框和总管输入框都用。模型不收图片：`Frozen.input`（`process.preset.input`）里没有 `image`（`refusesImages`）；总管还没有进程时看模型目录的 `image`。
 - 只跟最近看过的几个进程读全部历史。别的进程只读当前段最后一条消息，拿到最后动静的时间。
 
 ## 测试
@@ -240,9 +280,11 @@ D58：项目的上下文由上层拼。界面把 `<工作目录>/AGENTS.md` 拼�
 |---|---|
 | `test/extras/gui/bridge.test.ts` | 每条检查的反例；GET 不出目录；转发对着测试服务（临时目录、测试管道、faux 模型），含 `watch` 分块推送和浏览器断开；预设经 `check` 读（带 `options` 的读得出、读不出和装不下的错误文字和 `start` 一字不差、服务不在回 503）、新建不覆盖和删除；`inspect` 转发读到冻结的快照；换段信真的换段、信带进新段；git 带 `--no-optional-locks`、工作目录不对时拒绝；界面数据改名写入；模型目录和 pi-ai 一致、key 状态四种且值不进回复、auth.json 坏了或不存在、改了不用重启；改预设只换收到的字段（顺序、CRLF、BOM、正文原样，`null` 删行）、读不出或起不来改回旧文件、服务不在改回去、请求不合法；新建带 `handoff`、`options` |
 | `test/extras/tools/tools.test.ts` | 工具库：四个脚本在真的服务和 Git Bash 里跑（截断和存文件、退出码、超时结束整个进程组、7 天清理；后台立刻返回、跑完寄信、同名拒绝；peek 的输出；wait 等到结束、超时、停止）；桥的列、装、改过后拒绝覆盖、更新、预设用到时拒删；装好的定义内核 `check` 读得出 |
+| `test/extras/gui/service.test.ts` | 旧代码的判断（修改时间对比、服务不在、缓存和作废）；重启接口（有进程在跑回 409 且不动、`force`、只重启桥、参数不对），全部用假的 runner 和假的 `ps`；`/web/` 的缓存头；自动标题（假模型：提示词、输出上限、思考关掉、整理标题、各种错误码）；只读凭据库；标题的条件和 `titled`；助手文字第一行去标记 |
 | `test/extras/gui/agentsmd.test.ts` | 拼 AGENTS.md：加块和去块互逆（CRLF、BOM、手写的末尾空行字节不变）、换块在原处、给了 prompt 块留着、没有结束标记当没有块；接口：`/api/agents-md`、新建拼上或不拼或没有文件拒绝、CLAUDE.md 不认、改预设的不传不动、过期、重新拼、文件没了拒绝且旧文件不变、去掉、拼完装不下窗口改回旧文件、文件里有标记行或为空拒绝 |
 | `test/extras/gui/memory.test.ts` | 记忆页的纯逻辑（字节序排序、折叠、编辑状态、写回复的判读、冲突后字和版本的处理）；经桥对着真的服务：新键、改、兄弟先写造成的冲突不覆盖、删、已删键的冲突、超限 |
-| `test/extras/gui/lib.test.ts` | 纯逻辑：信的来历读 `tau`（发送者、跳数、回信、`after`、换段、`filled`，旧消息、被截过的消息）、`canHandoff`、进程按冻结的快照归类、增量读跨换段、重连后不丢不重、标题、当前进程、筛选计数、全部停止和清理的顺序、删进程的拒绝条件、`prunePatch`；模型选择（窗口的写法、思考级别取最近一档、搜索、供应商排序、最近用过、默认模型、key 提示）、预设表变成请求（只发变了的字段）、换模型的补丁、界面数据的新键、快照多带的几项；吐字的节奏（平稳的小块、成批到、收尾追平、一次来一大块）和 `latestSeq`；Markdown（GFM、原始 HTML 转义、链接和图片的过滤、代码块）；通知（谁刚进入待你看、该不该弹、正文、标题）；`notify` 键 |
+| `test/extras/gui/image.test.ts` | 图片常量和 `src/` 的真常量一致；缩放尺寸、原样发的条件、压缩尝试的顺序、张数；快照多带的输入类型和阈值、不收图片的判断；段尺比例和九成警告；排队的信、谁在等谁 |
+| `test/extras/gui/lib.test.ts` | 纯逻辑：信的来历读 `tau`（发送者、跳数、回信、`after`、换段、`filled`，旧消息、被截过的消息）、`canHandoff`、进程按冻结的快照归类、增量读跨换段、重连后不丢不重、标题、当前进程、筛选计数、全部停止和清理的顺序、删进程的拒绝条件、`prunePatch`；模型选择（窗口的写法、思考级别取最近一档、搜索、供应商排序、最近用过、默认模型、key 提示）、预设表变成请求（只发变了的字段）、换模型的补丁、界面数据的新键、快照多带的几项；流式文本按 `kind` 分开、watch 推来的消息并进缓存（重复、跳号、换段）、末尾几条的推送并进；吐字的节奏（平稳的小块、成批到、收尾追平、一次来一大块）和 `latestSeq`；Markdown（GFM、原始 HTML 转义、链接和图片的过滤、代码块）；通知（谁刚进入待你看、该不该弹、正文、标题）；`notify` 键 |
 
 ## 坑点
 
@@ -250,7 +292,8 @@ D58：项目的上下文由上层拼。界面把 `<工作目录>/AGENTS.md` 拼�
 - **宽屏的五块只能排成一行。** 多行的 flex 容器里，一行的高度跟着最高的那一块走。`.shell-body` 一换行，详情栏一长就把主区撑高，写信框被推出屏幕，消息区也滚不到底。所以只在窄于 1180 时才换行。
 - **服务的环境变量会进 Agent 的 bash。** 起服务的那个程序的环境原样传下去，所以从干净的终端起（见[启动](#启动)）。
 - **连管道不能半关闭。** 见 [kb-service 的坑点](kb-service.md#坑点)。
-- **`index.html` 只在桥启动时读一次。** import map 是内联脚本，桥启动时算它的哈希写进 CSP。改了 `index.html` 要重启桥。其余静态文件每次请求现读。
+- **`index.html` 只在桥启动时读一次。** import map 是内联脚本，桥启动时算它的哈希写进 CSP。改了 `index.html` 要重启桥。其余静态文件每次请求现读，带 `no-cache`，浏览器每次校验。
+- **重启服务会中断在跑的进程。** 在跑的库外副作用（工具调用）按崩溃处理，报“被中断”，不自动重做。所以界面在有进程在跑时先确认，桥的 `/api/service/restart` 也拦。
 
 ## 关联模块
 

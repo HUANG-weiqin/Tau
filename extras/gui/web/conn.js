@@ -26,7 +26,8 @@ export function createConn(hooks) {
         hooks.reply(ps);
         hooks.status("online");
         failures = 0;
-        await tauStream({ op: "watch" }, (r) => {
+        // messages: true：追加的消息和思考、工具调用参数的流式片段也推来。
+        await tauStream({ op: "watch", messages: true }, (r) => {
           hooks.reply(r);
         }, ctl.signal);
         if (stopped) return;
@@ -60,6 +61,8 @@ export function createHistoryReader(io) {
   const running = new Set();
   /** @type {Set<string>} */
   const again = new Set();
+  /** @type {Map<string, ReturnType<typeof setTimeout>>} */
+  const timers = new Map();
 
   /** @param {string} id */
   async function loop(id) {
@@ -80,6 +83,8 @@ export function createHistoryReader(io) {
       let gaveUp = false;
       try {
         await tauStream({ op: "history", process: id, segment: p.segment, from: p.from }, (r) => {
+          // 读的同时 watch 也在往缓存里追加：每次从缓存取最新的，别用手里的旧副本盖掉。
+          h = io.getHist(id) ?? h;
           if (r.type === "message") {
             h = applyMessage(h, r);
           } else if (r.type === "end") {
@@ -92,11 +97,12 @@ export function createHistoryReader(io) {
               gaveUp = true;
             }
           }
+          io.setHist(id, h);
         });
       } catch {
         failed = true;
       }
-      io.setHist(id, h);
+      h = io.getHist(id) ?? h;
       const after = h.segs[p.segment]?.msgs.length ?? 0;
       if (gaveUp) continue; // 抛错（连不上）不算放弃，走下面的退避。
       if (failed || !ended || after === before) {
@@ -108,8 +114,29 @@ export function createHistoryReader(io) {
   }
 
   return {
-    /** 告诉它这个进程有新状态。已经在读就标记再来一遍。 @param {string} id */
-    follow(id) {
+    /**
+     * 告诉它这个进程有新状态。已经在读就标记再来一遍。
+     * `grace` 毫秒：先等一等，那期间 watch 推来的消息能补上的就不读 history；到时候还差，才读。
+     * @param {string} id @param {number} [grace]
+     */
+    follow(id, grace = 0) {
+      if (grace > 0) {
+        if (!timers.has(id)) {
+          timers.set(
+            id,
+            setTimeout(() => {
+              timers.delete(id);
+              this.follow(id);
+            }, grace),
+          );
+        }
+        return;
+      }
+      const t = timers.get(id);
+      if (t !== undefined) {
+        clearTimeout(t);
+        timers.delete(id);
+      }
       if (running.has(id)) {
         again.add(id);
         return;
@@ -133,12 +160,18 @@ export function createPeeker(io) {
   const LIMIT = 3;
   /** @type {Map<string, { segment: number, messages: number }>} */
   const have = new Map();
+  /** 已读到的末尾几条，watch 推来的消息接在后面。 @type {Map<string, any[]>} */
+  const tails = new Map();
+  /** @type {Map<string, ReturnType<typeof setTimeout>>} */
+  const soon = new Map();
   /** @type {Map<string, { segment: number, messages: number }>} */
   const queue = new Map();
   /** @type {Set<string>} */
   const titleQueue = new Set();
   /** @type {Set<string>} */
   const titleDone = new Set();
+  /** 等着的那一次要用的最新 self。 @type {Map<string, import("./lib/types.js").Self>} */
+  const latest = new Map();
   let active = 0;
 
   function pump() {
@@ -181,6 +214,7 @@ export function createPeeker(io) {
     }
     if (!ok) return;
     have.set(id, want);
+    tails.set(id, msgs);
     io.onPeek(id, { segment: want.segment, total: want.messages, msgs, lastAt: msgs[msgs.length - 1]?.timestamp ?? null });
   }
 
@@ -203,12 +237,42 @@ export function createPeeker(io) {
   }
 
   return {
-    /** 这个进程的状态变了，需要的话排队读末尾。 @param {import("./lib/types.js").Self} self */
-    note(self) {
+    /**
+     * 这个进程的状态变了，需要的话排队读末尾。`grace` 毫秒：先等一等，那期间 watch 推来的消息（`push`）接得上就不读。
+     * @param {import("./lib/types.js").Self} self @param {number} [grace]
+     */
+    note(self, grace = 0) {
+      if (grace > 0) {
+        if (!soon.has(self.id)) {
+          soon.set(
+            self.id,
+            setTimeout(() => {
+              soon.delete(self.id);
+              const last = latest.get(self.id);
+              if (last) this.note(last);
+            }, grace),
+          );
+        }
+        latest.set(self.id, self);
+        return;
+      }
       const h = have.get(self.id);
       if (h && h.segment === self.segment && h.messages === self.messages) return;
       queue.set(self.id, { segment: self.segment, messages: self.messages });
       pump();
+    },
+    /**
+     * watch 推来一条追加的消息：正好接在已读的末尾后面就并进去，不用再读。新段的第 0 条总是接得上。
+     * @param {string} id @param {{ segment: number, seq: number, message: any }} r
+     */
+    push(id, r) {
+      const h = have.get(id);
+      const prev = h && h.segment === r.segment && h.messages === r.seq ? (tails.get(id) ?? []) : r.seq === 0 && (!h || r.segment > h.segment) ? [] : null;
+      if (prev === null) return;
+      const msgs = [...prev, r.message].slice(-TAIL);
+      have.set(id, { segment: r.segment, messages: r.seq + 1 });
+      tails.set(id, msgs);
+      io.onPeek(id, { segment: r.segment, total: r.seq + 1, msgs, lastAt: r.message.timestamp ?? null });
     },
     /** @param {string} id */
     wantTitle(id) {
@@ -219,7 +283,12 @@ export function createPeeker(io) {
     /** 这个进程已读的结果作废（进程被删）。 @param {string} id */
     forget(id) {
       have.delete(id);
+      tails.delete(id);
       queue.delete(id);
+      latest.delete(id);
+      const t = soon.get(id);
+      if (t !== undefined) clearTimeout(t);
+      soon.delete(id);
     },
   };
 }

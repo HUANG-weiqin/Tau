@@ -3,7 +3,8 @@ import { html, Icon, Pill, Tex, Contour, pad2, useRef, useState, useLayoutEffect
 import { toItems, foldMiddle, forkPoints, turnStart, clipText, phaseStartedAt, describeStart, canHandoff } from "../lib/messages.js";
 import { askRemove } from "./remove.js";
 import { segmentMessages } from "../lib/history.js";
-import { contextPercent, formatClock } from "../lib/format.js";
+import { formatClock } from "../lib/format.js";
+import { rulerOf } from "../lib/derive.js";
 import { Band, FoldRow, Ts, UserRow, HandoffRow, AssistantRow, OrphanRow, LiveRow, HeldRow } from "./messages.js";
 import { Compose } from "./compose.js";
 import { Follower } from "./follow.js";
@@ -19,15 +20,19 @@ function carryNote(ended) {
   return null;
 }
 
-/** 铭牌右边：上下文占窗口几成、段尺。 */
+/** 铭牌右边：上下文占窗口几成、段尺。尺上的刻线是自动换段的阈值，接近它时尺变警告色。 */
 function Ctx({ e, error, segMessages }) {
-  const pct = contextPercent(e.self.context);
+  const { pct, mark, near } = rulerOf(e.self.context, e.frozen?.threshold);
   const full = Math.floor(pct / 10);
   const part = pct % 10 >= 3;
   return html`<div class="ctx">
     <div class="ctx-l"><b>第 ${e.self.segment} 段</b><span>上下文已用</span></div>
     <div class="ctx-n"><span class="num ctx-big">${pct}</span><span class="num ctx-pc">%</span></div>
-    <div class=${`ctx-bar ${error ? "w" : ""}`} role="img" aria-label=${`上下文已用 ${pct}%`}>${Array.from({ length: 10 }, (_, i) => html`<span class=${i < full ? "f" : i === full && part ? "p" : ""}></span>`)}</div>
+    <div class=${`ctx-ruler ${near ? "near" : ""}`}>
+      ${mark !== null && html`<span class=${`ctx-mk ${mark > 55 ? "r" : ""}`} style=${`left:${mark}%`} aria-hidden="true"><span>自动换段</span></span>`}
+      <div class=${`ctx-bar ${error ? "w" : ""}`} role="img" aria-label=${`上下文已用 ${pct}%${mark !== null ? `，自动换段的刻线在 ${mark}%` : ""}${near ? "，快到了" : ""}`}>${Array.from({ length: 10 }, (_, i) => html`<span class=${i < full ? "f" : i === full && part ? "p" : ""}></span>`)}</div>
+      ${mark !== null && html`<span class="ctx-tick" style=${`left:${mark}%`} aria-hidden="true"></span>`}
+    </div>
     <div class="mono ctx-m">这一段 ${segMessages} 条消息</div>
   </div>`;
 }
@@ -110,7 +115,8 @@ function Stream({ app, e }) {
   const segs = Object.keys(h.segs).map(Number).sort((a, b) => a - b);
   const cur = e.self.segment;
   const msgs = segmentMessages(h, cur);
-  const live = app.streamText(e.id);
+  const lv = app.streamLive(e.id);
+  const live = lv?.text ?? "";
   const running = e.status === "running";
   const error = e.status === "error";
   const ended = e.self.phase.tag === "idle" ? e.self.phase.ended : undefined;
@@ -121,7 +127,7 @@ function Stream({ app, e }) {
   const awaiting = e.self.phase.tag === "awaitingModel";
   const liveSeq = awaiting ? e.self.messages : -1;
   const holds = msgs.length < e.self.messages ? pending(e.id, cur, msgs.length, liveSeq) : [];
-  const sig = `${cur}:${msgs.length}:${live.length}:${e.self.phase.tag}`;
+  const sig = `${cur}:${msgs.length}:${live.length}:${lv?.thinking.length ?? 0}:${lv?.argsLen ?? 0}:${e.self.phase.tag}`;
 
   // 跟着末尾走（留白进纸，见 follow.js）：往上翻着读的时候不拽，只提示。
   useLayoutEffect(() => {
@@ -201,7 +207,7 @@ function Stream({ app, e }) {
     for (const r of holds) rows.push(html`<${HeldRow} key=${`held${r.key}`} rec=${r} bar=${!awaiting} />`);
     if (awaiting) {
       const slot = slotKey(e.id, cur, liveSeq);
-      rows.push(html`<${LiveRow} key=${`live${slot}`} app=${app} slot=${slot} text=${live} purpose=${e.self.phase.purpose} since=${phaseStartedAt(msgs, "awaitingModel")} />`);
+      rows.push(html`<${LiveRow} key=${`live${slot}`} app=${app} slot=${slot} text=${live} think=${lv?.thinking ?? ""} args=${lv?.args ?? ""} argsLen=${lv?.argsLen ?? 0} purpose=${e.self.phase.purpose} since=${phaseStartedAt(msgs, "awaitingModel")} />`);
     } else if (holds.length === 0 && msgs.length === 0 && segs.length === 0) rows.push(html`<div class="wide-only"></div><p class="hintp">${running || e.status === "fresh" ? "正在读取消息…" : "这一段还没有消息。"}</p>`);
   }
 

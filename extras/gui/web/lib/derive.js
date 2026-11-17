@@ -49,15 +49,77 @@ export function seenFromInspect(line) {
   if (!snap || typeof snap.workdir !== "string" || !Array.isArray(snap.tools)) return null;
   /** @type {string[]} */
   const tools = [...snap.tools, ...(Array.isArray(snap.toolDefs) ? snap.toolDefs.map((/** @type {any} */ d) => d?.name).filter((/** @type {unknown} */ n) => typeof n === "string") : [])];
+  const threshold = line.limits?.threshold;
   return {
     workdir: snap.workdir,
     tools,
+    ...(Array.isArray(snap.input) ? { input: snap.input.filter((/** @type {unknown} */ x) => typeof x === "string") } : {}),
+    ...(typeof threshold === "number" && threshold > 0 ? { threshold } : {}),
     memory: snap.tools.includes("memory"),
     ...(typeof snap.model === "string" ? { model: snap.model } : {}),
     ...(typeof snap.thinking === "string" ? { thinking: snap.thinking } : {}),
     ...(typeof snap.handoff === "number" ? { handoff: snap.handoff } : {}),
     ...(snap.options !== null && typeof snap.options === "object" && !Array.isArray(snap.options) ? { options: snap.options } : {}),
   };
+}
+
+/** 冻结的模型不收图片：快照里读到了输入类型、并且没有 `image`。读不到就当收（不乱说）。 @param {Frozen | null | undefined} f */
+export function refusesImages(f) {
+  return !!f && Array.isArray(f.input) && !f.input.includes("image");
+}
+
+/** 到换段阈值的这个比例就变警告色。 */
+export const NEAR_RATIO = 0.9;
+
+/**
+ * 段尺：已用占窗口几成（0 到 100，取整）、换段阈值在尺上的位置（没有阈值是 null）、是否接近或超过阈值。
+ * 阈值来自 `inspect` 的 `limits.threshold`。
+ * @param {{ used: number, window: number }} ctx @param {number | undefined} threshold
+ * @returns {{ pct: number, mark: number | null, near: boolean }}
+ */
+export function rulerOf(ctx, threshold) {
+  const ok = ctx.window > 0;
+  const pct = ok ? Math.max(0, Math.min(100, Math.round((ctx.used / ctx.window) * 100))) : 0;
+  const has = ok && typeof threshold === "number" && threshold > 0;
+  return { pct, mark: has ? Math.max(0, Math.min(100, Math.round((threshold / ctx.window) * 100))) : null, near: has && ctx.used >= NEAR_RATIO * threshold };
+}
+
+/** 一封信在列表里的样子：谁寄的、第一行。 @param {any} letter */
+function letterLine(letter) {
+  const from = letter?.from;
+  const content = Array.isArray(letter?.content) ? letter.content : [];
+  const text = content.find((/** @type {any} */ b) => b?.type === "text");
+  const first = typeof text?.text === "string" ? (text.text.split(/\r?\n/).find((/** @type {string} */ l) => l.trim() !== "") ?? "").trim() : "";
+  const images = content.filter((/** @type {any} */ b) => b?.type === "image").length;
+  const who = from?.kind === "process" ? { id: String(from.id), label: `${from.preset} · ${from.id}`, reply: !!from.reply } : { id: null, label: "你", reply: false };
+  return { from: who.label, fromId: who.id, reply: who.reply, first: first || (images > 0 ? "（图片）" : ""), images, hops: Number(letter?.hops ?? 0), handoff: letter?.handoff === true };
+}
+
+/**
+ * 进程的信箱情况，只从 `inspect` 回的原样记录推。
+ * - `queued`：它这一轮里排着的信（`phase.turn.queued`），信本身没有时间，所以不给时间。
+ * - `waitedBy`：等它回信的进程（它这一轮的 `replyTo`，加排队的信里的 `replyTo`）。
+ * - `waitingOn`：它在等的进程：别的进程在跑的一轮里，`replyTo` 或排队的信的 `replyTo` 是它。
+ * 空闲的进程没有排队的信，也没有人在等它。
+ * @param {any[]} records 全部进程记录（`inspect` 每行的 `process`）
+ * @param {string} id
+ * @returns {{ queued: ReturnType<typeof letterLine>[], waitedBy: string[], waitingOn: string[] }}
+ */
+export function mailOf(records, id) {
+  /** @param {any} r @returns {string[]} */
+  const targets = (r) => {
+    const turn = r?.phase?.turn;
+    if (!turn) return [];
+    /** @type {string[]} */
+    const out = Array.isArray(turn.replyTo) ? [...turn.replyTo] : [];
+    for (const l of Array.isArray(turn.queued) ? turn.queued : []) if (typeof l?.replyTo === "string") out.push(l.replyTo);
+    return [...new Set(out)];
+  };
+  const mine = records.find((r) => r?.id === id);
+  const queued = (Array.isArray(mine?.phase?.turn?.queued) ? mine.phase.turn.queued : []).map(letterLine);
+  const waitedBy = targets(mine).filter((x) => x !== id);
+  const waitingOn = records.filter((r) => r?.id !== id && targets(r).includes(id)).map((r) => String(r.id)).sort();
+  return { queued, waitedBy: waitedBy.sort(), waitingOn };
 }
 
 /**

@@ -109,3 +109,19 @@ export function giveUp(h, segment) {
   if (!cur || h.followed === null || segment >= h.followed) return h;
   return { ...h, segs: { ...h.segs, [segment]: { ...cur, sealed: true } } };
 }
+
+/**
+ * `watch` 带 `messages: true` 推来的追加消息。先 `noteSelf`（`update` 总在它前面，段号已经变了的话先记下），
+ * 再只收正好接在后面的一条：已有的（重连后重读和推送重叠）丢掉，跳号的（漏了几条）也丢掉，留给 `plan` 用 `history` 补。
+ * 不认识的段（没读过、已经是旧段之外的）也丢掉。没有变化时返回原对象。
+ * @param {History} h
+ * @param {Self} self 这个进程最新的 self
+ * @param {{ segment: number, seq: number, message: Message }} reply
+ * @returns {History}
+ */
+export function applyPushed(h, self, reply) {
+  const noted = noteSelf(h, self);
+  const cur = noted.segs[reply.segment];
+  if (!cur || reply.seq !== cur.msgs.length) return noted;
+  return { ...noted, segs: { ...noted.segs, [reply.segment]: { ...cur, msgs: [...cur.msgs, reply.message] } } };
+}

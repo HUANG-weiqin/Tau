@@ -3,11 +3,11 @@ import { render } from "preact";
 import { html, useEffect, useState, TipLayer, MenuLayer } from "./ui/common.js";
 import * as api from "./api.js";
 import { createConn, createHistoryReader, createPeeker } from "./conn.js";
-import { emptyStore, reduce, streamingText, childCounts } from "./lib/store.js";
-import { emptyHistory, segmentMessages, lastTimestamp } from "./lib/history.js";
+import { emptyStore, reduce, streamingText, streamingLive, childCounts } from "./lib/store.js";
+import { emptyHistory, segmentMessages, lastTimestamp, applyPushed } from "./lib/history.js";
 import { buildEntries, buildProjects, railSections, projectView, currentOf, attention, seenFromInspect } from "./lib/derive.js";
 import { describeNow, phaseStartedAt, HANDOFF_LETTER } from "./lib/messages.js";
-import { processTitle } from "./lib/titles.js";
+import { processTitle, wantsAutoTitle } from "./lib/titles.js";
 import { stopOrder } from "./lib/order.js";
 import { formatDuration } from "./lib/format.js";
 import * as gs from "./lib/state.js";
@@ -30,6 +30,8 @@ import { ToolsDialog } from "./ui/tools.js";
 import { Notifier } from "./ui/notify.js";
 import { pushRecent } from "./lib/models.js";
 import { ConfirmLayer, confirmOpen } from "./ui/remove.js";
+import { ServiceBanner, StartServiceButton } from "./ui/banner.js";
+import { autoTitle } from "./ui/titlecache.js";
 
 /**
  * 页面上所有模块拿到的唯一对象 `app`。每次渲染重新生成，只读；改东西调用下面的动作。
@@ -79,6 +81,7 @@ import { ConfirmLayer, confirmOpen } from "./ui/remove.js";
  * @property {(id: string) => History} history 这个进程的完整历史缓存（按段）。只有被 `follow` 的进程才读全；没读的是空的。
  * @property {(id: string) => readonly Message[]} messages 这个进程当前段的消息。被 `follow` 的是整段；其它的只有末尾几条。
  * @property {(id: string) => string} streamText 模型正在写的文字（只在等模型时有）。
+ * @property {(id: string) => import("./lib/stream.js").Live | null} streamLive 这一次调用流式推来的正文、思考、工具调用参数（只在等模型时有）。
  * @property {(id: string) => { title: string, note?: string, known: boolean }} titleOf 进程的标题。
  * @property {(e: Entry) => { label: string, tool: string, since: number | null, dur: string, doing: string, endedText: string }} describe 进程此刻在做什么：阶段名（空闲时是上一轮的结束原因）、等工具时的工具名、阶段开始的时刻、已经多久、最后一步的摘要。
  * @property {(id: string) => Entry | null} entryOf
@@ -272,7 +275,8 @@ function noteTitle(id, title) {
     titleTimer = 0;
     const batch = pendingTitles;
     pendingTitles = {};
-    setGui((g) => ({ titles: { ...g.titles, ...batch } }));
+    // 已经自动起过标题的，不拿第一行盖掉。
+    setGui((g) => ({ titles: { ...g.titles, ...Object.fromEntries(Object.entries(batch).filter(([id]) => !g.titled.includes(id))) } }));
   }, 400);
 }
 
@@ -304,8 +308,23 @@ function follow(id) {
   reader.follow(id);
 }
 
+/**
+ * watch 推来的追加消息：并进缓存（只有被 follow 的进程有缓存），也并进别的进程的末尾几条。
+ * 并不进去的（漏了、没读过）不管：缓存比 self.messages 少，reader 到时候用 history 补。
+ * @param {any} r
+ */
+function onPushed(r) {
+  const self = S.store.procs[r.process]?.self;
+  if (!self) return;
+  const h = S.hist[r.process];
+  if (h) S.hist[r.process] = applyPushed(h, self, r);
+  peeker.push(r.process, r);
+  schedule();
+}
+
 /** @param {any} r */
 function onReply(r) {
+  if (r.type === "message" && typeof r.process === "string") return onPushed(r);
   const now = Date.now();
   // 删的是正在看的进程时，主区回到它的项目。先在进程还在表里时算出项目。
   const home = r.type === "removed" && S.route.proc === r.process ? buildEntries(S.store.procs, S.gui, S.snaps).entries.find((e) => e.id === r.process)?.workdir : undefined;
@@ -317,13 +336,14 @@ function onReply(r) {
     S.psFresh = true;
     for (const p of r.processes) S.ever.add(p.self.id);
     for (const id of Object.keys(S.hist)) if (!S.store.procs[id]) delete S.hist[id];
-    for (const p of r.processes) onSelf(p.self);
+    for (const p of r.processes) onSelf(p.self, 0);
     loadSnaps(null);
     const want = S.route.proc;
     if (want && !S.store.procs[want]) setRoute({ proc: null });
   } else if (r.type === "update") {
     S.ever.add(r.self.id);
-    onSelf(r.self);
+    // 同一次推送里紧跟着有这次追加的消息：等一等，推来的接得上就不读 history。
+    onSelf(r.self, PUSH_GRACE);
     if (S.snapsReady && !S.snaps[r.self.id]) loadSnaps(r.self.id);
   }
   else if (r.type === "removed") {
@@ -369,10 +389,13 @@ async function loadSnaps(id) {
   schedule();
 }
 
-/** @param {Self} self */
-function onSelf(self) {
-  peeker.note(self);
-  if (S.followed.includes(self.id)) reader.follow(self.id);
+/** 收到 update 以后等多久再决定要不要读 history，毫秒。watch 带 messages: true，追加的消息和 update 同一次推来。 */
+const PUSH_GRACE = 250;
+
+/** @param {Self} self @param {number} grace */
+function onSelf(self, grace) {
+  peeker.note(self, grace);
+  if (S.followed.includes(self.id)) reader.follow(self.id, grace);
 }
 
 /* ------------------------------------------------------------------ 路由：聚焦的进程或项目，写进地址栏的 # */
@@ -494,6 +517,7 @@ function compute() {
     history: (id) => S.hist[id] ?? emptyHistory(),
     messages: messagesOf,
     streamText: (id) => streamingText(S.store, id),
+    streamLive: (id) => streamingLive(S.store, id),
     titleOf,
     describe: (e) => {
       const msgs = messagesOf(e.id);
@@ -852,6 +876,11 @@ function Root() {
     if (!app.ready) return;
     for (const e of entries) if (e.kind === "temp" && S.gui.titles[e.id] === undefined) peeker.wantTitle(e.id);
   });
+  // 人建的根进程：第一封信到了，让桥起一个标题。每个进程只试一次。
+  useEffect(() => {
+    if (!app.ready || app.status !== "online") return;
+    for (const e of entries) if (wantsAutoTitle(e, S.gui)) autoTitle(app, e);
+  });
   // 聚焦的进程要读全。
   useEffect(() => {
     if (app.focusedId && app.store.procs[app.focusedId]) follow(app.focusedId);
@@ -902,7 +931,8 @@ function Root() {
     <${TipLayer} />
     <${Notifier} app=${app} />
     <${MenuLayer} />
-    ${app.status !== "online" && html`<div class="conn" role="status">${app.status === "connecting" ? "正在连接 tau 服务…" : `和 tau 服务断开了：${S.statusMsg}。正在重连`}</div>`}
+    <${ServiceBanner} app=${app} />
+    ${app.status !== "online" && html`<div class="conn" role="status">${app.status === "connecting" ? "正在连接 tau 服务…" : html`和 tau 服务断开了：${S.statusMsg}。正在重连 <${StartServiceButton} app=${app} />`}</div>`}
     ${S.toastMsg && html`<div class="toast" role="status" key=${S.toastMsg.id}>${S.toastMsg.text}</div>`}
   </div>`;
 }

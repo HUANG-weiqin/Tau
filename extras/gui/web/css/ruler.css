@@ -1,0 +1,20 @@
+/* 段尺：自动换段的刻线和接近时的警告色 */
+.ctx-ruler { position: relative; padding-top: 12px; margin-top: 4px; }
+.ctx-ruler .ctx-bar { margin-top: 0; }
+.ctx-tick { position: absolute; bottom: -3px; width: 2px; height: 16px; margin-left: -1px; background: var(--fg); pointer-events: none; }
+.ctx-mk { position: absolute; top: 0; font-size: 10px; letter-spacing: .1em; line-height: 1; color: var(--fg2); white-space: nowrap; transform: translateX(-1px); pointer-events: none; }
+.ctx-mk.r { transform: translateX(calc(-100% + 1px)); }
+.ctx-ruler.near .ctx-bar span.f, .ctx-ruler.near .ctx-bar span.p { background: var(--warn); }
+.ctx-ruler.near .ctx-mk { color: var(--warn); }
+.ctx-ruler.near .ctx-tick { background: var(--warn); }
+.seg-mid { position: relative; display: block; padding-top: 12px; }
+.seg.cur .ctx-mk { top: 0; }
+.seg-bar > span.seg-tick.seg-tick { position: absolute; top: 0; bottom: 0; width: 2px; height: auto; margin-left: -1px; background: var(--fg); transition: none; }
+.seg.near .seg-bar > span:not(.tx):not(.seg-tick) { background: var(--warn); }
+.seg.near .seg-bar > span.seg-tick.seg-tick { background: var(--warn); }
+.seg.near .ctx-mk { color: var(--warn); }
+.imail { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.imail li { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12px; }
+.imail-f { flex: none; font-size: 11px; color: var(--fg2); }
+.imail-t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.imail-w { display: inline-block; margin-right: 10px; }

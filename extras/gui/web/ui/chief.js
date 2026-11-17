@@ -3,13 +3,17 @@ import { html, Popover, Icon, Lamp, Fragment, useState, useRef, useEffect, useLa
 import * as api from "../api.js";
 import * as gs from "../lib/state.js";
 import { toItems, clipText, canHandoff } from "../lib/messages.js";
-import { attention } from "../lib/derive.js";
+import { attention, refusesImages } from "../lib/derive.js";
+import { findModel } from "../lib/models.js";
+import { useAttach, AttachBar, Thumbs } from "./attach.js";
 import { Typer, claim, pending, slotKey } from "./typer.js";
 import { Markdown } from "./mdview.js";
 import { Follower } from "./follow.js";
 
 /** 草稿记着，关掉再开还在。 */
 let draft = "";
+/** 草稿里的图片。 @type {import("./attach.js").Pic[]} */
+let draftImages = [];
 /** 点了“稍后”的条目，这次打开页面期间不再显示。 @type {Set<string>} */
 const later = new Set();
 /** 对话里最多先显示几条，更早的点开看。 */
@@ -224,18 +228,24 @@ function Picker({ app, onDone }) {
 function ComposeBox({ app, chiefId, e, target }) {
   const [text, setText] = useState(draft);
   const [withTarget, setWithTarget] = useState(true);
+  const [images, setImages] = useState(draftImages);
+  const at = useAttach(images, setImages);
   const [busy, setBusy] = useState(false);
   const area = useRef(/** @type {HTMLTextAreaElement | null} */ (null));
   useEffect(() => {
     draft = text;
-  }, [text]);
+    draftImages = images;
+  }, [text, images]);
   useLayoutEffect(() => {
     const a = area.current;
     if (!a) return;
     a.style.height = "auto";
     a.style.height = Math.min(a.scrollHeight, 150) + "px";
   }, [text]);
-  const can = text.trim() !== "" && !busy;
+  const can = (text.trim() !== "" || images.length > 0) && !busy && at.busy === 0;
+  const imgs = images.map((i) => i.data);
+  const model = chiefId ? app.presets[chiefId] : undefined;
+  const noImage = e ? refusesImages(e.frozen) : model && model.ok ? findModel(app.models?.providers, model.model)?.model.image === false : false;
 
   const send = async () => {
     if (!can) return;
@@ -243,12 +253,12 @@ function ComposeBox({ app, chiefId, e, target }) {
     try {
       const body = target && withTarget ? `在看 ${target.text}\n${text}` : text;
       if (e) {
-        await app.send(e.id, body);
+        await app.send(e.id, body, imgs);
         if (app.gui.current[chiefId] !== e.id) await app.makeCurrent(chiefId, e.id);
       } else {
         // 还没有总管的进程：这一封信就是它的第一封信。不走 app.start，免得把主区切到总管上。
         try {
-          const r = await api.tauCommand({ op: "start", preset: chiefId, text: body });
+          const r = await api.tauCommand({ op: "start", preset: chiefId, text: body, ...(imgs.length ? { images: imgs } : {}) });
           const pid = r.process ?? "";
           if (!pid) throw new Error("服务没有回进程 ID");
           await app.setGui((g) => ({ ...gs.addMine(g, pid), ...gs.setCurrent(g, chiefId, pid) }));
@@ -259,7 +269,9 @@ function ComposeBox({ app, chiefId, e, target }) {
         }
       }
       setText("");
+      setImages([]);
       draft = "";
+      draftImages = [];
     } catch {
       // 提示已经弹了，草稿留着。
     } finally {
@@ -267,7 +279,7 @@ function ComposeBox({ app, chiefId, e, target }) {
     }
   };
 
-  return html`<form class="ch-form" onSubmit=${(/** @type {Event} */ ev) => { ev.preventDefault(); send(); }}>
+  return html`<form class=${`ch-form ${at.over ? "over" : ""}`} ...${at.drop} onSubmit=${(/** @type {Event} */ ev) => { ev.preventDefault(); send(); }}>
     <div class="ch-tgt">
       ${target
         ? html`<span>当前在看</span>
@@ -276,10 +288,11 @@ function ComposeBox({ app, chiefId, e, target }) {
             <span>${withTarget ? "，你说的话会带上它" : "，这封信不带它"}</span>`
         : html`<span>现在没有在看的对象，信里不加“在看”。</span>`}
     </div>
+    <${Thumbs} images=${images} class="ch-thumbs" onRemove=${(/** @type {number} */ i) => setImages(images.filter((_, j) => j !== i))} />
     <div class="ch-row">
       <label for="chief-input" class="sr">对总管说</label>
       <textarea id="chief-input" ref=${area} rows="1" autofocus class="ch-in" value=${text} placeholder=${e ? "对总管说…（Ctrl+Enter 寄出）" : "对总管说第一句话…（Ctrl+Enter 寄出）"}
-        onInput=${(/** @type {any} */ ev) => setText(ev.currentTarget.value)}
+        onInput=${(/** @type {any} */ ev) => setText(ev.currentTarget.value)} onPaste=${at.onPaste}
         onKeyDown=${(/** @type {KeyboardEvent} */ ev) => {
           if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
             ev.preventDefault();
@@ -288,6 +301,7 @@ function ComposeBox({ app, chiefId, e, target }) {
         }}></textarea>
       <button type="submit" class="ch-go" aria-label=${busy ? "寄出中" : "寄出"} title="Ctrl+Enter" disabled=${!can}><${Icon} name="arrow" size=${20} sw=${2.8} /></button>
     </div>
+    <${AttachBar} at=${at} count=${images.length} noImage=${!!noImage} />
   </form>`;
 }
 

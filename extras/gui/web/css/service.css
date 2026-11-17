@@ -1,0 +1,7 @@
+/* 旧代码横幅：详情栏的底部（那里一般是空的），让开右边的页签栏，不挡操作。 */
+.svc { position: fixed; z-index: 90; right: 64px; bottom: 14px; max-width: min(300px, calc(100vw - 28px)); display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 6px 12px; background: var(--ink); color: var(--fg); box-shadow: inset 3px 0 0 var(--warn); font-size: 12px; }
+.svc.ask { box-shadow: inset 3px 0 0 var(--warn), 0 0 0 1px var(--warn); }
+/* 详情栏挪到下面以后（见 inspector.css），横幅改成贴底的一整条，不浮在按钮上。 */
+@media (max-width: 1179px) { .svc { left: 0; right: 0; bottom: 0; max-width: none; padding: 8px 16px; } }
+.svc .link { font-weight: 900; }
+.conn .link { color: var(--ink); text-decoration: underline; font-weight: 900; }

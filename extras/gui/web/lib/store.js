@@ -2,13 +2,15 @@
 // 线协议回复的 reducer。不读时钟：时间由调用方传入。
 /** @typedef {import("./types.js").Self} Self */
 /** @typedef {import("./types.js").Reply} Reply */
+/** @typedef {import("./stream.js").Live} Live */
+import { appendDelta } from "./stream.js";
 
 /**
  * 一个进程在页面里的记录。`createdAt` 和 `segmentStartedAt` 是按页面的时钟推算的：
  * 投影只给时长，不给时刻，服务的时钟和页面的可能不同。
  * @typedef {{ self: Self, createdAt: number, segmentStartedAt: number | null, seenAt: number }} ProcRecord
  */
-/** @typedef {{ procs: Record<string, ProcRecord>, text: Record<string, { n: number, text: string }> }} Store */
+/** @typedef {{ procs: Record<string, ProcRecord>, text: Record<string, Live> }} Store */
 
 /** @returns {Store} */
 export function emptyStore() {
@@ -65,10 +67,10 @@ export function reduce(store, reply, clientNow) {
       return { procs: omit(store.procs, reply.process), text: omit(store.text, reply.process) };
     }
     case "text": {
+      // 按 kind 分开存、编号的规则见 lib/stream.js。
       const cur = store.text[reply.process];
-      // 编号变大：新的一次调用，从头来；变小：过时的，丢掉。
-      if (cur && reply.n < cur.n) return store;
-      const next = cur && cur.n === reply.n ? { n: cur.n, text: cur.text + reply.delta } : { n: reply.n, text: reply.delta };
+      const next = appendDelta(cur, reply);
+      if (next === cur || !next) return store;
       return { procs: store.procs, text: { ...store.text, [reply.process]: next } };
     }
     default:
@@ -86,6 +88,18 @@ export function streamingText(store, id) {
   const p = store.procs[id];
   if (!p || p.self.phase.tag !== "awaitingModel") return "";
   return store.text[id]?.text ?? "";
+}
+
+/**
+ * 正在流式输出的全部三种内容：正文、思考、工具调用参数。进程不在等模型时是 null。
+ * @param {Store} store
+ * @param {string} id
+ * @returns {Live | null}
+ */
+export function streamingLive(store, id) {
+  const p = store.procs[id];
+  if (!p || p.self.phase.tag !== "awaitingModel") return null;
+  return store.text[id] ?? null;
 }
 
 /**

@@ -3,6 +3,7 @@
 /** @typedef {import("./types.js").Message} Message */
 /** @typedef {import("./types.js").Ended} Ended */
 /** @typedef {import("./types.js").PhaseView} PhaseView */
+import { plainFirstLine } from "./plain.js";
 
 /** 新段第一条消息的开头和带过来的用户消息前的一行（`src/kernel/context.ts`）：只用来切出交接说明和带过来的消息。 */
 export const HANDOFF_HEADER = "（这是你在上一个工作段结束时写的交接说明。）\n\n";
@@ -255,7 +256,7 @@ export function describeNow(messages) {
       const s = summarizeCall(call.name, call.arguments);
       return s === "" ? call.name : `${call.name} ${s}`;
     }
-    return clipText(firstLine(m.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("")), 80);
+    return clipText(plainFirstLine(m.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("")), 80);
   }
   return "";
 }

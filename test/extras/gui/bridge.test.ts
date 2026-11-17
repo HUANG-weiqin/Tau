@@ -354,11 +354,11 @@ test("转发：inspect 读到进程冻结的快照，预设文件之后改了也
   s.faux.setResponses([fauxAssistantMessage(fauxText("好"))]);
   const id: string = lines(await post(s.port, "/api/tau", { op: "start", preset: "p", text: "hi" }))[0].process;
   const before = lines(await post(s.port, "/api/tau", { op: "inspect", process: id }));
-  assert.deepEqual(seenFromInspect(before[0]), { workdir: s.work, tools: ["read"], memory: false, model: s.model });
+  assert.deepEqual(seenFromInspect(before[0]), { workdir: s.work, tools: ["read"], input: before[0].process.preset.input, threshold: before[0].limits.threshold, memory: false, model: s.model });
   // 预设文件改了：新进程读到新的，老进程的快照不变。
   writeFileSync(join(s.home, "presets", "p.md"), `---\nworkdir: ${s.home}\nmodel: ${s.model}\ntools: read, memory\n---\n新的。\n`);
   const all = lines(await post(s.port, "/api/tau", { op: "inspect" }));
-  assert.deepEqual(seenFromInspect(all[0]), { workdir: s.work, tools: ["read"], memory: false, model: s.model });
+  assert.deepEqual(seenFromInspect(all[0]), { workdir: s.work, tools: ["read"], input: all[0].process.preset.input, threshold: all[0].limits.threshold, memory: false, model: s.model });
   assert.equal(all.at(-1).type, "inspected");
   assert.deepEqual((await post(s.port, "/api/presets", {})).json.presets[0].tools, ["read", "memory"]);
 });

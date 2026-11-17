@@ -5,7 +5,8 @@
 import { html, Icon, Tex, useEffect, useRef, useState, Fragment } from "./common.js";
 import * as api from "../api.js";
 import { known } from "../lib/history.js";
-import { contextPercent, formatAgo } from "../lib/format.js";
+import { formatAgo } from "../lib/format.js";
+import { mailOf, rulerOf } from "../lib/derive.js";
 import { pathKey } from "../lib/state.js";
 
 const PROC_TABS = [
@@ -107,10 +108,10 @@ function Waiting({ st, what }) {
 /* ------------------------------------------------------------------ 概况 */
 
 /** 前面每段在哪换的：换段的内核不记当时占了多少，所以只写“换段”和已读到的条数。 */
-function SegmentRuler({ app, id, self }) {
+function SegmentRuler({ app, id, self, threshold }) {
   const hist = app.history(id);
   const cur = self.segment;
-  const pct = contextPercent(self.context);
+  const { pct, mark, near } = rulerOf(self.context, threshold);
   // 段很多时只列最近几段。
   const from = Math.max(1, cur - 6);
   /** @type {number[]} */
@@ -123,12 +124,48 @@ function SegmentRuler({ app, id, self }) {
       const n = known(hist, s);
       return html`<div class="seg"><span class="seg-n dim">段 ${s}</span><span class="seg-bar done" aria-hidden="true"><span class="tx hatch-bar"></span></span><span class="mono seg-r dim">${n > 0 ? `${n} 条 · ` : ""}换段</span></div>`;
     })}
-    <div class="seg" aria-label=${`当前段，上下文占 ${pct}%`}><span class="seg-n now">段 ${cur}</span><span class="seg-bar" aria-hidden="true"><span style=${`width:${pct}%`}></span></span><span class="mono seg-r now">${pct}% 当前</span></div>
+    <div class=${`seg cur ${near ? "near" : ""}`} aria-label=${`当前段，上下文占 ${pct}%${mark !== null ? `，自动换段的刻线在 ${mark}%` : ""}${near ? "，快到了" : ""}`}>
+      <span class="seg-n now">段 ${cur}</span>
+      <span class="seg-mid">
+        ${mark !== null && html`<span class=${`ctx-mk ${mark > 55 ? "r" : ""}`} style=${`left:${mark}%`} aria-hidden="true"><span>自动换段</span></span>`}
+        <span class="seg-bar" aria-hidden="true"><span style=${`width:${pct}%`}></span>${mark !== null && html`<span class="seg-tick" style=${`left:${mark}%`}></span>`}</span>
+      </span>
+      <span class="mono seg-r now">${pct}% 当前</span>
+    </div>
+  </section>`;
+}
+
+/** 一个进程在列表里的名字：预设 ID · 进程 ID。 @param {any[]} records @param {string} id */
+function procTag(records, id) {
+  const r = records.find((x) => x?.id === id);
+  return r?.preset?.id ? `${r.preset.id} · ${id}` : id;
+}
+
+/** 信箱：排队的信、谁在等它回信、它在等谁。全从 `inspect` 的记录推；信本身不记时间，所以不显示时间。 */
+function Mailbox({ records, id }) {
+  const m = mailOf(records, id);
+  if (m.queued.length === 0 && m.waitedBy.length === 0 && m.waitingOn.length === 0) return null;
+  return html`<section class="isection">
+    <${Sec} zh="信箱" en="MAILBOX" right=${m.queued.length > 0 ? `${m.queued.length} 封排队` : null} />
+    ${m.queued.length > 0 && html`<ul class="imail">
+      ${m.queued.map((l) => html`<li><span class="imail-f mono">${l.from}</span>${l.reply ? html`<span class="tag line">回信</span>` : null}${l.handoff ? html`<span class="tag line">换段信</span>` : null}<span class="imail-t" title=${l.first}>${l.first}</span>${l.images > 0 ? html`<span class="mono dim">${l.images} 图</span>` : null}</li>`)}
+    </ul>`}
+    ${m.queued.length > 0 && html`<p class="inote">排队的信在下一个安全点并进这一轮。只能看，不能撤回。</p>`}
+    ${(m.waitedBy.length > 0 || m.waitingOn.length > 0) && html`<dl class="ikv">
+      ${m.waitedBy.length > 0 && html`<${Fragment}><dt>等它回信</dt><dd>${m.waitedBy.map((x) => html`<span class="mono imail-w">${procTag(records, x)}</span>`)}</dd></${Fragment}>`}
+      ${m.waitingOn.length > 0 && html`<${Fragment}><dt>它在等</dt><dd>${m.waitingOn.map((x) => html`<span class="mono imail-w">${procTag(records, x)}</span>`)}</dd></${Fragment}>`}
+    </dl>`}
   </section>`;
 }
 
 function ProcOverview({ app }) {
   const id = app.focusedId;
+  // 读全部进程记录。它的阶段、排队数、消息数变了就马上再读一次。
+  const cur = id !== null ? app.store.procs[id]?.self : undefined;
+  const ph0 = cur?.phase;
+  const inspected = usePoll(id !== null ? `inspect:${id}` : null, () => api.tauAll({ op: "inspect" }), POLL_MS, cur ? `${ph0?.tag}:${ph0 && ph0.tag !== "idle" ? ph0.queued : 0}:${cur.messages}` : null);
+  /** @type {any[]} */
+  const records = Array.isArray(inspected.value) ? inspected.value.filter((/** @type {any} */ x) => x?.type === "process").map((/** @type {any} */ x) => x.process) : [];
   if (id === null) return html`<${Note}>没有聚焦的进程。<//>`;
   const entry = app.focused ?? app.entryOf(id);
   const self = app.store.procs[id]?.self ?? entry?.self;
@@ -150,7 +187,8 @@ function ProcOverview({ app }) {
       ]}
     />
     <div class="ibody">
-      <${SegmentRuler} app=${app} id=${id} self=${self} />
+      <${SegmentRuler} app=${app} id=${id} self=${self} threshold=${frozen?.threshold} />
+      <${Mailbox} records=${records} id=${id} />
       <section class="isection">
         <${Sec} zh="预设快照" en="PRESET" />
         <dl class="ikv">

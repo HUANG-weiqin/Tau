@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { activityAt, applyFilter, attention, buildEntries, buildProjects, classify, currentOf, filterCounts, indexPresets, projectView, railSections, seenFromInspect } from "../../../extras/gui/web/lib/derive.js";
 import { formatAgo, formatBytes, formatClock, formatContext, formatDuration, formatElapsed } from "../../../extras/gui/web/lib/format.js";
-import { applyEnd, applyMessage, emptyHistory, giveUp, known, lastTimestamp, noteSelf, plan, segmentMessages } from "../../../extras/gui/web/lib/history.js";
+import { applyEnd, applyMessage, applyPushed, emptyHistory, giveUp, known, lastTimestamp, noteSelf, plan, segmentMessages } from "../../../extras/gui/web/lib/history.js";
 import { canHandoff, CARRY_HEADER, describeNow, describeStart, foldMiddle, forkPoints, HANDOFF_HEADER, parseUser, phaseStartedAt, summarizeCall, toItems, turnStart } from "../../../extras/gui/web/lib/messages.js";
 import { cleanPlan, stopOrder } from "../../../extras/gui/web/lib/order.js";
 import { removePlan, skippedFor } from "../../../extras/gui/web/lib/remove.js";
 import { addFork, movePinned, normalizeState, pathKey, pinFolder, prunePatch, setCurrent } from "../../../extras/gui/web/lib/state.js";
-import { allProcs, childCounts, emptyStore, reduce, streamingText } from "../../../extras/gui/web/lib/store.js";
+import { allProcs, childCounts, emptyStore, reduce, streamingLive, streamingText } from "../../../extras/gui/web/lib/store.js";
 import { extractTitle, processTitle } from "../../../extras/gui/web/lib/titles.js";
+import { appendDelta, argsPreview, ARGS_KEEP, tailLines } from "../../../extras/gui/web/lib/stream.js";
 import { newPace, paceArrive, paceStep } from "../../../extras/gui/web/lib/pace.js";
 import { buildCreate, buildUpdate, defaultModelRef, filterCatalog, findModel, formatWindow, keyHint, keyLabel, modelPatch, nearestLevel, parseOptions, pushRecent, recentEntries, sortProviders, splitModel } from "../../../extras/gui/web/lib/models.js";
 import { markdownToHtml, safeHref } from "../../../extras/gui/web/lib/markdown.js";
@@ -1194,4 +1195,84 @@ test("notify: 新结果在前台聚焦时清掉，页面不在前台不清，进
 test("notify: 标题的数是待你看和新结果去重后的进程数", () => {
   assert.equal(unseenCount(["a", "b"], new Set(["b", "c"])), 3);
   assert.equal(unseenCount([], new Set()), 0);
+});
+
+test("stream: 按 kind 分开存，正文照旧，编号的规则不变", () => {
+  const running = { tag: "awaitingModel", steps: 1, purpose: "turn" } as Self["phase"];
+  let s = reduce(emptyStore(), { type: "ps", processes: [proj(self("a", { phase: running }))] }, NOW);
+  s = reduce(s, { type: "text", process: "a", n: 4, delta: "嗯", kind: "thinking" }, NOW);
+  s = reduce(s, { type: "text", process: "a", n: 4, delta: "，先看看", kind: "thinking" }, NOW);
+  s = reduce(s, { type: "text", process: "a", n: 4, delta: "你好" }, NOW);
+  s = reduce(s, { type: "text", process: "a", n: 4, delta: '{"command":', kind: "toolCall" }, NOW);
+  assert.deepEqual(streamingLive(s, "a"), { n: 4, text: "你好", thinking: "嗯，先看看", args: '{"command":', argsLen: 11 });
+  assert.equal(streamingText(s, "a"), "你好");
+  // 新编号：三样一起从头来；旧编号的思考丢掉。
+  s = reduce(s, { type: "text", process: "a", n: 5, delta: "新", kind: "thinking" }, NOW);
+  assert.deepEqual(streamingLive(s, "a"), { n: 5, text: "", thinking: "新", args: "", argsLen: 0 });
+  assert.equal(reduce(s, { type: "text", process: "a", n: 4, delta: "旧", kind: "thinking" }, NOW), s);
+  // 不认识的 kind 不当成正文。
+  assert.equal(appendDelta(undefined, { n: 1, delta: "x", kind: "other" }), undefined);
+  assert.equal(appendDelta(streamingLive(s, "a")!, { n: 5, delta: "x", kind: "other" })!.text, "");
+  // 离开等模型：全清。
+  s = reduce(s, { type: "update", self: self("a", { phase: { tag: "awaitingTool", steps: 1, queued: 0 } as Self["phase"] }) }, NOW);
+  assert.equal(streamingLive(s, "a"), null);
+  assert.equal(s.text["a"], undefined);
+});
+
+test("stream: 参数只存尾巴，总字数另记；预览压成一行", () => {
+  let l = appendDelta(undefined, { n: 1, delta: "a".repeat(ARGS_KEEP), kind: "toolCall" })!;
+  l = appendDelta(l, { n: 1, delta: "b".repeat(10), kind: "toolCall" })!;
+  assert.equal(l.args.length, ARGS_KEEP);
+  assert.equal(l.args.endsWith("bbbbbbbbbb"), true);
+  assert.equal(l.argsLen, ARGS_KEEP + 10);
+  assert.equal(argsPreview('{\n  "a":  1\n}', 50), '{ "a": 1 }');
+  assert.equal(argsPreview("一二三四五六", 3), "…四五六");
+});
+
+test("stream: tailLines 留最后几行，末尾空行不算", () => {
+  assert.deepEqual(tailLines("a\nb\nc\n\n", 5), { text: "a\nb\nc", hidden: 0 });
+  assert.deepEqual(tailLines("1\n2\n3\n4\n5", 2), { text: "4\n5", hidden: 3 });
+});
+
+test("history: watch 推来的消息接在后面，重复和跳号的丢掉，换段从 0 起", () => {
+  const s1 = self("a", { segment: 1, messages: 3 });
+  let h = noteSelf(emptyHistory(), s1);
+  h = feed(h, 1, 0, 2);
+  // 正好接上。
+  h = applyPushed(h, s1, { segment: 1, seq: 2, message: user("m1-2", 2) });
+  assert.equal(known(h, 1), 3);
+  // 重复（重连后重读和推送重叠）：不变，不覆盖。
+  const same = applyPushed(h, s1, { segment: 1, seq: 1, message: user("改", 9) });
+  assert.equal(segmentMessages(same, 1)[1]!.timestamp, 1);
+  // 跳号：不收，缓存比 self.messages 少，plan 会用 history 补。
+  const s2 = self("a", { segment: 1, messages: 6 });
+  h = applyPushed(h, s2, { segment: 1, seq: 5, message: user("跳", 5) });
+  assert.equal(known(h, 1), 3);
+  assert.deepEqual(plan(h, s2), { segment: 1, from: 3, sealed: false });
+  // 补上以后，推送接着来。
+  h = feed(h, 1, 3, 2);
+  h = applyPushed(h, s2, { segment: 1, seq: 5, message: user("m1-5", 5) });
+  assert.equal(known(h, 1), 6);
+  // 换段：update 先到（段号变了），新段的消息从 0 起；旧段留给 plan 读完。
+  const s3 = self("a", { segment: 2, messages: 1 });
+  h = applyPushed(h, s3, { segment: 2, seq: 0, message: user("新段", 7) });
+  assert.equal(known(h, 2), 1);
+  assert.deepEqual(plan(h, s3), { segment: 1, from: 6, sealed: true });
+  // 没读过的段：不收。
+  assert.equal(known(applyPushed(h, s3, { segment: 9, seq: 0, message: user("x", 1) }), 9), 0);
+});
+
+test("peeker: watch 推来的消息接在末尾后面，不再读 history；跳号的不收", async () => {
+  const { createPeeker } = await import("../../../extras/gui/web/conn.js");
+  const got: { segment: number; total: number; n: number }[] = [];
+  const p = createPeeker({ onPeek: (_id: string, v: any) => got.push({ segment: v.segment, total: v.total, n: v.msgs.length }), onTitle: () => {} });
+  p.push("a", { segment: 1, seq: 3, message: user("跳", 1) });
+  assert.equal(got.length, 0);
+  for (let i = 0; i < 8; i++) p.push("a", { segment: 1, seq: i, message: user(`m${i}`, i) });
+  assert.deepEqual(got.at(-1), { segment: 1, total: 8, n: 6 });
+  p.push("a", { segment: 1, seq: 8, message: user("m8", 8) });
+  assert.equal(got.at(-1)!.total, 9);
+  p.push("a", { segment: 2, seq: 0, message: user("新段", 9) });
+  assert.deepEqual(got.at(-1), { segment: 2, total: 1, n: 1 });
+  p.forget("a");
 });

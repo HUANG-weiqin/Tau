@@ -1,9 +1,10 @@
 // 消息流里的条目：换段带、交接说明、来信、助手的话、工具调用。
 // 每个条目是网格里的两格：左边时间戳，右边内容；整行的带跨两列。
-import { html, Icon, Thumb, clockS, useState, useEffect, Fragment } from "./common.js";
+import { html, Icon, Thumb, clockS, useState, useEffect, useLayoutEffect, useRef, Fragment } from "./common.js";
 import { Typer, claim, release } from "./typer.js";
 import { Markdown } from "./mdview.js";
 import { formatClock, formatBytes, formatElapsed } from "../lib/format.js";
+import { tailLines, argsPreview } from "../lib/stream.js";
 
 /** 左边的时间戳，窄屏隐藏。 */
 export function Ts({ ts, app, pad = 9, children }) {
@@ -147,12 +148,62 @@ export function OrphanRow({ app, item }) {
     <ul class="calls"><li class="call ok"><div class="chead"><span class="clabel"><span class="cl">${item.name.toUpperCase()}</span></span><span class="cbody"><span class="csum">${item.result.summary}</span><span class="cr dim">没有对应的调用</span></span></div></li></ul>`;
 }
 
-/** 模型正在写的文字：字在上，工作条在字的下面，像出纸口。`slot` 是这段字将来那条消息的记录键。 */
-export function LiveRow({ app, slot, text, purpose, since }) {
-  const doing = purpose === "handoff" ? "在写交接说明" : text === "" ? "在想" : "在写";
+/** 思考块收起时留最后几行。 */
+const THINK_LINES = 6;
+/** 工具调用参数的预览留最后这么多字。 */
+const ARGS_CHARS = 220;
+/** 一步写完、那条消息还没读到时，留住这一步的思考，免得思考块先消失再出现。 @type {Map<string, { text: string, at: number }>} */
+const thoughts = new Map();
+
+/** @param {string} slot @param {string} text */
+function holdThought(slot, text) {
+  const now = performance.now();
+  for (const [k, v] of thoughts) if (now - v.at > 10000) thoughts.delete(k);
+  thoughts.set(slot, { text, at: now });
+}
+
+/**
+ * 模型正在想：暗色小字，边到边显示。收起时只留最后几行，贴着底；展开后能滚，新字来了跟到底（往上滚着读时不拽）。
+ * @param {{ text: string }} p
+ */
+function ThinkLive({ text }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef(/** @type {HTMLElement | null} */ (null));
+  const near = useRef(true);
+  const tail = open ? { text, hidden: 0 } : tailLines(text, THINK_LINES);
+  useLayoutEffect(() => {
+    const n = box.current;
+    if (n && open && near.current) n.scrollTop = n.scrollHeight;
+  }, [text, open]);
+  return html`<div class="thinkl" role="status">
+    <div class="tl-h"><span class="tl-k">思考中</span><span class="mono dim">${Array.from(text).length} 字</span>
+      <button type="button" class="link" aria-expanded=${open} onClick=${() => setOpen(!open)}>${open ? "收起" : tail.hidden > 0 ? `展开（还有 ${tail.hidden} 行）` : "展开"}<${Icon} name=${open ? "up" : "down"} size=${12} sw=${2.8} /></button></div>
+    <div class=${`tl-b ${open ? "open" : ""}`} ref=${box} onScroll=${(/** @type {any} */ e) => (near.current = e.target.scrollHeight - e.target.scrollTop - e.target.clientHeight < 24)}><pre>${tail.text}</pre></div>
+  </div>`;
+}
+
+/** 工具调用的参数正在长出来：只有 JSON 片段，没有工具名。等宽，一行，留最后一截。 @param {{ args: string, len: number }} p */
+function ArgsLive({ args, len }) {
+  return html`<div class="argl" role="status"><span class="tl-k">工具调用</span><span class="mono dim">参数 ${len} 字</span><code>${argsPreview(args, ARGS_CHARS)}</code></div>`;
+}
+
+/** 写完了、消息还没读到的思考：已经是收起的样子。 @param {{ text: string }} p */
+function ThoughtHeld({ text }) {
+  return html`<details class="think"><summary>思考 · ${Array.from(text).length} 字</summary><p>${text}</p></details>`;
+}
+
+/**
+ * 模型正在写的文字：思考在最上，正文在中间，工具调用参数在正文下面，工作条在最下面，像出纸口。
+ * `slot` 是这段字将来那条消息的记录键。`think`、`args` 是这一次调用流式推来的思考和工具调用参数。
+ */
+export function LiveRow({ app, slot, text, think = "", args = "", argsLen = 0, purpose, since }) {
+  const doing = purpose === "handoff" ? "在写交接说明" : text === "" ? (args !== "" ? "在写工具调用" : "在想") : "在写";
+  if (think.trim() !== "") holdThought(slot, think);
   return html`<div class="ts wide-only live"><span class="tag">现在</span><span class="tick" aria-hidden="true"></span></div>
     <div class="abox">
+      ${think.trim() !== "" && html`<${ThinkLive} text=${think} />`}
       <${Typer} text=${text} live=${true} slot=${slot} />
+      ${args !== "" && html`<${ArgsLive} args=${args} len=${argsLen} />`}
       <div class="working" role="status"><${Working} text=${"模型" + doing} secs=${since === null ? "" : formatElapsed(app.now - app.clock(since))} /></div>
     </div>`;
 }
@@ -165,8 +216,10 @@ export function LiveRow({ app, slot, text, purpose, since }) {
 export function HeldRow({ rec, bar }) {
   const [claimed] = useState(() => claim(rec.key, rec.text));
   rec.bar = bar;
+  const th = thoughts.get(rec.key);
   return html`<div class="ts wide-only live"><span class="tag">现在</span><span class="tick" aria-hidden="true"></span></div>
     <div class="abox">
+      ${th && html`<${ThoughtHeld} text=${th.text} />`}
       <${Typer} text=${rec.text} claimed=${claimed} />
       ${bar && html`<div class="working" role="status"><${Working} text="模型在写" /></div>`}
     </div>`;
