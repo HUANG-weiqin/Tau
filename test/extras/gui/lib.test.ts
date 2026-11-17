@@ -478,20 +478,20 @@ test("order: 清理计划，当前进程不删，有挡路的孩子就删不了�
   const old = NOW - 10 * DAY;
   const lastAt: Record<string, number> = {};
   const list = [
-    self("t-old", { preset: "tmp", phase: doneIdle }),
-    self("t-new", { preset: "tmp", phase: doneIdle }),
-    self("t-parent", { preset: "tmp", phase: doneIdle }), // 孩子在跑
-    self("t-kid", { preset: "tmp", phase: running, parent: "t-parent" }),
-    self("t-p2", { preset: "tmp", phase: doneIdle }), // 孩子也是候选
-    self("t-k2", { preset: "tmp", phase: doneIdle, parent: "t-p2" }),
-    self("t-g", { preset: "tmp", phase: doneIdle }), // 祖父，孙子不够旧
-    self("t-m", { preset: "tmp", phase: doneIdle, parent: "t-g" }),
-    self("t-s", { preset: "tmp", phase: doneIdle, parent: "t-m" }),
-    self("d-cur", { preset: "dev", phase: doneIdle }),
-    self("d-old", { preset: "dev", phase: doneIdle }),
-    self("d-run", { preset: "dev", phase: running }),
-    self("c-old", { preset: "boss", phase: doneIdle }),
-    self("c-cur", { preset: "boss", phase: doneIdle }),
+    self("t-old", { age: 20 * DAY, preset: "tmp", phase: doneIdle }),
+    self("t-new", { age: 20 * DAY, preset: "tmp", phase: doneIdle }),
+    self("t-parent", { age: 20 * DAY, preset: "tmp", phase: doneIdle }), // 孩子在跑
+    self("t-kid", { age: 20 * DAY, preset: "tmp", phase: running, parent: "t-parent" }),
+    self("t-p2", { age: 20 * DAY, preset: "tmp", phase: doneIdle }), // 孩子也是候选
+    self("t-k2", { age: 20 * DAY, preset: "tmp", phase: doneIdle, parent: "t-p2" }),
+    self("t-g", { age: 20 * DAY, preset: "tmp", phase: doneIdle }), // 祖父，孙子不够旧
+    self("t-m", { age: 20 * DAY, preset: "tmp", phase: doneIdle, parent: "t-g" }),
+    self("t-s", { age: 20 * DAY, preset: "tmp", phase: doneIdle, parent: "t-m" }),
+    self("d-cur", { age: 20 * DAY, preset: "dev", phase: doneIdle }),
+    self("d-old", { age: 20 * DAY, preset: "dev", phase: doneIdle }),
+    self("d-run", { age: 20 * DAY, preset: "dev", phase: running }),
+    self("c-old", { age: 20 * DAY, preset: "boss", phase: doneIdle }),
+    self("c-cur", { age: 20 * DAY, preset: "boss", phase: doneIdle }),
   ];
   for (const id of ["t-old", "t-parent", "t-p2", "t-k2", "t-g", "t-m", "d-cur", "d-old", "d-run", "c-old", "c-cur"]) lastAt[id] = old;
   lastAt["t-new"] = NOW - 2 * DAY;
@@ -515,10 +515,16 @@ test("order: 清理计划，当前进程不删，有挡路的孩子就删不了�
 });
 
 test("order: 清理天数用界面数据的", () => {
-  const { entries } = world([self("a", { preset: "tmp", phase: doneIdle })]);
+  const { entries } = world([self("a", { age: 20 * DAY, preset: "tmp", phase: doneIdle })]);
   const lastAt = { a: NOW - 10 * DAY };
   assert.deepEqual(cleanPlan(entries, { state: gstate({ cleanDays: 30 }), lastAt, clientNow: NOW }).remove, []);
   assert.deepEqual(cleanPlan(entries, { state: gstate({ cleanDays: 7 }), lastAt, clientNow: NOW }).remove, ["a"]);
+});
+
+test("order: 刚分叉出来的进程消息是旧的，也不进清理名单", () => {
+  const { entries } = world([self("fresh-fork", { preset: "tmp", phase: doneIdle, age: 60 * 1000 })]);
+  const lastAt = { "fresh-fork": NOW - 10 * DAY };
+  assert.deepEqual(cleanPlan(entries, { state: gstate({ cleanDays: 7 }), lastAt, clientNow: NOW }).remove, []);
 });
 
 // ---------- state ----------

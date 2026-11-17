@@ -1,0 +1,77 @@
+/* 聚焦项目：成员表、最近动态。铭牌和写信框沿用 main.css。 */
+.pv-bar { display: grid; grid-template-columns: repeat(var(--n, 1), minmax(0, 1fr)); gap: 3px; margin-top: 10px; }
+.pv-bar span { height: 8px; background: var(--ink4); }
+.pv-bar span.f { background: var(--acc); }
+.pv-bar span.w { background: var(--warn); }
+.pv-bar span:not(.f):not(.w) { background: #5A5B57; }
+.pv-prog { max-width: 132px; font-size: 11px; line-height: 1.5; color: var(--fg2); }
+.pv-hint { position: relative; z-index: 2; align-items: flex-start; white-space: normal; line-height: 1.6; }
+.pv-hint > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+
+.pv-stage { position: relative; flex: 1 1 0; min-height: 300px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(17,18,17,.4) transparent; }
+.pv-in { position: relative; min-height: 100%; overflow: hidden; }
+.pv-body { position: relative; z-index: 1; padding: 24px 40px 26px 28px; display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+.pv-sec { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.pv-h { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 900; line-height: 1.2; }
+.pv-h .label { color: var(--ink-2); }
+.pv-line { flex: 1; height: 1px; background: var(--ink); }
+
+.pv-table { background: rgba(227,228,224,.82); min-width: 0; }
+.pv-row { display: grid; grid-template-columns: 52px minmax(110px, 1.1fr) minmax(150px, 1.2fr) minmax(0, 2fr) 64px; align-items: center; column-gap: 10px; padding: 0 12px 0 0; border-bottom: 1px solid rgba(17,18,17,.22); cursor: pointer; transition: background-color var(--t-fast) var(--ease-in); }
+.pv-row:not(.pv-head):hover { background: rgba(17,18,17,.07); }
+.pv-row.sel { background: var(--ink); color: var(--fg); box-shadow: inset 4px 0 0 var(--acc); }
+.pv-row.sel:hover { background: var(--ink); }
+.pv-row.sel .pv-id { color: var(--fg2); }
+.pv-row.sel .dim { color: var(--fg2); }
+.pv-row > div { padding: 9px 0; min-width: 0; }
+.pv-head { background: var(--ink1); color: var(--fg); cursor: default; font-size: 11px; font-weight: 700; }
+.pv-head > span { padding: 8px 0; white-space: nowrap; }
+.pv-head > span:first-child { padding-left: 12px; }
+.pv-n { padding: 0 !important; align-self: stretch; }
+.pv-pick { width: 100%; height: 100%; min-height: 48px; padding: 0 0 0 14px; border: 0; background: transparent; text-align: left; font-size: 19px; color: var(--ink-2); }
+.pv-row.sel .pv-pick { color: var(--acc); }
+.pv-who { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
+.pv-name { border: 0; background: none; padding: 0; font-size: 14px; font-weight: 700; text-align: left; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-name:hover { text-decoration: underline; }
+.pv-id { font-size: 11px; color: var(--ink-2); overflow-wrap: anywhere; }
+.pv-st { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pv-t { font-size: 12px; white-space: nowrap; }
+.pv-do { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.pv-do.mono { font-size: 12px; color: var(--ink); }
+.pv-row.sel .pv-do.mono { color: var(--fg); }
+.pv-ctx { text-align: right; font-size: 12px; }
+
+.pv-act { display: flex; flex-direction: column; }
+.pv-act li { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 14px; padding: 14px 0; border-bottom: 1px solid rgba(17,18,17,.22); }
+.pv-act li:first-child { padding-top: 4px; }
+.pv-ts { font-size: 11px; color: var(--ink-2); padding-top: 3px; }
+.pv-ab { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 620px; }
+.pv-ah { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; }
+.pv-ah b { font-weight: 900; }
+.pv-at { font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.pv-at.mono { font-size: 12.5px; }
+
+@media (max-width: 759px) {
+  .pv-stage { flex: 1 0 auto; overflow: visible; min-height: 60vh; }
+  .pv-body { padding: 20px 16px 24px; }
+  .pv-head { display: none; }
+  .pv-row { grid-template-columns: 52px minmax(0, 1fr) 56px; grid-template-areas: "n who ctx" "n st st" "n do do"; padding-right: 12px; row-gap: 0; }
+  .pv-row > div { padding: 3px 0; }
+  .pv-n { grid-area: n; }
+  .pv-who { grid-area: who; padding-top: 10px !important; }
+  .pv-ctx { grid-area: ctx; padding-top: 10px !important; }
+  .pv-st { grid-area: st; }
+  .pv-do { grid-area: do; padding-bottom: 10px !important; }
+  .pv-act li { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+}
+
+.pv-tags dt { flex: none; white-space: nowrap; display: flex; align-items: center; }
+.pv-tags dd { min-width: 0; }
+.pv-tags { min-width: 0; max-width: 100%; }
+.pv-tags > div { min-width: 0; max-width: 100%; }
+.pv-tags dd { overflow-wrap: anywhere; }
+.pv-body, .pv-sec, .pv-table { max-width: 100%; }
+
+.pv-dir { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-tags > div { min-width: 0; max-width: 100%; }
+.pv-row:not(.sel) .pv-do.dim { color: var(--ink-2); }

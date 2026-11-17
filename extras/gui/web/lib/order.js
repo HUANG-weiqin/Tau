@@ -58,7 +58,7 @@ export function cleanPlan(all, o) {
   const limit = o.state.cleanDays * 24 * 60 * 60 * 1000;
   const candidates = new Set(
     all
-      .filter((e) => (e.status === "idle" || e.status === "error" || e.status === "fresh") && !protectedIds.has(e.id) && o.lastAt[e.id] !== undefined && o.clientNow - activityAt(e, o.lastAt) > limit)
+      .filter((e) => (e.status === "idle" || e.status === "error" || e.status === "fresh") && !protectedIds.has(e.id) && o.lastAt[e.id] !== undefined && o.clientNow - Math.max(activityAt(e, o.lastAt), e.createdAt) > limit)
       .filter((e) => e.kind === "temp" || e.kind === "team" || e.kind === "chief")
       .map((e) => e.id),
   );

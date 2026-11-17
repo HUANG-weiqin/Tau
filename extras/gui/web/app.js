@@ -1,0 +1,815 @@
+// 根组件：把连接、数据、聚焦、弹窗和键盘接在一起。其它模块只拿到下面的 `app`。
+import { render } from "preact";
+import { html, useEffect, useState, TipLayer, MenuLayer } from "./ui/common.js";
+import * as api from "./api.js";
+import { createConn, createHistoryReader, createPeeker } from "./conn.js";
+import { emptyStore, reduce, streamingText, childCounts } from "./lib/store.js";
+import { emptyHistory, segmentMessages, lastTimestamp } from "./lib/history.js";
+import { buildEntries, buildProjects, railSections, projectView, currentOf, attention } from "./lib/derive.js";
+import { describeNow, phaseStartedAt } from "./lib/messages.js";
+import { processTitle } from "./lib/titles.js";
+import { stopOrder } from "./lib/order.js";
+import { formatDuration } from "./lib/format.js";
+import * as gs from "./lib/state.js";
+import { Rail } from "./ui/rail.js";
+import { ProcList, railIds } from "./ui/list.js";
+import { ProcessView } from "./ui/process.js";
+import { Inspector } from "./ui/inspector.js";
+import { ProjectView } from "./ui/project.js";
+import { ChiefDialog } from "./ui/chief.js";
+import { ProjectsDialog } from "./ui/projects.js";
+import { CleanDialog } from "./ui/clean.js";
+import { NewProcDialog } from "./ui/newproc.js";
+import { OpenProjDialog } from "./ui/openproj.js";
+
+/**
+ * 页面上所有模块拿到的唯一对象 `app`。每次渲染重新生成，只读；改东西调用下面的动作。
+ *
+ * @typedef {import("./lib/types.js").Self} Self
+ * @typedef {import("./lib/types.js").Message} Message
+ * @typedef {import("./lib/types.js").GuiState} GuiState
+ * @typedef {import("./lib/types.js").PresetInfo} PresetInfo
+ * @typedef {import("./lib/derive.js").Entry} Entry
+ * @typedef {import("./lib/derive.js").Project} Project
+ * @typedef {import("./lib/history.js").History} History
+ *
+ * 数据（只读）
+ * @typedef {object} AppData
+ * @property {number} now 页面的当前时刻（毫秒），每秒更新一次。所有“多久以前”都用它算。
+ * @property {number} skew 服务时钟减页面时钟。服务给的消息时间戳减去它，才是页面时钟的时刻。`clock(ts)` 已经算好。
+ * @property {"connecting" | "online" | "offline"} status 和服务的连接。
+ * @property {import("./lib/store.js").Store} store `lib/store` 的状态：`store.procs[id].self` 是进程视图。
+ * @property {Record<string, PresetInfo>} presets 预设文件，按预设 ID 查。读不懂的 `ok: false`。
+ * @property {PresetInfo[]} presetList 预设文件，列表。
+ * @property {GuiState} gui 界面数据（`~/.tau/extras/gui/state.json`）。改它用 `setGui` 和 `lib/state.js` 的补丁函数。
+ * @property {boolean} ready 界面数据和预设都读到了。
+ * @property {Entry[]} entries 全部进程（含总管的），已按预设分好类：`kind` 是 `chief | team | temp | unknown`，`status` 是 `running | error | idle | fresh`。
+ * @property {Record<string, Entry>} byId 同上，按进程 ID 查。
+ * @property {Record<string, number>} lastAt 进程最后动静的时刻（页面时钟）。没读到的进程没有。
+ * @property {Record<string, number>} children 每个进程开的进程个数（含空闲的）。
+ * @property {Project[]} projects 全部项目（总管不在内）。
+ * @property {{ pinned: Project[], active: Project[], rest: Project[], runningTotal: number }} rail 窄条的分段。
+ * @property {{ id: string, preset: string, kind: "error" | "unmerged", detail: string }[]} attention “待你看”里不需要 git 的部分：出错的进程。
+ * @property {Entry | null} chiefEntry 总管的当前进程。
+ * @property {"process" | "project" | "none"} focusKind 现在聚焦的是进程、项目，还是什么都没有（还没有项目）。
+ * @property {Entry | null} focused 聚焦的进程。聚焦项目时是 null。
+ * @property {string | null} focusedId 聚焦的进程 ID。进程可能还没出现在 `byId`（刚建好）。
+ * @property {Project | null} project 进程栏现在显示的项目（聚焦进程时是它所在的项目）。
+ * @property {import("./lib/derive.js").ProjectView | null} view 进程栏的内容（筛选和搜索后）。
+ * @property {"all" | "running" | "error"} filter 进程栏的筛选。
+ * @property {string} query 进程栏的搜索词。
+ * @property {number} tab 详情栏现在的选项卡，0 到 2。聚焦进程时 0 概况、1 改动、2 后台；聚焦项目时 0 概况、1 分支、2 后台。
+ * @property {{ name: string, rect: { left: number, top: number, right: number, bottom: number } | null, props: any } | null} dialog 打开着的弹窗：`chief | newproc | openproj | projects | clean`。`props` 是打开时传的。
+ *
+ * 读取（函数）
+ * @typedef {object} AppReaders
+ * @property {(ts: number) => number} clock 服务时间戳换成页面时钟。
+ * @property {(id: string) => History} history 这个进程的完整历史缓存（按段）。只有被 `follow` 的进程才读全；没读的是空的。
+ * @property {(id: string) => readonly Message[]} messages 这个进程当前段的消息。被 `follow` 的是整段；其它的只有末尾几条。
+ * @property {(id: string) => string} streamText 模型正在写的文字（只在等模型时有）。
+ * @property {(id: string) => { title: string, note?: string, known: boolean }} titleOf 进程的标题。
+ * @property {(e: Entry) => { label: string, tool: string, since: number | null, dur: string, doing: string, endedText: string }} describe 进程此刻在做什么：阶段名（空闲时是上一轮的结束原因）、等工具时的工具名、阶段开始的时刻、已经多久、最后一步的摘要。
+ * @property {(id: string) => Entry | null} entryOf
+ * @property {(path: string) => Project | null} projectOf 路径对应的项目。
+ *
+ * 动作（都返回 Promise，出错抛错；页面已经弹了提示，调用方不必再提示）
+ * @typedef {object} AppActions
+ * @property {(id: string) => void} focusProcess
+ * @property {(key: string | null) => void} focusProject 项目的 `key`。传 null 回到默认项目。
+ * @property {(id: string) => void} follow 让这个进程的完整历史被读到并保持更新。聚焦的进程自动 follow。
+ * @property {(id: string, text: string, images?: string[]) => Promise<void>} send 寄信。界面寄过信的常驻进程成为当前进程。
+ * @property {(preset: string, text: string, images?: string[]) => Promise<string>} start 建进程，回进程 ID。记进 `mine`，常驻预设成为当前进程，并聚焦它。
+ * @property {(id: string, before?: number) => Promise<string>} fork 分叉，回新进程 ID。`before` 是当前段里一条用户消息的段内序号；不给就复制整个当前段（源进程必须空闲）。
+ * @property {(id: string) => Promise<void>} stop 停这一轮。
+ * @property {(project: Project) => Promise<void>} stopAll 停项目里所有在跑的进程，子孙先停，反复做到都空闲为止。
+ * @property {(id: string) => Promise<void>} remove 删一个空闲进程。被拒绝时抛错，原因是服务给的。
+ * @property {() => Promise<number>} sweep 清没人引用的图片，回删掉的个数。
+ * @property {(patch: Record<string, unknown> | ((g: GuiState) => Record<string, unknown>)) => Promise<void>} setGui 改界面数据：顶层键整个覆盖。先改页面里的，再写文件。补丁用 `lib/state.js` 的函数算。传函数时，写之前先读文件里的最新状态再算，别的页面改过的不会被盖掉。
+ * @property {(workdir: string, what: "status" | "diff" | "log" | "branches", file?: string) => Promise<any>} git 桥的 `/api/git`。
+ * @property {(processes: string[]) => Promise<any[]>} bg 桥的 `/api/bg`。
+ * @property {() => Promise<void>} reloadPresets 重读预设文件。
+ * @property {(p: Record<string, unknown>) => Promise<void>} createPreset 建预设文件，成功后重读预设。
+ * @property {() => Promise<string | null>} pickFolder 系统选文件夹的对话框。
+ * @property {(hash: string) => Promise<string | null>} blob 一张图片的 data URL。
+ * @property {(name: string, anchor?: Element | null, props?: any) => void} openDialog 打开弹窗，贴着 `anchor`（不给就用约定的按钮）。
+ * @property {() => void} closeDialog
+ * @property {(n: number) => void} setTab
+ * @property {(f: "all" | "running" | "error") => void} setFilter
+ * @property {(q: string) => void} setQuery
+ * @property {(path: string) => Promise<void>} pin 钉住项目。
+ * @property {(path: string) => Promise<void>} unpin
+ * @property {(path: string, delta: number) => Promise<void>} movePinned 在钉住的顺序里挪一格。
+ * @property {(from: string, to: string) => Promise<void>} reorderPinned 把 `from` 项目挪到 `to` 项目的位置。
+ * @property {(presetId: string, pid: string) => Promise<void>} makeCurrent 把 `pid` 设为常驻预设的当前进程。
+ * @property {(text: string) => void} toast 底下弹一句提示。
+ * @typedef {AppData & AppReaders & AppActions} App
+ */
+
+/* ------------------------------------------------------------------ 状态 */
+
+/** 页面的全部状态。只在这里改，改完 `schedule()`。 */
+const S = {
+  store: emptyStore(),
+  /** @type {Record<string, History>} */
+  hist: {},
+  /** @type {Record<string, { segment: number, total: number, msgs: Message[], lastAt: number | null }>} */
+  peek: {},
+  /** @type {Record<string, PresetInfo>} */
+  presets: {},
+  /** @type {PresetInfo[]} */
+  presetList: [],
+  gui: gs.normalizeState({}),
+  guiReady: false,
+  presetsReady: false,
+  /** @type {"connecting" | "online" | "offline"} */
+  status: "connecting",
+  statusMsg: "",
+  skew: 0,
+  now: Date.now(),
+  /** @type {{ proc: string | null, proj: string | null }} */
+  route: { proc: null, proj: null },
+  /** @type {string[]} */
+  followed: [],
+  /** 这个页面见过的进程 ID。 @type {Set<string>} */
+  ever: new Set(),
+  /** 第一次拿到进程表后，界面数据里没人认的 ID 都清掉。 */
+  firstPrune: false,
+  gotPs: false,
+  /** 界面数据写失败后，这个时刻之前不再自动写（seen、清理）。 */
+  guiFailUntil: 0,
+  /** @type {"all" | "running" | "error"} */
+  filter: "all",
+  query: "",
+  tab: 0,
+  /** @type {{ name: string, rect: any, props: any } | null} */
+  dialog: null,
+  /** @type {{ text: string, id: number } | null} */
+  toastMsg: null,
+};
+
+let queued = false;
+/** @type {() => void} */
+let bump = () => {};
+function schedule() {
+  if (queued) return;
+  queued = true;
+  // 页面在后台时 rAF 不跑，用定时器兜底：谁先到谁渲染。
+  const go = () => {
+    if (!queued) return;
+    queued = false;
+    bump();
+  };
+  requestAnimationFrame(go);
+  setTimeout(go, 200);
+}
+
+/** @param {string} text */
+function toast(text) {
+  const id = Date.now();
+  S.toastMsg = { text, id };
+  schedule();
+  setTimeout(() => {
+    if (S.toastMsg && S.toastMsg.id === id) {
+      S.toastMsg = null;
+      schedule();
+    }
+  }, 4500);
+}
+
+/** @template T @param {Promise<T>} p @returns {Promise<T>} */
+function loud(p) {
+  p.catch((e) => toast(e instanceof Error ? e.message : String(e)));
+  return p;
+}
+
+/* ------------------------------------------------------------------ 界面数据的写入 */
+
+let writeChain = Promise.resolve();
+let writing = 0;
+/** @param {Record<string, unknown> | ((g: import("./lib/types.js").GuiState) => Record<string, unknown>)} arg */
+function setGui(arg) {
+  const fn = typeof arg === "function" ? arg : () => arg;
+  S.gui = { ...S.gui, ...fn(S.gui) };
+  schedule();
+  writing++;
+  const job = writeChain
+    .then(async () => {
+      // 先读文件里的最新状态再算补丁，别的页面（手机和桌面同时开着）改过的不会被盖掉。
+      const fresh = gs.normalizeState(await api.getState());
+      const patch = fn(fresh);
+      if (Object.keys(patch).length === 0) return;
+      const saved = await api.setState(patch);
+      if (writing === 1) {
+        S.gui = gs.normalizeState(saved);
+        schedule();
+      }
+    })
+    .then(
+      () => {
+        writing--;
+      },
+      (e) => {
+        writing--;
+        S.guiFailUntil = Date.now() + 30000;
+        toast(`界面数据没写进去：${e instanceof Error ? e.message : e}`);
+        return refreshGui();
+      },
+    );
+  writeChain = job;
+  return job;
+}
+
+/** 重读界面数据。有写入在排队时不读，免得冲掉乐观的改动。 */
+function refreshGui() {
+  if (writing > 0) return Promise.resolve();
+  return api.getState().then(
+    (st) => {
+      if (writing > 0) return;
+      S.gui = gs.normalizeState(st);
+      schedule();
+    },
+    () => {},
+  );
+}
+
+/** 已经不在的进程，从界面数据里清掉它们的键。 @param {import("./lib/types.js").GuiState} g @param {(id: string) => boolean} stale */
+function prunePatch(g, stale) {
+  /** @type {Record<string, unknown>} */
+  const patch = {};
+  /** @param {Record<string, any>} r @param {(k: string, v: any) => boolean} drop */
+  const filt = (r, drop) => Object.fromEntries(Object.entries(r).filter(([k, v]) => !drop(k, v)));
+  for (const key of /** @type {const} */ (["seen", "titles", "forkedFrom"])) {
+    if (Object.keys(g[key]).some(stale)) patch[key] = filt(g[key], (k) => stale(k));
+  }
+  if (g.mine.some(stale)) patch["mine"] = g.mine.filter((x) => !stale(x));
+  if (Object.values(g.current).some(stale)) patch["current"] = filt(g.current, (_k, v) => stale(v));
+  return patch;
+}
+
+/** 标题攒一下再写，一次写一批。 */
+/** @type {Record<string, string>} */
+let pendingTitles = {};
+let titleTimer = 0;
+/** @param {string} id @param {string | null} title */
+function noteTitle(id, title) {
+  if (title === null) return;
+  pendingTitles[id] = title;
+  if (titleTimer) return;
+  titleTimer = window.setTimeout(() => {
+    titleTimer = 0;
+    const batch = pendingTitles;
+    pendingTitles = {};
+    setGui((g) => ({ titles: { ...g.titles, ...batch } }));
+  }, 400);
+}
+
+/* ------------------------------------------------------------------ 读历史 */
+
+const reader = createHistoryReader({
+  getSelf: (id) => S.store.procs[id]?.self,
+  getHist: (id) => S.hist[id],
+  setHist: (id, h) => {
+    S.hist[id] = h;
+    schedule();
+  },
+});
+
+const peeker = createPeeker({
+  onPeek: (id, v) => {
+    S.peek[id] = v;
+    schedule();
+  },
+  onTitle: noteTitle,
+});
+
+/** @param {string} id */
+function follow(id) {
+  const next = [id, ...S.followed.filter((x) => x !== id)];
+  // 被挤出去的进程不再保持更新，旧缓存也删掉，免得显示停在被挤出的那一刻。
+  for (const old of next.slice(8)) delete S.hist[old];
+  S.followed = next.slice(0, 8);
+  reader.follow(id);
+}
+
+/** @param {any} r */
+function onReply(r) {
+  const now = Date.now();
+  if (r.type === "ps" && r.processes[0]) S.skew = r.processes[0].now - now;
+  S.store = reduce(S.store, r, now);
+  if (r.type === "ps") {
+    if (!S.gotPs) S.firstPrune = true;
+    S.gotPs = true;
+    for (const p of r.processes) S.ever.add(p.self.id);
+    for (const id of Object.keys(S.hist)) if (!S.store.procs[id]) delete S.hist[id];
+    for (const p of r.processes) onSelf(p.self);
+    const want = S.route.proc;
+    if (want && !S.store.procs[want]) setRoute({ proc: null });
+  } else if (r.type === "update") {
+    S.ever.add(r.self.id);
+    onSelf(r.self);
+  }
+  else if (r.type === "removed") {
+    delete S.hist[r.process];
+    delete S.peek[r.process];
+    peeker.forget(r.process);
+    S.followed = S.followed.filter((x) => x !== r.process);
+    if (S.route.proc === r.process) setRoute({ proc: null });
+  }
+  schedule();
+}
+
+/** @param {Self} self */
+function onSelf(self) {
+  peeker.note(self);
+  if (S.followed.includes(self.id)) reader.follow(self.id);
+}
+
+/* ------------------------------------------------------------------ 路由：聚焦的进程或项目，写进地址栏的 # */
+
+function parseHash() {
+  const q = new URLSearchParams(location.hash.replace(/^#/, ""));
+  const raw = location.hash.replace(/^#/, "");
+  return { proc: q.get("p"), proj: q.get("proj"), dlg: q.get("dlg") ?? (raw === "chief" ? "chief" : null) };
+}
+
+function writeHash() {
+  const q = new URLSearchParams();
+  if (S.route.proc) q.set("p", S.route.proc);
+  else if (S.route.proj) q.set("proj", S.route.proj);
+  if (S.dialog) q.set("dlg", S.dialog.name);
+  const s = q.toString();
+  const next = s ? `#${s}` : location.pathname + location.search;
+  try {
+    history.replaceState(null, "", next);
+  } catch {
+    // 地址栏改不了就算了。
+  }
+}
+
+/** @param {Partial<typeof S.route>} patch */
+function setRoute(patch) {
+  S.route = { ...S.route, ...patch };
+  writeHash();
+  schedule();
+}
+
+/* ------------------------------------------------------------------ 推导 */
+
+/** 最近一次渲染算出来的东西，给动作用。 @type {App | null} */
+let LAST = null;
+
+/** @param {string} id @returns {readonly Message[]} */
+function messagesOf(id) {
+  const self = S.store.procs[id]?.self;
+  const h = S.hist[id];
+  if (self && h && S.followed.includes(id) && h.followed === self.segment && (h.segs[self.segment]?.msgs.length ?? 0) > 0) return segmentMessages(h, self.segment);
+  const p = S.peek[id];
+  return p && self && p.segment === self.segment ? p.msgs : [];
+}
+
+/** @param {any} ended */
+function endedText(ended) {
+  if (ended === undefined) return "";
+  if (ended === "done") return "正常结束";
+  if (ended === "stepLimit") return "步数用完";
+  if (ended === "stopped") return "被停止";
+  return "出错";
+}
+
+function compute() {
+  const now = S.now;
+  const procs = S.store.procs;
+  const { entries, seenPatch } = buildEntries(procs, S.gui, S.presets);
+  /** @type {Record<string, number>} */
+  const lastAt = {};
+  for (const [id, p] of Object.entries(S.peek)) if (p.lastAt !== null) lastAt[id] = p.lastAt - S.skew;
+  for (const [id, h] of Object.entries(S.hist)) {
+    const self = procs[id]?.self;
+    if (!self) continue;
+    const t = lastTimestamp(h, self.segment);
+    if (t !== null) lastAt[id] = Math.max(lastAt[id] ?? 0, t - S.skew);
+  }
+  /** @type {Record<string, Entry>} */
+  const byId = Object.fromEntries(entries.map((e) => [e.id, e]));
+  const projects = buildProjects(entries, S.gui, S.presets, lastAt);
+  const rail = railSections(projects, entries, S.gui);
+  const titleOf = (/** @type {string} */ id) => processTitle(id, S.gui);
+
+  const focusedId = S.route.proc;
+  const focused = focusedId ? (byId[focusedId] ?? null) : null;
+  /** @type {Project | null} */
+  let project = null;
+  if (focused && focused.kind !== "chief" && focused.workdir !== null) project = projects.find((p) => p.key === gs.pathKey(focused.workdir ?? "")) ?? null;
+  if (!project && S.route.proj) project = projects.find((p) => p.key === S.route.proj) ?? null;
+  if (!project) project = rail.pinned[0] ?? rail.active[0] ?? rail.rest[0] ?? projects[0] ?? null;
+  const focusKind = focusedId ? "process" : project ? "project" : "none";
+  const view = project ? projectView(project, { state: S.gui, lastAt, clientNow: now, filter: S.filter, query: S.query, titleOf: (id) => titleOf(id).title }) : null;
+  const chiefEntry = S.gui.chief ? currentOf(S.gui.chief, entries.filter((e) => e.kind === "chief"), S.gui, lastAt) : null;
+
+  /** @type {App} */
+  const app = {
+    now,
+    skew: S.skew,
+    status: S.status,
+    store: S.store,
+    presets: S.presets,
+    presetList: S.presetList,
+    gui: S.gui,
+    ready: S.guiReady && S.presetsReady,
+    entries,
+    byId,
+    lastAt,
+    children: childCounts(S.store),
+    projects,
+    rail,
+    attention: attention(entries, { lastAt, clientNow: now }),
+    chiefEntry,
+    focusKind,
+    focused,
+    focusedId,
+    project,
+    view,
+    filter: S.filter,
+    query: S.query,
+    tab: S.tab,
+    dialog: S.dialog,
+
+    clock: (ts) => ts - S.skew,
+    history: (id) => S.hist[id] ?? emptyHistory(),
+    messages: messagesOf,
+    streamText: (id) => streamingText(S.store, id),
+    titleOf,
+    describe: (e) => {
+      const msgs = messagesOf(e.id);
+      const tag = e.self.phase.tag;
+      const at = phaseStartedAt(msgs, tag);
+      const since = at !== null ? at - S.skew : (lastAt[e.id] ?? e.segmentStartedAt ?? e.createdAt);
+      const dur = formatDuration(now - since);
+      const ended = e.self.phase.tag === "idle" ? e.self.phase.ended : undefined;
+      /** @type {string} */
+      let tool = "";
+      if (tag === "awaitingTool") {
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          const m = msgs[i];
+          if (m?.role !== "assistant") continue;
+          const calls = m.content.filter((b) => b.type === "toolCall");
+          tool = /** @type {any} */ (calls[calls.length - 1])?.name ?? "";
+          break;
+        }
+      }
+      const label = tag === "awaitingModel" ? (e.self.phase.tag === "awaitingModel" && e.self.phase.purpose === "handoff" ? "写交接说明" : "等模型") : tag === "awaitingTool" ? "等工具" : "空闲";
+      return { label, tool, since, dur, doing: describeNow(msgs), endedText: endedText(ended) };
+    },
+    entryOf: (id) => byId[id] ?? null,
+    projectOf: (path) => projects.find((p) => p.key === gs.pathKey(path)) ?? null,
+
+    focusProcess: (id) => {
+      follow(id);
+      const keep = byId[id]?.kind === "chief" ? (project?.key ?? null) : null;
+      S.tab = Math.min(S.tab, 2);
+      setRoute({ proc: id, proj: keep });
+    },
+    focusProject: (key) => {
+      if (key !== (project?.key ?? null)) S.query = "";
+      setRoute({ proc: null, proj: key });
+    },
+    follow,
+    send: (id, text, images) =>
+      loud(
+        (async () => {
+          await api.tauCommand({ op: "send", process: id, text, ...(images && images.length ? { images } : {}) });
+          const e = byId[id];
+          if (e && e.kind === "team" && S.gui.current[e.preset] !== id) await setGui((g) => gs.setCurrent(g, e.preset, id));
+        })(),
+      ),
+    start: (preset, text, images) =>
+      loud(
+        (async () => {
+          const r = await api.tauCommand({ op: "start", preset, text, ...(images && images.length ? { images } : {}) });
+          const pid = r.process ?? "";
+          if (!pid) throw new Error("服务没有回进程 ID");
+          const memory = !!(S.presets[preset]?.ok && /** @type {any} */ (S.presets[preset]).memory);
+          await setGui((g) => ({ ...gs.addMine(g, pid), ...(memory ? gs.setCurrent(g, preset, pid) : {}) }));
+          follow(pid);
+          setRoute({ proc: pid, proj: null });
+          return pid;
+        })(),
+      ),
+    fork: (id, before) =>
+      loud(
+        (async () => {
+          const r = await api.tauCommand({ op: "fork", process: id, ...(before !== undefined ? { before } : {}) });
+          const pid = r.process ?? "";
+          if (!pid) throw new Error("服务没有回进程 ID");
+          const src = byId[id];
+          await setGui((g) => ({ ...gs.addFork(g, pid, id), ...(src && src.kind === "team" ? gs.setCurrent(g, src.preset, pid) : {}) }));
+          follow(pid);
+          setRoute({ proc: pid, proj: null });
+          return pid;
+        })(),
+      ),
+    stop: (id) => loud(api.tauCommand({ op: "stop", process: id }).then(() => {})),
+    stopAll: (proj) =>
+      loud(
+        (async () => {
+          for (let round = 0; round < 12; round++) {
+            // 每一轮都按项目路径重新算成员：停的过程中新冒出来的子进程也要停。
+            const ents = buildEntries(S.store.procs, S.gui, S.presets).entries.filter((e) => e.workdir !== null && gs.pathKey(e.workdir) === proj.key);
+            const order = stopOrder(ents);
+            if (order.length === 0) return;
+            for (const id of order) {
+              if (!S.store.procs[id]) continue;
+              await api.tauCommand({ op: "stop", process: id });
+            }
+            await new Promise((r) => setTimeout(r, 400));
+          }
+        })(),
+      ),
+    remove: (id) =>
+      loud(
+        (async () => {
+          await api.tauCommand({ op: "remove", process: id });
+        })(),
+      ),
+    sweep: () => loud(api.tauAll({ op: "sweep" }).then((rs) => rs.find((r) => r.type === "swept")?.blobs ?? 0)),
+    setGui,
+    git: (w, what, file) => loud(api.git(w, what, file)),
+    bg: (ids) => loud(api.bg(ids)),
+    reloadPresets,
+    createPreset: (p) =>
+      loud(
+        api.createPreset(p).then(async () => {
+          await reloadPresets();
+        }),
+      ),
+    pickFolder: () => loud(api.pickFolder()),
+    blob: api.blobUrl,
+    openDialog,
+    closeDialog: () => {
+      S.dialog = null;
+      writeHash();
+      schedule();
+    },
+    setTab: (n) => {
+      S.tab = Math.max(0, Math.min(2, n));
+      schedule();
+    },
+    setFilter: (f) => {
+      S.filter = f;
+      schedule();
+    },
+    setQuery: (q) => {
+      S.query = q;
+      schedule();
+    },
+    pin: (p) => setGui((g) => gs.pinFolder(g, p)),
+    unpin: (p) => setGui((g) => gs.unpinFolder(g, p)),
+    movePinned: (p, d) => setGui((g) => gs.movePinned(g, p, d)),
+    reorderPinned: (from, to) => {
+      return setGui((g) => {
+        const a = g.pinned.findIndex((x) => gs.pathKey(x) === gs.pathKey(from));
+        const b = g.pinned.findIndex((x) => gs.pathKey(x) === gs.pathKey(to));
+        if (a < 0 || b < 0 || a === b) return {};
+        const next = g.pinned.slice();
+        const [it] = next.splice(a, 1);
+        if (it !== undefined) next.splice(b, 0, it);
+        return { pinned: next };
+      });
+    },
+    makeCurrent: (preset, pid) => setGui((g) => gs.setCurrent(g, preset, pid)),
+    toast,
+  };
+  return { app, seenPatch, entries };
+}
+
+/* 弹窗的锚点：约定的按钮。 */
+const ANCHORS = { chief: "btn-chief", newproc: "btn-newproc", openproj: "btn-open", projects: "btn-all", clean: "btn-clean" };
+
+/** @param {string} name @param {Element | null} [anchor] @param {any} [props] */
+function openDialog(name, anchor, props) {
+  const el = anchor ?? document.getElementById(/** @type {any} */ (ANCHORS)[name] ?? "") ?? null;
+  const r = el ? el.getBoundingClientRect() : null;
+  if (name === "newproc" || name === "openproj") reloadPresets();
+  S.dialog = { name, rect: r ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom } : null, props: props ?? null };
+  writeHash();
+  schedule();
+}
+
+async function reloadPresets() {
+  try {
+    const list = await api.presets();
+    S.presetList = list;
+    S.presets = Object.fromEntries(list.map((p) => [p.id, p]));
+    S.presetsReady = true;
+    schedule();
+  } catch (e) {
+    toast(`读不到预设：${e instanceof Error ? e.message : e}`);
+  }
+}
+
+/* ------------------------------------------------------------------ 键盘 */
+
+let lastStopKey = 0;
+/** 地址栏里带着的弹窗：等数据读到、按钮就位以后再开。 @type {string | null} */
+let pendingDlg = null;
+
+/** @param {KeyboardEvent} e @param {App} app */
+function onKey(e, app) {
+  const t = /** @type {HTMLElement | null} */ (e.target);
+  const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+  if (app.dialog) return; // 弹窗自己处理 Esc 和 Tab。
+  if (e.key === "Escape") {
+    if (typing) /** @type {HTMLElement} */ (t).blur();
+    return;
+  }
+  if (e.altKey && !e.ctrlKey && !e.metaKey && /^[0-9]$/.test(e.key)) {
+    e.preventDefault();
+    if (e.key === "0") return app.openDialog("projects");
+    const p = app.rail.pinned[Number(e.key) - 1];
+    if (p) app.focusProject(p.key);
+    return;
+  }
+  if (e.altKey && e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && app.project && app.project.pinnedIndex >= 0) {
+    e.preventDefault();
+    app.movePinned(app.project.path, e.key === "ArrowUp" ? -1 : 1);
+    return;
+  }
+  if (e.altKey && !e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && app.view) {
+    e.preventDefault();
+    const ids = railIds(app.view, app.gui, app.query);
+    const i = app.focusedId ? ids.indexOf(app.focusedId) : -1;
+    const n = ids[Math.max(0, Math.min(ids.length - 1, i + (e.key === "ArrowUp" ? -1 : 1)))];
+    if (n) app.focusProcess(n);
+    return;
+  }
+  if (e.ctrlKey && !e.altKey && /^[1-3]$/.test(e.key)) {
+    e.preventDefault();
+    app.setTab(Number(e.key) - 1);
+    return;
+  }
+  if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === "n") {
+    e.preventDefault();
+    app.openDialog("newproc");
+    return;
+  }
+  if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    app.openDialog("chief");
+    return;
+  }
+  if (e.ctrlKey && e.key === "." && app.focused) {
+    e.preventDefault();
+    const now = Date.now();
+    if (now - lastStopKey < 700) {
+      lastStopKey = 0;
+      if (app.focused.status === "running") app.stop(app.focused.id);
+    } else {
+      lastStopKey = now;
+      app.toast("再按一次 Ctrl+. 停止这一轮");
+    }
+    return;
+  }
+  if (e.key === "/" && !typing && !e.ctrlKey && !e.altKey) {
+    const el = document.getElementById("compose-input");
+    if (el) {
+      e.preventDefault();
+      el.focus();
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ 根组件 */
+
+function Root() {
+  const [, setN] = useState(0);
+  bump = () => setN((n) => n + 1);
+
+  useEffect(() => {
+    const tick = setInterval(() => {
+      S.now = Date.now();
+      schedule();
+    }, 1000);
+    const h = parseHash();
+    S.route = { proc: h.proc, proj: h.proj };
+    if (h.proc) follow(h.proc);
+    api.getState().then(
+      (s) => {
+        S.gui = gs.normalizeState(s);
+        S.guiReady = true;
+        schedule();
+      },
+      (e) => toast(`读不到界面数据：${e instanceof Error ? e.message : e}`),
+    );
+    reloadPresets();
+    const conn = createConn({
+      reply: onReply,
+      status: (s, msg) => {
+        S.status = s;
+        S.statusMsg = msg ?? "";
+        schedule();
+      },
+    });
+    const onHash = () => {
+      const x = parseHash();
+      S.route = { proc: x.proc, proj: x.proj };
+      if (x.proc) follow(x.proc);
+      schedule();
+    };
+    const onFocus = () => {
+      reloadPresets();
+      refreshGui();
+    };
+    const onVis = () => {
+      if (!document.hidden) refreshGui();
+    };
+    const resync = setInterval(refreshGui, 30000);
+    window.addEventListener("hashchange", onHash);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVis);
+    pendingDlg = h.dlg;
+    return () => {
+      clearInterval(tick);
+      clearInterval(resync);
+      document.removeEventListener("visibilitychange", onVis);
+      conn.stop();
+      window.removeEventListener("hashchange", onHash);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
+
+  const { app, seenPatch, entries } = compute();
+  LAST = app;
+
+  // 第一次见到的进程，把当时读到的预设记下来（界面数据和预设都读到了才记）。
+  useEffect(() => {
+    if (!app.ready || Object.keys(seenPatch).length === 0 || Date.now() < S.guiFailUntil) return;
+    setGui((g) => gs.mergeSeen(g, seenPatch));
+  });
+  // 已经删掉的进程，清掉界面数据里它们的键，文件才不会越长越大。
+  useEffect(() => {
+    if (!app.ready || !S.gotPs || Date.now() < S.guiFailUntil) return;
+    const live = S.store.procs;
+    const first = S.firstPrune;
+    const stale = (/** @type {string} */ id) => !live[id] && (first || S.ever.has(id));
+    S.firstPrune = false;
+    if (Object.keys(prunePatch(S.gui, stale)).length > 0) setGui((g) => prunePatch(g, stale));
+  });
+  // 临时进程的标题：没缓存的去读第 1 段。
+  useEffect(() => {
+    if (!app.ready) return;
+    for (const e of entries) if (e.kind === "temp" && S.gui.titles[e.id] === undefined) peeker.wantTitle(e.id);
+  });
+  // 聚焦的进程要读全。
+  useEffect(() => {
+    if (app.focusedId && app.store.procs[app.focusedId]) follow(app.focusedId);
+  }, [app.focusedId, !!(app.focusedId && app.store.procs[app.focusedId])]);
+  useEffect(() => {
+    if (pendingDlg && app.ready && app.status === "online") {
+      const name = pendingDlg;
+      pendingDlg = null;
+      setTimeout(() => openDialog(name), 60);
+    }
+  });
+  // 键盘。
+  useEffect(() => {
+    const f = (/** @type {KeyboardEvent} */ e) => onKey(e, /** @type {App} */ (LAST));
+    window.addEventListener("keydown", f);
+    return () => window.removeEventListener("keydown", f);
+  }, []);
+
+  const d = app.dialog;
+  const close = app.closeDialog;
+  const main =
+    app.focusKind === "process" ? html`<${ProcessView} key=${app.focusedId} app=${app} />` : app.focusKind === "project" ? html`<${ProjectView} app=${app} />` : html`<${Empty} app=${app} />`;
+
+  return html`<div class="shell">
+    <${Rail} app=${app} />
+    <div class="shell-body">
+      <${ProcList} app=${app} />
+      <main class="main" aria-label="主区">${main}</main>
+      <${Inspector} app=${app} />
+    </div>
+    ${d && d.name === "chief" && html`<${ChiefDialog} app=${app} onClose=${close} />`}
+    ${d && d.name === "newproc" && html`<${NewProcDialog} app=${app} onClose=${close} />`}
+    ${d && d.name === "openproj" && html`<${OpenProjDialog} app=${app} onClose=${close} />`}
+    ${d && d.name === "projects" && html`<${ProjectsDialog} app=${app} onClose=${close} />`}
+    ${d && d.name === "clean" && html`<${CleanDialog} app=${app} onClose=${close} />`}
+    <${TipLayer} />
+    <${MenuLayer} />
+    ${app.status !== "online" && html`<div class="conn" role="status">${app.status === "connecting" ? "正在连接 tau 服务…" : `和 tau 服务断开了：${S.statusMsg}。正在重连`}</div>`}
+    ${S.toastMsg && html`<div class="toast" role="status" key=${S.toastMsg.id}>${S.toastMsg.text}</div>`}
+  </div>`;
+}
+
+/** 还没有任何项目。 @param {{ app: App }} p */
+function Empty({ app }) {
+  if (!app.ready) return html`<div class="pending" aria-busy="true"></div>`;
+  return html`<div class="empty">
+    <span class="num" style="font-size:96px;color:#111211;opacity:.18">00</span>
+    <h2>还没有项目</h2>
+    <p>项目就是一个文件夹。打开一个文件夹，把它的进程归到一起。</p>
+    <button type="button" class="pill dark" onClick=${(/** @type {Event} */ e) => app.openDialog("openproj", /** @type {Element} */ (e.currentTarget))}>打开项目</button>
+  </div>`;
+}
+
+render(html`<${Root} />`, /** @type {HTMLElement} */ (document.getElementById("app")));
