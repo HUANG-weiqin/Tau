@@ -141,7 +141,7 @@ test("事务失败时什么都不留：新 ID 已经被占用，复制的消息�
   startProcess(db, memory, "b", PRESET, "占着", 0);
   drain(db);
   const before = dump(db);
-  assert.throws(() => forkProcess(db, memory, "b", "a", undefined, 0), /constraint|UNIQUE/i);
+  assert.throws(() => forkProcess(db, memory, "b", "a", undefined, 0), /进程 ID 已存在：b/);
   assert.equal(dump(db), before);
   // 消息写到一半失败：让第二条消息的主键冲突（预先放一行假消息）。
   db.prepare("INSERT INTO segment_messages (process_id, segment_seq, seq, message_json) VALUES ('c', 1, 1, '{}')").run();

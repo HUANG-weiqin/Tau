@@ -163,11 +163,11 @@ D64 第 6 组。服务不直接写 SQL，也不直接调 `memory.set`：读经 `
 
 ```ts
 type Request =
-  | { op: "start"; preset: string; text: string; images?: string[] }   // images 是 base64
-  | { op: "send"; process: string; text: string; images?: string[]; handoff?: boolean }
+  | { op: "start"; preset: string; text: string; images?: string[]; id?: string }   // images 是 base64；id 是调用方定的进程 ID
+  | { op: "send"; process: string; text: string; images?: string[]; handoff?: boolean; from?: string; reply?: boolean }
   | { op: "stop"; process: string }
   | { op: "ps" }
-  | { op: "fork"; process: string; before?: number; preset?: string } // before 是当前段里一条用户消息的段内序号；preset 是换角色
+  | { op: "fork"; process: string; before?: number; preset?: string; id?: string } // before 是当前段里一条用户消息的段内序号；preset 是换角色
   | { op: "history"; process: string; segment?: number; from?: number }
   | { op: "blob"; hash: string }                            // hash 不带 blob: 前缀
   | { op: "watch"; process?: string }
@@ -202,10 +202,10 @@ type Reply =
 
 | 请求 | 服务做什么 | 回复 |
 |---|---|---|
-| `start` | `checkImages` 检查图片；`loadPreset` 读预设；生成进程 ID；`startProcess`（启动检查不通过就抛错，回 `error`，什么都不建） | `receipt`，若干 `text`，`final` |
-| `send` | `checkImages` 检查图片；`send` 放进一封用户的信；进程不存在就抛出。`handoff` 为真时信带 `handoff: true`（换段信，生效的时机和条件见 [kb-kernel](kb-kernel.md#换段信)）；为假或没有时不写这个键。带图片的路径保留这个键 | 同上 |
+| `start` | `checkImages` 检查图片；`loadPreset` 读预设；进程 ID 取请求的 `id`，没有就生成；`startProcess`（启动检查不通过就抛错，回 `error`，什么都不建） | `receipt`，若干 `text`，`final` |
+| `send` | `checkImages` 检查图片；`send` 放进一封用户的信；进程不存在就抛出。`handoff` 为真时信带 `handoff: true`（换段信，生效的时机和条件见 [kb-kernel](kb-kernel.md#换段信)）；为假或没有时不写这个键。带图片的路径保留这个键。带 `from`（进程 ID）：以它的名义寄出，发送者、跳数、`replyTo` 由 `send` 事务从它的记录构造（[kb-store](kb-store.md#存储事务)）；`reply` 为真时要回信。`from` 不存在、等于目标、跳数超限回 `error`，什么都不写。请求里别的字段（`hops`、`replyTo`、发送者）一概不读 | 同上 |
 | `stop` | `send` 放进一条 `stop` | `receipt` |
-| `fork` | 生成进程 ID（和 `start` 一样）；带 `preset` 时，用 `loadPreset` 读预设（含工具定义），读不出就回 `error`；`forkProcess`（拒绝的情形见下，什么都不建）。提交之后，给订阅的连接推新进程的 `update`，再回执。不调用 `pump`：没有输入要处理 | `receipt`，然后关闭；拒绝回 `error` |
+| `fork` | 进程 ID 同 `start`（请求的 `id` 或生成）；带 `preset` 时，用 `loadPreset` 读预设（含工具定义），读不出就回 `error`；`forkProcess`（拒绝的情形见下，什么都不建）。提交之后，给订阅的连接推新进程的 `update`，再回执。不调用 `pump`：没有输入要处理 | `receipt`，然后关闭；拒绝回 `error` |
 | `ps` | 读全部进程记录；每个进程 `observe(p, 当前段, 全部进程, now)` | 一行 `ps` |
 | `history` | 读一段的消息 | 若干 `message`，一行 `end`，然后关闭 |
 | `inspect` | 读进程记录和当前段条数；`limits(快照)` | 若干 `process`，一行 `inspected`，然后关闭。没有这个进程回 `error` |
@@ -234,7 +234,7 @@ type Reply =
 
 - 每个连接只读第一行。`\r\n` 算一个换行。
 - 不是合法 JSON：`error`，内容是 `JSON.parse` 的错误信息。
-- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`，可选的 `handoff` 要是布尔；`stop` 要字符串 `process`；`fork` 要字符串 `process`，可选的 `before` 要是非负整数，可选的 `preset` 要是字符串；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`blob` 要字符串 `hash`；`start`、`send` 的 `images` 可以没有，有就要是字符串数组；`watch`、`inspect` 的 `process` 可以没有，有就要是字符串；`check` 要字符串 `preset`；`memory` 的 `ns` 可以没有，有就要是字符串、过预设 ID 的检查（不合法回“预设 ID 不合法：<ns>”）；`memory_write` 要非空数组 `ops`，每项是上面的两种形状之一，每项的 `ns` 也过预设 ID 的检查；`prune` 要字符串 `process`、非负整数 `before`；`remove` 要字符串 `process`；`sweep` 不要字段。否则 `error`：“无法识别的请求：<原文>”。
+- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`，可选的 `handoff` 要是布尔，可选的 `from` 要是字符串，可选的 `reply` 要是布尔、而且为真时必须有 `from`；`start`、`fork` 可选的 `id` 要是字符串，匹配 `[0-9a-z][0-9a-z_-]{0,31}`（ID 原样进信头和 `self` 的文字，上层还拿它拼路径）；`stop` 要字符串 `process`；`fork` 要字符串 `process`，可选的 `before` 要是非负整数，可选的 `preset` 要是字符串；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`blob` 要字符串 `hash`；`start`、`send` 的 `images` 可以没有，有就要是字符串数组；`watch`、`inspect` 的 `process` 可以没有，有就要是字符串；`check` 要字符串 `preset`；`memory` 的 `ns` 可以没有，有就要是字符串、过预设 ID 的检查（不合法回“预设 ID 不合法：<ns>”）；`memory_write` 要非空数组 `ops`，每项是上面的两种形状之一，每项的 `ns` 也过预设 ID 的检查；`prune` 要字符串 `process`、非负整数 `before`；`remove` 要字符串 `process`；`sweep` 不要字段。否则 `error`：“无法识别的请求：<原文>”。
 - 只查类型。空串能通过，多余的字段被忽略。空预设 ID 由 `loadPreset` 拒绝；空消息会成为一条用户消息。CLI 不发空消息。
 - 预设读不出、进程不存在、进程 ID 冲突，都回 `error`。这些情况下库里什么都没写。
 
@@ -447,6 +447,8 @@ tau stop <进程>
 | cli：`self` 和 `ps` 一致 | 同一个预设的两个进程，一个被拦住；另一个的 `self` 显示用量、窗口、时间、时区和运行中的兄弟；`ps` 的投影在 ID、预设、模型、段号、窗口和兄弟上一致 |
 | cli：流式文本 | 流式片段拼起来等于最终回复；CLI 只打印一次 |
 | protocol：`history` | 默认读当前段，`from` 起读，段尾之后只有 `end`；旧段；越界和不存在回 `error`；数字字段的校验；读请求不写库 |
+| protocol：`send` 带 `from`、`reply` | 发送者和跳数来自 `from` 的记录，请求里多余的 `hops`、`replyTo`、发送者字段不进信；`reply` 的回信进 `from` 的信箱并唤醒它；`reply` 没有 `from`、类型不对回 `error`；`from` 不存在或等于目标回 `error` 且库不变；和 `handoff` 同时带 |
+| protocol：`start`、`fork` 带 `id` | 用调用方的 ID；字符集和长度（32 个字符可以，33 个不行）；ID 已存在回“进程 ID 已存在：<id>”，库不变；同一个 `id` 重试是幂等的 |
 | protocol：`text` | `start`、`send` 的观察者收到的 `text` 带进程和编号 |
 | protocol：`watch` 快照和增量 | 带不带 `process` 的快照；每次处理输入一条 `update`，消息条数和用量与库一致；不推 `final`；只推订阅的进程；订阅不存在的进程回 `error` |
 | protocol：`watch` 断开和退出 | 客户端断开后连接被释放，其余订阅照常；服务退出时断开订阅；退出开始以后才到的 `watch` 回 `error`，等最终回复的连接照常收到 |

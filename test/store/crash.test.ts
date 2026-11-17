@@ -191,8 +191,9 @@ async function step(run: Run, kind: Kind): Promise<void> {
       const other = run.processes.find((id) => id !== to);
       // 有两个进程时，一半的信是另一个进程寄来、要回信的：回信的投递也在崩溃注入的范围里。
       if (other !== undefined && run.rand() < 0.5) {
-        send(db, to, { kind: "letter", letter: { from: { kind: "process", id: other, preset: PRESET.id }, content: textContent(text), hops: 1, replyTo: other } });
-        run.asked++;
+        const reply = run.rand() < 0.75;
+        send(db, to, userLetter(text), [], { id: other, reply });
+        if (reply) run.asked++;
       } else send(db, to, userLetter(text), maybeImages(run));
       run.users.push(text);
       return;

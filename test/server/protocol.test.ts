@@ -1322,3 +1322,92 @@ test("memory_write 之后：同预设新开的进程视图看得到，已有进�
   assert.equal(await viewOf(old), "", "运行中的进程当前段的视图是开段时的快照");
   assert.equal(old === fresh, false);
 });
+
+// D64 第 8、9 组：send 带 from、reply；start、fork 带 id
+
+test("send 带 from：寄给另一个进程，信的发送者和跳数来自 from 的记录；请求里多余的字段不进信", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e, "a 好");
+  const b = await startIdle(e, "b 好");
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("收到"))]);
+  const r = await collect(e.pipe, { op: "send", process: b, text: "问你", from: a, hops: 99, replyTo: "zzz", sender: { kind: "user" } } as unknown as Request);
+  assert.equal(r.at(-1)?.type, "final");
+  const first = segmentOf(e, b)[2];
+  assert.ok(first?.role === "user");
+  assert.match(String(first.content), new RegExp(`^（来自进程 ${a}`));
+  // 没有 replyTo：不给 zzz 回信，b 结束时不会往不存在的进程寄信。
+  assert.deepEqual(loadProcess(e.svc.db, b)?.phase, { tag: "idle", ended: "done" });
+});
+
+test("send 带 from 和 reply：b 处理完，回信进 a 的信箱，a 被唤醒；reply 没有 from、from 不是字符串、reply 不是布尔，回 error", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e, "a 好");
+  const b = await startIdle(e, "b 好");
+  for (const bad of [{ reply: true }, { from: 1 }, { from: a, reply: "yes" }, { from: a, reply: 1 }]) {
+    const r = await collect(e.pipe, { op: "send", process: b, text: "x", ...bad } as unknown as Request);
+    assert.match(errorOf(r), /^无法识别的请求/, JSON.stringify(bad));
+  }
+  assert.equal(segmentOf(e, b).length, 2);
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("答案")), fauxAssistantMessage(fauxText("a 收到回信"))]);
+  const r = await collect(e.pipe, { op: "send", process: b, text: "几点", from: a, reply: true });
+  assert.equal(r.at(-1)?.type, "final");
+  // 回信的投递在 b 的结束事务里，a 随后由 pump 处理；等 a 回到 idle。
+  for (let i = 0; i < 200 && segmentOf(e, a).length < 4; i++) await sleep(10);
+  const seg = segmentOf(e, a);
+  assert.equal(seg.length, 4);
+  assert.match(String(seg[2]!.role === "user" ? seg[2]!.content : ""), /答案/);
+});
+
+test("send 带 from 的拒绝：from 不存在、from 等于目标，回 error，什么都不写", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  const before = dumpDb(e);
+  assert.match(errorOf(await collect(e.pipe, { op: "send", process: a, text: "x", from: "nobody" })), /没有这个进程：nobody/);
+  assert.match(errorOf(await collect(e.pipe, { op: "send", process: a, text: "x", from: a, reply: true })), /不能给自己寄信/);
+  assert.equal(dumpDb(e), before);
+});
+
+test("send 带 from 和 handoff：标记保留，换段", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  const b = await startIdle(e);
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("交接说明")), fauxAssistantMessage(fauxText("新段回复"))]);
+  const r = await collect(e.pipe, { op: "send", process: b, text: "换段后做", from: a, handoff: true });
+  assert.equal(r.at(-1)?.type, "final");
+  assert.equal(loadProcess(e.svc.db, b)?.segment.seq, 2);
+});
+
+test("start、fork 带 id：用这个 ID；字符集 [0-9a-z][0-9a-z_-]{0,31}，其余回 error，什么都不建", async (t) => {
+  const e = await setup(t);
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("好"))]);
+  const r = await collect(e.pipe, { op: "start", preset: "p", text: "hi", id: "job-1_a" });
+  assert.deepEqual(r[0], { type: "receipt", process: "job-1_a" });
+  assert.ok(loadProcess(e.svc.db, "job-1_a"));
+  const f = await collect(e.pipe, { op: "fork", process: "job-1_a", id: "f0" });
+  assert.deepEqual(f, [{ type: "receipt", process: "f0" }]);
+  assert.ok(loadProcess(e.svc.db, "f0"));
+  const max = "a".repeat(32);
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("好"))]);
+  assert.equal((await collect(e.pipe, { op: "start", preset: "p", text: "hi", id: max }))[0]?.type, "receipt");
+  const before = dumpDb(e);
+  for (const id of ["", "-a", "_a", "A", "a".repeat(33), "a/b", "a.b", "a b", "中", 1, null]) {
+    for (const req of [{ op: "start", preset: "p", text: "hi", id }, { op: "fork", process: "f0", id }]) {
+      assert.match(errorOf(await collect(e.pipe, req as unknown as Request)), /^无法识别的请求/, JSON.stringify(req));
+    }
+  }
+  assert.equal(dumpDb(e), before);
+});
+
+test("start、fork 带 id：ID 已存在回“进程 ID 已存在”，什么都不写；同一个 id 重试是幂等的", async (t) => {
+  const e = await setup(t);
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("好"))]);
+  assert.equal((await collect(e.pipe, { op: "start", preset: "p", text: "hi", id: "x1" })).at(-1)?.type, "final");
+  const before = dumpDb(e);
+  assert.equal(errorOf(await collect(e.pipe, { op: "start", preset: "p", text: "hi", id: "x1" })), "进程 ID 已存在：x1");
+  assert.equal(errorOf(await collect(e.pipe, { op: "fork", process: "x1", id: "x1" })), "进程 ID 已存在：x1");
+  assert.equal(dumpDb(e), before);
+  assert.deepEqual(await collect(e.pipe, { op: "fork", process: "x1", id: "x2" }), [{ type: "receipt", process: "x2" }]);
+  const once = dumpDb(e);
+  assert.equal(errorOf(await collect(e.pipe, { op: "fork", process: "x1", id: "x2" })), "进程 ID 已存在：x2");
+  assert.equal(dumpDb(e), once);
+});

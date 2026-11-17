@@ -1,6 +1,6 @@
 // 进程的事务：启动、分叉、收一条命令、处理一条输入、三个删除、写记忆（见 .knowledge/kb-store.md）。每个函数恰好一个事务。
 import { decide, effectOf, fork, start } from "../kernel/decide.ts";
-import { startError } from "../kernel/derive.ts";
+import { HOPS_MAX, startError } from "../kernel/derive.ts";
 import { findTool } from "../kernel/tools.ts";
 import { textContent, unreachable } from "../kernel/types.ts";
 import type { DatabaseSync } from "node:sqlite";
@@ -8,7 +8,7 @@ import type { Effect, Input, Instant, Memory, MemoryFailure, MemoryOp, Message, 
 import type { Image } from "../images.ts";
 import { letterContent } from "./blobs.ts";
 import { appendMessages, loadProcess, loadProcesses, loadSegment, putMail, saveProcess, tx } from "./db.ts";
-import { envFor, runDeclared, runInStore } from "./instore.ts";
+import { envFor, nextHops, runDeclared, runInStore, sender } from "./instore.ts";
 import type { ReadPreset } from "./instore.ts";
 
 /**
@@ -19,6 +19,7 @@ export function startProcess(db: DatabaseSync, memory: Memory, id: ProcessId, pr
   const tooBig = startError(preset);
   if (tooBig !== null) throw new Error(tooBig);
   tx(db, () => {
+    checkFreeId(db, id);
     const p = start(id, preset, envFor(memory, preset, now));
     db.prepare("INSERT INTO processes (id, state_json) VALUES (?, ?)").run(id, JSON.stringify(p));
     putMail(db, id, { kind: "letter", letter: { from: { kind: "user" }, content: letterContent(db, text, images, preset.input.includes("image")), hops: 0 } });
@@ -32,6 +33,7 @@ export function startProcess(db: DatabaseSync, memory: Memory, id: ProcessId, pr
  */
 export function forkProcess(db: DatabaseSync, memory: Memory, id: ProcessId, source: ProcessId, before: number | undefined, now: Instant, preset?: PresetSnapshot): { process: Process; segment: Message[] } {
   return tx(db, () => {
+    checkFreeId(db, id);
     const old = loadProcess(db, source);
     if (!old) throw new Error(`没有这个进程：${source}`);
     const { process, messages } = fork(id, old, loadSegment(db, old), before, now, preset && { preset, memoryView: envFor(memory, preset, now).memoryView });
@@ -43,15 +45,41 @@ export function forkProcess(db: DatabaseSync, memory: Memory, id: ProcessId, sou
   });
 }
 
-/** 把信或停止放进一个已有进程的信箱。提交之后才能发回执。`images` 只能跟着信：按目标进程的模型收不收图片，存进 `blobs` 或换成说明。 */
-export function send(db: DatabaseSync, id: ProcessId, input: Extract<Input, { kind: "letter" | "stop" }>, images: readonly Image[] = []): void {
+/** 已有同名进程就抛错：调用方定的 ID 重试时，什么都不写，所以是幂等的（D64 第 9 组）。 */
+function checkFreeId(db: DatabaseSync, id: ProcessId): void {
+  if (loadProcess(db, id)) throw new Error(`进程 ID 已存在：${id}`);
+}
+
+/** 带 `from` 的信：以进程 `id` 的名义寄出，`reply` 为真时要回信（D64 第 8 组）。 */
+export interface SendFrom {
+  id: ProcessId;
+  reply: boolean;
+}
+
+/**
+ * 把信或停止放进一个已有进程的信箱。提交之后才能发回执。`images` 只能跟着信：按目标进程的模型收不收图片，存进 `blobs` 或换成说明。
+ * 带 `from`（只对信）：发送者、跳数、`replyTo` 都从 `from.id` 的记录构造，和它调用 `post` 寄出的信同形，永远不带 `reply`，所以不能伪造回信。
+ * 拒绝（什么都不写）：`from.id` 不存在、等于目标、跳数超过 `HOPS_MAX`。
+ */
+export function send(db: DatabaseSync, id: ProcessId, input: Extract<Input, { kind: "letter" | "stop" }>, images: readonly Image[] = [], from?: SendFrom): void {
   tx(db, () => {
     const p = loadProcess(db, id);
     if (!p) throw new Error(`没有这个进程：${id}`);
-    if (images.length === 0) return putMail(db, id, input);
-    if (input.kind !== "letter") throw new Error("图片只能跟着信。");
-    const text = input.letter.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("");
-    putMail(db, id, { kind: "letter", letter: { ...input.letter, content: letterContent(db, text, images, p.preset.input.includes("image")) } });
+    let letter = input.kind === "letter" ? input.letter : undefined;
+    if (from) {
+      if (!letter) throw new Error("from 只能跟着信。");
+      if (from.id === id) throw new Error("不能给自己寄信。");
+      const a = loadProcess(db, from.id);
+      if (!a) throw new Error(`没有这个进程：${from.id}`);
+      const hops = nextHops(a);
+      if (hops > HOPS_MAX) throw new Error(`跳数到上限（${HOPS_MAX}）：这封信是被进程之间的信一路引出来的。`);
+      const { replyTo: _, ...rest } = letter;
+      letter = { ...rest, from: sender(a), hops, ...(from.reply ? { replyTo: a.id } : {}) };
+    }
+    if (images.length === 0) return putMail(db, id, letter ? { kind: "letter", letter } : input);
+    if (!letter) throw new Error("图片只能跟着信。");
+    const text = letter.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("");
+    putMail(db, id, { kind: "letter", letter: { ...letter, content: letterContent(db, text, images, p.preset.input.includes("image")) } });
   });
 }
 

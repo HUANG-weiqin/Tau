@@ -126,19 +126,19 @@ export async function serve(opts: ServeOptions): Promise<Service> {
       case "start": {
         const images = checkImages(req.images ?? []);
         const preset = readPreset(req.preset);
-        const id = randomBytes(4).toString("hex");
+        const id = req.id ?? randomBytes(4).toString("hex");
         startProcess(db, memory, id, preset, req.text, now, images);
         return awaitFinal(s, id);
       }
       case "send":
-        send(db, req.process, req.handoff === true ? withHandoff(userLetter(req.text)) : userLetter(req.text), checkImages(req.images ?? []));
+        send(db, req.process, req.handoff === true ? withHandoff(userLetter(req.text)) : userLetter(req.text), checkImages(req.images ?? []), req.from === undefined ? undefined : { id: req.from, reply: req.reply === true });
         return awaitFinal(s, req.process);
       case "stop":
         send(db, req.process, { kind: "stop" });
         reply(s, { type: "receipt", process: req.process }).end();
         return pump();
       case "fork": {
-        const id = randomBytes(4).toString("hex");
+        const id = req.id ?? randomBytes(4).toString("hex");
         const preset = req.preset === undefined ? undefined : readPreset(req.preset);
         const h = forkProcess(db, memory, id, req.process, req.before, now, preset);
         if (subscriptions.size > 0) push(id, update(h, now));
@@ -286,6 +286,9 @@ function withHandoff(i: ReturnType<typeof userLetter>): ReturnType<typeof userLe
   return { ...i, letter: { ...i.letter, handoff: true } };
 }
 
+/** 调用方定的进程 ID（D64 第 9 组）：ID 原样进信头和 `self` 的文字，上层还拿它拼路径，所以字符集收得很窄。没有就是合格。 */
+const idOk = (v: unknown): boolean => v === undefined || (typeof v === "string" && /^[0-9a-z][0-9a-z_-]{0,31}$/.test(v));
+
 function parseRequest(line: string): Request {
   const r: unknown = JSON.parse(line);
   const str = (o: object, k: string): boolean => typeof (o as Record<string, unknown>)[k] === "string";
@@ -311,13 +314,14 @@ function parseRequest(line: string): Request {
     if (r.op === "history" && str(r, "process") && num("segment") && num("from")) return r as Request;
     if (r.op === "watch" && (!("process" in r) || str(r, "process"))) return r as Request;
     if (r.op === "stop" && str(r, "process")) return r as Request;
-    if (r.op === "fork" && str(r, "process") && num("before") && ((r as Record<string, unknown>).preset === undefined || str(r, "preset"))) return r as Request;
+    if (r.op === "fork" && str(r, "process") && num("before") && ((r as Record<string, unknown>).preset === undefined || str(r, "preset")) && idOk((r as Record<string, unknown>).id)) return r as Request;
     const images = "images" in r ? r.images : [];
     const imagesOk = Array.isArray(images) && images.every((x) => typeof x === "string");
     if (r.op === "blob" && str(r, "hash")) return r as Request;
     const handoff = (r as Record<string, unknown>).handoff;
-    if (r.op === "send" && str(r, "process") && str(r, "text") && imagesOk && (handoff === undefined || typeof handoff === "boolean")) return r as Request;
-    if (r.op === "start" && str(r, "preset") && str(r, "text") && imagesOk) return r as Request;
+    const { from, reply, id } = r as Record<string, unknown>;
+    if (r.op === "send" && str(r, "process") && str(r, "text") && imagesOk && (handoff === undefined || typeof handoff === "boolean") && (from === undefined || typeof from === "string") && (reply === undefined || (typeof reply === "boolean" && (reply === false || from !== undefined)))) return r as Request;
+    if (r.op === "start" && str(r, "preset") && str(r, "text") && imagesOk && idOk(id)) return r as Request;
   }
   throw new Error(`无法识别的请求：${line}`);
 }

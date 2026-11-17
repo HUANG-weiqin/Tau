@@ -43,10 +43,24 @@ function assertSegmentRows(db: DatabaseSync, processes: readonly Process[]): voi
   }
 }
 
+/** D64 第 8 组：信箱的每一行属于存在的进程；信箱里的信、`turn.queued`、`turn.replyTo` 里的 `replyTo` 都指向存在的进程（`removeProcess` 的拒绝条件保证它）。 */
+function assertReferences(db: DatabaseSync, processes: readonly Process[]): void {
+  const ids = new Set(processes.map((p) => p.id));
+  for (const m of mailbox(db)) {
+    assert.ok(ids.has(m.id), `信箱里的输入属于不存在的进程 ${m.id}`);
+    if (m.input.kind === "letter" && m.input.letter.replyTo !== undefined) assert.ok(ids.has(m.input.letter.replyTo), `信箱里的信要回信给不存在的进程 ${m.input.letter.replyTo}`);
+  }
+  for (const p of processes) {
+    if (p.phase.tag === "idle") continue;
+    for (const to of [...p.phase.turn.replyTo, ...p.phase.turn.queued.flatMap((l) => (l.replyTo === undefined ? [] : [l.replyTo]))]) assert.ok(ids.has(to), `进程 ${p.id} 要回信给不存在的进程 ${to}`);
+  }
+}
+
 export function assertStoreInvariants(db: DatabaseSync): void {
   const processes = loadProcesses(db);
   assertBlobRefs(db, processes);
   assertSegmentRows(db, processes);
+  assertReferences(db, processes);
   const rows = effectRows(db);
   const mail = mailbox(db);
   for (const r of rows) assert.ok(processes.some((p) => p.id === r.id), `副作用表里的行属于不存在的进程 ${r.id}`);

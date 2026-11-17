@@ -146,12 +146,12 @@ const AFTER_REPLY = "，之后的几轮不会。";
 const POST_REPLY = "它处理这封信的那一轮结束时会给你回信" + AFTER_REPLY;
 const SPAWN_REPLY = "它这一轮结束时会给你回信" + AFTER_REPLY;
 
-/** 这一轮寄出的信的跳数。库内工具只在 awaitingTool 里执行。 */
-function nextHops(p: Process): number {
-  return (p.phase.tag === "awaitingTool" ? p.phase.turn.hops : 0) + 1;
+/** `p` 寄出的信的跳数：不空闲时是本轮的跳数加 1，空闲时是 1。库内工具只在等工具时执行；协议的 `send` 带 `from` 时，`p` 可能在等模型。 */
+export function nextHops(p: Process): number {
+  return (p.phase.tag === "idle" ? 0 : p.phase.turn.hops) + 1;
 }
 
-function sender(p: Process): { kind: "process"; id: ProcessId; preset: string } {
+export function sender(p: Process): { kind: "process"; id: ProcessId; preset: string } {
   return { kind: "process", id: p.id, preset: p.preset.id };
 }
 

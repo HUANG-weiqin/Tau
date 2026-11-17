@@ -129,9 +129,9 @@ CREATE TABLE blobs (
 
 | 函数 | 做什么 | 失败时 |
 |---|---|---|
-| `startProcess(db, memory, id, preset, text, now, images?)` | 用 `start` 建 `idle` 进程记录并插入；第一条消息作为用户的信进信箱。带图片时，信的内容块在同一个事务里生成，图片存进 `blobs`（见[图片](#图片)） | ID 重复：主键冲突，什么都不写，`blobs` 也不留。启动检查不通过（[kb-kernel](kb-kernel.md#启动检查和交接以后的检查)）：抛错，什么都不写 |
-| `forkProcess(db, memory, id, source, before, now, preset?)` | 读源进程记录和当前段，用 `fork` 算出新进程记录和要复制的消息（带 `preset`，是调用方在事务之外读好的新预设快照，记忆视图按它重取，见 [kb-kernel 的 fork](kb-kernel.md#fork)），过启动检查，插入新进程记录，写入复制的消息；返回新记录和复制的段。不寄信，不碰 `effects` 和 `blobs`（图片引用照用，`blobs` 不动） | 没有源进程、`fork` 的拒绝（[kb-kernel](kb-kernel.md#fork)）、启动检查不通过、新 ID 已被占用：抛错，整个事务回滚，什么都不留 |
-| `send(db, id, input, images?)` | 把信件或 `stop` 放进已有进程的信箱。带图片时和 `startProcess` 一样，按目标进程的快照处理；图片只能跟着信 | 进程不存在：抛出“没有这个进程”，什么都不写，`blobs` 也不留 |
+| `startProcess(db, memory, id, preset, text, now, images?)` | 先查 `id` 没被占用，再用 `start` 建 `idle` 进程记录并插入；第一条消息作为用户的信进信箱。带图片时，信的内容块在同一个事务里生成，图片存进 `blobs`（见[图片](#图片)） | ID 已存在：抛“进程 ID 已存在：<id>”，什么都不写，`blobs` 也不留（调用方定 ID 时，重试因此是幂等的）。启动检查不通过（[kb-kernel](kb-kernel.md#启动检查和交接以后的检查)）：抛错，什么都不写 |
+| `forkProcess(db, memory, id, source, before, now, preset?)` | 先查 `id` 没被占用，读源进程记录和当前段，用 `fork` 算出新进程记录和要复制的消息（带 `preset`，是调用方在事务之外读好的新预设快照，记忆视图按它重取，见 [kb-kernel 的 fork](kb-kernel.md#fork)），过启动检查，插入新进程记录，写入复制的消息；返回新记录和复制的段。不寄信，不碰 `effects` 和 `blobs`（图片引用照用，`blobs` 不动） | 没有源进程、`fork` 的拒绝（[kb-kernel](kb-kernel.md#fork)）、启动检查不通过、新 ID 已存在（“进程 ID 已存在：<id>”）：抛错，整个事务回滚，什么都不留 |
+| `send(db, id, input, images?, from?)` | 把信件或 `stop` 放进已有进程的信箱。带图片时和 `startProcess` 一样，按目标进程的快照处理；图片只能跟着信。带 `from: { id: A, reply }`（只对信）：在同一个事务里读 A 的记录，发送者是 A 的 `{ kind: "process", id, preset }`（永远不带 `reply`，所以不能伪造回信），跳数是 A 不空闲时 `turn.hops + 1`、空闲时 1（`post` 只在等工具时执行，这里 A 可能在等模型，所以和 `post` 共用的 `nextHops` 不看 A 是不是在等工具，只看有没有 `turn`），`reply` 为真时 `replyTo` 是 A；调用方信里的 `replyTo` 丢掉，`handoff` 保留 | 进程不存在：抛出“没有这个进程”，什么都不写，`blobs` 也不留。带 `from` 时另有：A 不存在、A 等于目标、跳数超过 `HOPS_MAX`，都抛错、什么都不写 |
 | `handleNext(db, memory, now, readPreset?)` | 处理信箱里最早的一条输入。`readPreset` 给 `spawn` 读预设用，服务传 `loadPreset` | 抛出时整个事务回滚，这条输入留在队头 |
 | `pruneSegments(db, id, before)` | 删这个进程段号小于 `before` 的全部旧段。`before` ≤ 1 什么都不删，照样成功 | 没有这个进程、`before` 大于当前段号：抛错，什么都不删 |
 | `removeProcess(db, id)` | 删一个空闲、没人引用的进程的记录和全部段。不碰记忆、`blobs`、`effects` | 没有这个进程、不是 `idle`、信箱里有它的输入、有进程的 `parent` 是它、它在任何 `turn.replyTo` 或排队的信的 `replyTo` 里：抛错，什么都不删 |
@@ -294,6 +294,7 @@ CREATE TABLE blobs (
 
 8. 信箱、`turn.queued` 和全部进程的全部段里的每个 blob 引用，`blobs` 里都有对应的行。图片块的 `data` 不是 `blob:<hash>` 也算违反：库里只存引用。检查在 `assertStoreInvariants` 的 `assertBlobRefs`，读全部进程的全部段。
 9. 旧段（段号小于当前段）要么整段在、不为空，要么整段删掉；删掉的段是从 1 起连着的一段（`pruneSegments` 总是删“小于 `before`”的全部）。`history` 判断一段是否被删，靠这一条。
+10. 信箱的每一行都属于存在的进程；信箱里的信、`turn.queued`、`turn.replyTo` 里的 `replyTo` 都指向存在的进程。`removeProcess` 的拒绝条件加上 `send` 带 `from` 的事务保证它：`replyTo` 只在 A 存在时写入。检查在 `assertReferences`。
 
 “n 的结果”指：同一个进程、种类对得上（`callModel` 对 `modelResult`，`runTool` 对 `toolResult`）、编号是 n 的输入。
 
@@ -468,6 +469,7 @@ CREATE TABLE blobs (
 | `test/store/inputs.test.ts` | `startProcess`、`send`、`handleNext` 三个事务、同步规则、库内工具、只读当前段（读取行数和查询计划） |
 | `test/store/blobs.test.ts` | 图片：存字节和引用、同一事务（反例：进程不存在、启动检查不过、ID 重复时不留 `blobs`）、不收图片的模型换说明、`resolveImages`、执行器调用模型前换成真数据、不变量能抓到缺行 |
 | `test/store/invariants.ts` | 存储层不变量（含 blob 引用完整性） |
+| `test/store/sendfrom.test.ts` | `send` 带 `from`（D64 第 8 组）：发送者和跳数从 A 的记录构造，A 空闲、等模型、等工具三种跳数；`reply` 的 `replyTo`、回信在 B 的结束事务里进 A 的信箱；与 `handoff` 同带；A 不存在、A 等于目标、跳数到 `HOPS_MAX` 的拒绝，库一字不差；`start`、`forkProcess` 遇到已存在的 ID（第 9 组）；不变量第 10 条能抓到三种违反。`crash.test.ts` 的随机序列里，进程之间的信用 `send` 带 `from`（`reply` 随机）寄出，和 `removeProcess` 交错，每步之后查不变量 |
 | `test/store/fork.test.ts` | `forkProcess`：新进程和复制的消息、源进程和库里别的东西不变；运行中带 `before` 可以、不带被拒；各种拒绝和启动检查不通过什么都不建；新 ID 被占用或写到一半失败时回滚；带图片引用的段不变量成立、`blobs` 不增；带 `preset`：快照和记忆视图来自新预设，图片按新模型处理，放不进什么都不建 |
 | `test/store/delete.test.ts` | 三个删除事务（D59）：`pruneSegments`（当前段不删、`before` 越界被拒、`before` ≤ 1 什么都不删、运行中也能删、没有进程被拒）；`removeProcess` 的每条拒绝（没有进程、不是 `idle`、信箱里有它的输入、有子进程、在 `turn.replyTo` 里、在排队的信和信箱里的信的 `replyTo` 里）各一个最小反例，拒绝后库不变，成功时记忆和 `blobs` 不动；`sweepBlobs`（只在 `turn.queued` 里引用的图片留下，到安全点调用模型拿得到真字节；`fork` 共用的图片、旧段的图片）；不变量第 8、9 条能抓到违反 |
 | `test/store/regressions.test.ts` | 审查发现的缺陷的最小反例 |

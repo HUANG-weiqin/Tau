@@ -88,7 +88,7 @@ test("反例：进程不存在时 send 抛错，图片不存；启动检查不�
   assert.throws(() => startProcess(db, memory, "p1", { ...VISION, contextWindow: 100 }, "x", 0, images(png(1, 1, 2))), /窗口太小/);
   assert.equal(blobCount(db), 0);
   startProcess(db, memory, "p1", VISION, "x", 0);
-  assert.throws(() => startProcess(db, memory, "p1", VISION, "y", 0, images(png(1, 1, 3))), /UNIQUE|constraint/i);
+  assert.throws(() => startProcess(db, memory, "p1", VISION, "y", 0, images(png(1, 1, 3))), /进程 ID 已存在：p1/);
   assert.equal(blobCount(db), 0);
   assert.equal(mailbox(db).length, 1);
 });

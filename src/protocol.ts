@@ -6,14 +6,14 @@ import type { Ended, Instant, MemoryFailure, MemoryOp, Message, PresetSnapshot, 
 export const PIPE = "\\\\.\\pipe\\tau";
 
 export type Request =
-  /** `images` 是 base64 字符串，按入口检查（设计稿 5.6）。 */
-  | { op: "start"; preset: string; text: string; images?: string[] }
-  /** `handoff` 为真：换段信（D64 第 7 组），这封信写进段时，下一次调用的用途是 handoff。 */
-  | { op: "send"; process: string; text: string; images?: string[]; handoff?: boolean }
+  /** `images` 是 base64 字符串，按入口检查（设计稿 5.6）。`id` 是调用方定的进程 ID（D64 第 9 组），只许 `[0-9a-z][0-9a-z_-]{0,31}`；已存在回 `error`，什么都不写。 */
+  | { op: "start"; preset: string; text: string; images?: string[]; id?: string }
+  /** `handoff` 为真：换段信（D64 第 7 组），这封信写进段时，下一次调用的用途是 handoff。`from` 是进程 ID：以它的名义寄出，发送者、跳数从它的记录构造；`reply` 为真时必须带 `from`，回信寄给它（D64 第 8 组）。 */
+  | { op: "send"; process: string; text: string; images?: string[]; handoff?: boolean; from?: string; reply?: boolean }
   | { op: "stop"; process: string }
   | { op: "ps" }
-  /** 从进程当前段里一条用户消息（段内序号 `before`）前面分叉出新进程；不带 `before` 复制整个当前段。带 `preset` 是换角色：用这个预设的快照和记忆。回执带新进程的 ID。 */
-  | { op: "fork"; process: string; before?: number; preset?: string }
+  /** 从进程当前段里一条用户消息（段内序号 `before`）前面分叉出新进程；不带 `before` 复制整个当前段。带 `preset` 是换角色：用这个预设的快照和记忆。带 `id` 用调用方定的 ID（同 `start`）。回执带新进程的 ID。 */
+  | { op: "fork"; process: string; before?: number; preset?: string; id?: string }
   /** 读一段的消息，从段内序号 from 起。段默认是当前段，from 默认是 0。 */
   | { op: "history"; process: string; segment?: number; from?: number }
   /** 读一张图片。`hash` 不带 `blob:` 前缀。 */
