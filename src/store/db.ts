@@ -99,8 +99,12 @@ export function readSegment(db: DatabaseSync, id: ProcessId, segment: number, fr
     .prepare("SELECT seq, message_json FROM segment_messages WHERE process_id = ? AND segment_seq = ? AND seq >= ? ORDER BY seq")
     .all(id, segment, from)
     .map((r) => ({ seq: r.seq as number, message: JSON.parse(r.message_json as string) as Message }));
-  const count = db.prepare("SELECT COUNT(*) AS n FROM segment_messages WHERE process_id = ? AND segment_seq = ?").get(id, segment)?.n as number;
-  return { rows, count };
+  return { rows, count: countMessages(db, id, segment) };
+}
+
+/** 一段的消息条数，不读消息。 */
+export function countMessages(db: DatabaseSync, id: ProcessId, segment: number): number {
+  return db.prepare("SELECT COUNT(*) AS n FROM segment_messages WHERE process_id = ? AND segment_seq = ?").get(id, segment)?.n as number;
 }
 
 /** 把消息追加到 `p.segment.seq` 那一段，段内序号从 `from` 开始。 */

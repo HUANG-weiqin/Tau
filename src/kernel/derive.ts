@@ -46,13 +46,26 @@ export function fixedTokens(p: PresetSnapshot): number {
   return tokens(utf8Bytes(fixedPrompt(p)) + utf8Bytes(JSON.stringify(toolDescriptions(p))));
 }
 
+/** 一份快照的限度，单位 token：固定部分、记忆视图的上界（没有 memory 工具时是 0）、换段阈值。只看快照。 */
+export interface Limits {
+  fixed: number;
+  memoryMax: number;
+  threshold: number;
+}
+
+export function limits(p: PresetSnapshot): Limits {
+  return {
+    fixed: fixedTokens(p),
+    memoryMax: p.tools.includes("memory") ? tokens(utf8Bytes(MEMORY_HEADING) + MEMORY_VIEW_MAX_BYTES) : 0,
+    threshold: handoffThreshold(p),
+  };
+}
+
 /** 启动检查（设计稿 5.6）：固定部分加记忆的上界要低于阈值。通过时返回 null，否则返回失败的原因。 */
 export function startError(p: PresetSnapshot): string | null {
-  const fixed = fixedTokens(p);
-  const memory = p.tools.includes("memory") ? tokens(utf8Bytes(MEMORY_HEADING) + MEMORY_VIEW_MAX_BYTES) : 0;
-  const threshold = handoffThreshold(p);
-  if (fixed + memory < threshold) return null;
-  return `预设 ${p.id} 的窗口太小，装不下：固定部分 ${fixed} token，记忆的上界 ${memory} token，换段阈值 ${threshold} token`;
+  const { fixed, memoryMax, threshold } = limits(p);
+  if (fixed + memoryMax < threshold) return null;
+  return `预设 ${p.id} 的窗口太小，装不下：固定部分 ${fixed} token，记忆的上界 ${memoryMax} token，换段阈值 ${threshold} token`;
 }
 
 /** 假想的新段开头：只有一条消息 `first`，记忆视图是 `view`。返回它的用量和各部分的 token。 */

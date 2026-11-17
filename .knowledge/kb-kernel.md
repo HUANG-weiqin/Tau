@@ -104,7 +104,7 @@ interface Env { now: Instant; memoryView: string }
 | `buildContext(p, seg)`、`tailStart(seg)`、`omitOldImages(messages)` | `context.ts` | 模型请求；段末用户消息的起点；请求里成批省略旧图 |
 | `observe(p, seg, siblings, now)` | `observe.ts` | 投影 |
 | `toolsFor(preset)`、`findTool(preset, name)` | `tools.ts` | 工具描述，含工具定义。参数只要 `tools` 和 `toolDefs` |
-| `contextUsed`、`messageBytes`、`tokens`、`outputMax`、`handoffThreshold`、`resultReserve`、`fixedTokens`、`startError`、`newSegmentUsed`、`pendingCalls`、`handoffRequested`、`segmentStartedAt`、`usageOf`、`clip`、`utf8Bytes` | `derive.ts` | 派生值和字节工具 |
+| `contextUsed`、`messageBytes`、`tokens`、`outputMax`、`handoffThreshold`、`resultReserve`、`fixedTokens`、`limits`、`startError`、`newSegmentUsed`、`pendingCalls`、`handoffRequested`、`segmentStartedAt`、`usageOf`、`clip`、`utf8Bytes` | `derive.ts` | 派生值和字节工具 |
 | `finalReply(seg)`、`endedText(ended)`、`endedReason(error)` | `derive.ts` | [最终回复](#最终回复)；[结束原因的文字](#结束原因的文字) |
 
 ``decide` 的输出约定：
@@ -192,7 +192,8 @@ interface Env { now: Instant; memoryView: string }
 | 换段阈值 | `handoffThreshold(preset)` | `min(contextWindow − 2 × outputMax − R − MARGIN_TOKENS, handoff)`，R 是 `resultReserve(preset)`；预设没写 `handoff` 时只有前一项，见[换段阈值](#换段阈值) |
 | R | `resultReserve(preset)` | `tokens(MESSAGE_MAX_BYTES)`；`input` 含 `image` 时再加 `IMAGES_PER_MESSAGE × IMAGE_TOKENS`。只看快照 |
 | 固定部分 | `fixedTokens(preset)` | `tokens(预设提示词 + 工作目录那一行 + JSON.stringify(工具描述)的字节)`，口径和 `contextUsed` 一样。工具描述含工具定义，所以启动检查也算上它们 |
-| 启动检查 | `startError(preset)` | `fixedTokens + 记忆的上界 < handoffThreshold` 时返回 `null`，否则返回原因（含三个数）。记忆的上界：预设含 `memory` 时是 `tokens(MEMORY_VIEW_MAX_BYTES + 标题的字节)`，否则 0。`start` 和 `spawn` 在存储层调用（[kb-store](kb-store.md)） |
+| 限度 | `limits(preset)` | `{ fixed, memoryMax, threshold }`，单位 token：`fixedTokens`、记忆的上界、`handoffThreshold`。记忆的上界：预设含 `memory` 时是 `tokens(MEMORY_VIEW_MAX_BYTES + 标题的字节)`，否则 0。只看快照。协议的 `inspect`、`check` 把它交给上层 |
+| 启动检查 | `startError(preset)` | 用 `limits`：`fixed + memoryMax < threshold` 时返回 `null`，否则返回原因（含三个数）。`start`、`fork`、`spawn` 在存储层调用，`check` 在服务层调用（[kb-store](kb-store.md)、[kb-service](kb-service.md#读记录和干跑inspectcheck)） |
 | 假想的新段 | `newSegmentUsed(p, view, first)` | 新段只有 `first` 一条消息时的用量，加固定部分和记忆各多少 token。交接以后的检查用 |
 | 是否到阈值 | 内部 `overThreshold` | `contextUsed >= handoffThreshold` |
 | 段末用户消息的起点 | `tailStart(seg)`（`context.ts`） | 段末最长一串用户消息的起点。段不空时最小为 1，段空时为 0 |
@@ -547,7 +548,7 @@ interface Projection {
   self: ProcessView & {
     segment: number;                       // 段号
     segmentAge: number | null;             // 本段开始多久；段空时为 null
-    context: { used: number; window: number };
+    context: { used: number; window: number; threshold: number }; // threshold 是换段阈值
     messages: number;                      // 当前段的消息条数
     usage: Usage;                          // 累计用量，跨段
   };
@@ -566,6 +567,7 @@ type PhaseView =
 
 - 只给时刻和时长，单位毫秒。`age = now - createdAt`。`queued` 只给条数。
 - `parent` 没有时没有这个键。`children` 和 `siblings` 都从传入的全部进程记录里按条件挑，保持传入的顺序；子进程也可能同时是兄弟。只看直接的子进程，不含孙子。空闲子进程的 ID 不在投影里：要找，就按 `parent` 从协议 `ps` 的投影里挑。
+- `context.threshold` 是 `handoffThreshold(快照)`，含预设的 `handoff`。
 - `messages` 是当前段的消息条数；`usage` 是进程记录里的累计用量，不是从段里算的。
 - `idle` 阶段的出错原因经 `endedReason` 截短（先截到 1024 字节再把换行换成空格）。进程记录里存的仍是原文。运行中的进程没有结束原因，所以只有空闲的自己会出现截短的原因。
 - 本地时间、时区和文本格式在纯函数层外：`self` 在事务里（[kb-store.md](kb-store.md#self)），`tau ps` 在 CLI 里（[kb-service.md](kb-service.md#tau-ps-的文字格式)）。

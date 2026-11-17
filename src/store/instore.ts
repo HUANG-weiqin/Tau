@@ -167,6 +167,7 @@ function formatSelf(v: Projection): string {
     `阶段：${phaseText(s.phase)}`,
     `工作段：第 ${s.segment} 段${s.segmentAge === null ? "" : `，开始于 ${duration(s.segmentAge)}前`}，共 ${s.messages} 条消息`,
     `上下文：已用约 ${s.context.used} token，窗口 ${s.context.window} token`,
+    `换段阈值：${s.context.threshold} token`,
     `累计用量：输入 ${s.usage.input}，输出 ${s.usage.output}，缓存读 ${s.usage.cacheRead}，缓存写 ${s.usage.cacheWrite}（token）`,
     v.siblings.length === 0 ? "同一个预设下没有其他运行中的进程。" : "同一个预设下运行中的其他进程：",
     ...v.siblings.map((x) => `- ${x.id}：${phaseText(x.phase)}，已运行 ${duration(x.age)}`),

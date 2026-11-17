@@ -12,12 +12,15 @@ import {
   endedReason,
   endedText,
   finalReply,
+  fixedTokens,
   handoffThreshold,
+  limits,
   MESSAGE_MAX_BYTES,
   messageBytes,
   outputMax,
   pendingCalls,
   segmentStartedAt,
+  startError,
   tokens,
   utf8Bytes,
 } from "../../src/kernel/derive.ts";
@@ -153,4 +156,19 @@ test("endedText：四种结束原因；出错原因先 clip 再把回车换行�
   assert.ok(text.includes("中间省略"), "省略标记还在，它的换行也换成了空格");
   assert.ok(utf8Bytes(text) <= ENDED_REASON_MAX_BYTES + utf8Bytes("出错："));
   assert.equal(endedReason(endedReason(long)), endedReason(long), "处理过的原因再处理一次不变");
+});
+
+test("limits：固定部分、记忆的上界、换段阈值；没有 memory 工具时上界是 0；handoff 只调低阈值；startError 的文字用它", () => {
+  const withMem = preset({ contextWindow: 200_000, tools: ["read", "memory"] });
+  const noMem = preset({ contextWindow: 200_000, tools: ["read"] });
+  const a = limits(withMem);
+  assert.equal(a.fixed, fixedTokens(withMem));
+  assert.equal(a.threshold, handoffThreshold(withMem));
+  assert.ok(a.memoryMax > 0);
+  assert.equal(limits(noMem).memoryMax, 0);
+  assert.equal(limits({ ...withMem, handoff: 20_000 }).threshold, 20_000);
+  assert.equal(startError(withMem), null);
+  const small = preset({ contextWindow: 30_000, tools: ["read", "memory"] });
+  const l = limits(small);
+  assert.equal(startError(small), `预设 ${small.id} 的窗口太小，装不下：固定部分 ${l.fixed} token，记忆的上界 ${l.memoryMax} token，换段阈值 ${l.threshold} token`);
 });

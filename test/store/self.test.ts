@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { DatabaseSync } from "node:sqlite";
 import type { Message, Process, PresetSnapshot } from "../../src/kernel/types.ts";
+import { handoffThreshold } from "../../src/kernel/derive.ts";
 import { loadProcess, saveProcess, tx } from "../../src/store/db.ts";
 import { startProcess } from "../../src/store/inputs.ts";
 import { runInStore, spawnId } from "../../src/store/instore.ts";
@@ -61,4 +62,16 @@ test("self 的文字：父进程一行，运行中的子进程各一行，空闲
   const kidText = selfText(db, kid);
   assert.match(kidText, /^父进程：boss1$/m);
   assert.doesNotMatch(kidText, /子进程/);
+});
+
+test("self 的文字：上下文那一行后面多一行换段阈值；有 handoff 时用较低的", (t) => {
+  const db = tempDb(t);
+  startProcess(db, fakeMemory(), "solo", BOSS, "开始", 0);
+  const p = loadProcess(db, "solo")!;
+  const lines = selfText(db, p).split("\n");
+  const at = lines.findIndex((l) => l.startsWith("上下文："));
+  assert.ok(at >= 0);
+  assert.equal(lines[at + 1], `换段阈值：${handoffThreshold(BOSS)} token`);
+  const low: Process = { ...p, preset: { ...BOSS, handoff: 1_234 } };
+  assert.ok(selfText(db, low).split("\n").includes("换段阈值：1234 token"));
 });

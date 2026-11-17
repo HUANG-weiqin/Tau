@@ -1,6 +1,7 @@
 // CLI 和服务之间唯一的线协议（见 .knowledge/kb-service.md）。每个连接：客户端发一行 JSON 请求，服务回若干行 JSON，然后关闭。
+import type { Limits } from "./kernel/derive.ts";
 import type { Projection } from "./kernel/observe.ts";
-import type { Ended, Message } from "./kernel/types.ts";
+import type { Ended, Instant, Message, PresetSnapshot, Process } from "./kernel/types.ts";
 
 export const PIPE = "\\\\.\\pipe\\tau";
 
@@ -16,6 +17,10 @@ export type Request =
   | { op: "history"; process: string; segment?: number; from?: number }
   /** 读一张图片。`hash` 不带 `blob:` 前缀。 */
   | { op: "blob"; hash: string }
+  /** 原样读进程记录。不带 `process` 回全部，按 ID 升序；没有这个进程回 `error`。不开事务，不调 `pump`。 */
+  | { op: "inspect"; process?: string }
+  /** 干跑预设的读取和启动检查，和 `start` 用同一个读预设的函数。不读库。 */
+  | { op: "check"; preset: string }
   /** 订阅变化，直到客户端断开。不带 process 时订阅全部进程。 */
   | { op: "watch"; process?: string }
   /** 删这个进程段号小于 `before` 的旧段。当前段不删；`before` 大于当前段号回 `error`。回执。 */
@@ -33,6 +38,12 @@ export type Reply =
   /** 进程回到 idle 后，从库里取出的最终回复和结束原因。 */
   | { type: "final"; reply: string; ended: Ended | null }
   | { type: "ps"; processes: Projection[] }
+  /** inspect 的每个进程一行：原样的记录，当前段的条数（同一次读取），按它的快照算的限度。 */
+  | { type: "process"; process: Process; messages: number; limits: Limits }
+  /** inspect 的结束行。没收到它就断开，是没读完。 */
+  | { type: "inspected"; count: number; now: Instant }
+  /** check 读得出时的回复：`error` 是启动检查的原文，`null` 表示此刻能启动。 */
+  | { type: "check"; snapshot: PresetSnapshot; limits: Limits; error: string | null }
   | { type: "message"; segment: number; seq: number; message: Message }
   /** history 读完：这一段的段号和消息条数。没收到它就断开，是没读完。 */
   | { type: "end"; segment: number; messages: number }

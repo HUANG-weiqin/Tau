@@ -12,6 +12,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import type { FauxProviderHandle, RegisterFauxProviderOptions } from "@earendil-works/pi-ai";
 import { request } from "../../src/cli/main.ts";
+import { limits } from "../../src/kernel/derive.ts";
 import type { Message } from "../../src/kernel/types.ts";
 import { sqliteMemory } from "../../src/memory/kv.ts";
 import type { Reply, Request } from "../../src/protocol.ts";
@@ -1028,4 +1029,153 @@ test("prune、remove、sweep 的请求校验：缺字段、类型不对都回无
   const before = dumpDb(e);
   for (const req of bad) assert.match(errorOf(await collect(e.pipe, req as Request)), /^无法识别的请求/, JSON.stringify(req));
   assert.equal(dumpDb(e), before);
+});
+
+// inspect（D64 第 1 组）
+
+type Inspected = Extract<Reply, { type: "process" }>;
+const rowsOf = (r: Reply[]): Inspected[] => r.filter((x): x is Inspected => x.type === "process");
+
+test("inspect：不带 process 回全部进程，按 ID 升序，一个进程一行，最后一行 inspected；记录原样", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  const b = await startIdle(e);
+  const r = await collect(e.pipe, { op: "inspect" });
+  assert.equal(r.length, 3);
+  const ids = [a, b].sort();
+  assert.deepEqual(rowsOf(r).map((x) => x.process.id), ids);
+  for (const row of rowsOf(r)) {
+    const p = loadProcess(e.svc.db, row.process.id)!;
+    assert.deepEqual(row.process, p);
+    assert.equal(row.messages, segmentOf(e, p.id).length);
+    assert.deepEqual(row.limits, limits(p.preset));
+  }
+  const end = r.at(-1);
+  assert.equal(end?.type, "inspected");
+  assert.equal(end?.type === "inspected" ? end.count : -1, 2);
+  assert.equal(end?.type === "inspected" && typeof end.now, "number");
+});
+
+test("inspect：带 process 回这一个的一行加结束行；没有进程时回 error，没有结束行；没有任何进程时只有结束行", async (t) => {
+  const e = await setup(t);
+  const empty = await collect(e.pipe, { op: "inspect" });
+  assert.equal(empty.length, 1);
+  assert.equal(empty[0]?.type, "inspected");
+  assert.equal(empty[0]?.type === "inspected" ? empty[0].count : -1, 0);
+  const a = await startIdle(e);
+  await startIdle(e);
+  const one = await collect(e.pipe, { op: "inspect", process: a });
+  assert.deepEqual(one.map((x) => x.type), ["process", "inspected"]);
+  assert.equal(rowsOf(one)[0]?.process.id, a);
+  assert.equal(one[1]?.type === "inspected" ? one[1].count : -1, 1);
+  assert.match(errorOf(await collect(e.pipe, { op: "inspect", process: "nope" })), /没有这个进程：nope/);
+});
+
+test("inspect：记录加上 history 的前 messages 条，就是那一刻的状态；messages 和当前段条数一致", async (t) => {
+  const e = await setup(t);
+  const id = await startIdle(e, "第一句。");
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("第二句。"))]);
+  await collect(e.pipe, { op: "send", process: id, text: "再说" });
+  const row = rowsOf(await collect(e.pipe, { op: "inspect", process: id }))[0]!;
+  const hist = (await collect(e.pipe, { op: "history", process: id })).filter((x): x is Extract<Reply, { type: "message" }> => x.type === "message");
+  assert.equal(row.messages, 4);
+  assert.deepEqual(hist.slice(0, row.messages).map((x) => x.message), segmentOf(e, id));
+  assert.equal(row.process.segment.seq, 1);
+});
+
+test("inspect：出错原因不截短（投影里才截短）", async (t) => {
+  const e = await setup(t);
+  const id = await startIdle(e);
+  const long = `错误\n${"长".repeat(2_000)}`;
+  saveProcess(e.svc.db, { ...loadProcess(e.svc.db, id)!, phase: { tag: "idle", ended: { error: long } } });
+  const row = rowsOf(await collect(e.pipe, { op: "inspect", process: id }))[0]!;
+  assert.deepEqual(row.process.phase, { tag: "idle", ended: { error: long } });
+});
+
+test("inspect 是读请求：不写库，不开事务，不调 pump（信箱里的信不被处理）；请求校验：process 必须是字符串", async (t) => {
+  const e = await setup(t);
+  const id = await startIdle(e);
+  putMail(e.svc.db, id, { kind: "letter", letter: { from: { kind: "user" }, content: [{ type: "text", text: "留着" }], hops: 0 } });
+  const before = dumpDb(e);
+  await collect(e.pipe, { op: "inspect" });
+  await collect(e.pipe, { op: "inspect", process: id });
+  await sleep(100);
+  assert.equal(dumpDb(e), before);
+  assert.equal(e.svc.db.isTransaction, false);
+  for (const req of [{ op: "inspect", process: 1 }, { op: "inspect", process: null }]) {
+    assert.match(errorOf(await collect(e.pipe, req as unknown as Request)), /^无法识别的请求/);
+  }
+});
+
+// check（D64 第 2 组）
+
+type Checked = Extract<Reply, { type: "check" }>;
+
+test("check：读得出就回快照、限度和 error:null；快照和 start 冻结的一致", async (t) => {
+  const e = await setup(t);
+  const r = await collect(e.pipe, { op: "check", preset: "p" });
+  assert.equal(r.length, 1);
+  const c = r[0] as Checked;
+  assert.equal(c.type, "check");
+  assert.equal(c.error, null);
+  assert.equal(c.snapshot.id, "p");
+  assert.deepEqual(c.limits, limits(c.snapshot));
+  const id = await startIdle(e);
+  assert.deepEqual(loadProcess(e.svc.db, id)?.preset, c.snapshot);
+});
+
+test("check：读不出回 error，文字和 start 一字不差；装不下回 check，error 是启动检查的原文", async (t) => {
+  const e = await setup(t);
+  const preset = (id: string, extra: string) => writeFileSync(join(e.presetsDir, `${id}.md`), `---\nworkdir: ${e.work}\nmodel: ${e.faux.getModel().provider}/m\ntools: read\n${extra}---\n你是测试助手。\n`);
+  preset("tiny", "handoff: 100\n");
+  const c = (await collect(e.pipe, { op: "check", preset: "tiny" }))[0] as Checked;
+  assert.equal(c.type, "check");
+  assert.match(c.error ?? "", /窗口太小，装不下/);
+  assert.equal(errorOf(await collect(e.pipe, { op: "start", preset: "tiny", text: "你好" })), c.error);
+  const ghost = errorOf(await collect(e.pipe, { op: "check", preset: "ghost" }));
+  assert.equal(ghost, errorOf(await collect(e.pipe, { op: "start", preset: "ghost", text: "你好" })));
+});
+
+test("check：不读库，不开事务，什么都不写；请求校验：preset 必须是字符串", async (t) => {
+  const e = await setup(t);
+  await startIdle(e);
+  const before = dumpDb(e);
+  await collect(e.pipe, { op: "check", preset: "p" });
+  await collect(e.pipe, { op: "check", preset: "ghost" });
+  assert.equal(dumpDb(e), before);
+  assert.equal(e.svc.db.isTransaction, false);
+  for (const req of [{ op: "check" }, { op: "check", preset: 1 }, { op: "check", preset: null }]) {
+    assert.match(errorOf(await collect(e.pipe, req as unknown as Request)), /^无法识别的请求/);
+  }
+});
+
+test("check 和 start 结论一致：读不出、工具定义坏、装不下、能启动", async (t) => {
+  const e = await setup(t);
+  const preset = (id: string, tools: string, extra = "") => writeFileSync(join(e.presetsDir, `${id}.md`), `---\nworkdir: ${e.work}\nmodel: ${e.faux.getModel().provider}/m\ntools: ${tools}\n${extra}---\n你是测试助手。\n`);
+  writeFileSync(join(e.toolsDir, "broken.json"), JSON.stringify({ description: 7, parameters: { type: "object" }, command: "echo" }));
+  preset("baddef", "read, broken");
+  preset("tiny", "read", "handoff: 100\n");
+  const cases: { id: string; verdict: "unreadable" | "toobig" | "ok" }[] = [
+    { id: "ghost", verdict: "unreadable" },
+    { id: "baddef", verdict: "unreadable" },
+    { id: "tiny", verdict: "toobig" },
+    { id: "p", verdict: "ok" },
+  ];
+  for (const { id, verdict } of cases) {
+    e.faux.appendResponses([fauxAssistantMessage(fauxText("好"))]);
+    const c = (await collect(e.pipe, { op: "check", preset: id }))[0]!;
+    const s = await collect(e.pipe, { op: "start", preset: id, text: "你好" });
+    if (verdict === "unreadable") {
+      assert.equal(c.type, "error", id);
+      assert.deepEqual(s, [c], id);
+    } else if (verdict === "toobig") {
+      assert.equal(c.type, "check", id);
+      assert.equal(s[0]?.type, "error", id);
+      assert.equal(s[0]?.type === "error" ? s[0].message : "", (c as Checked).error, id);
+    } else {
+      assert.equal(c.type, "check", id);
+      assert.equal((c as Checked).error, null, id);
+      assert.equal(s[0]?.type, "receipt", id);
+    }
+  }
 });

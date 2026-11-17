@@ -121,7 +121,7 @@ CREATE TABLE blobs (
 
 `tx(db, f)`：`BEGIN IMMEDIATE`，执行 `f`，`COMMIT`。`f` 抛出时，如果库还开着并且还在事务里，就 `ROLLBACK`，再把错误抛出去。
 
-行的读写函数都在 `db.ts`：`loadProcess`、`loadProcesses`（按 ID 排序）、`saveProcess`、`loadSegment`、`appendMessages`、`putMail`（把一条输入放进一个进程的信箱）。它们不开事务。写入都由调用方放进 `tx`。
+行的读写函数都在 `db.ts`：`loadProcess`、`loadProcesses`（按 ID 排序）、`saveProcess`、`loadSegment`、`readSegment`、`countMessages`（只数一段的条数，不读消息；`inspect` 用）、`appendMessages`、`putMail`（把一条输入放进一个进程的信箱）。它们不开事务。写入都由调用方放进 `tx`。
 
 ### 存储事务
 
@@ -347,6 +347,7 @@ CREATE TABLE blobs (
 阶段：<阶段>
 工作段：第 <n> 段，开始于 <时长>前，共 <m> 条消息
 上下文：已用约 <used> token，窗口 <window> token
+换段阈值：<threshold> token
 累计用量：输入 <a>，输出 <b>，缓存读 <c>，缓存写 <d>（token）
 同一个预设下运行中的其他进程：
 - <id>：<阶段>，已运行 <时长>
@@ -356,6 +357,7 @@ CREATE TABLE blobs (
 ```
 
 - `父进程` 一行只在有父进程时出现。`运行中的子进程` 和它的各行只在有运行中的子进程时出现；`空闲的子进程` 一行只在个数大于 0 时出现。
+- 换段阈值一行是 `context.threshold`：`handoffThreshold`，含预设的 `handoff`。
 - 工作段一行：段里还没有消息时没有“开始于”。消息条数是当前段的。累计用量跨段。
 - 空闲子进程的 ID 不在文字里，要找就用协议 `ps` 的投影按 `parent` 挑。
 

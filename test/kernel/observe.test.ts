@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { start } from "../../src/kernel/decide.ts";
-import { ENDED_REASON_MAX_BYTES, contextUsed, utf8Bytes } from "../../src/kernel/derive.ts";
+import { ENDED_REASON_MAX_BYTES, contextUsed, handoffThreshold, utf8Bytes } from "../../src/kernel/derive.ts";
 import { observe } from "../../src/kernel/observe.ts";
 import type { Message, Phase, Process } from "../../src/kernel/types.ts";
 import { assistant, call, current, deepFreeze, env, feed, letter, preset, reply, userInput, world } from "./helpers.ts";
@@ -34,7 +34,7 @@ test("自己：ID、预设、模型、阶段、第几段、本段开始多久、
     age: 8_000,
     segment: 1,
     segmentAge: 4_000,
-    context: { used: contextUsed(w.p, seg), window: A.contextWindow },
+    context: { used: contextUsed(w.p, seg), window: A.contextWindow, threshold: handoffThreshold(A) },
     messages: 2,
     usage: { input: 1_234, output: 0, cacheRead: 0, cacheWrite: 0 },
   });
@@ -142,4 +142,10 @@ test("出错的原因在投影里截短：先截再把换行换成空格；进�
   assert.ok(utf8Bytes(shown) <= ENDED_REASON_MAX_BYTES + 3, String(utf8Bytes(shown)));
   assert.ok(shown.length < long.length && shown.startsWith("头") && shown.endsWith("尾") && !/[\r\n]/.test(shown));
   assert.equal((me.phase as { ended: { error: string } }).ended.error, long);
+});
+
+test("上下文：threshold 是换段阈值，预设写了 handoff 就取较小的；不用段，只看快照", () => {
+  const low = preset({ id: "low", contextWindow: 200_000, handoff: 20_000 });
+  assert.equal(observe(proc("a"), [], [], 0).self.context.threshold, handoffThreshold(A));
+  assert.equal(observe(proc("l", low), [], [], 0).self.context.threshold, 20_000);
 });

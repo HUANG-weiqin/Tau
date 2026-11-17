@@ -6,14 +6,14 @@ import type { DatabaseSync } from "node:sqlite";
 import type { Models } from "@earendil-works/pi-ai";
 import { createActions } from "../executor/actions.ts";
 import { createExecutor } from "../executor/executor.ts";
-import { finalReply } from "../kernel/derive.ts";
+import { finalReply, limits, startError } from "../kernel/derive.ts";
 import { observe } from "../kernel/observe.ts";
 import { unreachable, userLetter } from "../kernel/types.ts";
 import type { Instant, Memory, Process, ProcessId } from "../kernel/types.ts";
 import { checkImages, imageType } from "../images.ts";
 import { loadPreset } from "../presets/load.ts";
 import type { Reply, Request } from "../protocol.ts";
-import { loadProcess, loadProcesses, loadSegment, openDb, readSegment } from "../store/db.ts";
+import { countMessages, loadProcess, loadProcesses, loadSegment, openDb, readSegment } from "../store/db.ts";
 import { readBlob } from "../store/blobs.ts";
 import { forkProcess, handleNext, pruneSegments, removeProcess, send, startProcess, sweepBlobs } from "../store/inputs.ts";
 import type { Handled } from "../store/inputs.ts";
@@ -150,6 +150,21 @@ export async function serve(opts: ServeOptions): Promise<Service> {
         reply(s, { type: "ps", processes: all.map((p) => observe(p, loadSegment(db, p), all, now)) }).end();
         return;
       }
+      case "inspect": {
+        // 同步读完，中间没有别的输入被处理：记录和条数是同一刻的。
+        const all = req.process === undefined ? loadProcesses(db) : [loadProcess(db, req.process)];
+        for (const p of all) {
+          if (!p) throw new Error(`没有这个进程：${req.process}`);
+          reply(s, { type: "process", process: p, messages: countMessages(db, p.id, p.segment.seq), limits: limits(p.preset) });
+        }
+        reply(s, { type: "inspected", count: all.length, now }).end();
+        return;
+      }
+      case "check": {
+        const snapshot = readPreset(req.preset);
+        reply(s, { type: "check", snapshot, limits: limits(snapshot), error: startError(snapshot) }).end();
+        return;
+      }
       case "history": {
         const p = loadProcess(db, req.process);
         if (!p) throw new Error(`没有这个进程：${req.process}`);
@@ -258,6 +273,8 @@ function parseRequest(line: string): Request {
     };
     if (r.op === "ps") return { op: "ps" };
     if (r.op === "sweep") return { op: "sweep" };
+    if (r.op === "inspect" && (!("process" in r) || str(r, "process"))) return r as Request;
+    if (r.op === "check" && str(r, "preset")) return r as Request;
     if (r.op === "remove" && str(r, "process")) return r as Request;
     if (r.op === "prune" && str(r, "process") && "before" in r && num("before")) return r as Request;
     if (r.op === "history" && str(r, "process") && num("segment") && num("from")) return r as Request;

@@ -4,7 +4,7 @@
 
 ## 这个模块是干什么的
 
-服务是 `tau serve` 这个常驻进程。它持有单实例锁，打开库，做启动恢复，再用一个同步的 `pump` 推进全部进程。CLI 是它自己的客户端；协议还有 `history`、`watch`、`fork` 和三个删除（`prune`、`remove`、`sweep`），给上层用。
+服务是 `tau serve` 这个常驻进程。它持有单实例锁，打开库，做启动恢复，再用一个同步的 `pump` 推进全部进程。CLI 是它自己的客户端；协议还有 `history`、`watch`、`fork`、`inspect`、`check` 和三个删除（`prune`、`remove`、`sweep`），给上层用。
 
 它负责：
 
@@ -13,6 +13,7 @@
 - 线协议：请求和回复的类型、请求的校验、回执什么时候发。
 - 观察者：哪些连接在等哪个进程，最终回复什么时候发、内容怎么算。
 - `history` 和 `watch`：读历史，订阅变化，订阅的写缓冲上限。
+- `inspect` 和 `check`：原样读进程记录；干跑预设的读取和启动检查。
 - 图片：`start`、`send` 的入口检查，`blob` 请求。
 - `fork`：请求的参数、什么时候拒绝、回执和订阅的推送。复制什么在[纯函数层](kb-kernel.md#fork)。
 - 删除：`prune`、`remove`、`sweep` 的请求、拒绝、回执和 `removed` 推送。
@@ -70,7 +71,7 @@ pump()
 | 动作结束（`complete`） | `run.then(pump)` |
 | 库内工具的结果 | 同一个 `handleNext` 循环接着处理 |
 
-- `ps` 不调用 `pump`。`prune`、`remove`、`sweep` 也不调用：不放输入。
+- `ps`、`inspect`、`check` 不调用 `pump`。`prune`、`remove`、`sweep` 也不调用：不放输入。
 - `fatal`：动作的 promise 被拒绝（例如 `complete` 写库失败）时，打印“tau 服务遇到无法继续的错误，退出。重启时会恢复。”，退出码 1。服务正在关闭时忽略。
 
 ### 观察者和最终回复
@@ -120,6 +121,24 @@ pump()
   - 一次推送突发超过 1 MiB 字符的快速订阅方也会被断开。真实的模型流式输出远没有这么快。
 - 退出：见[退出](#退出)。
 
+### 读记录和干跑（`inspect`、`check`）
+
+两个都是读请求：不开事务，不调用 `pump`，不写库。
+
+`inspect`（可选的 `process`）：
+
+- 每个进程一行 `process`：`process` 是库里存的进程记录，原样、不经 `observe`，出错的原因不截短；`messages` 是当前段的条数；`limits` 是按这个进程冻结的快照算的 `Limits`。最后一行 `inspected`（进程个数、`now`），然后关闭。没收到 `inspected` 就断开，是没读完。
+- 不带 `process` 时回全部进程，按 ID 升序。带 `process` 时一行加结束行；没有这个进程回 `error`，没有结束行。没有任何进程时只有结束行。
+- 记录和条数在同一个同步调用里读，中间不会处理别的输入，所以它们是同一刻的。条数只数当前段（`COUNT`），不读消息。记录加上 `history` 读这一段的前 `messages` 条，就是那一刻的状态。
+- 逐行写，不拼成一个大串。`watch` 不推原样记录：体积大、频率高。要详情就按需 `inspect`。
+
+`check`（`preset`）：
+
+- 用 `start`、`fork`、`spawn` 同一个读预设的函数（`loadPreset`，含工具定义）。读不出，回 `error`，文字和 `start` 一字不差。
+- 读得出，回一行 `check`：`snapshot` 是此刻文件读成的快照，`limits` 是它的限度，`error` 是 `startError` 的原文，`null` 表示此刻能启动。然后关闭。
+- 不读库，不开事务。它只描述此刻的文件；已有进程的限度看 `inspect` 的 `limits`。
+- 契约：读预设时的任何拒绝，只许加在 `loadPreset`、`loadToolDefs`、`startError` 里。这样 `check` 和 `start` 永远一致。
+
 ### 线协议（`src/protocol.ts`）
 
 每个连接：客户端发一行 JSON 请求，服务回若干行 JSON，然后关闭连接。
@@ -134,6 +153,8 @@ type Request =
   | { op: "history"; process: string; segment?: number; from?: number }
   | { op: "blob"; hash: string }                            // hash 不带 blob: 前缀
   | { op: "watch"; process?: string }
+  | { op: "inspect"; process?: string }                // 原样读进程记录
+  | { op: "check"; preset: string }                    // 干跑预设的读取和启动检查
   | { op: "prune"; process: string; before: number }   // 删段号小于 before 的旧段
   | { op: "remove"; process: string }                  // 删一个空闲、没人引用的进程
   | { op: "sweep" };                                   // 清掉没人引用的图片
@@ -145,6 +166,9 @@ type Reply =
   | { type: "ps"; processes: Projection[] }
   | { type: "message"; segment: number; seq: number; message: Message }
   | { type: "end"; segment: number; messages: number }      // history 读完
+  | { type: "process"; process: Process; messages: number; limits: Limits } // inspect 的一行
+  | { type: "inspected"; count: number; now: Instant }      // inspect 的结束行
+  | { type: "check"; snapshot: PresetSnapshot; limits: Limits; error: string | null }
   | { type: "blob"; mimeType: string; data: string }        // data 是 base64
   | { type: "update"; self: Projection["self"] }            // watch 的快照和增量
   | { type: "removed"; process: string }                    // watch 推送：这个进程已删
@@ -160,6 +184,8 @@ type Reply =
 | `fork` | 生成进程 ID（和 `start` 一样）；带 `preset` 时，用 `loadPreset` 读预设（含工具定义），读不出就回 `error`；`forkProcess`（拒绝的情形见下，什么都不建）。提交之后，给订阅的连接推新进程的 `update`，再回执。不调用 `pump`：没有输入要处理 | `receipt`，然后关闭；拒绝回 `error` |
 | `ps` | 读全部进程记录；每个进程 `observe(p, 当前段, 全部进程, now)` | 一行 `ps` |
 | `history` | 读一段的消息 | 若干 `message`，一行 `end`，然后关闭 |
+| `inspect` | 读进程记录和当前段条数；`limits(快照)` | 若干 `process`，一行 `inspected`，然后关闭。没有这个进程回 `error` |
+| `check` | `loadPreset`，`limits`，`startError` | 一行 `check`，然后关闭。读不出回 `error` |
 | `blob` | 读一张图片：`hash` 不带 `blob:` 前缀。不开写事务 | 一行 `blob`，然后关闭。`hash` 不存在回 `error` |
 | `watch` | 推快照，登记订阅 | 一直推 `update` 和 `text`，直到客户端断开 |
 | `prune` | `pruneSegments`（见[删除](#删除)） | `receipt`，然后关闭；拒绝回 `error` |
@@ -182,7 +208,7 @@ type Reply =
 
 - 每个连接只读第一行。`\r\n` 算一个换行。
 - 不是合法 JSON：`error`，内容是 `JSON.parse` 的错误信息。
-- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`；`stop` 要字符串 `process`；`fork` 要字符串 `process`，可选的 `before` 要是非负整数，可选的 `preset` 要是字符串；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`blob` 要字符串 `hash`；`start`、`send` 的 `images` 可以没有，有就要是字符串数组；`watch` 的 `process` 可以没有，有就要是字符串；`prune` 要字符串 `process`、非负整数 `before`；`remove` 要字符串 `process`；`sweep` 不要字段。否则 `error`：“无法识别的请求：<原文>”。
+- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`；`stop` 要字符串 `process`；`fork` 要字符串 `process`，可选的 `before` 要是非负整数，可选的 `preset` 要是字符串；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`blob` 要字符串 `hash`；`start`、`send` 的 `images` 可以没有，有就要是字符串数组；`watch`、`inspect` 的 `process` 可以没有，有就要是字符串；`check` 要字符串 `preset`；`prune` 要字符串 `process`、非负整数 `before`；`remove` 要字符串 `process`；`sweep` 不要字段。否则 `error`：“无法识别的请求：<原文>”。
 - 只查类型。空串能通过，多余的字段被忽略。空预设 ID 由 `loadPreset` 拒绝；空消息会成为一条用户消息。CLI 不发空消息。
 - 预设读不出、进程不存在、进程 ID 冲突，都回 `error`。这些情况下库里什么都没写。
 
@@ -361,7 +387,7 @@ tau stop <进程>
 | `src/server/credentials.ts` | `piCredentials`：只读 pi 的凭据文件，只交出 `api_key` 条目 |
 | `src/protocol.ts` | `PIPE`、`Request`、`Reply` |
 | `src/images.ts` | `checkImages`、`imageType`、`imageSize`、`IMAGE_MAX_BYTES`、`IMAGE_MAX_EDGE` |
-| `test/server/protocol.test.ts` | `history`、`watch`、`text` 的进程和编号、图片和 `blob`、`fork`、`prune`、`remove`、`sweep` |
+| `test/server/protocol.test.ts` | `history`、`watch`、`text` 的进程和编号、图片和 `blob`、`fork`、`prune`、`remove`、`sweep`、`inspect`、`check` |
 | `test/images.test.ts` | 入口检查：常量、魔数、每种格式的尺寸、张数、大小、类型、尺寸、顺序、base64 |
 | `src/cli/main.ts` | `main`（命令和退出码）、`request`（连接、发一行、逐行交出回复）、`formatPs`、`ago` |
 | `src/main.ts` | 入口：`serve` 或 CLI；`~/.tau` 的位置；信号处理 |
@@ -399,6 +425,8 @@ tau stop <进程>
 | protocol：`watch` 快照和增量 | 带不带 `process` 的快照；每次处理输入一条 `update`，消息条数和用量与库一致；不推 `final`；只推订阅的进程；订阅不存在的进程回 `error` |
 | protocol：`watch` 断开和退出 | 客户端断开后连接被释放，其余订阅照常；服务退出时断开订阅；退出开始以后才到的 `watch` 回 `error`，等最终回复的连接照常收到 |
 | protocol：`watch` 写缓冲上限 | 快照大于管道缓冲、订阅方一直不读：到上限才断开，读的订阅不受影响；快照很小、订阅方不读：少量推送不断开，超过上限才断开 |
+| protocol：`inspect` | 全部按 ID 升序、一进程一行加结束行；带 `process` 一行加结束行；没有进程回 `error` 且无结束行；记录原样，加 `history` 前 `messages` 条等于当前状态；出错原因不截短；读请求不写库、不动信箱；请求校验 |
+| protocol：`check` | 读得出回快照、限度和 `null`；装不下回 `check`，`error` 是启动检查的原文；读不出回 `error`，和 `start` 一字不差；不写库；请求校验。表驱动：读不出、工具定义坏、装不下、能启动，`check` 和 `start` 结论一致 |
 | protocol：图片 | `start`、`send` 带图：段里是引用，`blob` 取回原字节和类型，`history` 不带字节；`images` 的校验；不合格回 `error`、什么都不建；不收图片的模型先检查、再换说明；执行器发给模型的是真数据；`blob` 不存在、带前缀回 `error`，读请求不写库 |
 | protocol：`fork` | 回执带新 ID 并关闭；带 `preset`：新进程用新预设，之后 `send` 模型收到新系统提示词和工具描述；读不出的预设、放不进的预设回 `error`；`history` 读新进程等于源进程的前缀；之后对新进程 `send`，模型收到复制的消息，系统提示词和源进程一样；各种 `error`（没有进程、越界、不是用户消息、运行中不带 `before`、启动检查、请求校验）；订阅在回执之前收到新进程的 `update`；带图片引用的段 |
 | protocol：删除 | `prune`：回执，旧段读不到，当前段在，`before` 越界回 `error`；`history` 读已删的段回 `error`，当前段 0 条回 `end`。`remove`：每条拒绝回 `error` 且库不变；执行器还有该进程的动作时回 `error`；成功时订阅这个进程的连接和订阅全部的连接都先收到 `removed`（断言两种都收到），订阅这个进程的随后关闭，订阅全部的照常订阅，回执在 `removed` 之后。`sweep`：回 `swept`，数目对。请求校验。三个请求不调用 `pump` |
