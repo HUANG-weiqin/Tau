@@ -2,7 +2,7 @@
 import { html, Popover, Icon, Lamp, Fragment, useState, useRef, useEffect, useLayoutEffect } from "./common.js";
 import * as api from "../api.js";
 import * as gs from "../lib/state.js";
-import { toItems, clipText } from "../lib/messages.js";
+import { toItems, clipText, HANDOFF_LETTER } from "../lib/messages.js";
 import { attention } from "../lib/derive.js";
 
 /** 草稿记着，关掉再开还在。 */
@@ -326,6 +326,7 @@ function Body({ app, close }) {
               <h3 class="ch-sec"><span>对话</span><span class="label dim">LOG</span><span class="sep" aria-hidden="true"></span>
                 ${e && d && html`<span class="ch-state"><${Lamp} phase=${e.self.phase.tag} /><span>${d.label}</span></span>`}
                 <span class="mono dim" style="font-weight:400;font-size:11px">${chiefId}</span>
+                ${e && html`<button type="button" class="link dim" disabled=${e.status === "running"} title=${e.status === "running" ? "总管在跑时不能换段" : "请总管调用 handoff 换段：下一轮只带交接说明"} onClick=${() => app.send(e.id, HANDOFF_LETTER)}>换段</button>`}
                 <button type="button" class="link dim" onClick=${() => setChoosing(true)}>换预设</button></h3>
               ${e && e.status === "error" && html`<div class="callout ch-err">总管上一轮出错${ended && typeof ended === "object" ? "：" + clipText(ended.error, 120) : ""}。再给它写一封信，它会接着做。</div>`}
               ${e

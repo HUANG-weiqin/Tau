@@ -317,3 +317,9 @@ export function turnStart(messages) {
   if (i === 0 && first?.role === "user" && textOf(first.content).startsWith(HANDOFF_HEADER)) return null;
   return i;
 }
+
+/**
+ * “换段”按钮寄的信。内核没有从外面强制换段的请求，只有模型自己调用 `handoff` 工具才换段，
+ * 所以界面请模型去调。它和写信框寄的信一样走 `send`，消息流里看得见。
+ */
+export const HANDOFF_LETTER = "请现在调用 handoff 工具换段，这一轮不做别的事。换段以后回一句“已换段”就结束。";

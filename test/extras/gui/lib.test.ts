@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { activityAt, applyFilter, attention, buildEntries, buildProjects, classify, currentOf, filterCounts, indexPresets, projectView, railSections } from "../../../extras/gui/web/lib/derive.js";
 import { formatAgo, formatBytes, formatClock, formatContext, formatDuration, formatElapsed } from "../../../extras/gui/web/lib/format.js";
 import { applyEnd, applyMessage, emptyHistory, giveUp, known, lastTimestamp, noteSelf, plan, segmentMessages } from "../../../extras/gui/web/lib/history.js";
-import { CARRY_HEADER, describeNow, foldMiddle, forkPoints, HANDOFF_HEADER, INTERRUPTED, parseUser, phaseStartedAt, SKIPPED, splitLetters, summarizeCall, toItems, turnStart } from "../../../extras/gui/web/lib/messages.js";
+import { CARRY_HEADER, describeNow, HANDOFF_LETTER, foldMiddle, forkPoints, HANDOFF_HEADER, INTERRUPTED, parseUser, phaseStartedAt, SKIPPED, splitLetters, summarizeCall, toItems, turnStart } from "../../../extras/gui/web/lib/messages.js";
 import { cleanPlan, stopOrder } from "../../../extras/gui/web/lib/order.js";
 import { removeBlock, removeBlockText } from "../../../extras/gui/web/lib/remove.js";
 import { addFork, mergeSeen, movePinned, normalizeState, pathKey, pinFolder, prunePatch, setCurrent } from "../../../extras/gui/web/lib/state.js";
@@ -670,4 +670,8 @@ test("state: prunePatch 清掉没了的进程，被还在的分叉指着的标�
   // 分叉也没了：标题跟着清。
   const g2 = { ...g, forkedFrom: {}, titles: { src: "标题" }, mine: [], current: {}, seen: {} };
   assert.deepEqual(prunePatch(g2, stale), { titles: {} });
+});
+
+test("messages: 换段的信是固定的一句，点名 handoff 工具", () => {
+  assert.equal(HANDOFF_LETTER, "请现在调用 handoff 工具换段，这一轮不做别的事。换段以后回一句“已换段”就结束。");
 });

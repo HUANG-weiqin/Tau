@@ -34,8 +34,9 @@
 .ctx-bar.w span.f { background: var(--fg); }
 .ctx-bar span.p { background: #5A5B57; }
 .ctx-m { margin-top: 7px; font-size: 11px; color: var(--fg2); }
-.plate-act { flex: none; display: flex; flex-direction: column; gap: 8px; }
-.plate-act .pill { min-width: 116px; }
+.plate-act { flex: none; display: grid; grid-template-columns: repeat(2, auto); gap: 6px; }
+.plate-act .pill { gap: 6px; padding-left: 12px; }
+.plate-act .pill .chip { width: 26px; height: 26px; }
 .plate-act .pill:first-child { border-color: var(--fg); }
 
 .stage { position: relative; flex: 1 1 0; min-height: 300px; overflow: hidden; }
@@ -158,7 +159,7 @@ button.chead:hover { background: var(--ink3); }
 @media (min-width: 760px) {
   .plate-wrap { flex-wrap: nowrap; }
   .plate { flex: 1 1 auto; }
-  .plate-r { flex: 0 0 auto; padding-left: 28px; gap: 14px; }
+  .plate-r { flex: 0 0 auto; padding-left: 24px; gap: 12px; }
   .plate h1 { font-size: clamp(40px, 4.4vw, 64px); }
   .ctx-big { font-size: clamp(56px, 5.6vw, 84px); }
   .stage { min-height: 160px; }
