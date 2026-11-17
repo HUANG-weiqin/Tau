@@ -66,6 +66,13 @@ export function omitOldImages(messages: readonly Message[]): Message[] {
   });
 }
 
+/** 去掉内核写的 `tau`：它不发给模型。 */
+function withoutTau(m: Message): Message {
+  if (m.role === "assistant" || !("tau" in m)) return m;
+  const { tau: _, ...rest } = m;
+  return rest as Message;
+}
+
 export function buildContext(p: Process, segment: readonly Message[]): ModelRequest {
   let messages: Message[] = [...segment];
   if (p.phase.tag === "awaitingModel" && p.phase.purpose === "handoff") {
@@ -73,6 +80,6 @@ export function buildContext(p: Process, segment: readonly Message[]): ModelRequ
     messages.splice(tailStart(segment));
     messages.push({ role: "user", content: HANDOFF_INSTRUCTION, timestamp: messages.at(-1)?.timestamp ?? p.createdAt });
   }
-  messages = omitOldImages(messages);
+  messages = omitOldImages(messages).map(withoutTau);
   return { systemPrompt: systemPrompt(p), messages, tools: toolDescriptions(p.preset) };
 }

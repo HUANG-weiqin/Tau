@@ -12,6 +12,7 @@ import { handleNext, send, startProcess } from "../../src/store/inputs.ts";
 import { countReads, effectRows, fakeMemory, gated, mailbox, PRESET, reply, say, scripted, settle, tempDb, toolCall, use } from "./fixtures.ts";
 import { plain, res } from "../plain.ts";
 import { assertStoreInvariants } from "./invariants.ts";
+import { stripTau } from "../kernel/helpers.ts";
 
 test("启动进程：写入 idle 的进程记录，第一条消息进信箱；ID 重复时什么都不写", (t) => {
   const db = tempDb(t);
@@ -57,7 +58,7 @@ test("用户消息：进入 awaitingModel，插入 pending 行，删除这条输
   assert.equal(h?.abort, null);
   assert.deepEqual(effectRows(db), [{ id: "p1", n: 1, status: "pending" }]);
   assert.deepEqual(mailbox(db), []);
-  assert.deepEqual(loadSegment(db, h!.process), [{ role: "user", content: "你好", timestamp: 1 }]);
+  assert.deepEqual(stripTau(loadSegment(db, h!.process)), [{ role: "user", content: "你好", timestamp: 1 }]);
   assertStoreInvariants(db);
 });
 
@@ -258,6 +259,6 @@ test("用户的信：信箱里是一个文本块、跳数 0、没有 replyTo；�
   const p = loadProcess(db, "p1")!;
   assert.deepEqual(p.usage, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
   assert.equal("parent" in p, false);
-  assert.deepEqual(loadSegment(db, p), [{ role: "user", content: "你好", timestamp: 7 }]);
+  assert.deepEqual(stripTau(loadSegment(db, p)), [{ role: "user", content: "你好", timestamp: 7 }]);
   assert.deepEqual(p.phase.tag === "awaitingModel" && [p.phase.turn.hops, p.phase.turn.replyTo], [0, []]);
 });

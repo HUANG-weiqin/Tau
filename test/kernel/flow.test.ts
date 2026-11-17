@@ -28,6 +28,7 @@ import {
   world,
 } from "./helpers.ts";
 import type { World } from "./helpers.ts";
+import { stripTau } from "./helpers.ts";
 
 // 设计稿里写明的文本。
 const INTERRUPTED = "被中断，结果未知";
@@ -623,12 +624,12 @@ describe("5.4 换段", () => {
       reply(w, assistant({ usage: 3_000, stopReason: "error", errorMessage: "超时" }));
       feed(w, userInput(text));
       assert.equal(w.p.phase.tag === "awaitingModel" && w.p.phase.purpose, "handoff");
-      assert.deepEqual(buildContext(w.p, current(w)).messages, [...kept, { role: "user", content: HANDOFF_INSTRUCTION, timestamp: 0 }], "交接请求每次都一样");
+      assert.deepEqual(buildContext(w.p, current(w)).messages, [...stripTau(kept), { role: "user", content: HANDOFF_INSTRUCTION, timestamp: 0 }], "交接请求每次都一样");
     }
     const s = reply(w, assistant({ usage: 3_000, text: "交接说明" }), env(9));
     // 交接失败之后发的消息带着说明，换段时说明也跟着带过去。
     const n = failed("交接失败：超时");
-    assert.deepEqual(s.append, [{ role: "user", content: `${HANDOFF_HEADER}交接说明\n\n${CARRY_HEADER}\n\n${n}\n\n甲\n\n${n}\n\n乙`, timestamp: 9 }]);
+    assert.deepEqual(stripTau(s.append), [{ role: "user", content: `${HANDOFF_HEADER}交接说明\n\n${CARRY_HEADER}\n\n${n}\n\n甲\n\n${n}\n\n乙`, timestamp: 9 }]);
     assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 2, queued: [], hops: 0, replyTo: [] }, purpose: "turn" });
   });
 

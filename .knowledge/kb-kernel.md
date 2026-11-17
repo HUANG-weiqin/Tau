@@ -331,6 +331,21 @@ W 是 `preset.contextWindow`。快照里只冻结它和 `input`，不冻结模�
 
 信的内容块由 `decide` 里的 `render` 拆成文本和图片；图片按信的顺序全带。合并几封信时不限张数，入口限每封信（[kb-service 的图片](kb-service.md#图片)）。
 
+#### `tau`：消息带的结构
+
+`decide` 写的消息可以带可选字段 `tau`（D64 第 3 组），让读段的人不用解析文字就能知道信的来历。旧消息没有它。类型在 `types.ts`，`Message` 的用户消息和工具结果各加一个可选键，助手消息不带。
+
+- 用户消息：`tau: { letters: LetterMeta[]; after?: Ended; handoff?: true }`。
+  - `LetterMeta = { from; hops; replyTo?; handoff?; at? }`，每封合并进这条消息的信一项，顺序同信。`handoff` 是信自己的换段标记（[换段信](#换段信)）。
+  - `at` 是这封信的正文（不含头）在消息文本里的起止位置，按 UTF-16 算。消息文本：`content` 是字符串时就是它，是数组时是第一个文本块。
+  - `after` 是 [D25](kb-decisions.md#d25-上一轮没有正常结束时下一条消息加说明) 那句说明对应的上一轮结束原因，只在加了说明的那条消息上有。说明在正文里，不在任何一封信的 `at` 里。
+  - `handoff: true` 只在换段后新段的第一条上。
+- 工具结果：`decide` 补的带 `tau: { filled: "interrupted" | "skipped" }`，对应 `INTERRUPTED` 和 `SKIPPED`。真实的工具结果没有 `tau`。
+- 文本被 `clip` 截过（消息文本不再以渲染出的正文开头）：这条消息的 `at` 全部去掉，别的字段照留。`userMessage` 统一做这个检查。
+- 换段：带过去的消息，它们的信带着 `at` 平移到新段第一条的文本里，仍然截得出原文。带过去的消息原来的 `after` 不带：说明的文字照旧在正文里，不属于任何一封信。没有文本的消息不占位，它的信没有 `at`。
+- `buildContext` 发请求前去掉 `tau`，给模型看的文字一个字不变。`messageBytes` 只数内容，用量估算不受影响。
+- `fork` 和 `history` 原样带着它。
+
 ### 张数和省略行
 
 工具结果和新段的第一条消息，最多 `IMAGES_PER_MESSAGE` 张图片，由 `decide` 里的 `fit` 做：
@@ -499,6 +514,7 @@ D64 第 7 组：外面也能要求换段（模型调 `handoff` 工具之外的�
    - `segment` 变成 `{ seq: seq + 1, memoryView: env.memoryView }`。
    - 新段的第一条消息是用户消息，时间戳 `env.now`。内容是 `HANDOFF_HEADER` + 交接说明。旧段末尾有用户消息时（从 `tailStart` 起），再接空行、`CARRY_HEADER`、空行和这些消息的正文，正文之间用空行连接。没有正文（只有图片）的消息不占位。
    - 段末的用户消息两种形状都带：文本照上面接在后面，图片块原样带过去，按顺序。新段第一条按[张数和省略行](#张数和省略行)整理：留最后 `IMAGES_PER_MESSAGE` 张，文本连省略行不超过 `MESSAGE_MAX_BYTES`。没有图片时第一条仍是字符串，经 `clip` 截到 `MESSAGE_MAX_BYTES`。
+   - 新段第一条带 `tau: { letters, handoff: true }`：`letters` 是带过去的信，位置平移（见 [`tau`](#tau消息带的结构)）。
    - 用同一个 `turn` 执行 `continueTurn`：步数和排队的消息带到新段。
 4. 其它情况（包括 `toolUse` 和空说明）：`endTurn(turn, { error: "交接失败：" + (errorMessage ?? stopReason) })`。不写交接回复，不开新段。排队的消息仍按 `endTurn` 合并写进旧段。
 5. 失败后再发一条消息：新的一轮，`continueTurn` 立即再换段。新消息在段末，不进交接请求，所以请求和上一次相同。一直失败时，每条消息只调用一次模型。

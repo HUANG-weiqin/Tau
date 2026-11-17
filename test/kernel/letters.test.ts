@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { CARRY_HEADER, HANDOFF_HEADER } from "../../src/kernel/context.ts";
 import { clip, handoffThreshold, IMAGES_PER_MESSAGE, MESSAGE_MAX_BYTES, utf8Bytes } from "../../src/kernel/derive.ts";
 import type { Ended, ImageContent, Message } from "../../src/kernel/types.ts";
-import { assistant, call, codeText, current, feed, image, letterInput, preset, processLetter, reply, stopInput, textOf, toolDone, toolOkContent, userInput, userLetterWith, world } from "./helpers.ts";
+import { assistant, call, codeText, current, feed, image, letterInput, preset, processLetter, reply, stopInput, stripTau, textOf, toolDone, toolOkContent, userInput, userLetterWith, world } from "./helpers.ts";
 import type { World } from "./helpers.ts";
 
 const P = preset({ contextWindow: 100_000 });
@@ -213,7 +213,7 @@ describe("换段带全部段末消息", () => {
     const w = tailWith(userLetterWith("甲"), userLetterWith("乙", [a, b]));
     const s = reply(w, assistant({ usage: 3_000, text: "交接说明" }));
     const note = `（上一轮出错，没有做完：交接失败：超时。${WAITED}）`;
-    assert.deepEqual(s.append, [
+    assert.deepEqual(stripTau(s.append), [
       { role: "user", content: [{ type: "text", text: `${HANDOFF_HEADER}交接说明\n\n${CARRY_HEADER}\n\n${note}\n\n甲\n\n${note}\n\n乙` }, a, b], timestamp: 0 },
     ]);
   });
@@ -249,10 +249,10 @@ describe("换段带全部段末消息", () => {
     const w = atHandoff();
     feed(w, letterInput(userLetterWith("", [a]))); // 排队，交接失败时合并写进旧段，没有说明
     reply(w, assistant({ usage: 3_000, stopReason: "error", errorMessage: "超时" }));
-    assert.deepEqual(current(w).at(-1), { role: "user", content: [a], timestamp: 0 });
+    assert.deepEqual(stripTau([current(w).at(-1)!])[0], { role: "user", content: [a], timestamp: 0 });
     feed(w, letterInput(userLetterWith("再来")));
     const s = reply(w, assistant({ usage: 3_000, text: "交接说明" }));
     const note = `（上一轮出错，没有做完：交接失败：超时。${WAITED}）`;
-    assert.deepEqual(s.append, [{ role: "user", content: [{ type: "text", text: `${HANDOFF_HEADER}交接说明\n\n${CARRY_HEADER}\n\n${note}\n\n再来` }, a], timestamp: 0 }]);
+    assert.deepEqual(stripTau(s.append), [{ role: "user", content: [{ type: "text", text: `${HANDOFF_HEADER}交接说明\n\n${CARRY_HEADER}\n\n${note}\n\n再来` }, a], timestamp: 0 }]);
   });
 });

@@ -6,8 +6,29 @@ export type { AssistantMessage, ImageContent, ToolCall, ToolResultMessage, UserM
 /** 信件和工具结果的内容块。图片的 data 将写成 `blob:<hash>`（设计稿第 5.6 节）。 */
 export type Content = TextContent | ImageContent;
 
-/** 工作段里只有这三种消息。 */
-export type Message = UserMessage | AssistantMessage | ToolResultMessage;
+/** 一封信在用户消息里的结构（D64 第 3 组）。`at` 是正文在消息文本里的起止位置，按 UTF-16 算；文本被截过的消息没有。 */
+export interface LetterMeta {
+  from: Sender;
+  hops: number;
+  replyTo?: ProcessId;
+  handoff?: true;
+  at?: [number, number];
+}
+
+/** `decide` 写的用户消息带的结构。消息文本：`content` 是字符串时就是它，是数组时是第一个文本块。`after` 是上一轮的结束原因（说明在正文里，不在任何 `at` 里）；`handoff` 表示新段的第一条。发给模型前去掉。 */
+export interface UserTau {
+  letters: LetterMeta[];
+  after?: Ended;
+  handoff?: true;
+}
+
+/** `decide` 补的工具结果：被中断，或者未执行。 */
+export interface ToolTau {
+  filled: "interrupted" | "skipped";
+}
+
+/** 工作段里只有这三种消息。`tau` 是内核写的可选结构，旧消息没有。 */
+export type Message = (UserMessage & { tau?: UserTau }) | AssistantMessage | (ToolResultMessage & { tau?: ToolTau });
 
 export type ProcessId = string;
 /** 毫秒时间戳。 */

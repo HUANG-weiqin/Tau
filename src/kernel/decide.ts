@@ -2,7 +2,7 @@
 import { CARRY_HEADER, HANDOFF_HEADER, HANDOFF_INSTRUCTION, IMAGE_UNSUPPORTED, tailStart } from "./context.ts";
 import { clip, contextUsed, endedReason, endedText, estimatedUsed, finalReply, handoffRequested, handoffThreshold, IMAGES_PER_MESSAGE, MARGIN_TOKENS, MESSAGE_MAX_BYTES, newSegmentUsed, pendingCalls, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
 import { textContent, unreachable } from "./types.ts";
-import type { AssistantMessage, Content, Effect, Ended, Env, ImageContent, Input, Instant, Letter, Message, Phase, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Turn, Usage } from "./types.ts";
+import type { AssistantMessage, Content, Effect, Ended, Env, ImageContent, Input, Instant, Letter, LetterMeta, Message, Phase, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Turn, Usage, UserTau } from "./types.ts";
 
 export const INTERRUPTED = "被中断，结果未知";
 export const SKIPPED = "未执行";
@@ -93,8 +93,10 @@ function step(d: Draft, input: Input): void {
     case "letter":
       if (phase.tag === "idle") {
         const note = endedNote(phase.ended);
-        const { text, images } = render([input.letter]);
-        push(d, userMessage(note === "" ? text : `${note}\n\n${text}`, images, false, d.env.now));
+        const { text, images, metas } = render([input.letter]);
+        const shift = note === "" ? 0 : note.length + 2;
+        const tau: UserTau = { letters: shifted(metas, shift), ...(phase.ended === undefined || note === "" ? {} : { after: phase.ended }) };
+        push(d, userMessage(note === "" ? text : `${note}\n\n${text}`, images, false, d.env.now, tau));
         continueTurn(d, newTurn([input.letter]), wantsHandoff(d, [input.letter]));
       } else {
         const turn = { ...phase.turn, queued: [...phase.turn.queued, input.letter] };
@@ -164,12 +166,23 @@ function onHandoff(d: Draft, turn: Turn, m: AssistantMessage): void {
     const threshold = handoffThreshold(d.p.preset);
     if (used >= threshold) return endTurn(d, turn, { error: `交接失败：新段一开头就到阈值（固定部分 ${fixed}、记忆 ${memory}、交接说明 ${used - fixed - memory}，共 ${used} / ${threshold} token）` });
     // 交接请求没带段末的用户消息（见 buildContext），把它们原样附在交接说明后面：文本接在说明后，图片块原样带过去。
-    const tail = d.seg.slice(tailStart(d.seg)).flatMap((u) => (u.role === "user" ? [typeof u.content === "string" ? textContent(u.content) : u.content] : []));
+    const users = d.seg.slice(tailStart(d.seg)).flatMap((u) => (u.role === "user" ? [u] : []));
+    const tail = users.map((u) => (typeof u.content === "string" ? textContent(u.content) : u.content));
     const carriedText = tail.map(textOf).filter((t) => t !== "").join("\n\n");
     const carried = tail.length === 0 ? "" : `\n\n${CARRY_HEADER}${carriedText === "" ? "" : `\n\n${carriedText}`}`;
+    // 带过去的信，位置平移到新段第一条的文本里：每条消息的文本在 carriedText 里的起点。没有文本的消息不进 carriedText，它的信没有位置。
+    let offset = (HANDOFF_HEADER + note + `\n\n${CARRY_HEADER}\n\n`).length;
+    const letters = users.flatMap((u, i) => {
+      const text = textOf(tail[i]!);
+      const metas = u.tau?.letters ?? [];
+      if (text === "") return metas.map(unlocated);
+      const moved = shifted(metas, offset);
+      offset += text.length + 2;
+      return moved;
+    });
     d.p = { ...d.p, segment: { seq: d.p.segment.seq + 1, memoryView: d.env.memoryView } };
     d.seg = [];
-    push(d, userMessage(HANDOFF_HEADER + note + carried, tail.flatMap(imagesOf), true, d.env.now));
+    push(d, userMessage(HANDOFF_HEADER + note + carried, tail.flatMap(imagesOf), true, d.env.now, { letters, handoff: true }));
     // 交接已经做了：交接调用进行中到的信，标记用掉了，合并它们时不再换段。
     return continueTurn(d, { ...turn, queued: turn.queued.map(unmarked) });
   }
@@ -183,7 +196,7 @@ function onToolResult(d: Draft, turn: Turn, content: ToolResultContent): void {
   push(d, toolResult(call, content.content, content.isError, d.env.now));
   const rest = pendingCalls(d.seg);
   if (rest.length > 0 && !overThreshold(d)) return enter(d, { tag: "awaitingTool", turn });
-  for (const c of rest) push(d, toolResult(c, textContent(SKIPPED), true, d.env.now));
+  for (const c of rest) push(d, toolResult(c, textContent(SKIPPED), true, d.env.now, "skipped"));
   return atSafePoint(d, turn);
 }
 
@@ -193,8 +206,8 @@ function onToolResult(d: Draft, turn: Turn, content: ToolResultContent): void {
  */
 function atSafePoint(d: Draft, turn: Turn): void {
   if (turn.steps >= STEPS_PER_TURN || turn.queued.length === 0) return continueTurn(d, turn);
-  const { text, images } = render(turn.queued);
-  push(d, userMessage(text, images, false, d.env.now));
+  const { text, images, metas } = render(turn.queued);
+  push(d, userMessage(text, images, false, d.env.now, { letters: metas }));
   const handoff = wantsHandoff(d, turn.queued);
   const replyTo = [...new Set([...turn.replyTo, ...turn.queued.flatMap((l) => (l.replyTo === undefined ? [] : [l.replyTo]))])];
   const hops = Math.max(turn.hops, ...turn.queued.map((l) => l.hops));
@@ -221,12 +234,15 @@ function continueTurn(d: Draft, turn: Turn, handoff = false): void {
 function endTurn(d: Draft, turn: Turn, ended: Ended): void {
   // 正在等的就是第一个待执行的调用：它可能已经开始。
   const waiting = d.p.phase.tag === "awaitingTool";
-  pendingCalls(d.seg).forEach((c, i) => push(d, toolResult(c, textContent(waiting && i === 0 ? INTERRUPTED : SKIPPED), true, d.env.now)));
+  pendingCalls(d.seg).forEach((c, i) => {
+    const interrupted = waiting && i === 0;
+    push(d, toolResult(c, textContent(interrupted ? INTERRUPTED : SKIPPED), true, d.env.now, interrupted ? "interrupted" : "skipped"));
+  });
   // 最终回复在合并排队的信之前算（设计稿 5.3 规则 3）。
   sendReplies(d, turn, ended, finalReply(d.seg));
   if (turn.queued.length > 0) {
-    const { text, images } = render(turn.queued);
-    push(d, userMessage(text, images, false, d.env.now));
+    const { text, images, metas } = render(turn.queued);
+    push(d, userMessage(text, images, false, d.env.now, { letters: metas }));
   }
   if (ended === "done" && turn.queued.length > 0) return continueTurn(d, newTurn(turn.queued), wantsHandoff(d, turn.queued));
   d.p = { ...d.p, phase: { tag: "idle", ended } };
@@ -264,17 +280,27 @@ function header(l: Letter, mixed: boolean): string {
   return l.replyTo === undefined ? `（${who}）` : `（${who}。它在等回信：你这一轮结束时，最终回复会寄给它，之后的几轮不会。）`;
 }
 
-/** 一批信写进段的正文和图片：每封信是头、换行、正文，信之间空一行；图片按信的顺序。 */
-function render(letters: readonly Letter[]): { text: string; images: ImageContent[] } {
+/** 一批信写进段的正文和图片：每封信是头、换行、正文，信之间空一行；图片按信的顺序。`metas` 记每封信正文在 `text` 里的位置。 */
+function render(letters: readonly Letter[]): { text: string; images: ImageContent[]; metas: LetterMeta[] } {
   const mixed = letters.some((l) => l.from.kind === "process");
-  const text = letters
-    .map((l) => {
-      const h = header(l, mixed);
-      return h === "" ? textOf(l.content) : `${h}\n${textOf(l.content)}`;
-    })
-    .join("\n\n");
-  return { text, images: letters.flatMap((l) => imagesOf(l.content)) };
+  let text = "";
+  const metas = letters.map((l, i): LetterMeta => {
+    const h = header(l, mixed);
+    const body = textOf(l.content);
+    if (i > 0) text += "\n\n";
+    if (h !== "") text += `${h}\n`;
+    const at: [number, number] = [text.length, text.length + body.length];
+    text += body;
+    return { from: l.from, hops: l.hops, ...(l.replyTo === undefined ? {} : { replyTo: l.replyTo }), ...(l.handoff === true ? { handoff: true } : {}), at };
+  });
+  return { text, images: letters.flatMap((l) => imagesOf(l.content)), metas };
 }
+
+const unlocated = (m: LetterMeta): LetterMeta => {
+  const { at: _, ...rest } = m;
+  return rest;
+};
+const shifted = (metas: readonly LetterMeta[], n: number): LetterMeta[] => metas.map((m) => (m.at === undefined ? m : { ...m, at: [m.at[0] + n, m.at[1] + n] }));
 
 /**
  * 文本和图片成内容块：文本经 clip 成一个文本块（没有文本就不加），图片块原样接在后面。
@@ -331,16 +357,20 @@ function endedNote(ended: Ended | undefined): string {
 /**
  * decide 写入的每条用户消息都经过这里（工具结果经 `toolResult`）：空闲时的消息、合并的排队消息、新段的第一条。
  * 没有图片时正文是字符串；有图片时是文本块加图片块。`limit`：新段的第一条，图片张数受限。
+ * `tau` 带上结构；文本被截过（消息文本不再以 `text` 开头）就去掉全部 `at`。
  */
-function userMessage(text: string, images: readonly ImageContent[], limit: boolean, now: number): Message {
-  return { role: "user", content: images.length === 0 ? clip(text) : fit(text === "" ? undefined : text, images, limit), timestamp: now };
+function userMessage(text: string, images: readonly ImageContent[], limit: boolean, now: number, tau?: UserTau): Message {
+  const content = images.length === 0 ? clip(text) : fit(text === "" ? undefined : text, images, limit);
+  if (tau === undefined) return { role: "user", content, timestamp: now };
+  const shown = typeof content === "string" ? content : content.find((c) => c.type === "text")?.text ?? "";
+  return { role: "user", content, timestamp: now, tau: shown.startsWith(text) ? tau : { ...tau, letters: tau.letters.map(unlocated) } };
 }
 
 /** 工具结果：文本和图片都经 `fit`，图片张数受限。 */
-function toolResult(call: ToolCall, content: readonly Content[], isError: boolean, now: number): Message {
+function toolResult(call: ToolCall, content: readonly Content[], isError: boolean, now: number, filled?: "interrupted" | "skipped"): Message {
   const images = imagesOf(content);
   const text = content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("");
   // 有图片时，空串和没有文本一样：不加文本块。没有图片时保持从前的做法。
   const only = images.length > 0 && text === "";
-  return { role: "toolResult", toolCallId: call.id, toolName: call.name, content: fit(only || (images.length === 0 && content.length === 0) ? undefined : text, images, true), isError, timestamp: now };
+  return { role: "toolResult", toolCallId: call.id, toolName: call.name, content: fit(only || (images.length === 0 && content.length === 0) ? undefined : text, images, true), isError, timestamp: now, ...(filled === undefined ? {} : { tau: { filled } }) };
 }

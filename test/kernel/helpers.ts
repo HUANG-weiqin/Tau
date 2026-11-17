@@ -182,3 +182,11 @@ export function deepFreeze<T>(x: T): T {
   }
   return x;
 }
+
+/** 去掉消息上内核写的 `tau`：比较消息的内容时用。 */
+export function stripTau<T extends Message>(ms: readonly T[]): Message[] {
+  return ms.map((m) => {
+    const { tau: _, ...rest } = m as Message & { tau?: unknown };
+    return rest as Message;
+  });
+}
