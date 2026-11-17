@@ -129,7 +129,6 @@ function SegmentRuler({ app, id, self, threshold }) {
       </div>
       <div class="cc-rule">
         <div class="cc-bar">${Array.from({ length: 10 }, (_, i) => html`<span class=${i < full ? "f" : i === full && part ? "p" : ""}></span>`)}</div>
-        ${mark !== null && html`<span class="cc-tick" style=${`left:${mark}%`}></span>`}
         ${mark !== null && html`<span class=${`cc-flag ${mark > 55 ? "r" : ""}`} style=${`left:${mark}%`}><span class="label">自动换段</span><span class="mono">${mark}%</span></span>`}
       </div>
     </div>
