@@ -19,6 +19,8 @@
 .dlg-body { position: relative; padding: 4px 22px 18px; display: flex; flex-direction: column; gap: 16px; }
 .dlg-foot { position: sticky; bottom: 0; z-index: 2; background: var(--ink1); margin-top: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 14px 16px 16px 22px; border-top: 1px solid var(--ink4); }
 .cmdline { flex: 1 1 220px; min-width: 0; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; color: var(--fg2); overflow-wrap: anywhere; }
+/* 没有命令行时只占位把按钮推到右边，不占 220px，窄弹窗的按钮才不折行。 */
+.cmdline:empty { flex: 1 1 0; }
 .sec-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 900; line-height: 1.2; }
 .sec-head .mono { font-weight: 400; font-size: 11px; }
 .dnote { font-size: 12.5px; line-height: 1.65; color: var(--fg2); }
