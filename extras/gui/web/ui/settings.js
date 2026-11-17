@@ -14,6 +14,7 @@ export function SettingsDialog({ app, onClose }) {
   const thinking = app.gui.defaultThinking;
   const info = findModel(providers, model)?.model ?? null;
   const [note, setNote] = useState("");
+  const [notifyNote, setNotifyNote] = useState("");
   const [daysText, setDaysText] = useState(String(app.gui.cleanDays));
   const days = Number(daysText);
   const daysOk = Number.isInteger(days) && days >= 1 && days <= MAX_DAYS;
@@ -33,6 +34,24 @@ export function SettingsDialog({ app, onClose }) {
     const n = Number(v);
     if (Number.isInteger(n) && n >= 1 && n <= MAX_DAYS && n !== app.gui.cleanDays) quiet(app.setGui({ cleanDays: n }));
   };
+
+  // 开关在点击的处理函数里申请许可：浏览器只认用户操作里的申请。
+  const notifyOn = app.gui.notify === true;
+  const perm = typeof Notification === "undefined" ? "unsupported" : Notification.permission;
+  const setNotify = (/** @type {boolean} */ want) => {
+    if (!want) {
+      setNotifyNote("");
+      quiet(app.setGui({ notify: false }));
+    } else if (perm === "unsupported") setNotifyNote("这个浏览器不支持通知。");
+    else
+      Notification.requestPermission().then((p) => {
+        if (p === "granted") {
+          setNotifyNote("");
+          quiet(app.setGui({ notify: true }));
+        } else setNotifyNote(p === "denied" ? "浏览器拒绝了通知。在地址栏左边的站点设置里改成允许，再回来打开。" : "没有选择允许，通知没有打开。");
+      });
+  };
+  const notifyWhy = notifyNote !== "" ? notifyNote : notifyOn && perm !== "granted" ? "开关开着，但浏览器没有许可通知，所以不会弹。" : "";
 
   const sorted = providers ? sortProviders(providers) : [];
   const ready = sorted.filter((p) => p.key === "key").length;
@@ -71,6 +90,19 @@ export function SettingsDialog({ app, onClose }) {
           <input id="st-days-in" class="input mono" type="number" min="1" max=${MAX_DAYS} step="1" value=${daysText} aria-invalid=${!daysOk} onInput=${(/** @type {any} */ e) => changeDays(e.currentTarget.value)} />
           <span>天的临时进程算旧的。</span>
           ${!daysOk && html`<span class="dnote" style="color:var(--warn)">天数要写 1 到 ${MAX_DAYS} 的整数。</span>`}
+        </div>
+
+        <${SecHead} n="04" title="完成通知" en="NOTIFY" />
+        <div class="cl-days">
+          <div class="toggles" role="group" aria-label="完成通知"><button type="button" class="toggle" aria-pressed=${notifyOn} onClick=${() => (!notifyOn || perm !== "granted") && setNotify(true)}>开</button><button type="button" class="toggle" aria-pressed=${!notifyOn} onClick=${() => notifyOn && setNotify(false)}>关</button></div>
+          <span>人建的进程跑完一轮、或者任何进程出错，而页面不在前台时，弹一条系统通知。</span>
+          ${notifyWhy !== "" && html`<span class="dnote" style="color:var(--warn)">${notifyWhy}</span>`}
+        </div>
+
+        <${SecHead} n="05" title="工具定义" en="TOOLS" />
+        <div class="cl-days">
+          <${Pill} label="打开工具定义" onClick=${(/** @type {Event} */ e) => app.openDialog("tools", /** @type {Element} */ (e.currentTarget))} />
+          <span>~/.tau/tools 里已装的定义，和能一键装的工具库。</span>
         </div>
       </div>
       <div class="dlg-foot">

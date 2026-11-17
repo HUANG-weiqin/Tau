@@ -458,8 +458,8 @@ test("预设：读得出、读不出、能不能启动都和 start 一致；带 
   assert.equal(r.status, 200);
   const byId = new Map<string, any>(r.json.presets.map((x: any) => [x.id, x]));
   assert.deepEqual([...byId.keys()].sort(), ["badopt", "bom", "crlf", "good", "missing", "nodir", "nofm", "nomodel", "notool", "relative", "tiny", "unknown"]);
-  assert.deepEqual(byId.get("good"), { id: "good", ok: true, workdir: e.work, model: m, tools: ["read", "bash", "memory", "mytool"], memory: true, prompt: "提示词", thinking: "low", handoff: 150000, options: { temperature: 0.2 } });
-  assert.deepEqual(byId.get("crlf"), { id: "crlf", ok: true, workdir: e.work, model: m, tools: ["read"], memory: false, prompt: "提示词" });
+  assert.deepEqual(byId.get("good"), { id: "good", ok: true, workdir: e.work, model: m, tools: ["read", "bash", "memory", "mytool"], memory: true, prompt: "提示词", agentsMd: "none", thinking: "low", handoff: 150000, options: { temperature: 0.2 } });
+  assert.deepEqual(byId.get("crlf"), { id: "crlf", ok: true, workdir: e.work, model: m, tools: ["read"], memory: false, prompt: "提示词", agentsMd: "none" });
   assert.deepEqual(byId.get("bom").tools, []);
   assert.match(byId.get("unknown").error, /color/);
   // 读不出和装不下：错误文字一字不差，和 start 回的一样；读得出的，start 也起得来。

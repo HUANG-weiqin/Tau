@@ -10,7 +10,9 @@
     "@fontsource-variable/archivo": "5.3.0",
     "@fontsource-variable/jetbrains-mono": "5.3.0",
     "@fontsource-variable/noto-sans-sc": "5.3.1",
+    "dompurify": "3.4.17",
     "htm": "3.1.1",
+    "marked": "18.1.2",
     "preact": "10.29.8"
   }
 }

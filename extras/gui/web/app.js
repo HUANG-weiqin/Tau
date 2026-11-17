@@ -24,7 +24,10 @@ import { OpenProjDialog } from "./ui/openproj.js";
 import { NewPresetDialog } from "./ui/newpreset.js";
 import { EditPresetDialog } from "./ui/editpreset.js";
 import { SwitchModelDialog } from "./ui/switchmodel.js";
+import { MemoryDialog } from "./ui/memory.js";
 import { SettingsDialog } from "./ui/settings.js";
+import { ToolsDialog } from "./ui/tools.js";
+import { Notifier } from "./ui/notify.js";
 import { pushRecent } from "./lib/models.js";
 import { ConfirmLayer, confirmOpen } from "./ui/remove.js";
 
@@ -68,7 +71,7 @@ import { ConfirmLayer, confirmOpen } from "./ui/remove.js";
  * @property {"all" | "running" | "error"} filter 进程栏的筛选。
  * @property {string} query 进程栏的搜索词。
  * @property {number} tab 详情栏现在的选项卡，0 到 2。聚焦进程时 0 概况、1 改动、2 后台；聚焦项目时 0 概况、1 分支、2 后台。
- * @property {{ name: string, rect: { left: number, top: number, right: number, bottom: number } | null, props: any } | null} dialog 打开着的弹窗：`chief | newproc | newpreset | openproj | projects | clean | settings | editpreset | switchmodel`。`props` 是打开时传的。
+ * @property {{ name: string, rect: { left: number, top: number, right: number, bottom: number } | null, props: any } | null} dialog 打开着的弹窗：`chief | newproc | newpreset | openproj | projects | clean | settings | editpreset | switchmodel | memory | tools`。`props` 是打开时传的。
  *
  * 读取（函数）
  * @typedef {object} AppReaders
@@ -377,7 +380,7 @@ function onSelf(self) {
 function parseHash() {
   const q = new URLSearchParams(location.hash.replace(/^#/, ""));
   const raw = location.hash.replace(/^#/, "");
-  return { proc: q.get("p"), proj: q.get("proj"), dlg: q.get("dlg") ?? (raw === "chief" ? "chief" : null) };
+  return { proc: q.get("p"), proj: q.get("proj"), dlg: q.get("dlg") ?? (raw === "chief" ? "chief" : null), ns: q.get("ns") };
 }
 
 function writeHash() {
@@ -385,6 +388,8 @@ function writeHash() {
   if (S.route.proc) q.set("p", S.route.proc);
   else if (S.route.proj) q.set("proj", S.route.proj);
   if (S.dialog && HASH_DIALOGS.includes(S.dialog.name)) q.set("dlg", S.dialog.name);
+  // 记忆页要知道开的是哪个预设的库，写在 ns 里。
+  if (S.dialog && S.dialog.name === "memory" && S.dialog.props?.ns) q.set("ns", S.dialog.props.ns);
   const s = q.toString();
   const next = s ? `#${s}` : location.pathname + location.search;
   try {
@@ -651,7 +656,7 @@ function compute() {
 /* 弹窗的锚点：约定的按钮。 */
 const ANCHORS = { chief: "btn-chief", newproc: "btn-newproc", openproj: "btn-open", projects: "btn-all", clean: "btn-clean", settings: "btn-settings" };
 /** 写进地址栏 hash 的弹窗。别的弹窗要靠打开时传的东西，刷新以后还原不了。 */
-const HASH_DIALOGS = ["chief", "newproc", "newpreset", "openproj", "projects", "clean", "settings"];
+const HASH_DIALOGS = ["chief", "newproc", "newpreset", "openproj", "projects", "clean", "settings", "memory", "tools"];
 
 /** @param {string} name @param {Element | null} [anchor] @param {any} [props] */
 function openDialog(name, anchor, props) {
@@ -693,6 +698,8 @@ async function reloadPresets() {
 let lastStopKey = 0;
 /** 地址栏里带着的弹窗：等数据读到、按钮就位以后再开。 @type {string | null} */
 let pendingDlg = null;
+/** 地址栏里带着的记忆页的 ns。 @type {string | null} */
+let pendingNs = null;
 
 /** @param {KeyboardEvent} e @param {App} app */
 function onKey(e, app) {
@@ -817,6 +824,7 @@ function Root() {
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVis);
     pendingDlg = h.dlg;
+    pendingNs = h.ns;
     return () => {
       clearInterval(tick);
       clearInterval(resync);
@@ -851,8 +859,13 @@ function Root() {
   useEffect(() => {
     if (pendingDlg && app.ready && app.status === "online") {
       const name = pendingDlg;
+      const ns = pendingNs;
       pendingDlg = null;
-      setTimeout(() => openDialog(name), 60);
+      pendingNs = null;
+      // 记忆页没有 ns 就开不了，当没有这个弹窗。
+      if (name === "memory") {
+        if (ns) setTimeout(() => openDialog(name, undefined, { ns }), 60);
+      } else setTimeout(() => openDialog(name), 60);
     }
   });
   // 键盘。
@@ -881,10 +894,13 @@ function Root() {
     ${d && d.name === "projects" && html`<${ProjectsDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "clean" && html`<${CleanDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "settings" && html`<${SettingsDialog} app=${app} onClose=${close} />`}
+    ${d && d.name === "tools" && html`<${ToolsDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "editpreset" && html`<${EditPresetDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "switchmodel" && html`<${SwitchModelDialog} app=${app} onClose=${close} />`}
+    ${d && d.name === "memory" && html`<${MemoryDialog} app=${app} onClose=${close} />`}
     <${ConfirmLayer} app=${app} />
     <${TipLayer} />
+    <${Notifier} app=${app} />
     <${MenuLayer} />
     ${app.status !== "online" && html`<div class="conn" role="status">${app.status === "connecting" ? "正在连接 tau 服务…" : `和 tau 服务断开了：${S.statusMsg}。正在重连`}</div>`}
     ${S.toastMsg && html`<div class="toast" role="status" key=${S.toastMsg.id}>${S.toastMsg.text}</div>`}

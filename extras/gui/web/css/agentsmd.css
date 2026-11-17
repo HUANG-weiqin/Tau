@@ -1,0 +1,4 @@
+/* 预设表里的 AGENTS.md 勾选，和项目概况里的“改过了”标记 */
+.agents-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.agents-row .toggle[disabled] { opacity: .4; pointer-events: none; }
+.ipreset-h .agents-stale { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12px; }

@@ -9,7 +9,7 @@ export function NewPresetDialog({ app, onClose }) {
   const key = project?.key ?? "";
   const mine = app.presetList.filter((p) => p.ok && p.id !== app.gui.chief && pathKey(p.workdir) === key);
   const model = mine.flatMap((p) => (p.ok ? [p.model] : []))[0];
-  const form = usePresetForm({ app, ...(model !== undefined ? { model } : {}) });
+  const form = usePresetForm({ app, ...(model !== undefined ? { model } : {}), ...(project ? { workdir: project.path } : {}) });
   const extra = form.create();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);

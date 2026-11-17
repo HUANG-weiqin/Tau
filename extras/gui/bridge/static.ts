@@ -2,7 +2,7 @@
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
-export const VENDOR_PACKAGES = ["preact", "htm", "@fontsource-variable/archivo", "@fontsource-variable/jetbrains-mono", "@fontsource-variable/noto-sans-sc"];
+export const VENDOR_PACKAGES = ["preact", "htm", "@fontsource-variable/archivo", "@fontsource-variable/jetbrains-mono", "@fontsource-variable/noto-sans-sc", "marked", "dompurify"];
 
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",

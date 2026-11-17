@@ -164,10 +164,31 @@ function ProcOverview({ app }) {
           <dt>记忆</dt><dd>${memory === null ? html`<span class="dim">不知道</span>` : memory ? html`带，库名 <span class="mono">${self.preset}</span>` : "不带"}</dd>
         </dl>
         <p class="inote">这是进程冻结的快照，预设文件之后改了也不影响它。</p>
-        ${file && html`<div><button type="button" class="link ilink" onClick=${(/** @type {Event} */ ev) => app.openDialog("editpreset", /** @type {Element} */ (ev.currentTarget), { preset: self.preset })}><span>改预设</span><${Icon} name="arrow" size=${13} sw=${2.8} /></button></div>`}
+        ${(file || memory) && html`<div class="ilinks">
+          ${file && html`<button type="button" class="link ilink" onClick=${(/** @type {Event} */ ev) => app.openDialog("editpreset", /** @type {Element} */ (ev.currentTarget), { preset: self.preset })}><span>改预设</span><${Icon} name="arrow" size=${13} sw=${2.8} /></button>`}
+          ${memory && html`<button type="button" class="link ilink" onClick=${(/** @type {Event} */ ev) => app.openDialog("memory", /** @type {Element} */ (ev.currentTarget), { ns: self.preset })}><span>记忆</span><${Icon} name="arrow" size=${13} sw=${2.8} /></button>`}
+        </div>`}
       </section>
     </div>
   </div>`;
+}
+
+/** 预设提示词里拼的 AGENTS.md 过期了或文件没了。过期时给“重新拼”，只发 `agentsMd: true`。 @param {{ app: import("../app.js").App, pr: Extract<import("../lib/types.js").PresetInfo, { ok: true }> }} p */
+function AgentsMdMark({ app, pr }) {
+  const [busy, setBusy] = useState(false);
+  if (pr.agentsMd === "missing") return html`<div class="agents-stale"><span class="tag warn">AGENTS.md 没了</span><span class="dim">预设里拼的是旧的，新进程还会用它。</span></div>`;
+  if (pr.agentsMd !== "stale") return null;
+  const regen = async () => {
+    setBusy(true);
+    try {
+      await app.updatePreset({ id: pr.id, agentsMd: true });
+      app.toast(`预设 ${pr.id} 重新拼好了。新开的进程用新的，在跑的进程不变`);
+    } catch (e) {
+      app.toast(`没拼成：${e instanceof Error ? e.message : e}`);
+    }
+    setBusy(false);
+  };
+  return html`<div class="agents-stale"><span class="tag acc">AGENTS.md 改过了</span><button type="button" class="link ilink" disabled=${busy} onClick=${regen}>${busy ? "拼接中" : "重新拼"}</button><span class="dim">只对新进程生效。</span></div>`;
 }
 
 function ProjOverview({ app, status, branches }) {
@@ -199,7 +220,7 @@ function ProjOverview({ app, status, branches }) {
         <ul class="ipresets">
           ${p.presets.map(
             (pr) => html`<li>
-              <div class="ipreset-h"><span class="mono ipreset-id">${pr.id}</span><span class=${`tag ${pr.memory ? "acc" : "line"}`}>${pr.memory ? "带记忆" : "不带记忆"}</span><button type="button" class="link ilink" onClick=${(/** @type {Event} */ ev) => app.openDialog("editpreset", /** @type {Element} */ (ev.currentTarget), { preset: pr.id })}>改预设</button></div>
+              <div class="ipreset-h"><span class="mono ipreset-id">${pr.id}</span><span class=${`tag ${pr.memory ? "acc" : "line"}`}>${pr.memory ? "带记忆" : "不带记忆"}</span>${pr.memory && html`<button type="button" class="link ilink" onClick=${(/** @type {Event} */ ev) => app.openDialog("memory", /** @type {Element} */ (ev.currentTarget), { ns: pr.id })}>记忆</button>`}<button type="button" class="link ilink" onClick=${(/** @type {Event} */ ev) => app.openDialog("editpreset", /** @type {Element} */ (ev.currentTarget), { preset: pr.id })}>改预设</button><${AgentsMdMark} app=${app} pr=${pr} /></div>
               <dl class="ikv small"><dt>模型</dt><dd><span class="mono">${pr.model}</span>${pr.thinking ? html` <span class="tag line">${pr.thinking}</span>` : ""}</dd><dt>工具</dt><dd><${ToolTags} tools=${pr.tools} /></dd></dl>
             </li>`,
           )}

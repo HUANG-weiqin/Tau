@@ -56,7 +56,7 @@
 
 /**
  * `/api/presets` 回的一项。
- * @typedef {{ id: string, ok: true, workdir: string, model: string, tools: string[], memory: boolean, thinking?: string, handoff?: number, options?: Record<string, unknown>, prompt?: string }
+ * @typedef {{ id: string, ok: true, workdir: string, model: string, tools: string[], memory: boolean, thinking?: string, handoff?: number, options?: Record<string, unknown>, prompt?: string, agentsMd?: "none" | "fresh" | "stale" | "missing" }
  *   | { id: string, ok: false, error: string }} PresetInfo
  */
 
@@ -77,6 +77,7 @@
  *   recentModels: string[],
  *   defaultModel?: string,
  *   defaultThinking?: string,
+ *   notify?: boolean,
  * }} GuiState
  */
 

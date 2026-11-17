@@ -40,6 +40,7 @@ export function normalizeState(raw) {
     recentModels: strings(r["recentModels"]),
     ...(typeof r["defaultModel"] === "string" && r["defaultModel"] !== "" ? { defaultModel: r["defaultModel"] } : {}),
     ...(typeof r["defaultThinking"] === "string" && LEVELS.includes(r["defaultThinking"]) ? { defaultThinking: r["defaultThinking"] } : {}),
+    ...(r["notify"] === true ? { notify: true } : {}),
     cleanDays: typeof days === "number" && Number.isFinite(days) && days >= 1 ? Math.floor(days) : DEFAULT_CLEAN_DAYS,
   };
 }

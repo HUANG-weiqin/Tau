@@ -2,6 +2,7 @@
 // 每个条目是网格里的两格：左边时间戳，右边内容；整行的带跨两列。
 import { html, Icon, Thumb, clockS, useState, useEffect, Fragment } from "./common.js";
 import { Typer, claim, release } from "./typer.js";
+import { Markdown } from "./mdview.js";
 import { formatClock, formatBytes, formatElapsed } from "../lib/format.js";
 
 /** 左边的时间戳，窄屏隐藏。 */
@@ -113,6 +114,7 @@ const Working = ({ text, secs }) => html`<span class="wk-l">MODEL</span>
  * 助手的一条消息：思考、文字、工具调用。`slot` 是它的记录键（typer.js 的 slotKey）。
  * 这条消息刚写完、字还没吐完时，接手那条记录：字接着吐；那时下面有工作条的，先放一条一样的“幽灵”工作条，
  * 字追平了它收起，工具条长出来，字不再往上窜。没有记录：直接显示，没有动画。
+ * 吐字期间是纯文字；追平以后（或本来就没有记录）换成 Markdown 渲染的结果。
  * @param {{ app: any, item: any, running: boolean, slot?: string }} p
  */
 export function AssistantRow({ app, item, running, slot = "" }) {
@@ -132,7 +134,7 @@ export function AssistantRow({ app, item, running, slot = "" }) {
   return html`<${Ts} ts=${item.ts} app=${app} pad=${4} />
     <div class="abox">
       ${item.thinking.trim() !== "" && html`<details class="think"><summary>思考 · ${Array.from(item.thinking).length} 字</summary><p>${item.thinking}</p></details>`}
-      ${hasText && html`<${Typer} text=${item.text} claimed=${claimed} final=${true} onCaught=${claimed ? () => setCaught(true) : undefined} />`}
+      ${hasText && (caught ? html`<${Markdown} text=${item.text} />` : html`<${Typer} text=${item.text} claimed=${claimed} final=${true} onCaught=${() => setCaught(true)} />`)}
       ${item.errorMessage && html`<div class="aerr"><span class="tag warn">模型出错</span><span class="mono">${item.errorMessage}</span></div>`}
       ${ghost && html`<div class=${`gx ${caught ? "out" : "in"}`} aria-hidden="true"><div class="gi"><div class="working"><${Working} text="模型在写" /></div></div></div>`}
       ${claimed ? calls && html`<div class=${`gx ${caught ? "in" : ""}`}><div class="gi">${calls}</div></div>` : calls}

@@ -11,6 +11,8 @@ import { allProcs, childCounts, emptyStore, reduce, streamingText } from "../../
 import { extractTitle, processTitle } from "../../../extras/gui/web/lib/titles.js";
 import { newPace, paceArrive, paceStep } from "../../../extras/gui/web/lib/pace.js";
 import { buildCreate, buildUpdate, defaultModelRef, filterCatalog, findModel, formatWindow, keyHint, keyLabel, modelPatch, nearestLevel, parseOptions, pushRecent, recentEntries, sortProviders, splitModel } from "../../../extras/gui/web/lib/models.js";
+import { markdownToHtml, safeHref } from "../../../extras/gui/web/lib/markdown.js";
+import { firstLine, lastReply, notifyText, shouldNotify, tabTitle, trackResults, unseenCount, watchAttention } from "../../../extras/gui/web/lib/notify.js";
 
 type Self = import("../../../extras/gui/web/lib/types.js").Self;
 type Msg = import("../../../extras/gui/web/lib/types.js").Message;
@@ -1061,4 +1063,135 @@ test("inspect: 快照里还带模型、思考强度、换段阈值和 options", 
   assert.deepEqual(f, { workdir: "E:\\w", tools: ["read", "memory", "t"], memory: true, model: "x/m", thinking: "high", handoff: 90000, options: { temperature: 0.1 } });
   const g = seenFromInspect({ type: "process", process: { preset: { workdir: "E:\\w", tools: ["read"], model: "x/m" } } });
   assert.deepEqual(g, { workdir: "E:\\w", tools: ["read"], memory: false, model: "x/m" });
+});
+
+// ---------- Markdown ----------
+
+test("markdown: GFM 的表格、删除线、任务列表、围栏代码块", () => {
+  const h = markdownToHtml("## 标题\n\n~~旧~~ **新** `x`\n\n- [x] 做完\n- [ ] 没做\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```ts\nconst a = 1 < 2;\n```\n");
+  assert.match(h, /<h2>标题<\/h2>/);
+  assert.match(h, /<del>旧<\/del>/);
+  assert.match(h, /<input checked="" disabled="" type="checkbox">/);
+  assert.match(h, /<div class="md-tw"><table>[\s\S]*<\/table><\/div>/);
+  assert.match(h, /<span class="md-lang">ts<\/span><button type="button" class="md-copy" data-md-copy>复制<\/button>/);
+  assert.match(h, /<pre><code>const a = 1 &lt; 2;<\/code><\/pre>/);
+});
+
+test("markdown: 原始 HTML 按文字转义，块级和行内都一样", () => {
+  const h = markdownToHtml("<script>alert(1)</script>\n\n行内 <img src=x onerror=alert(1)> 和 <b>粗</b>");
+  assert.ok(!/<script|<img|<b>/.test(h), h);
+  assert.match(h, /&lt;script&gt;/);
+  assert.match(h, /&lt;img src=x onerror=alert\(1\)&gt;/);
+});
+
+test("markdown: 链接只认 http、https、mailto，新标签页打开", () => {
+  assert.equal(safeHref("https://a.com/x?y=1"), "https://a.com/x?y=1");
+  assert.equal(safeHref("HTTP://a.com"), "HTTP://a.com");
+  assert.equal(safeHref("mailto:a@b.c"), "mailto:a@b.c");
+  for (const bad of ["javascript:alert(1)", " javascript:alert(1)", "java\nscript:alert(1)", "data:text/html,x", "/rel/path", "#frag", "ftp://x", "https://a b", ""]) assert.equal(safeHref(bad), null, bad);
+  const h = markdownToHtml("[好](https://a.com) [坏](javascript:alert(1)) [引](https://a.com \"t\\\"x\")");
+  assert.match(h, /<a href="https:\/\/a.com" target="_blank" rel="noopener noreferrer">好<\/a>/);
+  assert.ok(!h.includes("javascript"), h);
+  assert.match(h, / 坏 /);
+  assert.match(h, /title="t&quot;x"/);
+});
+
+test("markdown: 图片不加载，显示成链接或文字", () => {
+  const h = markdownToHtml("![图](https://a.com/x.png) ![坏](javascript:x)");
+  assert.ok(!h.includes("<img"), h);
+  assert.match(h, /<a href="https:\/\/a.com\/x.png"[^>]*>图<\/a>/);
+  assert.match(h, /坏/);
+});
+
+test("markdown: 代码块的语言标签只留短的字母数字，内容转义", () => {
+  const h = markdownToHtml("```\"><b>\n<i>&\n```");
+  assert.match(h, /<span class="md-lang"><\/span>/);
+  assert.match(h, /&lt;i&gt;&amp;/);
+  assert.ok(!/<b>|<i>/.test(h), h);
+});
+
+// ---------- 通知 ----------
+
+test("notify: 标签页标题", () => {
+  assert.equal(tabTitle(0), "tau");
+  assert.equal(tabTitle(3), "(3) tau");
+});
+
+test("notify: 谁刚进入待你看——首次只记下，离开再进入算新的一轮，数据没读全不动", () => {
+  let r = watchAttention(null, ["a"], false);
+  assert.deepEqual(r, { next: null, entered: [] });
+  r = watchAttention(r.next, ["a"], true);
+  assert.deepEqual([...(r.next ?? [])], ["a"]);
+  assert.deepEqual(r.entered, []);
+  r = watchAttention(r.next, ["a", "b"], true);
+  assert.deepEqual(r.entered, ["b"]);
+  r = watchAttention(r.next, ["a", "b"], true);
+  assert.deepEqual(r.entered, []);
+  const gone = watchAttention(r.next, ["a"], true);
+  assert.deepEqual(gone.entered, []);
+  assert.deepEqual(watchAttention(gone.next, ["a", "b"], true).entered, ["b"]);
+  const held = watchAttention(gone.next, [], false);
+  assert.equal(held.next, gone.next);
+});
+
+test("notify: 开关开着、许可了、页面不在前台才通知", () => {
+  assert.equal(shouldNotify({ enabled: true, permission: "granted", away: true }), true);
+  assert.equal(shouldNotify({ enabled: false, permission: "granted", away: true }), false);
+  assert.equal(shouldNotify({ enabled: true, permission: "denied", away: true }), false);
+  assert.equal(shouldNotify({ enabled: true, permission: "default", away: true }), false);
+  assert.equal(shouldNotify({ enabled: true, permission: "granted", away: false }), false);
+});
+
+test("notify: 正文是结束原因加最终回复的第一行，长的截短", () => {
+  assert.equal(firstLine("\n  \n 第一行 \n第二行"), "第一行");
+  assert.equal(firstLine(""), "");
+  assert.equal(firstLine("字".repeat(100), 5), "字字字字字…");
+  const msgs = [user("hi"), asst([text("旧")]), asst([call("1", "bash", {})]), asst([text("\n结果在这\n别的"), text("尾")])];
+  assert.equal(lastReply(msgs as any), "\n结果在这\n别的\n尾");
+  assert.equal(lastReply([user("x")] as any), "");
+  assert.deepEqual(notifyText("甲", "出错", "\n好了\n后面"), { title: "甲", body: "出错：好了" });
+  assert.deepEqual(notifyText("甲", "出错", ""), { title: "甲", body: "出错" });
+});
+
+test("state: notify 只在为 true 时保留", () => {
+  assert.equal(normalizeState({ notify: true }).notify, true);
+  assert.equal("notify" in normalizeState({ notify: false }), false);
+  assert.equal("notify" in normalizeState({ notify: "yes" }), false);
+});
+
+test("notify: 新结果——根进程一轮结束算，子进程不算，首次不算", () => {
+  const P = (id: string, busy: boolean, root = true) => ({ id, root, busy });
+  const o = { focusedId: null as string | null, away: true, ready: true };
+  let r = trackResults(null, [P("a", false), P("b", true)], { ...o, ready: false });
+  assert.equal(r.next, null);
+  r = trackResults(null, [P("a", false), P("b", true)], o);
+  assert.deepEqual(r.ended, []);
+  assert.equal(r.next!.results.size, 0);
+  r = trackResults(r.next, [P("a", false), P("b", false), P("c", true, false)], o);
+  assert.deepEqual(r.ended, ["b"]);
+  assert.deepEqual([...r.next!.results], ["b"]);
+  r = trackResults(r.next, [P("a", false), P("b", false), P("c", false, false)], o);
+  assert.deepEqual(r.ended, []);
+  assert.deepEqual([...r.next!.results], ["b"]);
+});
+
+test("notify: 新结果在前台聚焦时清掉，页面不在前台不清，进程没了也清", () => {
+  const P = (id: string, busy: boolean) => ({ id, root: true, busy });
+  let r = trackResults(null, [P("a", true), P("b", true)], { focusedId: null, away: true, ready: true });
+  r = trackResults(r.next, [P("a", false), P("b", false)], { focusedId: "a", away: true, ready: true });
+  assert.deepEqual(r.ended, ["a", "b"]);
+  assert.deepEqual([...r.next!.results].sort(), ["a", "b"]);
+  r = trackResults(r.next, [P("a", false), P("b", false)], { focusedId: "a", away: false, ready: true });
+  assert.deepEqual([...r.next!.results], ["b"]);
+  r = trackResults(r.next, [P("a", false)], { focusedId: null, away: false, ready: true });
+  assert.equal(r.next!.results.size, 0);
+  // 前台时聚焦的进程结束：算刚结束（由调用方决定弹不弹），但不留在结果里。
+  r = trackResults(trackResults(null, [P("a", true)], { focusedId: "a", away: false, ready: true }).next, [P("a", false)], { focusedId: "a", away: false, ready: true });
+  assert.deepEqual(r.ended, ["a"]);
+  assert.equal(r.next!.results.size, 0);
+});
+
+test("notify: 标题的数是待你看和新结果去重后的进程数", () => {
+  assert.equal(unseenCount(["a", "b"], new Set(["b", "c"])), 3);
+  assert.equal(unseenCount([], new Set()), 0);
 });

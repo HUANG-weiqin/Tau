@@ -1,8 +1,10 @@
 // 预设表：预设 ID、模型、思考强度、记忆和工具、换段阈值、提示词、折起的高级（options）。
 // “打开项目”“新预设”“改预设”共用；改预设时预设 ID 只读。
-import { html, Icon, useState, Fragment } from "./common.js";
+import { html, Icon, useEffect, useState, Fragment } from "./common.js";
+import { tools as loadTools, agentsMd as loadAgentsMd } from "../api.js";
 import { ModelPicker, ThinkingBar, thinkingFor } from "./modelpicker.js";
 import { buildCreate, buildUpdate, defaultModelRef, findModel, nearestLevel } from "../lib/models.js";
+import { formatBytes } from "../lib/format.js";
 
 export const TOOLS = ["read", "write", "edit", "bash", "memory", "agents"];
 const NEW_TOOLS = ["read", "write", "edit", "bash", "memory"];
@@ -10,7 +12,8 @@ const NEW_TOOLS = ["read", "write", "edit", "bash", "memory"];
 /**
  * 表的状态。`orig` 是改预设时现在的预设（读出来的样子）。`suggest` 是预设 ID 没填时的默认值，`model` 是想预填的模型。
  * 模型没传时：设置里的默认，没有就是最近用过的，再没有就是第一家配了 key 的第一个模型。
- * @param {{ app: import("../app.js").App, orig?: Extract<import("../lib/types.js").PresetInfo, { ok: true }>, model?: string, suggest?: string }} o
+ * `workdir` 是预设的工作目录（改预设时取现在的），用来查项目里有没有 AGENTS.md；没有就不查。
+ * @param {{ app: import("../app.js").App, orig?: Extract<import("../lib/types.js").PresetInfo, { ok: true }>, model?: string, suggest?: string, workdir?: string }} o
  */
 export function usePresetForm(o) {
   const { app, orig } = o;
@@ -24,7 +27,45 @@ export function usePresetForm(o) {
   const [options, setOptions] = useState(orig?.options !== undefined ? JSON.stringify(orig.options) : "");
   const [prompt, setPrompt] = useState(orig?.prompt ?? "");
   const [advanced, setAdvanced] = useState(orig?.options !== undefined);
+  /** 已装的工具定义的名字；还没读到或读不到是 null。 */
+  const [defs, setDefs] = useState(/** @type {string[] | null} */ (null));
+  useEffect(() => {
+    let alive = true;
+    loadTools().then(
+      (r) => alive && setDefs((r.installed ?? []).map((/** @type {{ name: string }} */ t) => t.name)),
+      () => {},
+    );
+    return () => {
+      alive = false;
+    };
+  }, []);
 
+  const workdir = o.workdir ?? orig?.workdir ?? "";
+  /** 项目里 AGENTS.md 的情况，连同它是对哪个目录查的；还没查到是 null。 */
+  const [agentsFile, setAgentsFile] = useState(/** @type {{ workdir: string, exists: boolean, bytes: number } | null} */ (null));
+  useEffect(() => {
+    if (workdir === "") return;
+    let alive = true;
+    // 打开项目时路径是一个字一个字敲的：等一下再查。
+    const t = setTimeout(
+      () =>
+        loadAgentsMd(workdir).then(
+          (r) => alive && setAgentsFile({ workdir, exists: r.exists, bytes: r.bytes ?? 0 }),
+          () => alive && setAgentsFile(null),
+        ),
+      300,
+    );
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [workdir]);
+  const agentsInfo = agentsFile && agentsFile.workdir === workdir ? agentsFile : null;
+  /** 用户点过勾选以后是他的选择；没点过，新建时文件在就默认勾上，改预设时跟现在有没有块。 */
+  const [agentsPick, setAgentsPick] = useState(/** @type {boolean | null} */ (null));
+  const agents = agentsPick ?? (orig ? orig.agentsMd !== "none" : !!agentsInfo?.exists);
+  /** 块过期了，用户要求保存时重新拼。 */
+  const [regen, setRegen] = useState(false);
   const model = picked ?? orig?.model ?? o.model ?? defaultModelRef(app.gui, providers);
   const info = findModel(providers, model)?.model ?? null;
   const thinking = thinkingSet ? thinkingSet.v : orig ? orig.thinking : nearestLevel(info?.thinking ?? [], app.gui.defaultThinking);
@@ -33,7 +74,15 @@ export function usePresetForm(o) {
   const draft = () => ({ model, thinking, tools, handoff, options, prompt });
   return {
     orig, id, setId, idFinal, suggest: o.suggest ?? "",
-    model, thinking, note, tools, handoff, setHandoff, options, setOptions, prompt, setPrompt, advanced, setAdvanced,
+    model, thinking, note, tools, agents, agentsInfo, agentsState: orig?.agentsMd ?? "none", regen,
+    /** @param {boolean} v */
+    setAgents(v) {
+      setAgentsPick(v);
+      if (!v) setRegen(false);
+    },
+    /** @param {boolean} v */
+    setRegen,
+     defs, handoff, setHandoff, options, setOptions, prompt, setPrompt, advanced, setAdvanced,
     /** 选了模型：原来的思考级别不被支持，换成最近的一档，并给一行提示。 @param {string} ref */
     pickModel(ref) {
       setPicked(ref);
@@ -52,10 +101,19 @@ export function usePresetForm(o) {
     /** 改预设时发给 `/api/presets/update` 的补丁（不含 id）；填错了是 `error`。 */
     update() {
       if (!orig) return { ok: /** @type {const} */ (false), error: "不是改预设" };
-      return buildUpdate(orig, orig.prompt ?? "", draft());
+      const r = buildUpdate(orig, orig.prompt ?? "", draft());
+      // 勾选和现在的块不一样才发；块过期了，选了“重新拼”也发。其余不动这段块。
+      if (r.ok) {
+        if (agents !== (orig.agentsMd !== "none")) r.patch["agentsMd"] = agents;
+        else if (agents && regen) r.patch["agentsMd"] = true;
+      }
+      return r;
     },
     /** 新建时多带的几个字段。 */
-    create: () => buildCreate(draft()),
+    create() {
+      const r = buildCreate(draft());
+      return r.ok && agents && agentsInfo?.exists ? { ok: /** @type {const} */ (true), fields: { ...r.fields, agentsMd: true } } : r;
+    },
     toggle: (/** @type {string} */ t) => setTools(tools.includes(t) ? tools.filter((x) => x !== t) : [...tools, t]),
     /** ID 合法、没被占（Windows 不分大小写）、模型填了、几个输入框填得对。 @param {Record<string, unknown>} presets */
     valid(presets) {
@@ -87,7 +145,8 @@ export function PresetFields({ form, app, placeholder = "my-project", promptHint
   const { memory, toggle, tools, orig } = form;
   const edit = !!orig;
   const info = findModel(app.models?.providers, form.model)?.model ?? null;
-  const allTools = [...TOOLS, ...tools.filter((t) => !TOOLS.includes(t))];
+  // 工具定义：已装的，加上预设里写了、但 tools/ 下没有的（原样保留，可以取消）。
+  const defNames = [...(form.defs ?? []), ...tools.filter((t) => !TOOLS.includes(t) && !(form.defs ?? []).includes(t))];
   const optErr = (() => {
     const b = form.draft().options.trim();
     if (b === "") return "";
@@ -110,13 +169,20 @@ export function PresetFields({ form, app, placeholder = "my-project", promptHint
       <div class="field">记忆
         <div class="toggles" role="group" aria-label="记忆"><button type="button" class="toggle" aria-pressed=${memory} onClick=${() => !memory && toggle("memory")}>带</button><button type="button" class="toggle" aria-pressed=${!memory} onClick=${() => memory && toggle("memory")}>不带</button></div>
       </div>
-      <div class="field">工具
-        <div class="toggles" role="group" aria-label="工具">${allTools.map((t) => html`<button type="button" key=${t} class="toggle" aria-pressed=${tools.includes(t)} title=${TOOLS.includes(t) ? undefined : "工具定义，原样保留"} onClick=${() => toggle(t)}>${t}</button>`)}</div>
+      <div class="field">内置工具
+        <div class="toggles" role="group" aria-label="内置工具">${TOOLS.map((t) => html`<button type="button" key=${t} class="toggle" aria-pressed=${tools.includes(t)} onClick=${() => toggle(t)}>${t}</button>`)}</div>
       </div>
+    </div>
+    <div class="field">工具定义
+      ${defNames.length === 0
+        ? html`<span class="dnote">${form.defs === null ? "正在读…" : "还没有装工具定义。在设置里打开“工具定义”装。"}</span>`
+        : html`<div class="toggles" role="group" aria-label="工具定义">${defNames.map((t) => html`<button type="button" key=${t} class="toggle" aria-pressed=${tools.includes(t)} title=${(form.defs ?? []).includes(t) ? undefined : "tools/ 下没有这个定义，原样保留"} onClick=${() => toggle(t)}>${t}</button>`)}</div>`}
+      ${tools.includes("shell") && tools.includes("bash") && html`<span class="dnote" style="font-size:11.5px">shell 和 bash 同时开着：两个都能运行命令，通常只留一个。</span>`}
     </div>
     <label class="field">换段阈值（token，可以不填）
       <input class="input mono" style="max-width:240px" type="text" inputmode="numeric" value=${form.handoff} placeholder="不填就按窗口自己定" onInput=${(/** @type {any} */ e) => form.setHandoff(e.currentTarget.value)} />
     </label>
+    <${AgentsMdField} form=${form} />
     <label class="field">提示词${edit ? "" : "（可以以后在编辑器里补）"}<textarea class="input" rows=${edit ? 7 : 3} value=${form.prompt} onInput=${(/** @type {any} */ e) => form.setPrompt(e.currentTarget.value)} placeholder=${promptHint}></textarea></label>
     <div class="adv">
       <button type="button" class="adv-h" aria-expanded=${form.advanced} onClick=${() => form.setAdvanced(!form.advanced)}><span class="label">高级</span><span class="dim" style="font-size:12px">options</span><span class="sep"></span><${Icon} name=${form.advanced ? "up" : "down"} size=${13} sw=${2.8} /></button>
@@ -126,4 +192,23 @@ export function PresetFields({ form, app, placeholder = "my-project", promptHint
       </label>`}
     </div>
   </${Fragment}>`;
+}
+
+/** “拼上项目的 AGENTS.md”：一个勾选，旁边写文件大小。只对新进程生效。 @param {{ form: ReturnType<typeof usePresetForm> }} p */
+function AgentsMdField({ form }) {
+  const { agents, agentsInfo, agentsState, regen } = form;
+  const edit = !!form.orig;
+  const exists = agentsInfo?.exists === true;
+  // 文件不在、又没勾着：开不了。勾着而文件没了（旧的块还在）：只能取消。
+  const locked = !exists && !agents;
+  return html`<div class="field">AGENTS.md
+    <div class="agents-row">
+      <button type="button" class="toggle" aria-pressed=${agents} disabled=${locked} onClick=${() => form.setAgents(!agents)}>拼上项目的 AGENTS.md</button>
+      <span class="dnote">${agentsInfo === null ? "正在查…" : exists ? formatBytes(agentsInfo.bytes) : "项目里没有 AGENTS.md"}</span>
+      ${edit && agentsState === "stale" && agents && html`<button type="button" class="toggle" aria-pressed=${regen} onClick=${() => form.setRegen(!regen)}>保存时重新拼</button>`}
+    </div>
+    ${edit && agentsState === "stale" && html`<span class="dnote" style="font-size:11.5px;color:var(--acc)">AGENTS.md 改过了，预设里拼的还是旧的。</span>`}
+    ${edit && agentsState === "missing" && html`<span class="dnote" style="font-size:11.5px;color:var(--warn)">项目里的 AGENTS.md 没了，预设里拼的是旧的。</span>`}
+    <span class="dnote" style="font-size:11.5px">放在提示词末尾，由界面管，别手改。只对新进程生效，在跑的进程冻结着旧的。</span>
+  </div>`;
 }

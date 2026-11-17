@@ -1,0 +1,20 @@
+/* 记忆页：键值一行一格，值折起，冲突的黄块 */
+.dlg.memory .callout.warn { box-shadow: inset 3px 0 0 var(--warn); }
+.mem-list { display: flex; flex-direction: column; gap: 6px; }
+.mem-row { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 10px 14px 8px; background: var(--ink3); box-shadow: inset 3px 0 0 var(--ink5); }
+.mem-row.editing { box-shadow: inset 3px 0 0 var(--acc); }
+.mem-row.asking { box-shadow: inset 3px 0 0 var(--warn); }
+.mem-h { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.mem-k { flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+.mem-v { flex: none; font-size: 11px; }
+.mem-key { flex: 1 1 auto; min-width: 0; width: auto; min-height: 40px; box-shadow: inset 0 0 0 1px var(--acc); border: 0; font-weight: 700; }
+.mem-fold { font-size: 13px; line-height: 1.6; color: var(--fg); overflow-wrap: anywhere; }
+.mem-pre { margin: 0; max-height: 280px; overflow: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; scrollbar-width: thin; scrollbar-color: var(--fg3) transparent; }
+.mem-ta { min-height: 110px; resize: vertical; }
+.mem-bytes { margin-top: -4px; font-size: 11px; }
+.mem-other-h { margin-bottom: 4px; font-size: 11px; font-weight: 900; color: var(--fg2); }
+.mem-links { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.mem-links .link[disabled] { opacity: .4; pointer-events: none; }
+.mem-acts, .mem-ask { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.mem-ask > span { flex: 1 1 160px; min-width: 0; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+.sec-head .link[disabled] { opacity: .4; pointer-events: none; }

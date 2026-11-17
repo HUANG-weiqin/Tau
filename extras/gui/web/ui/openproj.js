@@ -15,7 +15,7 @@ function suggestId(p) {
 export function OpenProjDialog({ app, onClose }) {
   const [folder, setFolder] = useState(/** @type {string} */ (app.dialog?.props?.folder ?? ""));
   const [busy, setBusy] = useState(false);
-  const form = usePresetForm({ app, suggest: suggestId(folder) });
+  const form = usePresetForm({ app, suggest: suggestId(folder), ...(isAbs(folder.trim()) ? { workdir: folder.trim() } : {}) });
   const extra = form.create();
 
   const key = folder.trim() === "" ? "" : pathKey(folder.trim());

@@ -148,7 +148,11 @@ export const getState = () => post("/api/state", {}).then((r) => r.state ?? {});
 export const setState = (/** @type {Record<string, unknown>} */ set) => post("/api/state", { set }).then((r) => r.state ?? {});
 export const git = (/** @type {string} */ workdir, /** @type {string} */ what, /** @type {string} [file] */ file) => post("/api/git", { workdir, what, ...(file !== undefined ? { file } : {}) });
 export const bg = (/** @type {string[]} */ processes) => post("/api/bg", { processes }).then((r) => r.logs ?? []);
-export const pickFolder = () => post("/api/pick-folder", {}).then((r) => /** @type {string | null} */ (r.path ?? null));
+/** 已装的工具定义和工具库（含安装状态）。 */
+export const tools = () => post("/api/tools", {});
+export const installTool = (/** @type {string} */ name, /** @type {boolean} */ replace = false) => post("/api/tools/install", { name, ...(replace ? { replace } : {}) });
+export const removeTool = (/** @type {string} */ name) => post("/api/tools/remove", { name });
+export const pickFolder =() => post("/api/pick-folder", {}).then((r) => /** @type {string | null} */ (r.path ?? null));
 
 /** @type {Map<string, Promise<string | null>>} */
 const blobs = new Map();
@@ -170,3 +174,34 @@ export function blobUrl(hash) {
   }
   return p;
 }
+
+/**
+ * 读一个 ns 的记忆，按键的字节序。`ns` 过预设 ID 的检查，没有键就是空数组。
+ * @param {string} ns
+ * @returns {Promise<{ key: string, value: string, version: number }[]>}
+ */
+export async function memoryRead(ns) {
+  const rs = await tauAll({ op: "memory", ns });
+  const r = rs.find((x) => x.type === "memory");
+  if (!r) throw new ApiError("服务没有回记忆");
+  return r.entries;
+}
+
+/**
+ * 写记忆，整批一个事务。回 `memory_written` 或 `memory_rejected`（冲突和超限是正常回复），由 `lib/memory.js` 的 `interpretWrite` 读。
+ * @param {Record<string, unknown>[]} ops
+ * @returns {Promise<any>}
+ */
+export async function memoryWrite(ops) {
+  const rs = await tauAll({ op: "memory_write", ops });
+  const r = rs.find((x) => x.type === "memory_written" || x.type === "memory_rejected");
+  if (!r) throw new ApiError("服务没有回写入的结果");
+  return r;
+}
+
+/**
+ * 工作目录里有没有 AGENTS.md，多大。预设表用它决定默认勾不勾“拼上项目的 AGENTS.md”。
+ * @param {string} workdir
+ * @returns {Promise<{ exists: boolean, bytes?: number }>}
+ */
+export const agentsMd = (workdir) => post("/api/agents-md", { workdir });

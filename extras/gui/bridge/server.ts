@@ -13,8 +13,10 @@ import { pickFolder as realPick } from "./pick.ts";
 import type { PickFolder } from "./pick.ts";
 import { buildCatalog, readKeys } from "./models.ts";
 import type { CatalogProvider } from "./models.ts";
+import { agentsMdInfo } from "./agentsmd.ts";
 import { createPreset, deletePreset, listPresets, presetWorkdirs, updatePreset } from "./presets.ts";
 import { contentType, readStatic, routeStatic } from "./static.ts";
+import { installTool, listTools, removeTool } from "./tools.ts";
 import { createStateStore } from "./state.ts";
 import { HttpError, isObject } from "./util.ts";
 
@@ -132,8 +134,17 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
         const { keys, auth } = readKeys(authFile);
         return json(res, 200, { providers: catalog.map((p) => ({ ...p, key: keys.get(p.id) ?? "none" })), auth });
       }
+      case "agents-md":
+        return json(res, 200, agentsMdInfo(body));
       case "presets/delete":
         deletePreset(home, body);
+        return json(res, 200, { ok: true });
+      case "tools":
+        return json(res, 200, listTools(home));
+      case "tools/install":
+        return json(res, 200, { ok: true, status: installTool(home, body) });
+      case "tools/remove":
+        removeTool(home, body);
         return json(res, 200, { ok: true });
       case "git":
         return json(res, 200, await git(body));

@@ -1,0 +1,146 @@
+// 记忆页的纯函数（extras/gui/web/lib/memory.js），读回复的部分对着真的测试服务。
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createModels } from "@earendil-works/pi-ai";
+import { sqliteMemory } from "../../../src/memory/kv.ts";
+import { serve } from "../../../src/server/serve.ts";
+import { createBridge } from "../../../extras/gui/bridge/server.ts";
+import { afterConflict, byKeyBytes, deleteOp, editDirty, editError, editOf, interpretWrite, isLong, newEdit, overText, preview, setOp, sortEntries, utf8Bytes } from "../../../extras/gui/web/lib/memory.js";
+
+const E = (key: string, value = "v", version = 1) => ({ key, value, version });
+
+test("memory: 排序按键的 UTF-8 字节序，不按 UTF-16 码元", () => {
+  // U+FF5E（3 字节，EF）比 U+10000（4 字节，F0）小；UTF-16 里代理项 D800 比 FF5E 小。
+  const got = sortEntries([E("\u{10000}"), E("b"), E("～"), E("a"), E("中")]).map((x) => x.key);
+  assert.deepEqual(got, ["a", "b", "中", "～", "\u{10000}"]);
+  assert.ok(byKeyBytes("a", "ab") < 0 && byKeyBytes("ab", "a") > 0 && byKeyBytes("a", "a") === 0);
+  const input = [E("b"), E("a")];
+  sortEntries(input);
+  assert.equal(input[0]!.key, "b", "不改原数组");
+});
+
+test("memory: 折叠预览，多行或长的才折", () => {
+  assert.equal(isLong("短"), false);
+  assert.equal(isLong("一行\n两行"), true);
+  assert.equal(isLong("字".repeat(80)), false);
+  assert.equal(isLong("字".repeat(81)), true);
+  assert.equal(preview("第一行\n第二行"), "第一行");
+  assert.equal(preview("字".repeat(100)), `${"字".repeat(80)}…`);
+  assert.equal(utf8Bytes("中a"), 4);
+});
+
+test("memory: 编辑状态：没改不能存，新键必须有键名且不重名", () => {
+  const e = editOf(E("k", "旧", 7));
+  assert.deepEqual(e, { key: "k", draft: "旧", base: 7, isNew: false, orig: "旧" });
+  assert.equal(editDirty(e), false);
+  assert.equal(editDirty({ ...e, draft: "新" }), true);
+  assert.equal(editError(e, [E("k")]), null);
+
+  const n = newEdit();
+  assert.equal(n.base, null);
+  assert.match(editError(n, []) ?? "", /不能为空/);
+  assert.match(editError({ ...n, key: "k" }, [E("k")]) ?? "", /已经有/);
+  assert.equal(editError({ ...n, key: "j" }, [E("k")]), null);
+});
+
+test("memory: 写操作带读到的版本号；新键 expected 是 null", () => {
+  assert.deepEqual(setOp("p", editOf(E("k", "旧", 7))), { kind: "set", ns: "p", key: "k", value: "旧", expected: 7 });
+  assert.deepEqual(setOp("p", { ...newEdit(), key: "n", draft: "x" }), { kind: "set", ns: "p", key: "n", value: "x", expected: null });
+  assert.deepEqual(deleteOp("p", E("k", "v", 9)), { kind: "delete", ns: "p", key: "k", expected: 9 });
+});
+
+test("memory: 读写回复：成功、冲突（带最新值，或键已被删）、超限、读不懂", () => {
+  assert.deepEqual(interpretWrite({ type: "memory_written", versions: [12] }), { kind: "ok", version: 12 });
+  assert.deepEqual(interpretWrite({ type: "memory_written", versions: [null] }), { kind: "ok", version: null });
+  const cur = { value: "别人的", version: 20 };
+  assert.deepEqual(interpretWrite({ type: "memory_rejected", index: 0, result: { ok: false, current: cur } }), { kind: "conflict", current: cur });
+  assert.deepEqual(interpretWrite({ type: "memory_rejected", index: 0, result: { ok: false, current: null } }), { kind: "conflict", current: null });
+  assert.deepEqual(interpretWrite({ type: "memory_rejected", index: 0, result: { ok: false, over: "value", bytes: 5000 } }), { kind: "over", over: "value", bytes: 5000 });
+  assert.deepEqual(interpretWrite({ type: "nope" }), { kind: "unknown" });
+  assert.deepEqual(interpretWrite(null), { kind: "unknown" });
+  assert.match(overText("key", 200), /键太长.*200/);
+  assert.match(overText("value", 5000), /值太长.*5000/);
+  assert.match(overText("view", 20000), /整个库.*20000/);
+});
+
+test("memory: 版本冲突：用户写的字原样留着，版本号换成别处现在的，别处的值给他对照", () => {
+  const mine = { ...editOf(E("k", "旧", 7)), draft: "我写的" };
+  const a = afterConflict(mine, { value: "别人写的", version: 20 });
+  assert.equal(a.draft, "我写的");
+  assert.equal(a.base, 20);
+  assert.deepEqual(a.other, { value: "别人写的" });
+  assert.equal(a.orig, "旧");
+  assert.equal(editDirty(a), true);
+  // 我写的和别人写的一样：没有可存的。
+  assert.equal(editDirty({ ...a, draft: "别人写的" }), false);
+  // 别处把键删了：版本号回到 null，保存就是重建。
+  const g = afterConflict(mine, null);
+  assert.equal(g.draft, "我写的");
+  assert.equal(g.base, null);
+  assert.deepEqual(g.other, { gone: true });
+  assert.equal(editDirty({ ...g, draft: "旧" }), true);
+  assert.deepEqual(setOp("p", g), { kind: "set", ns: "p", key: "k", value: "我写的", expected: null });
+  // 新键撞上别人刚建的同名键：成了改已有的键，再按保存不被“已经有这个键”拦住。
+  const n = afterConflict({ ...newEdit(), key: "n", draft: "x" }, { value: "y", version: 30 });
+  assert.equal(n.base, 30);
+  assert.equal(n.isNew, false);
+  assert.equal(n.draft, "x");
+  assert.equal(editError(n, [{ key: "n", value: "y", version: 30 }]), null);
+});
+
+test("memory: 经桥读写真的服务：新键、改、冲突不覆盖、删；回复正好是 interpretWrite 读得懂的", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "tau-gui-mem-"));
+  mkdirSync(join(dir, "presets"));
+  const pipe = `\\\\.\\pipe\\tau-test-gui-mem-${process.pid}-${Math.random().toString(16).slice(2)}`;
+  const svc = await serve({ pipe, dbPath: join(dir, "tau.db"), presetsDir: join(dir, "presets"), toolsDir: join(dir, "tools"), models: createModels(), memory: sqliteMemory });
+  const bridge = await createBridge({ port: 0, home: join(dir, "home"), pipe });
+  t.after(async () => {
+    await bridge.close();
+    await svc.close();
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
+  const tau = async (body: unknown): Promise<any[]> => {
+    const res = await fetch(`http://127.0.0.1:${bridge.port}/api/tau`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    return (await res.text()).split("\n").filter((l) => l !== "").map((l) => JSON.parse(l));
+  };
+  const read = async () => (await tau({ op: "memory", ns: "proj" }))[0].entries as { key: string; value: string; version: number }[];
+  const write = async (op: unknown) => (await tau({ op: "memory_write", ops: [op] }))[0];
+
+  // 空库。
+  assert.deepEqual(await read(), []);
+  // 新键。
+  const made = interpretWrite(await write(setOp("proj", { ...newEdit(), key: "城市", draft: "上海" })));
+  assert.equal(made.kind, "ok");
+  const [first] = await read();
+  assert.deepEqual({ key: first!.key, value: first!.value }, { key: "城市", value: "上海" });
+  // 我开始改（版本 v1），兄弟进程先写了。
+  const mine = { ...editOf(first!), draft: "北京" };
+  const sibling = interpretWrite(await write(setOp("proj", { ...editOf(first!), draft: "深圳" })));
+  assert.equal(sibling.kind, "ok");
+  const clash = interpretWrite(await write(setOp("proj", mine)));
+  assert.equal(clash.kind, "conflict");
+  assert.equal((await read())[0]!.value, "深圳", "冲突时没有覆盖");
+  if (clash.kind !== "conflict") return;
+  // 带着别处现在的版本再存，才写进去。
+  const again = afterConflict(mine, clash.current);
+  assert.equal(again.draft, "北京");
+  assert.deepEqual(again.other, { value: "深圳" });
+  assert.equal(interpretWrite(await write(setOp("proj", again))).kind, "ok");
+  const [now] = await read();
+  assert.equal(now!.value, "北京");
+  // 删：版本旧了冲突，现在的版本才删得掉；已经没有的键，冲突带 null。
+  assert.equal(interpretWrite(await write(deleteOp("proj", first!))).kind, "conflict");
+  assert.equal(interpretWrite(await write(deleteOp("proj", now!))).kind, "ok");
+  assert.deepEqual(await read(), []);
+  assert.deepEqual(interpretWrite(await write(deleteOp("proj", now!))), { kind: "conflict", current: null });
+  // 新键撞上别人刚建的同名键：冲突。
+  await write(setOp("proj", { ...newEdit(), key: "k", draft: "a" }));
+  assert.equal(interpretWrite(await write(setOp("proj", { ...newEdit(), key: "k", draft: "b" }))).kind, "conflict");
+  // 超限。
+  const big = interpretWrite(await write(setOp("proj", { ...newEdit(), key: "big", draft: "字".repeat(2000) })));
+  assert.equal(big.kind, "over");
+  if (big.kind === "over") assert.equal(big.over, "value");
+});

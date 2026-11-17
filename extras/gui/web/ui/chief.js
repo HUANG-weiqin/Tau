@@ -5,6 +5,7 @@ import * as gs from "../lib/state.js";
 import { toItems, clipText, canHandoff } from "../lib/messages.js";
 import { attention } from "../lib/derive.js";
 import { Typer, claim, pending, slotKey } from "./typer.js";
+import { Markdown } from "./mdview.js";
 import { Follower } from "./follow.js";
 
 /** 草稿记着，关掉再开还在。 */
@@ -128,9 +129,12 @@ function Letter({ letter }) {
 function Said({ text, calls, error, live = false, slot = "", held = false, wait }) {
   const [claimed] = useState(() => (!live && slot !== "" ? claim(slot, text) : null));
   const typed = live || (claimed !== null && text.trim() !== "");
+  // 吐字期间是纯文字；追平以后（或本来就是历史）换成 Markdown，规则和消息流一样（messages.js 的 AssistantRow）。
+  const [caught, setCaught] = useState(false);
+  const md = text.trim() !== "" && !live && (!typed || caught);
   return html`<div class="ch-bot">
     <div class="ch-bot-l"><span class="ch-dia" aria-hidden="true"></span>总管</div>
-    ${typed ? html`<${Typer} text=${text} live=${live} slot=${slot} claimed=${claimed} final=${!live && !held} cls="" cur="y" />` : text.trim() !== "" && html`<p>${text}</p>`}
+    ${md ? html`<${Markdown} text=${text} />` : typed ? html`<${Typer} text=${text} live=${live} slot=${slot} claimed=${claimed} final=${!live && !held} cls="" cur="y" onCaught=${() => setCaught(true)} />` : null}
     ${wait && html`<p class="dim"><span class="pulse">正在想…</span></p>`}
     ${error && html`<p><span class="tag warn">模型出错</span> <span class="mono" style="font-size:12px">${error}</span></p>`}
     ${calls.length > 0 && html`<ul class="ch-calls">${calls.map((c) => html`<li class=${c.status === "error" || c.status === "interrupted" ? "w" : ""}><b>${String(c.name).toUpperCase()}</b><span class="ell">${c.summary || c.name}</span>${c.status === "pending" ? html`<span class="pulse" style="width:7px;height:7px;background:var(--acc);flex:none"></span>` : null}</li>`)}</ul>`}
