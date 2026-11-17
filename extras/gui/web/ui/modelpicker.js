@@ -33,6 +33,15 @@ export function ModelPicker({ app, value, onPick, label = "模型" }) {
   useEffect(() => {
     if (!open) return;
     root.current?.querySelector("input")?.focus();
+    // 弹窗收到 Esc 时，先收起选择器（见 common.js 的 Dialog）。
+    const panel = root.current?.querySelector(".mp-panel");
+    const onEsc = () => {
+      setOpen(false);
+      setQuery("");
+      /** @type {HTMLElement | null | undefined} */ (root.current?.querySelector(".mp-cur"))?.focus();
+    };
+    panel?.addEventListener("esc", onEsc);
+    return () => panel?.removeEventListener("esc", onEsc);
   }, [open]);
 
   if (providers === null) {
@@ -64,7 +73,7 @@ export function ModelPicker({ app, value, onPick, label = "模型" }) {
     </button>
     ${hint !== null && html`<p class="mp-hint" role="status">${hint}</p>`}
     ${found === null && value !== "" && html`<p class="mp-hint plain">模型目录里没有 ${value}，大概是手写的。表单照原样保留它，能不能启动由检查说了算。</p>`}
-    ${open && html`<div class="mp-panel" role="listbox" aria-label="选模型">
+    ${open && html`<div class="mp-panel" data-esc role="listbox" aria-label="选模型">
       <div class="mp-search"><${Icon} name="search" size=${14} sw=${2.6} /><input type="text" placeholder="搜供应商、模型名" value=${query} aria-label="搜模型"
         onInput=${(/** @type {any} */ e) => setQuery(e.currentTarget.value)}
         onKeyDown=${(/** @type {KeyboardEvent} */ e) => {

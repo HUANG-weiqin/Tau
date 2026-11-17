@@ -259,7 +259,10 @@ export function Popover({ rect, onClose, onClosing, label, width = 640, align = 
       if (e.key === "Escape") {
         e.stopPropagation();
         e.preventDefault();
-        close();
+        // 弹窗里展开着的小面板（带 data-esc，例如模型选择器）先收起，弹窗本身留着。
+        const inner = root.current?.querySelector("[data-esc]");
+        if (inner) inner.dispatchEvent(new CustomEvent("esc"));
+        else close();
       } else if (e.key === "Tab" && root.current) {
         const f = /** @type {HTMLElement[]} */ ([...root.current.querySelectorAll("button, a[href], input, textarea, select, [tabindex]:not([tabindex='-1'])")]).filter((x) => !x.hasAttribute("disabled") && x.offsetParent !== null);
         const firstEl = f[0];
