@@ -71,7 +71,10 @@ test("awaitingModel：最后一条不能是助手消息，用途要和阈值一�
   const { p } = midTools();
   const model = (purpose: "turn" | "handoff") => running(p, { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 0, replyTo: [] }, purpose });
   broken(model("turn"), [user("u"), assistant({ usage: 100, text: "好" })], /最后一条是助手消息/);
-  broken(model("handoff"), [user("u")], /用途是 handoff，但上下文用量 \d+ 没有达到阈值/);
+  // D64 第 7 组：用途是 handoff、没有触发条件时，段末要是用户消息，段里要有助手消息（换段信）。
+  broken(model("handoff"), [user("u")], /用途是 handoff，但用量没到阈值/);
+  broken(model("handoff"), [user("u"), assistant({ usage: 100, calls: [call("c1")] }), result("c1")], /用途是 handoff，但用量没到阈值/);
+  assertInvariants(model("handoff"), [user("u"), assistant({ usage: 100, text: "好" }), user("换段信")]);
   const full = handoffThreshold(p.preset);
   broken(model("turn"), [user("u"), assistant({ usage: full, text: "好" }), user("再来")], /用途是 turn，但上下文用量 \d+ 已经达到阈值/);
 });

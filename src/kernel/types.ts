@@ -80,6 +80,8 @@ export interface Letter {
   content: Content[];
   hops: number;
   replyTo?: ProcessId;
+  /** 换段信（D64 第 7 组）：只由协议的 `send` 产生，只有 `true` 才写这个键。生效的条件和时机见 `decide`。 */
+  handoff?: true;
 }
 
 export interface Turn {

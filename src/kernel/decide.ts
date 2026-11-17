@@ -95,7 +95,7 @@ function step(d: Draft, input: Input): void {
         const note = endedNote(phase.ended);
         const { text, images } = render([input.letter]);
         push(d, userMessage(note === "" ? text : `${note}\n\n${text}`, images, false, d.env.now));
-        continueTurn(d, newTurn([input.letter]));
+        continueTurn(d, newTurn([input.letter]), wantsHandoff(d, [input.letter]));
       } else {
         const turn = { ...phase.turn, queued: [...phase.turn.queued, input.letter] };
         d.p = { ...d.p, phase: { ...phase, turn } };
@@ -170,7 +170,8 @@ function onHandoff(d: Draft, turn: Turn, m: AssistantMessage): void {
     d.p = { ...d.p, segment: { seq: d.p.segment.seq + 1, memoryView: d.env.memoryView } };
     d.seg = [];
     push(d, userMessage(HANDOFF_HEADER + note + carried, tail.flatMap(imagesOf), true, d.env.now));
-    return continueTurn(d, turn);
+    // 交接已经做了：交接调用进行中到的信，标记用掉了，合并它们时不再换段。
+    return continueTurn(d, { ...turn, queued: turn.queued.map(unmarked) });
   }
   return endTurn(d, turn, { error: "交接失败：" + (m.errorMessage ?? m.stopReason) });
 }
@@ -194,15 +195,27 @@ function atSafePoint(d: Draft, turn: Turn): void {
   if (turn.steps >= STEPS_PER_TURN || turn.queued.length === 0) return continueTurn(d, turn);
   const { text, images } = render(turn.queued);
   push(d, userMessage(text, images, false, d.env.now));
+  const handoff = wantsHandoff(d, turn.queued);
   const replyTo = [...new Set([...turn.replyTo, ...turn.queued.flatMap((l) => (l.replyTo === undefined ? [] : [l.replyTo]))])];
   const hops = Math.max(turn.hops, ...turn.queued.map((l) => l.hops));
-  return continueTurn(d, { ...turn, queued: [], hops, replyTo });
+  return continueTurn(d, { ...turn, queued: [], hops, replyTo }, handoff);
 }
 
-function continueTurn(d: Draft, turn: Turn): void {
+/** 换段信（D64 第 7 组）：刚写进段的这一批信里有带标记的，并且段里有助手消息。其余情形标记作废，不留到下一轮。 */
+function wantsHandoff(d: Draft, letters: readonly Letter[]): boolean {
+  return letters.some((l) => l.handoff === true) && d.seg.some((m) => m.role === "assistant");
+}
+
+function unmarked(l: Letter): Letter {
+  const { handoff: _, ...rest } = l;
+  return rest;
+}
+
+/** `handoff`：这一批信要求换段（`wantsHandoff`），下一次调用的用途是 handoff。 */
+function continueTurn(d: Draft, turn: Turn, handoff = false): void {
   if (turn.steps >= STEPS_PER_TURN) return endTurn(d, turn, "stepLimit");
   const next = { ...turn, steps: turn.steps + 1 };
-  return enter(d, { tag: "awaitingModel", turn: next, purpose: overThreshold(d) || handoffRequested(d.seg) ? "handoff" : "turn" });
+  return enter(d, { tag: "awaitingModel", turn: next, purpose: handoff || overThreshold(d) || handoffRequested(d.seg) ? "handoff" : "turn" });
 }
 
 function endTurn(d: Draft, turn: Turn, ended: Ended): void {
@@ -215,7 +228,7 @@ function endTurn(d: Draft, turn: Turn, ended: Ended): void {
     const { text, images } = render(turn.queued);
     push(d, userMessage(text, images, false, d.env.now));
   }
-  if (ended === "done" && turn.queued.length > 0) return continueTurn(d, newTurn(turn.queued));
+  if (ended === "done" && turn.queued.length > 0) return continueTurn(d, newTurn(turn.queued), wantsHandoff(d, turn.queued));
   d.p = { ...d.p, phase: { tag: "idle", ended } };
 }
 

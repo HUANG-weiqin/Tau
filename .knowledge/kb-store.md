@@ -96,7 +96,7 @@ CREATE TABLE blobs (
 
 | 输入 | 谁放进信箱 |
 |---|---|
-| 信件（CLI 寄来的是用户的信） | `startProcess`、`send` |
+| 信件（CLI 寄来的是用户的信；`send` 的 `handoff` 为真时带换段信标记，原样存进信箱和 `turn.queued`） | `startProcess`、`send` |
 | `stop` | `send` |
 | 回信 | `handleNext`：处理一条输入的 `decide` 给出 `out`，投进收件人的信箱 |
 | 库内工具的结果、工具不存在的错误结果 | `handleNext` 的同步步骤 |

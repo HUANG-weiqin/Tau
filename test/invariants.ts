@@ -52,8 +52,13 @@ export function assertInvariants(p: Process, segment: readonly Message[]): void 
       // 等模型时工作段不变，所以存下的用途和现在重算的一致。
       const used = contextUsed(p, segment);
       const requested = handoffCalled(segment);
-      if ((phase.purpose === "handoff") !== (used >= threshold || requested)) {
+      // D64 第 7 组：两条蕴含。(a) 用量到阈值或有成功的 handoff 调用，用途就是 handoff；(b) 用途是 handoff、两者又都不成立，只能是换段信：段末是用户消息，段里有助手消息。
+      const trigger = used >= threshold || requested;
+      if (trigger && phase.purpose !== "handoff") {
         throw bad(`用途是 ${phase.purpose}，但上下文用量 ${used} ${used >= threshold ? "已经" : "没有"}达到阈值 ${threshold}，最后一条助手消息里${requested ? "有" : "没有"}成功的 handoff 调用`);
+      }
+      if (phase.purpose === "handoff" && !trigger && (segment.at(-1)?.role !== "user" || !segment.some((m) => m.role === "assistant"))) {
+        throw bad("用途是 handoff，但用量没到阈值、也没有成功的 handoff 调用，段末不是用户消息或者段里没有助手消息");
       }
       return;
     }

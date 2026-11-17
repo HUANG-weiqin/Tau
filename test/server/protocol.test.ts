@@ -574,6 +574,38 @@ test("send 带图片：同一进程的下一封信；blob 引用进段", async (
   assert.equal(blobRows(e), 2);
 });
 
+test("send 带 handoff：生效时换段，新段里处理这封信；只有 true 才带标记；不是布尔回 error", async (t) => {
+  const e = await setup(t);
+  const id = await startIdle(e);
+  const bad = await collect(e.pipe, { op: "send", process: id, text: "x", handoff: "yes" } as unknown as Request);
+  assert.equal(bad[0]?.type, "error");
+  assert.match(bad[0]?.type === "error" ? bad[0].message : "", /^无法识别的请求/);
+  assert.equal(loadProcess(e.svc.db, id)?.segment.seq, 1);
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("交接说明")), fauxAssistantMessage(fauxText("新段里的回复"))]);
+  const replies = await collect(e.pipe, { op: "send", process: id, text: "换段后做这个", handoff: true });
+  assert.equal(replies.at(-1)?.type, "final");
+  const p = loadProcess(e.svc.db, id);
+  assert.equal(p?.segment.seq, 2);
+  const first = segmentOf(e, id)[0];
+  assert.ok(first?.role === "user" && typeof first.content === "string" && first.content.includes("换段后做这个"));
+  // handoff: false 不带标记，也不换段。
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("普通回复"))]);
+  await collect(e.pipe, { op: "send", process: id, text: "普通", handoff: false });
+  assert.equal(loadProcess(e.svc.db, id)?.segment.seq, 2);
+});
+
+test("send 带 handoff 和图片：标记保留，图片进新段", async (t) => {
+  const e = await setup(t);
+  const id = await startIdle(e);
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("交接说明")), fauxAssistantMessage(fauxText("看到了"))]);
+  const replies = await collect(e.pipe, { op: "send", process: id, text: "看图", images: [b64(png(7, 8, 1))], handoff: true });
+  assert.equal(replies.at(-1)?.type, "final");
+  assert.equal(loadProcess(e.svc.db, id)?.segment.seq, 2);
+  const first = segmentOf(e, id)[0];
+  assert.ok(first?.role === "user" && Array.isArray(first.content));
+  assert.equal(first.content.filter((c) => c.type === "image").length, 1);
+});
+
 test("执行器：模型收到的请求里图片是真数据（base64），库里的段仍是引用", async (t) => {
   const e = await setup(t);
   const img = png(16, 16, 9);

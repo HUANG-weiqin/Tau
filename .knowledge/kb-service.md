@@ -164,7 +164,7 @@ D64 第 6 组。服务不直接写 SQL，也不直接调 `memory.set`：读经 `
 ```ts
 type Request =
   | { op: "start"; preset: string; text: string; images?: string[] }   // images 是 base64
-  | { op: "send"; process: string; text: string; images?: string[] }
+  | { op: "send"; process: string; text: string; images?: string[]; handoff?: boolean }
   | { op: "stop"; process: string }
   | { op: "ps" }
   | { op: "fork"; process: string; before?: number; preset?: string } // before 是当前段里一条用户消息的段内序号；preset 是换角色
@@ -203,7 +203,7 @@ type Reply =
 | 请求 | 服务做什么 | 回复 |
 |---|---|---|
 | `start` | `checkImages` 检查图片；`loadPreset` 读预设；生成进程 ID；`startProcess`（启动检查不通过就抛错，回 `error`，什么都不建） | `receipt`，若干 `text`，`final` |
-| `send` | `checkImages` 检查图片；`send` 放进一封用户的信；进程不存在就抛出 | 同上 |
+| `send` | `checkImages` 检查图片；`send` 放进一封用户的信；进程不存在就抛出。`handoff` 为真时信带 `handoff: true`（换段信，生效的时机和条件见 [kb-kernel](kb-kernel.md#换段信)）；为假或没有时不写这个键。带图片的路径保留这个键 | 同上 |
 | `stop` | `send` 放进一条 `stop` | `receipt` |
 | `fork` | 生成进程 ID（和 `start` 一样）；带 `preset` 时，用 `loadPreset` 读预设（含工具定义），读不出就回 `error`；`forkProcess`（拒绝的情形见下，什么都不建）。提交之后，给订阅的连接推新进程的 `update`，再回执。不调用 `pump`：没有输入要处理 | `receipt`，然后关闭；拒绝回 `error` |
 | `ps` | 读全部进程记录；每个进程 `observe(p, 当前段, 全部进程, now)` | 一行 `ps` |
@@ -234,7 +234,7 @@ type Reply =
 
 - 每个连接只读第一行。`\r\n` 算一个换行。
 - 不是合法 JSON：`error`，内容是 `JSON.parse` 的错误信息。
-- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`；`stop` 要字符串 `process`；`fork` 要字符串 `process`，可选的 `before` 要是非负整数，可选的 `preset` 要是字符串；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`blob` 要字符串 `hash`；`start`、`send` 的 `images` 可以没有，有就要是字符串数组；`watch`、`inspect` 的 `process` 可以没有，有就要是字符串；`check` 要字符串 `preset`；`memory` 的 `ns` 可以没有，有就要是字符串、过预设 ID 的检查（不合法回“预设 ID 不合法：<ns>”）；`memory_write` 要非空数组 `ops`，每项是上面的两种形状之一，每项的 `ns` 也过预设 ID 的检查；`prune` 要字符串 `process`、非负整数 `before`；`remove` 要字符串 `process`；`sweep` 不要字段。否则 `error`：“无法识别的请求：<原文>”。
+- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`，可选的 `handoff` 要是布尔；`stop` 要字符串 `process`；`fork` 要字符串 `process`，可选的 `before` 要是非负整数，可选的 `preset` 要是字符串；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`blob` 要字符串 `hash`；`start`、`send` 的 `images` 可以没有，有就要是字符串数组；`watch`、`inspect` 的 `process` 可以没有，有就要是字符串；`check` 要字符串 `preset`；`memory` 的 `ns` 可以没有，有就要是字符串、过预设 ID 的检查（不合法回“预设 ID 不合法：<ns>”）；`memory_write` 要非空数组 `ops`，每项是上面的两种形状之一，每项的 `ns` 也过预设 ID 的检查；`prune` 要字符串 `process`、非负整数 `before`；`remove` 要字符串 `process`；`sweep` 不要字段。否则 `error`：“无法识别的请求：<原文>”。
 - 只查类型。空串能通过，多余的字段被忽略。空预设 ID 由 `loadPreset` 拒绝；空消息会成为一条用户消息。CLI 不发空消息。
 - 预设读不出、进程不存在、进程 ID 冲突，都回 `error`。这些情况下库里什么都没写。
 

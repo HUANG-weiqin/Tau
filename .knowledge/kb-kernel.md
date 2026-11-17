@@ -45,7 +45,7 @@ interface Process {
 interface Usage { input: number; output: number; cacheRead: number; cacheWrite: number }
 
 type Sender = { kind: "user" } | { kind: "process"; id: ProcessId; preset: string; reply?: { ended: Ended } };
-interface Letter { from: Sender; content: Content[]; hops: number; replyTo?: ProcessId }
+interface Letter { from: Sender; content: Content[]; hops: number; replyTo?: ProcessId; handoff?: true }   // handoff：换段信，只由协议的 send 产生
 type Content = TextContent | ImageContent;   // pi-ai 的类型
 
 interface Turn { steps: number; queued: Letter[]; hops: number; replyTo: ProcessId[] }
@@ -376,7 +376,7 @@ W 是 `preset.contextWindow`。快照里只冻结它和 `input`，不冻结模�
 **`continueTurn(turn)`**
 
 1. `turn.steps >= STEPS_PER_TURN`：`endTurn(turn, "stepLimit")`。
-2. 否则步数加一。到阈值，或者[最后一条助手消息里有成功的 `handoff` 调用](#主动换段handoff)：进入 `awaitingModel(handoff)`。
+2. 否则步数加一。到阈值，或者[最后一条助手消息里有成功的 `handoff` 调用](#主动换段handoff)，或者调用方传来的[换段信](#换段信)标记：进入 `awaitingModel(handoff)`。
 3. 否则进入 `awaitingModel(turn)`。
 
 每次调用模型都计一步，交接调用也算。
@@ -387,7 +387,7 @@ W 是 `preset.contextWindow`。快照里只冻结它和 `input`，不冻结模�
 2. 算最终回复（`finalReply`）。这一步在合并排队的信之前。
 3. [寄回信](#回信)：收件人和正文由结束原因、`turn.replyTo`、`turn.queued` 算出，放进 `out`。
 4. `turn.queued` 不空：按[信的头和合并](#信的头和合并)渲染成一条用户消息，时间戳 `env.now`，写入当前段。
-5. `ended` 是 `done` 且 `turn.queued` 不空：`continueTurn` 一个新的 `Turn`：`steps` 为 0，`queued` 为空，`hops` 取这批信的最大值，`replyTo` 取这批信的 `replyTo` 去重。
+5. `ended` 是 `done` 且 `turn.queued` 不空：`continueTurn` 一个新的 `Turn`：`steps` 为 0，`queued` 为空，`hops` 取这批信的最大值，`replyTo` 取这批信的 `replyTo` 去重。这批信带[换段信](#换段信)标记且段里有助手消息时，传标记。
 6. 否则进入 `idle`，带上 `ended`。排队的信仍在段里，它们的头里还写着“它在等回信”；下一封信前面的[上一轮的说明](#常量)负责纠正。
 
 ### 回信
@@ -418,7 +418,7 @@ W 是 `preset.contextWindow`。快照里只冻结它和 `input`，不冻结模�
 
 | 输入 | 条件 | 处理 |
 |---|---|---|
-| `letter` | `idle` | 按[信的头和合并](#信的头和合并)渲染这一封信。上一轮没有正常结束（`ended` 是 `stopped`、`stepLimit` 或 `error`）时，正文前面加上一轮的说明和一个空行。写入工作段，时间戳 `env.now`；`continueTurn` 一个新的 `Turn`，`hops` 和 `replyTo` 只取自这封信 |
+| `letter` | `idle` | 按[信的头和合并](#信的头和合并)渲染这一封信。上一轮没有正常结束（`ended` 是 `stopped`、`stepLimit` 或 `error`）时，正文前面加上一轮的说明和一个空行。写入工作段，时间戳 `env.now`；`continueTurn` 一个新的 `Turn`，`hops` 和 `replyTo` 只取自这封信。这封信带[换段信](#换段信)标记且段里有助手消息时，传标记 |
 | `letter` | 运行中 | 追加到 `turn.queued`。不写段，副作用不变。写进段在下一个安全点或本轮结束时 |
 | `stop` | 运行中 | `endTurn(turn, "stopped")` |
 | `stop` | `idle` | 什么都不做 |
@@ -462,7 +462,7 @@ W 是 `preset.contextWindow`。快照里只冻结它和 `input`，不冻结模�
 
 1. 先查步数。`turn.steps >= STEPS_PER_TURN`：不合并，信留在 `queued`，由 `continueTurn` 里的 `endTurn(stepLimit)` 按[结束一轮](#流程两个辅助步骤)处理。发起这一轮的进程拿到的最终回复，和这时没有信一样。
 2. `queued` 不空：经 `userMessage` 合并成一条用户消息写进段（头和形状见[信的头和合并](#信的头和合并)，不限张数），时间戳 `env.now`。这批信的 `replyTo` 并进 `turn.replyTo`（去重），`hops` 取 `turn.hops` 和这批信的最大值，`queued` 清空。
-3. `continueTurn`。
+3. `continueTurn`。这批信带[换段信](#换段信)标记且段里有助手消息时，传标记。
 
 - 写入不计步，下一次调用模型才计。
 - 换段成功以后、等模型回复时到的信，都等下一个安全点或者本轮结束；`turn.queued` 到那时才写进段。
@@ -478,6 +478,18 @@ W 是 `preset.contextWindow`。快照里只冻结它和 `input`，不冻结模�
 - 同一批里的其他工具照常执行，批做完才到安全点。
 - 不存状态：从最后一条助手消息和它的结果算出来。换段成功以后新段里没有助手消息，不会再换。
 - 交接失败以后，下一封信一来又会立即换段。这和到阈值时一样，是有意的。
+
+#### 换段信
+
+D64 第 7 组：外面也能要求换段（模型调 `handoff` 工具之外的第三个触发）。`Letter.handoff?: true` 由协议的 `send` 的 `handoff` 布尔产生，只有 `true` 才写这个键（[kb-service](kb-service.md#协议)）。
+
+- 三个时机：空闲时收信；安全点合并；一轮以 `done` 结束后，用排队的信开新一轮。每个时机都在写进段之后、`continueTurn` 之前，用 `wantsHandoff` 判一次，结果作为参数传给 `continueTurn`。
+- 条件：这一批信里有带标记的，并且段里已有助手消息。成立时下一次调用的用途是 `handoff`。交接请求不带段末的用户消息，所以这封信原样带进新段，模型在新段里接着处理它。
+- 标记只在信箱和 `turn.queued` 里，用掉以后就是 `phase.purpose`。不加阶段、输入种类、事务和状态。
+- 其余情形标记作废，不留到下一轮：一轮不是以 `done` 结束时由 `endTurn` 合并的信；步数用完时没有合并的信；段里没有助手消息（新进程的第一封信、刚换段的新段开头）。没有触发换段的信也不再有标记：开新一轮时 `queued` 已清空。上层看 `final` 的结束原因，再用 `inspect` 或 `ps` 看段号，判断换没换成。
+- 和阈值、`handoff` 工具同时成立：用途只有一个，只换一次。
+- 交接调用进行中到的信：`onHandoff` 接受交接时，去掉 `turn.queued` 里各信的标记。否则换段后合并这批信时会再换一次。交接失败时信照常由 `endTurn` 合并，标记随之作废。
+- `post`、`spawn`、`start` 不带这个参数。
 
 ### 流程：换段
 
@@ -535,7 +547,7 @@ W 是 `preset.contextWindow`。快照里只冻结它和 `input`，不冻结模�
 | 阶段 | 不变量 |
 |---|---|
 | `idle` | 结果齐全；`effectOf` 为 `null`。`ended` 缺省：这个进程自己还没跑过一轮，`lastEffect` 为 0、段号 1；段是空的（`start`），或者是复制来的前缀（`fork` 带 `before`）。有 `ended` 时：取值合法、段不空；`lastEffect >= 1`，只有 `fork` 不带 `before` 建出来的进程例外：`lastEffect` 为 0、段号 1 |
-| `awaitingModel` | 运行中的通用约束；结果齐全；最后一条不是助手消息；`effectOf` 是 `callModel(lastEffect, purpose)`；`purpose` 是 `handoff` 当且仅当用量到阈值，或者最后一条助手消息里有成功的 `handoff` 调用 |
+| `awaitingModel` | 运行中的通用约束；结果齐全；最后一条不是助手消息；`effectOf` 是 `callModel(lastEffect, purpose)`；用途的两条蕴含：用量到阈值或者最后一条助手消息里有成功的 `handoff` 调用，推出 `purpose` 是 `handoff`；`purpose` 是 `handoff`、两者又都不成立，推出段末是用户消息、段里有助手消息（[换段信](#换段信)） |
 | `awaitingTool` | 运行中的通用约束；有缺结果的调用；`effectOf` 是 `runTool(lastEffect, 第一个缺结果的调用)`；已经写过至少一个结果时，用量没到阈值 |
 
 消息形状（总是成立）：用户消息的 `content` 是字符串，或者一个可有可无的文本块加至少一张图片；工具结果最多一个文本块，在最前；工具结果和段号大于 1 的段的第一条，图片不超过 `IMAGES_PER_MESSAGE`。
@@ -598,6 +610,7 @@ type PhaseView =
 | `test/kernel/flow.test.ts` | 第 5 节每一行流程和丢弃规则 |
 | `test/kernel/derive.test.ts` | 字节估算、只取整一次、输出上限和阈值、`clip`、`finalReply`、`endedText` |
 | `test/kernel/safepoint.test.ts` | 安全点投递和 `handoff` |
+| `test/kernel/handoff-letter.test.ts` | 换段信：三个时机各生效一次；段里没有助手消息、非 `done` 结束、步数用完时作废；和阈值或 `handoff` 工具同时成立只换一次；交接中到的信去掉标记 |
 | `test/kernel/letters.test.ts` | 信的头和合并、两种形状、工具结果和新段第一条的张数、换段带全部段末消息 |
 | `test/kernel/usage.test.ts` | 累计用量：每种回复都加，丢弃的和被中断的不加 |
 | `test/kernel/context.test.ts` | 系统提示词、工具描述、交接请求去掉段末用户消息 |

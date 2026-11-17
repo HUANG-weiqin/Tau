@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { HANDOFF_INSTRUCTION } from "../../src/kernel/context.ts";
 import { decide, effectOf } from "../../src/kernel/decide.ts";
-import { contextUsed, endedReason, finalReply, handoffThreshold, MESSAGE_MAX_BYTES, tokens, utf8Bytes } from "../../src/kernel/derive.ts";
+import { contextUsed, endedReason, finalReply, handoffRequested, handoffThreshold, MESSAGE_MAX_BYTES, tokens, utf8Bytes } from "../../src/kernel/derive.ts";
 import { unreachable } from "../../src/kernel/types.ts";
 import type { AssistantMessage, Effect, Ended, Env, ImageContent, Input, Letter, Message, PresetTool, Process } from "../../src/kernel/types.ts";
 import { res } from "../plain.ts";
@@ -136,12 +136,13 @@ interface Stats {
   images: number;
   safePoints: number;
   handoffByCall: number;
+  handoffByLetter: number;
   replies: number;
   emptyReplies: number;
 }
 
 function newStats(): Stats {
-  return { handoffOk: 0, handoffFailed: 0, done: 0, stopped: 0, stepLimit: 0, errors: 0, skipped: 0, interrupted: 0, queuedMerged: 0, dropped: 0, duplicates: 0, usageAdded: 0, processLetters: 0, images: 0, safePoints: 0, handoffByCall: 0, replies: 0, emptyReplies: 0 };
+  return { handoffOk: 0, handoffFailed: 0, done: 0, stopped: 0, stepLimit: 0, errors: 0, skipped: 0, interrupted: 0, queuedMerged: 0, dropped: 0, duplicates: 0, usageAdded: 0, processLetters: 0, images: 0, safePoints: 0, handoffByCall: 0, handoffByLetter: 0, replies: 0, emptyReplies: 0 };
 }
 
 /**
@@ -219,8 +220,11 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
     const body = images.length > 0 && r.chance(0.3) ? "" : text(r, r.chance(0.05) ? r.int(2_000, 20_000) : r.int(1, 200));
     const id = `q${r.int(1, 3)}`;
     switch (r.weighted({ user: 55, process: 15, wait: 15, reply: 15 })) {
-      case "user":
-        return userLetterWith(body, images);
+      case "user": {
+        // D64 第 7 组：一部分用户的信带换段标记。
+        const l = userLetterWith(body, images);
+        return r.chance(0.15) ? { ...l, handoff: true } : l;
+      }
       case "process":
         return processLetter(body, { id, hops: r.int(1, 5), images });
       case "wait":
@@ -371,7 +375,9 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
       assert.deepEqual(turn.replyTo, [...new Set([...replyTo, ...queued.flatMap((l) => (l.replyTo === undefined ? [] : [l.replyTo]))])]);
       stats.safePoints++;
     }
-    if (input.kind === "toolResult" && prev.phase.tag === "awaitingTool" && w.p.phase.tag === "awaitingModel" && w.p.phase.purpose === "handoff" && contextUsed(w.p, current(w)) < handoffThreshold(w.p.preset)) stats.handoffByCall++;
+    if (input.kind === "toolResult" && prev.phase.tag === "awaitingTool" && w.p.phase.tag === "awaitingModel" && w.p.phase.purpose === "handoff" && contextUsed(w.p, current(w)) < handoffThreshold(w.p.preset) && !prev.phase.turn.queued.some((l) => l.handoff === true)) stats.handoffByCall++;
+    // 没有任何触发条件、用途却是 handoff：只能是换段信。
+    if (w.p.phase.tag === "awaitingModel" && w.p.phase.purpose === "handoff" && contextUsed(w.p, current(w)) < handoffThreshold(w.p.preset) && !handoffRequested(current(w))) stats.handoffByLetter++;
 
     // 统计覆盖面。
     if (input.kind === "letter" && input.letter.from.kind === "process") stats.processLetters++;
@@ -465,7 +471,7 @@ for (const profile of PROFILES) {
     if (profile.name === "失控") {
       assert.ok(stats.stepLimit > 0, "没有用完步数");
     } else {
-      for (const k of ["handoffFailed", "done", "stopped", "errors", "skipped", "interrupted", "queuedMerged", "duplicates", "usageAdded", "processLetters", "images", "safePoints", "handoffByCall", "replies", "emptyReplies"] as const) {
+      for (const k of ["handoffFailed", "done", "stopped", "errors", "skipped", "interrupted", "queuedMerged", "duplicates", "usageAdded", "processLetters", "images", "safePoints", "handoffByCall", "handoffByLetter", "replies", "emptyReplies"] as const) {
         assert.ok(stats[k] > 0, `没有覆盖到 ${k}`);
       }
     }

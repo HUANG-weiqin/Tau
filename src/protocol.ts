@@ -8,7 +8,8 @@ export const PIPE = "\\\\.\\pipe\\tau";
 export type Request =
   /** `images` 是 base64 字符串，按入口检查（设计稿 5.6）。 */
   | { op: "start"; preset: string; text: string; images?: string[] }
-  | { op: "send"; process: string; text: string; images?: string[] }
+  /** `handoff` 为真：换段信（D64 第 7 组），这封信写进段时，下一次调用的用途是 handoff。 */
+  | { op: "send"; process: string; text: string; images?: string[]; handoff?: boolean }
   | { op: "stop"; process: string }
   | { op: "ps" }
   /** 从进程当前段里一条用户消息（段内序号 `before`）前面分叉出新进程；不带 `before` 复制整个当前段。带 `preset` 是换角色：用这个预设的快照和记忆。回执带新进程的 ID。 */

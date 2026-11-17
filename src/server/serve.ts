@@ -131,7 +131,7 @@ export async function serve(opts: ServeOptions): Promise<Service> {
         return awaitFinal(s, id);
       }
       case "send":
-        send(db, req.process, userLetter(req.text), checkImages(req.images ?? []));
+        send(db, req.process, req.handoff === true ? withHandoff(userLetter(req.text)) : userLetter(req.text), checkImages(req.images ?? []));
         return awaitFinal(s, req.process);
       case "stop":
         send(db, req.process, { kind: "stop" });
@@ -281,6 +281,11 @@ function memoryOp(x: unknown): x is MemoryOp {
   return o.kind === "set" ? typeof o.value === "string" && (o.expected === null || version) : o.kind === "delete" && version;
 }
 
+/** 换段信：只有 true 才写 `handoff` 键。 */
+function withHandoff(i: ReturnType<typeof userLetter>): ReturnType<typeof userLetter> {
+  return { ...i, letter: { ...i.letter, handoff: true } };
+}
+
 function parseRequest(line: string): Request {
   const r: unknown = JSON.parse(line);
   const str = (o: object, k: string): boolean => typeof (o as Record<string, unknown>)[k] === "string";
@@ -310,7 +315,8 @@ function parseRequest(line: string): Request {
     const images = "images" in r ? r.images : [];
     const imagesOk = Array.isArray(images) && images.every((x) => typeof x === "string");
     if (r.op === "blob" && str(r, "hash")) return r as Request;
-    if (r.op === "send" && str(r, "process") && str(r, "text") && imagesOk) return r as Request;
+    const handoff = (r as Record<string, unknown>).handoff;
+    if (r.op === "send" && str(r, "process") && str(r, "text") && imagesOk && (handoff === undefined || typeof handoff === "boolean")) return r as Request;
     if (r.op === "start" && str(r, "preset") && str(r, "text") && imagesOk) return r as Request;
   }
   throw new Error(`无法识别的请求：${line}`);
