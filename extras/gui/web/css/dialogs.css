@@ -23,6 +23,8 @@
 .cmdline:empty { flex: 1 1 0; }
 .sec-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 900; line-height: 1.2; }
 .sec-head .mono { font-weight: 400; font-size: 11px; }
+/* 一节和上一节之间多留一格，节才分得开。 */
+.dlg-body > .sec-head:not(:first-child) { margin-top: 12px; }
 .dnote { font-size: 12.5px; line-height: 1.65; color: var(--fg2); }
 .pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px; }
 .pcard { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-height: 84px; min-width: 0; padding: 10px 12px 10px 16px; border: 0; background: var(--ink3); color: var(--fg); text-align: left; transition: background-color var(--t-fast) var(--ease-in); }

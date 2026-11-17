@@ -28,19 +28,24 @@
 /* 页 */
 .ipage { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .istats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--ink4); flex: none; }
-.istat { display: flex; flex-direction: column-reverse; justify-content: flex-end; gap: 5px; padding: 14px 18px 12px; min-width: 0; }
+/* 三格数字：英文小标签在上，压窄的大数字，中文说明在下。 */
+.istat { display: flex; flex-direction: column; gap: 6px; padding: 12px 16px 12px; min-width: 0; }
 .istat + .istat { border-left: 1px solid var(--ink4); }
-.istat dt { font-size: 11px; color: var(--fg2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.istat dd { font-stretch: 62%; font-weight: 800; font-size: 30px; line-height: 1; white-space: nowrap; }
-.istat dd .u { font-size: 15px; color: var(--fg2); }
+.istat dt { display: contents; font-size: 11px; color: var(--fg2); }
+.istat dt .label { order: 0; color: var(--fg3); font-size: 9px; }
+.istat dt > span:last-child { order: 2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.istat dd { order: 1; display: flex; align-items: baseline; font-stretch: 62%; font-weight: 800; font-size: 42px; line-height: .95; white-space: nowrap; }
+.istat dd .u { font-size: 16px; color: var(--fg2); }
 .istat dd.warn { color: var(--warn); }
-.ibody { flex: 1; display: flex; flex-direction: column; gap: 22px; padding: 18px 18px 22px; min-width: 0; }
-.ibody.wide { gap: 20px; padding: 16px 0 22px; }
+.istat.hot dd > span:first-child { background: var(--acc); color: var(--ink); padding: 1px 7px 0 5px; }
+.ibody { flex: 1; display: flex; flex-direction: column; gap: 24px; padding: 20px 18px 64px; min-width: 0; }
+.ibody.wide { gap: 22px; padding: 18px 0 64px; }
 .ibody.wide > .inote, .ibody.wide > .isection:not(.flush), .ibody.wide > .ichips, .ibody.wide > .ibranches { margin-left: 18px; margin-right: 18px; }
 .isection { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
 .isection.flush { gap: 6px; }
 .isection .pad { padding: 0 18px; }
-.isec { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 900; line-height: 1.2; }
+.isec { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 900; line-height: 1.2; }
+.isec::before { content: ""; width: 7px; height: 7px; flex: none; background: var(--acc); }
 .isec .sep { background: var(--ink4); }
 .isec .n { font-size: 11px; font-weight: 400; color: var(--fg2); }
 .inote { font-size: 12.5px; line-height: 1.65; color: var(--fg2); overflow-wrap: anywhere; }
@@ -58,20 +63,10 @@
 .ipresets { display: flex; flex-direction: column; gap: 10px; }
 .ipresets li { padding: 10px 12px; background: var(--ink3); box-shadow: inset 3px 0 0 var(--ink5); display: flex; flex-direction: column; gap: 8px; }
 .ipreset-h { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
-.ilinks { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.ilinks { display: flex; flex-wrap: wrap; gap: 4px 16px; padding-top: 10px; border-top: 1px solid var(--ink4); }
 .ipreset-id { font-size: 13px; font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
 .ipreset-h .tag { margin-left: auto; }
 .ipreset-h .tag.line { color: var(--fg2); }
-
-/* 上下文：每段一行 */
-.seg { display: grid; grid-template-columns: 40px minmax(0, 1fr) 88px; column-gap: 10px; align-items: center; }
-.seg-n { font-size: 12px; }
-.seg-n.now { font-weight: 900; }
-.seg-r { font-size: 11px; text-align: right; white-space: nowrap; }
-.seg-r.now { font-weight: 700; }
-.seg-bar { position: relative; display: block; height: 10px; background: var(--ink3); overflow: hidden; }
-.seg-bar > span:not(.tx) { display: block; height: 10px; background: var(--acc); transition: width var(--t-slow) var(--ease-in); }
-.seg-bar .tx { opacity: .7; }
 
 /* 改动：标签、文件树、diff、提交 */
 .ichips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -159,8 +154,7 @@
   .inspector { min-height: 360px; }
   .itab-foot { display: none; }
   .istat { padding: 12px 12px 10px; }
-  .istat dd { font-size: 26px; }
-  .seg { grid-template-columns: 36px minmax(0, 1fr) 80px; }
+  .istat dd { font-size: 36px; }
   .diff-body { max-height: 320px; }
 }
 

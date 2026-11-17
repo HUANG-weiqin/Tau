@@ -7,14 +7,36 @@
 .ctx-ruler.near .ctx-bar span.f, .ctx-ruler.near .ctx-bar span.p { background: var(--warn); }
 .ctx-ruler.near .ctx-mk { color: var(--warn); }
 .ctx-ruler.near .ctx-tick { background: var(--warn); }
-.seg-mid { position: relative; display: block; padding-top: 12px; }
-.seg.cur .ctx-mk { top: 0; }
-.seg-bar > span.seg-tick.seg-tick { position: absolute; top: 0; bottom: 0; width: 2px; height: auto; margin-left: -1px; background: var(--fg); transition: none; }
-.seg.near .seg-bar > span:not(.tx):not(.seg-tick) { background: var(--warn); }
-.seg.near .seg-bar > span.seg-tick.seg-tick { background: var(--warn); }
-.seg.near .ctx-mk { color: var(--warn); }
+/* 详情栏概况的上下文：小铭牌。十格段尺和铭牌一样，刻线的标签在尺下面，不压字。 */
+.cc { position: relative; background: var(--ink0); box-shadow: inset 4px 0 0 var(--acc); padding: 14px 16px 6px 20px; overflow: hidden; }
+.cc.near { box-shadow: inset 4px 0 0 var(--warn); }
+.cc > :not(.tx) { position: relative; z-index: 1; }
+.cc-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.cc-n { display: flex; align-items: baseline; gap: 4px; }
+.cc-big { font-size: 66px; font-weight: 900; line-height: .86; letter-spacing: -.01em; }
+.cc-pc { font-size: 22px; color: var(--acc); }
+.cc.near .cc-pc { color: var(--warn); }
+.cc-l { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; font-size: 11px; color: var(--fg2); text-align: right; }
+.cc-l b { color: var(--fg); font-size: 12px; }
+.cc-rule { position: relative; margin-top: 16px; }
+.cc-rule:has(.cc-flag) { padding-bottom: 36px; }
+.cc-bar { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 3px; }
+.cc-bar span { height: 12px; background: var(--ink4); }
+.cc-bar span.f { background: var(--acc); }
+.cc-bar span.p { background: #5A5B57; }
+.cc.near .cc-bar span.f, .cc.near .cc-bar span.p { background: var(--warn); }
+.cc-flag { position: absolute; top: -5px; height: 46px; margin-left: -1px; padding: 24px 0 0 7px; border-left: 2px solid var(--fg); display: flex; align-items: baseline; gap: 6px; white-space: nowrap; pointer-events: none; }
+.cc-flag.r { margin-left: 0; padding: 24px 7px 0 0; border-left: 0; border-right: 2px solid var(--fg); transform: translateX(calc(-100% + 1px)); }
+.cc-flag .label { font-size: 10px; color: var(--fg2); }
+.cc-flag .mono { font-size: 11px; font-weight: 700; }
+.cc.near .cc-flag .label, .cc.near .cc-flag .mono { color: var(--warn); }
+.cc-prev { display: flex; flex-direction: column; gap: 6px; }
+.cc-prev li { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; column-gap: 10px; align-items: center; font-size: 11px; color: var(--fg2); }
+.cc-ph { height: 6px; background: repeating-linear-gradient(-45deg, var(--fg3) 0 2px, transparent 2px 6px); }
+.cc-pr { white-space: nowrap; }
 .imail { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.imail li { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12px; }
-.imail-f { flex: none; font-size: 11px; color: var(--fg2); }
-.imail-t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.imail-w { display: inline-block; margin-right: 10px; }
+.imail li { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 8px 12px; background: var(--ink3); box-shadow: inset 3px 0 0 var(--ink5); }
+.imail-h { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; }
+.imail-f { font-size: 11px; color: var(--fg2); }
+.imail-i { margin-left: auto; font-size: 11px; }
+.imail-t { font-size: 12.5px; line-height: 1.5; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; }

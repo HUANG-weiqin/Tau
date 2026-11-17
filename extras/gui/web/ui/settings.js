@@ -95,7 +95,7 @@ export function SettingsDialog({ app, onClose }) {
         </div>
 
         <${SecHead} n="04" title="完成通知" en="NOTIFY" />
-        <div class="cl-days">
+        <div class="cl-days soft">
           <div class="toggles" role="group" aria-label="完成通知"><button type="button" class="toggle" aria-pressed=${notifyOn} onClick=${() => (!notifyOn || perm !== "granted") && setNotify(true)}>开</button><button type="button" class="toggle" aria-pressed=${!notifyOn} onClick=${() => notifyOn && setNotify(false)}>关</button></div>
           <span>人建的进程跑完一轮、或者任何进程出错，而页面不在前台时，弹一条系统通知。</span>
           ${notifyWhy !== "" && html`<span class="dnote" style="color:var(--warn)">${notifyWhy}</span>`}
@@ -109,7 +109,7 @@ export function SettingsDialog({ app, onClose }) {
         <p class="dnote">人建的进程收到第一封信后，用这个模型调一次，把信概括成不超过 16 个字的标题。每个进程只调一次，失败就照旧显示第一行。</p>
 
         <${SecHead} n="06" title="工具定义" en="TOOLS" />
-        <div class="cl-days">
+        <div class="cl-days soft">
           <${Pill} label="打开工具定义" onClick=${(/** @type {Event} */ e) => app.openDialog("tools", /** @type {Element} */ (e.currentTarget))} />
           <span>~/.tau/tools 里已装的定义，和能一键装的工具库。</span>
         </div>

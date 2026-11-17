@@ -70,10 +70,10 @@ function usePoll(key, fn, ms, bump) {
 
 /* ------------------------------------------------------------------ 小件 */
 
-/** 三格数字。`items`：`{ label, value, unit?, warn? }`。 */
+/** 三格数字。`items`：`{ en, label, value, unit?, warn?, hot? }`。 */
 function Stats({ items }) {
   return html`<dl class="istats">
-    ${items.map((it) => html`<div class="istat"><dt>${it.label}</dt><dd class=${it.warn ? "warn" : ""}>${it.value}${it.unit ? html`<span class="u"> ${it.unit}</span>` : ""}</dd></div>`)}
+    ${items.map((it) => html`<div class=${`istat ${it.hot ? "hot" : ""}`}><dt><span class="label">${it.en}</span><span>${it.label}</span></dt><dd class=${it.warn ? "warn" : ""}><span>${it.value}</span>${it.unit ? html`<span class="u"> ${it.unit}</span>` : ""}</dd></div>`)}
   </dl>`;
 }
 
@@ -107,11 +107,13 @@ function Waiting({ st, what }) {
 
 /* ------------------------------------------------------------------ 概况 */
 
-/** 前面每段在哪换的：换段的内核不记当时占了多少，所以只写“换段”和已读到的条数。 */
+/** 上下文：一块小铭牌（占比大数字、十格段尺、自动换段的刻线），下面是前面各段。前面每段在哪换的：内核不记当时占了多少，所以只写“换段”和已读到的条数。 */
 function SegmentRuler({ app, id, self, threshold }) {
   const hist = app.history(id);
   const cur = self.segment;
   const { pct, mark, near } = rulerOf(self.context, threshold);
+  const full = Math.floor(pct / 10);
+  const part = pct % 10 >= 3;
   // 段很多时只列最近几段。
   const from = Math.max(1, cur - 6);
   /** @type {number[]} */
@@ -119,19 +121,25 @@ function SegmentRuler({ app, id, self, threshold }) {
   for (let s = from; s < cur; s++) earlier.push(s);
   return html`<section class="isection">
     <${Sec} zh="上下文" en="CONTEXT" right=${`${cur} 段`} />
-    ${from > 1 && html`<p class="inote">更早的 ${from - 1} 段都换过段了。</p>`}
-    ${earlier.map((s) => {
-      const n = known(hist, s);
-      return html`<div class="seg"><span class="seg-n dim">段 ${s}</span><span class="seg-bar done" aria-hidden="true"><span class="tx hatch-bar"></span></span><span class="mono seg-r dim">${n > 0 ? `${n} 条 · ` : ""}换段</span></div>`;
-    })}
-    <div class=${`seg cur ${near ? "near" : ""}`} aria-label=${`当前段，上下文占 ${pct}%${mark !== null ? `，自动换段的刻线在 ${mark}%` : ""}${near ? "，快到了" : ""}`}>
-      <span class="seg-n now">段 ${cur}</span>
-      <span class="seg-mid">
-        ${mark !== null && html`<span class=${`ctx-mk ${mark > 55 ? "r" : ""}`} style=${`left:${mark}%`} aria-hidden="true"><span>自动换段</span></span>`}
-        <span class="seg-bar" aria-hidden="true"><span style=${`width:${pct}%`}></span>${mark !== null && html`<span class="seg-tick" style=${`left:${mark}%`}></span>`}</span>
-      </span>
-      <span class="mono seg-r now">${pct}% 当前</span>
+    <div class=${`cc ${near ? "near" : ""}`} role="img" aria-label=${`当前段，上下文占 ${pct}%${mark !== null ? `，自动换段的刻线在 ${mark}%` : ""}${near ? "，快到了" : ""}`}>
+      <${Tex} kind="tx-dots-d" mask="linear-gradient(100deg, transparent 30%, #000 100%)" />
+      <div class="cc-top">
+        <div class="cc-n"><span class="num cc-big">${pct}</span><span class="num cc-pc">%</span></div>
+        <div class="cc-l"><b>第 ${cur} 段</b><span>上下文已用</span>${near && html`<span class="tag warn">快到了</span>`}</div>
+      </div>
+      <div class="cc-rule">
+        <div class="cc-bar">${Array.from({ length: 10 }, (_, i) => html`<span class=${i < full ? "f" : i === full && part ? "p" : ""}></span>`)}</div>
+        ${mark !== null && html`<span class="cc-tick" style=${`left:${mark}%`}></span>`}
+        ${mark !== null && html`<span class=${`cc-flag ${mark > 55 ? "r" : ""}`} style=${`left:${mark}%`}><span class="label">自动换段</span><span class="mono">${mark}%</span></span>`}
+      </div>
     </div>
+    ${from > 1 && html`<p class="inote">更早的 ${from - 1} 段都换过段了。</p>`}
+    ${earlier.length > 0 && html`<ul class="cc-prev">
+      ${earlier.map((s) => {
+        const n = known(hist, s);
+        return html`<li><span class="mono cc-pn">段 ${s}</span><span class="cc-ph" aria-hidden="true"></span><span class="mono cc-pr">${n > 0 ? `${n} 条 · ` : ""}换段</span></li>`;
+      })}
+    </ul>`}
   </section>`;
 }
 
@@ -148,12 +156,12 @@ function Mailbox({ records, id }) {
   return html`<section class="isection">
     <${Sec} zh="信箱" en="MAILBOX" right=${m.queued.length > 0 ? `${m.queued.length} 封排队` : null} />
     ${m.queued.length > 0 && html`<ul class="imail">
-      ${m.queued.map((l) => html`<li><span class="imail-f mono">${l.from}</span>${l.reply ? html`<span class="tag line">回信</span>` : null}${l.handoff ? html`<span class="tag line">换段信</span>` : null}<span class="imail-t" title=${l.first}>${l.first}</span>${l.images > 0 ? html`<span class="mono dim">${l.images} 图</span>` : null}</li>`)}
+      ${m.queued.map((l) => html`<li><div class="imail-h"><span class="imail-f mono">${l.from}</span>${l.reply ? html`<span class="tag line">回信</span>` : null}${l.handoff ? html`<span class="tag line">换段信</span>` : null}${l.images > 0 ? html`<span class="mono dim imail-i">${l.images} 图</span>` : null}</div><p class="imail-t" title=${l.first}>${l.first}</p></li>`)}
     </ul>`}
     ${m.queued.length > 0 && html`<p class="inote">排队的信在下一个安全点并进这一轮。只能看，不能撤回。</p>`}
     ${(m.waitedBy.length > 0 || m.waitingOn.length > 0) && html`<dl class="ikv">
-      ${m.waitedBy.length > 0 && html`<${Fragment}><dt>等它回信</dt><dd>${m.waitedBy.map((x) => html`<span class="mono imail-w">${procTag(records, x)}</span>`)}</dd></${Fragment}>`}
-      ${m.waitingOn.length > 0 && html`<${Fragment}><dt>它在等</dt><dd>${m.waitingOn.map((x) => html`<span class="mono imail-w">${procTag(records, x)}</span>`)}</dd></${Fragment}>`}
+      ${m.waitedBy.length > 0 && html`<${Fragment}><dt>等它回信</dt><dd><span class="itags">${m.waitedBy.map((x) => html`<span class="mono itag">${procTag(records, x)}</span>`)}</span></dd></${Fragment}>`}
+      ${m.waitingOn.length > 0 && html`<${Fragment}><dt>它在等</dt><dd><span class="itags">${m.waitingOn.map((x) => html`<span class="mono itag">${procTag(records, x)}</span>`)}</span></dd></${Fragment}>`}
     </dl>`}
   </section>`;
 }
@@ -181,9 +189,9 @@ function ProcOverview({ app }) {
   return html`<div class="ipage">
     <${Stats}
       items=${[
-        { label: "本段消息", value: self.messages },
-        { label: "本轮步数", value: steps ?? "—" },
-        { label: "信箱待处理", value: queued },
+        { en: "MSG", label: "本段消息", value: self.messages },
+        { en: "STEP", label: "本轮步数", value: steps ?? "—" },
+        { en: "QUEUE", label: "信箱待处理", value: queued, hot: queued > 0 },
       ]}
     />
     <div class="ibody">
@@ -237,9 +245,9 @@ function ProjOverview({ app, status, branches }) {
   return html`<div class="ipage">
     <${Stats}
       items=${[
-        { label: "在跑", value: p.running, unit: `/${p.entries.length}` },
-        { label: "出错", value: p.errors, warn: p.errors > 0 },
-        { label: "预设", value: p.presets.length },
+        { en: "LIVE", label: "在跑", value: p.running, unit: `/${p.entries.length}` },
+        { en: "ERROR", label: "出错", value: p.errors, warn: p.errors > 0 },
+        { en: "PRESET", label: "预设", value: p.presets.length },
       ]}
     />
     <div class="ibody">
@@ -466,9 +474,9 @@ function ProcChanges({ app, workdir, status }) {
   return html`<div class="ipage">
     <${Stats}
       items=${[
-        { label: "改动文件", value: files.length },
-        { label: "增 / 删", value: `+${add}`, unit: `−${del}` },
-        { label: bd && bd.main ? `领先 ${bd.main}` : "领先主分支", value: mine && !onMain ? mine.ahead : "—", unit: mine && !onMain ? "提交" : "" },
+        { en: "FILES", label: "改动文件", value: files.length },
+        { en: "DIFF", label: "增 / 删", value: `+${add}`, unit: `−${del}` },
+        { en: "AHEAD", label: bd && bd.main ? `领先 ${bd.main}` : "领先主分支", value: mine && !onMain ? mine.ahead : "—", unit: mine && !onMain ? "提交" : "" },
       ]}
     />
     <div class="ibody wide">
@@ -508,9 +516,9 @@ function ProjBranches({ app, workdir, status, branches }) {
   return html`<div class="ipage">
     <${Stats}
       items=${[
-        { label: "分支", value: list.length },
-        { label: "没合并", value: un.length },
-        { label: "改动文件", value: files ?? "—" },
+        { en: "BRANCH", label: "分支", value: list.length },
+        { en: "OPEN", label: "没合并", value: un.length },
+        { en: "FILES", label: "改动文件", value: files ?? "—" },
       ]}
     />
     <div class="ibody wide">
@@ -585,9 +593,9 @@ function BgPage({ app, ids, bgs, project }) {
   return html`<div class="ipage">
     <${Stats}
       items=${[
-        { label: "没看到退出码", value: run },
-        { label: "已退出", value: logs.length - run },
-        { label: "退出码非 0", value: bad, warn: bad > 0 },
+        { en: "RUNNING", label: "没看到退出码", value: run },
+        { en: "EXITED", label: "已退出", value: logs.length - run },
+        { en: "FAILED", label: "退出码非 0", value: bad, warn: bad > 0 },
       ]}
     />
     <div class="ibody">

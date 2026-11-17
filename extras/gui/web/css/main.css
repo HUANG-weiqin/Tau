@@ -193,13 +193,14 @@ button.chead:hover { background: var(--ink3); }
 }
 @media (max-width: 1399px) { .xl-only { display: none !important; } }
 /* 正在想、正在写工具参数：暗边、暗底、小号等宽，比最终回答低一档，不抢视觉重心。 */
-.thinkl, .argl { max-width: var(--col); background: var(--ink1); color: var(--fg2); box-shadow: inset 0 0 0 1px var(--ink4); font-size: 12px; }
-.tl-h { display: flex; align-items: center; gap: 10px; padding: 5px 10px; border-bottom: 1px dashed var(--ink4); }
-.tl-k { font-stretch: 125%; font-weight: 800; letter-spacing: .1em; font-size: 11px; color: var(--fg); }
+.thinkl, .argl { max-width: var(--col); background: var(--ink1); color: var(--fg2); box-shadow: inset 0 0 0 1px var(--ink4), inset 3px 0 0 var(--acc); font-size: 12px; }
+.tl-h { display: flex; align-items: center; gap: 10px; padding: 6px 10px 6px 16px; border-bottom: 1px dashed var(--ink4); }
+.tl-k { display: inline-flex; align-items: center; gap: 7px; font-stretch: 125%; font-weight: 800; letter-spacing: .1em; font-size: 11px; color: var(--fg); }
+.tl-k::before { content: ""; width: 6px; height: 6px; background: var(--acc); animation: tau-pulse 2.4s ease-in-out infinite; }
 .tl-h .dim, .argl .dim { color: var(--fg3); }
 .tl-h .link { margin-left: auto; color: var(--fg2); }
-.tl-b { display: flex; flex-direction: column; justify-content: flex-end; max-height: calc(6 * 1.55em + 12px); overflow: hidden; padding: 6px 10px; }
+.tl-b { display: flex; flex-direction: column; justify-content: flex-end; max-height: calc(6 * 1.55em + 14px); overflow: hidden; padding: 7px 10px 7px 16px; }
 .tl-b.open { justify-content: flex-start; max-height: 40vh; overflow-y: auto; }
 .tl-b pre { margin: 0; font-family: var(--mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
-.argl { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; padding: 6px 10px; }
+.argl { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 7px 10px 7px 16px; }
 .argl code { flex: 1 1 100%; font-family: var(--mono); font-size: 12px; line-height: 1.5; color: var(--fg2); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
