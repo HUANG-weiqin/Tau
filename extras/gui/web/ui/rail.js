@@ -13,6 +13,11 @@ function Tile({ app, p, n }) {
   const label = `${p.name}：${p.entries.length === 0 ? "还没有进程" : counts}${pinned ? `，Alt+${n}` : "，没钉住"}`;
   const drag = useRef(/** @type {HTMLElement | null} */ (null));
   const tip = tipProps(() => html`<${Fragment}><b>${p.name}</b><div class="mono">${p.path}</div><div style="margin-top:6px">${p.entries.length === 0 ? "还没有进程" : counts}</div></${Fragment}>`);
+  const inner = html`<span class=${`tile-face ${pinned ? "" : "loose-face"}`}>
+    ${current && html`<span class="tile-bar" aria-hidden="true"></span>`}
+    ${pinned && html`<span class="num tile-n">${pad2(n)}</span>`}
+    <span class="tile-s">${p.short}</span>
+  </span>`;
   // 浮牌的处理器先铺，后面的 onClick 才不会被它的 onClick（只收起浮牌）盖掉。
   return html`<button
     ...${tip}
@@ -34,9 +39,7 @@ function Tile({ app, p, n }) {
       if (from) app.reorderPinned(from, p.path);
     }}
   >
-    ${current && html`<span class="tile-bar" aria-hidden="true"></span>`}
-    ${pinned && html`<span class="num tile-n">${pad2(n)}</span>`}
-    <span class="tile-s">${p.short}</span>
+    ${pinned ? html`<span class="tile-shell">${inner}</span>` : inner}
     ${badge !== null && html`<span class=${`badge ${badge}`} aria-hidden="true"></span>`}
   </button>`;
 }
@@ -47,34 +50,43 @@ export function Rail({ app }) {
   const all = app.projects.length;
   const chiefCount = app.attention.length;
   return html`<nav class="rail" aria-label="项目">
-    <${Tex} kind="tx-hatch-d" mask="linear-gradient(transparent 50%, #000 100%)" />
-    <span class="rail-logo" aria-hidden="true"><${Icon} name="tau" size=${24} sw=${2.6} color="#111211" /></span>
+    <${Tex} kind="tx-hatch-d" mask="linear-gradient(transparent 55%, rgba(0,0,0,.65) 100%)" />
+    <span class="rail-logo" aria-hidden="true">
+      <${Tex} kind="tx-dots-y" mask="linear-gradient(135deg, rgba(0,0,0,.5) 0%, transparent 75%)" />
+      <${Icon} name="tau" size=${24} sw=${2.6} color="var(--ink)" />
+    </span>
     <div class="rail-scroll">
       ${pinned.map((p, i) => html`<${Tile} key=${p.key} app=${app} p=${p} n=${i + 1} />`)}
       ${pinned.length > 0 && active.length > 0 && html`<span class="hatch-bar rail-div" aria-hidden="true"></span>`}
       ${active.map((p) => html`<${Tile} key=${p.key} app=${app} p=${p} n=${0} />`)}
-      <button type="button" id="btn-all" class="tile tool" aria-haspopup="dialog" aria-label=${`全部项目，${all} 个，Alt+0`} onClick=${(/** @type {Event} */ e) => app.openDialog("projects", /** @type {Element} */ (e.currentTarget))}>
-        <${Icon} name="grid" size=${18} sw=${2.4} color="#A3A59F" />
-        <span class="mono" style="font-size:10.5px;color:#A3A59F">全部 ${all}</span>
-      </button>
-      <button type="button" id="btn-open" class="tile plus" aria-haspopup="dialog" aria-label="打开项目" onClick=${(/** @type {Event} */ e) => app.openDialog("openproj", /** @type {Element} */ (e.currentTarget))}>
-        <${Icon} name="plus" size=${16} sw=${2.8} color="#A3A59F" />
-      </button>
+      ${pinned.length + active.length > 0 && html`<span class="rail-sep" aria-hidden="true"></span>`}
+      <div class="rail-ops">
+        <button type="button" id="btn-all" class="rail-op all" aria-haspopup="dialog" aria-label=${`全部项目，${all} 个，Alt+0`} onClick=${(/** @type {Event} */ e) => app.openDialog("projects", /** @type {Element} */ (e.currentTarget))}>
+          <${Icon} name="grid" size=${15} sw=${2.3} />
+          <span class="rail-op-l">全部 <span class="mono">${all}</span></span>
+        </button>
+        <button type="button" id="btn-open" class="rail-op plus" aria-haspopup="dialog" aria-label="打开项目" onClick=${(/** @type {Event} */ e) => app.openDialog("openproj", /** @type {Element} */ (e.currentTarget))}>
+          <${Icon} name="plus" size=${15} sw=${2.6} />
+        </button>
+      </div>
     </div>
     <div class="rail-base">
-      <button type="button" id="btn-settings" class="tile tool set-btn" aria-haspopup="dialog" aria-label="设置，Ctrl+," title="设置 Ctrl+," onClick=${(/** @type {Event} */ e) => app.openDialog("settings", /** @type {Element} */ (e.currentTarget))}>
-        <${Icon} name="sliders" size=${16} sw=${2.4} color="#A3A59F" />
-        <span class="mono" style="font-size:10.5px;color:#A3A59F">设置</span>
+      <button type="button" id="btn-settings" class="tile set-btn" aria-haspopup="dialog" aria-label="设置，Ctrl+," title="设置 Ctrl+," onClick=${(/** @type {Event} */ e) => app.openDialog("settings", /** @type {Element} */ (e.currentTarget))}>
+        <span class="tile-shell"><span class="tile-face">
+          <${Icon} name="sliders" size=${15} sw=${2.3} />
+          <span class="rail-btn-l">设置</span>
+        </span></span>
       </button>
       <button type="button" id="btn-chief" class="chief-btn" aria-haspopup="dialog" aria-label=${chiefCount ? `总管，${chiefCount} 件事待你看，Ctrl+K` : "总管，Ctrl+K"} onClick=${(/** @type {Event} */ e) => app.openDialog("chief", /** @type {Element} */ (e.currentTarget))}>
-        <span class="chief-dia" aria-hidden="true"></span>
-        <span style="font-size:11px;font-weight:900;line-height:1">总管</span>
+        <span class="tile-shell"><span class="tile-face">
+          <span class="chief-dia" aria-hidden="true"></span>
+          <span class="chief-l">总管</span>
+        </span></span>
         ${chiefCount > 0 && html`<span class="chief-n num" aria-hidden="true">${chiefCount}</span>`}
       </button>
-      <div class="rail-run" role="status">
-        <span class="rail-run-l">${runningTotal > 0 && html`<span class="pulse" aria-hidden="true" style="width:7px;height:7px;background:var(--acc)"></span>`}在跑</span>
-        <span class="num" style="font-size:24px">${runningTotal}</span>
-        <span class="dim" style="font-size:11px">个进程</span>
+      <div class="rail-run" role="status" aria-label=${`全局 ${runningTotal} 个进程在跑`}>
+        <span class="rail-run-h"><span>在跑</span><i class=${runningTotal > 0 ? "on pulse" : ""} aria-hidden="true"></i></span>
+        <span class="rail-run-v"><span class=${`num rail-run-n ${runningTotal > 0 ? "acc-fg" : ""}`}>${pad2(runningTotal)}</span><span class="rail-run-u">进程</span></span>
       </div>
     </div>
   </nav>`;

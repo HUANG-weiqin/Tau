@@ -1,13 +1,13 @@
-/* 助手最终文字的 Markdown（ui/mdview.js）。台面是亮的：代码块反成深底，表格是亮表加细线，黄色只做小块。 */
-.md { max-width: var(--col); min-width: 0; font-size: 15px; line-height: 1.75; overflow-wrap: anywhere; }
+/* 助手最终文字的 Markdown（ui/mdview.js）。台面是亮的：代码块反成深底，表格是清爽印刷线表，黄色只做小块。 */
+.md { max-width: var(--col); min-width: 0; font-size: var(--fs-body); line-height: 1.75; overflow-wrap: anywhere; }
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
 .md p { margin: 0 0 .7em; }
 .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 1.1em 0 .45em; font-family: var(--ui); font-weight: 800; line-height: 1.25; letter-spacing: .01em; }
-.md h1 { font-size: 22px; font-stretch: 112%; }
-.md h2 { font-size: 19px; font-stretch: 108%; }
-.md h3 { font-size: 16.5px; }
-.md h4, .md h5, .md h6 { font-size: 15px; }
+.md h1 { font-size: var(--fs-h2); font-stretch: 112%; }
+.md h2 { font-size: 19px; font-stretch: 108%; padding-bottom: .22em; border-bottom: 1px solid var(--line-l); }
+.md h3 { font-size: var(--fs-h3); }
+.md h4, .md h5, .md h6 { font-size: var(--fs-body); }
 .md ul, .md ol { margin: 0 0 .7em; padding-left: 1.5em; }
 .md ul { list-style: square; }
 .md ol { list-style: decimal; }
@@ -20,42 +20,56 @@
 .md del { opacity: .6; }
 .md a { color: var(--ink); text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 3px; text-decoration-color: rgba(17,18,17,.45); transition: text-decoration-color var(--t-fast) var(--ease-in), background-color var(--t-fast) var(--ease-in); }
 .md a:hover { text-decoration-color: var(--ink); background: var(--acc); }
-.md hr { border: 0; border-top: 1px solid rgba(17,18,17,.35); margin: 1.1em 0; }
+.md hr { border: 0; border-top: 1px solid var(--line-l); margin: 1.1em 0; }
 .md blockquote { margin: 0 0 .7em; padding: 2px 0 2px 14px; border-left: 3px solid var(--ink); color: var(--ink-2); }
 .md blockquote > :last-child { margin-bottom: 0; }
 
 /* 行内代码 */
-.md code { font-family: var(--mono); font-size: .88em; padding: .08em .38em; background: rgba(17,18,17,.1); }
+.md code { font-family: var(--mono); font-size: .88em; padding: .1em .4em; background: rgba(17,18,17,.075); box-shadow: inset 0 0 0 1px rgba(17,18,17,.12); }
 
 /* 代码块：深底，长行在里面横向滚动 */
-.md .md-code { position: relative; margin: 0 0 .8em; background: var(--ink0); color: var(--fg); box-shadow: inset 0 0 0 1px var(--ink4); max-width: 100%; }
-.md .md-ch { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 28px; padding: 0 6px 0 12px; border-bottom: 1px solid var(--ink4); background: var(--ink2); }
-.md .md-lang { font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--fg2); }
-.md .md-copy { border: 0; background: transparent; color: var(--fg2); font-family: var(--mono); font-size: 11px; padding: 4px 8px; transition: color var(--t-fast) var(--ease-in), background-color var(--t-fast) var(--ease-in); }
-.md .md-copy:hover { color: var(--ink); background: var(--acc); }
-.md .md-copy:active { background: #E6D800; }
-.md pre { margin: 0; padding: 12px 14px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.6; white-space: pre; tab-size: 2; }
-.md pre code { padding: 0; background: none; font-size: inherit; color: inherit; overflow-wrap: normal; }
+.md .md-code { position: relative; margin: 0 0 .85em; background: var(--ink0); color: var(--fg); box-shadow: inset 3px 0 0 var(--ink5), inset 0 0 0 1px var(--ink4); max-width: 100%; }
+.md .md-ch { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 30px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--ink4); background: var(--ink2); }
+.md .md-lang { font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: .08em; text-transform: uppercase; color: var(--fg2); }
+.md .md-copy {
+  margin: 3px 0;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--ink5);
+  background: var(--ink3);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  box-shadow: 0 1.5px 0 var(--ink0);
+  transition: color var(--t-fast) var(--ease-in), background-color var(--t-fast) var(--ease-in), border-color var(--t-fast) var(--ease-in), transform 70ms var(--ease-in);
+}
+.md .md-copy:hover { border-color: var(--acc); background: var(--acc); color: var(--ink); }
+.md .md-copy:active { transform: translateY(1px); box-shadow: none; }
+.md pre { margin: 0; padding: 12px 14px; overflow-x: auto; font-family: var(--mono); font-size: var(--fs-base); line-height: 1.6; white-space: pre; tab-size: 2; }
+.md pre code { padding: 0; background: none; box-shadow: none; font-size: inherit; color: inherit; overflow-wrap: normal; }
 
-/* 表格：亮表细线，宽了在外层滚动 */
-.md .md-tw { margin: 0 0 .8em; overflow-x: auto; max-width: 100%; }
-.md table { border-collapse: collapse; min-width: 100%; background: var(--card); font-size: 13.5px; line-height: 1.5; }
-.md th, .md td { padding: 6px 12px; border: 1px solid rgba(17,18,17,.28); text-align: left; vertical-align: top; overflow-wrap: normal; }
-.md th { background: var(--sel); font-weight: 800; font-size: 12.5px; white-space: nowrap; }
+/* 表格：清爽印刷横线表，宽了在外层滚动 */
+.md .md-tw { margin: 0 0 .85em; overflow-x: auto; max-width: 100%; }
+.md table { border-collapse: collapse; min-width: 100%; background: var(--card); box-shadow: inset 0 0 0 1px var(--line-l); font-size: 13.5px; line-height: 1.5; }
+.md th, .md td { padding: 7px 12px; border: 0; border-bottom: 1px solid var(--line-l); text-align: left; vertical-align: top; overflow-wrap: normal; }
+.md th { background: rgba(17,18,17,.06); border-bottom: 1.5px solid rgba(17,18,17,.32); font-weight: 800; font-size: var(--fs-sm); white-space: nowrap; }
+.md tr:last-child td { border-bottom: 0; }
 
 /* 总管弹窗是暗面：字用浅色，亮表换成暗表 */
 .ch-bot .md { font-size: 13.5px; line-height: 1.7; color: var(--fg); }
+.ch-bot .md h2 { border-bottom-color: var(--ink4); }
 .ch-bot .md a { color: var(--fg); text-decoration-color: var(--fg3); }
 .ch-bot .md a:hover { color: var(--ink); text-decoration-color: var(--ink); }
 .ch-bot .md li::marker { color: var(--fg2); }
 .ch-bot .md input[type="checkbox"] { accent-color: var(--acc); }
 .ch-bot .md hr { border-top-color: var(--ink5); }
 .ch-bot .md blockquote { border-left-color: var(--acc); color: var(--fg2); }
-.ch-bot .md code { background: var(--ink4); }
+.ch-bot .md code { background: var(--ink2); box-shadow: inset 0 0 0 1px var(--ink4); }
 .ch-bot .md .md-code { background: var(--ink0); }
-.ch-bot .md table { background: var(--ink2); }
-.ch-bot .md th, .ch-bot .md td { border-color: var(--ink5); }
-.ch-bot .md th { background: var(--ink4); }
+.ch-bot .md table { background: var(--ink2); box-shadow: inset 0 0 0 1px var(--ink4); }
+.ch-bot .md th, .ch-bot .md td { border-bottom-color: var(--ink4); }
+.ch-bot .md th { background: var(--ink3); border-bottom-color: var(--ink5); }
 
 @media (max-width: 759px) {
   .md { font-size: 14.5px; }

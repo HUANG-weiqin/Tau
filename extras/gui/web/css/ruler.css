@@ -27,9 +27,9 @@
 .cc.near .cc-bar span.f, .cc.near .cc-bar span.p { background: var(--warn); }
 .cc-flag { position: absolute; top: -5px; height: 46px; margin-left: -1px; padding: 24px 0 0 7px; border-left: 2px solid var(--fg); display: flex; align-items: baseline; gap: 6px; white-space: nowrap; pointer-events: none; }
 .cc-flag.r { margin-left: 0; padding: 24px 7px 0 0; border-left: 0; border-right: 2px solid var(--fg); transform: translateX(calc(-100% + 1px)); }
-.cc-flag .label { font-size: 10px; color: var(--fg2); }
-.cc-flag .mono { font-size: 11px; font-weight: 700; }
-.cc.near .cc-flag .label, .cc.near .cc-flag .mono { color: var(--warn); }
+.cc-flag .label, .cc-flag .kicker { font-size: var(--fs-micro); color: var(--fg2); }
+.cc-flag .mono { font-size: var(--fs-xs); font-weight: 700; }
+.cc.near .cc-flag .label, .cc.near .cc-flag .kicker, .cc.near .cc-flag .mono { color: var(--warn); }
 .cc-prev { display: flex; flex-direction: column; gap: 6px; }
 .cc-prev li { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; column-gap: 10px; align-items: center; font-size: 11px; color: var(--fg2); }
 .cc-ph { height: 6px; background: repeating-linear-gradient(-45deg, var(--fg3) 0 2px, transparent 2px 6px); }

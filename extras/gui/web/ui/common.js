@@ -59,15 +59,22 @@ export function Icon({ name, size = 16, sw = 2.6, color = "currentColor", class:
 }
 
 /**
- * 药丸按钮。`kind`：默认是描边，`accent` 黄，`warn` 橙，`dark` 在浅色面上。
- * `icon` 是右边圆里的图标，`chip` 是圆的颜色。没有 icon 就是平的。
- * @param {{ kind?: string, icon?: string, chip?: string, label?: any, class?: string, [k: string]: any }} p
+ * 斜切双仓机械动作键。`kind`：默认石墨双仓，`accent` 信号黄，`warn` 警示橙，`dark` 浅色台面深框反色。
+ * `size`：默认标准档，`"sm"` 紧凑档。`icon` 是右边分仓里的图标，`chip` 是分仓底色（`red`/`gray`/`blk`）。没有 icon 就是单仓。
+ * @param {{ type?: string, kind?: string, size?: string, icon?: string, chip?: string, label?: any, children?: any, class?: string, [k: string]: any }} p
  */
-export function Pill({ kind = "", icon, chip = "", label, children, class: cls = "", ...rest }) {
+export function Pill({ type = "button", kind = "", size = "", icon, chip = "", label, children, class: cls = "", ...rest }) {
   const isStop = icon === "stop";
-  return html`<button type="button" class=${`pill ${kind} ${icon ? "" : "bare"} ${cls}`} ...${rest}>
-    <span>${label ?? children}</span>
-    ${icon && html`<span class=${`chip ${chip}`} aria-hidden="true">${isStop ? html`<span style="width:11px;height:11px;background:#111211"></span>` : html`<${Icon} name=${icon} size=${16} sw=${icon === "fork" ? 2.6 : 2.8} />`}</span>`}
+  const small = size === "sm" || /\bsm\b/.test(cls);
+  const iconSize = small ? 13 : 15;
+  const stopSize = small ? 9 : 11;
+  return html`<button type=${type} class=${`pill ${kind} ${size} ${icon ? "" : "bare"} ${cls}`} ...${rest}>
+    <span class="pill-shell">
+      <span class="pill-face">
+        <span class="pill-txt">${label ?? children}</span>
+        ${icon && html`<span class=${`chip ${chip}`} aria-hidden="true">${isStop ? html`<span style=${`width:${stopSize}px;height:${stopSize}px;background:currentColor;display:block`}></span>` : html`<${Icon} name=${icon} size=${iconSize} sw=${icon === "fork" ? 2.6 : 2.8} />`}</span>`}
+      </span>
+    </span>
   </button>`;
 }
 
@@ -115,7 +122,7 @@ const CONTOURS = makeContours();
 
 /** 台面右下角的等高线。 */
 export function Contour() {
-  return html`<svg aria-hidden="true" width="760" height="560" viewBox="0 0 760 560" fill="none" stroke="rgba(17,18,17,0.14)" stroke-width="1" style="position:absolute;z-index:0;pointer-events:none;right:-150px;bottom:-190px">
+  return html`<svg aria-hidden="true" width="760" height="560" viewBox="0 0 760 560" fill="none" stroke="rgba(17,18,17,0.065)" stroke-width="1" style="position:absolute;z-index:0;pointer-events:none;right:-150px;bottom:-190px">
     ${CONTOURS.map((d) => html`<path d=${d} />`)}
   </svg>`;
 }
@@ -130,8 +137,8 @@ export function Thumb({ hash, fetchBlob, class: cls = "thumb" }) {
       alive = false;
     };
   }, [hash]);
-  if (src === undefined) return html`<span class=${cls} style="background:#aaa;display:inline-block"></span>`;
-  if (src === null) return html`<span class=${cls} style="display:inline-grid;place-items:center;font-size:11px;color:#3D3E3B;background:#C7C8C4">图片读不到</span>`;
+  if (src === undefined) return html`<span class=${cls} style="background:#C2C4BE;display:inline-block"></span>`;
+  if (src === null) return html`<span class=${cls} style="display:inline-grid;place-items:center;font-size:11px;color:var(--ink-2);background:#DFE0DA">图片读不到</span>`;
   return html`<a href=${src} target="_blank" rel="noopener"><img class=${cls} src=${src} alt="图片" /></a>`;
 }
 
@@ -319,15 +326,15 @@ export function DlgHead({ icon, title, en, sub, onClose }) {
     <span class="dlg-ico" aria-hidden="true"><${Icon} name=${icon} size=${16} sw=${2.8} /></span>
     <div class="dlg-title">
       <h2>${title}</h2>
-      <div><span class="label" style="color:var(--acc)">${en}</span>${sub && html`<span class="dlg-sub">${sub}</span>`}</div>
+      <div><span class="label acc-fg">${en}</span>${sub && html`<span class="dlg-sub">${sub}</span>`}</div>
     </div>
-    <button type="button" class="pill closer" aria-label="关闭" onClick=${onClose}><span class="mono">Esc</span><${Icon} name="close" size=${18} /></button>
+    <button type="button" class="closer" aria-label="关闭" onClick=${onClose}><span class="mono">Esc</span><${Icon} name="close" size=${13} sw=${2.8} /></button>
   </div>`;
 }
 
 /** 弹窗里的小节标题：编号、中文、英文。 @param {{ n?: string, title: string, en: string, right?: any }} p */
 export function SecHead({ n, title, en, right }) {
   return html`<h3 class="sec-head">
-    ${n && html`<span class="num" style="font-size:18px;color:var(--acc)">${n}</span>`}<span>${title}</span><span class="label dim">${en}</span><span class="sep"></span>${right}
+    ${n && html`<span class="num acc-fg">${n}</span>`}<span>${title}</span><span class="label dim">${en}</span><span class="sep"></span>${right}
   </h3>`;
 }

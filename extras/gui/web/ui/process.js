@@ -55,7 +55,7 @@ function Plate({ app, e }) {
         <div class="plate-top"><span class="tag">当前聚焦</span><span class="mono" style="font-size:11px">${app.project?.name ?? "总管"} / ${e.id}</span></div>
         <div class="plate-name">
           <h1 class=${e.kind === "temp" ? "small" : ""} title=${big}>${big}</h1>
-          <span class="label" style="font-size:15px;letter-spacing:.16em">${e.preset}</span>
+          <span class="plate-id">${e.preset}</span>
         </div>
         ${e.kind === "temp" && title.note && html`<div class="mono" style="font-size:11px;margin-top:6px">${title.note}</div>`}
         <dl class="plate-tags">
@@ -71,11 +71,15 @@ function Plate({ app, e }) {
       <span class="slash xl-only" aria-hidden="true"></span>
       <${Ctx} e=${e} error=${error} segMessages=${e.self.messages} />
       <div class="plate-act">
-        <${Pill} label="分叉" icon="fork" disabled=${running} title=${running ? "进程在跑时不能复制整个段。可以在某条消息上分叉" : "复制整个当前段，开一个新进程"} onClick=${() => app.fork(e.id)} />
-        <${Pill} label="换模型" icon="ext" disabled=${running} title=${running ? "进程在跑时不能换模型（要分叉）" : "带着当前这一段的上下文，用另一个模型分叉出一个新进程"} onClick=${(/** @type {Event} */ ev) => app.openDialog("switchmodel", /** @type {Element} */ (ev.currentTarget), { process: e.id })} />
-        <${Pill} label="换段" icon="reply" disabled=${running || !canHandoff(app.messages(e.id))} title=${running ? "进程在跑时不能换段" : !canHandoff(app.messages(e.id)) ? "这一段里还没有助手的回复，没有可交接的内容" : "寄一封换段信：下一轮只带交接说明，不用按整段重新算"} onClick=${() => app.handoff(e.id)} />
-        <${Pill} label="停止" icon="stop" chip="red" disabled=${!running} title="Ctrl+. 按两次" onClick=${() => app.stop(e.id)} />
-        <${Pill} label="删除" icon="trash" chip="red" disabled=${running} title=${running ? "进程在跑时不能删除" : "删掉这个进程和它的全部段"} onClick=${(/** @type {Event} */ ev) => askRemove(e.id, /** @type {Element} */ (ev.currentTarget))} />
+        <div class="plate-act-row">
+          <${Pill} size="sm" label="分叉" icon="fork" chip="gray" disabled=${running} title=${running ? "进程在跑时不能复制整个段。可以在某条消息上分叉" : "复制整个当前段，开一个新进程"} onClick=${() => app.fork(e.id)} />
+          <${Pill} size="sm" label="换模型" icon="ext" chip="gray" disabled=${running} title=${running ? "进程在跑时不能换模型（要分叉）" : "带着当前这一段的上下文，用另一个模型分叉出一个新进程"} onClick=${(/** @type {Event} */ ev) => app.openDialog("switchmodel", /** @type {Element} */ (ev.currentTarget), { process: e.id })} />
+          <${Pill} size="sm" label="换段" icon="reply" chip="gray" disabled=${running || !canHandoff(app.messages(e.id))} title=${running ? "进程在跑时不能换段" : !canHandoff(app.messages(e.id)) ? "这一段里还没有助手的回复，没有可交接的内容" : "寄一封换段信：下一轮只带交接说明，不用按整段重新算"} onClick=${() => app.handoff(e.id)} />
+        </div>
+        <div class="plate-act-row">
+          <${Pill} size="sm" label="停止" icon="stop" chip="red" disabled=${!running} title="Ctrl+. 按两次" onClick=${() => app.stop(e.id)} />
+          <${Pill} size="sm" label="删除" icon="trash" chip="red" disabled=${running} title=${running ? "进程在跑时不能删除" : "删掉这个进程和它的全部段"} onClick=${(/** @type {Event} */ ev) => askRemove(e.id, /** @type {Element} */ (ev.currentTarget))} />
+        </div>
       </div>
     </div>
   </section>`;
@@ -246,7 +250,7 @@ function renderItems(app, e, items, seg, running, onFork) {
 export function ProcessView({ app }) {
   const e = app.focused;
   if (!e) {
-    return html`<div class="pending"><${Tex} kind="tx-grid-l" /><p class="mono">正在读取进程 ${app.focusedId}…</p><button type="button" class="pill dark" onClick=${() => app.focusProject(null)}>回到项目</button></div>`;
+    return html`<div class="pending"><${Tex} kind="tx-grid-l" /><p class="mono">正在读取进程 ${app.focusedId}…</p><${Pill} kind="dark" icon="arrow" label="回到项目" onClick=${() => app.focusProject(null)} /></div>`;
   }
   const ended = e.self.phase.tag === "idle" ? e.self.phase.ended : undefined;
   const note = e.status === "error" || ended === "stopped" || ended === "stepLimit" ? carryNote(ended) : null;

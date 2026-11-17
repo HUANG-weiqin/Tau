@@ -1,6 +1,6 @@
 // 根组件：把连接、数据、聚焦、弹窗和键盘接在一起。其它模块只拿到下面的 `app`。
 import { render } from "preact";
-import { html, useEffect, useState, TipLayer, MenuLayer } from "./ui/common.js";
+import { html, Pill, useEffect, useState, TipLayer, MenuLayer } from "./ui/common.js";
 import * as api from "./api.js";
 import { createConn, createHistoryReader, createPeeker } from "./conn.js";
 import { emptyStore, reduce, streamingText, streamingLive, childCounts } from "./lib/store.js";
@@ -25,6 +25,7 @@ import { NewPresetDialog } from "./ui/newpreset.js";
 import { EditPresetDialog } from "./ui/editpreset.js";
 import { SwitchModelDialog } from "./ui/switchmodel.js";
 import { MemoryDialog } from "./ui/memory.js";
+import { DiffDialog } from "./ui/diff.js";
 import { SettingsDialog } from "./ui/settings.js";
 import { ToolsDialog } from "./ui/tools.js";
 import { Notifier } from "./ui/notify.js";
@@ -927,6 +928,7 @@ function Root() {
     ${d && d.name === "editpreset" && html`<${EditPresetDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "switchmodel" && html`<${SwitchModelDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "memory" && html`<${MemoryDialog} app=${app} onClose=${close} />`}
+    ${d && d.name === "diff" && html`<${DiffDialog} app=${app} onClose=${close} />`}
     <${ConfirmLayer} app=${app} />
     <${TipLayer} />
     <${Notifier} app=${app} />
@@ -944,7 +946,7 @@ function Empty({ app }) {
     <span class="num" style="font-size:96px;color:#111211;opacity:.18">00</span>
     <h2>还没有项目</h2>
     <p>项目就是一个文件夹。打开一个文件夹，把它的进程归到一起。</p>
-    <button type="button" class="pill dark" onClick=${(/** @type {Event} */ e) => app.openDialog("openproj", /** @type {Element} */ (e.currentTarget))}>打开项目</button>
+    <${Pill} kind="dark" icon="plus" label="打开项目" onClick=${(/** @type {Event} */ e) => app.openDialog("openproj", /** @type {Element} */ (e.currentTarget))} />
   </div>`;
 }
 

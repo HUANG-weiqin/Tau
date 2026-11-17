@@ -128,7 +128,7 @@ function Plate({ app, p, members, repo }) {
         <div class="plate-top"><span class="tag">当前聚焦</span><span class="mono" style="font-size:11px">${p.pinnedIndex >= 0 ? `项目 ${pad2(p.pinnedIndex + 1)}` : "项目"}</span></div>
         <div class="plate-name">
           <h1>${title.big}</h1>
-          ${title.small !== "" && html`<span class="label" style="font-size:15px;letter-spacing:.16em">${title.small}</span>`}
+          ${title.small !== "" && html`<span class="plate-id">${title.small}</span>`}
         </div>
         <dl class="plate-tags pv-tags">
           <div><dt>目录</dt><dd class="mono pv-dir" title=${p.path}>${dir}</dd></div>
@@ -147,7 +147,7 @@ function Plate({ app, p, members, repo }) {
         <div class="mono ctx-m">${members.length === 0 ? "还没有常驻进程" : sub || "全部在跑"}</div>
       </div>
       <div class="plate-act">
-        <${Pill} label=${stopping ? "停止中" : "全部停止"} icon="stop" chip="red" disabled=${p.running === 0 || stopping} title="停项目里所有在跑的进程，子孙先停" onClick=${stopAll} />
+        <${Pill} size="sm" label=${stopping ? "停止中" : "全部停止"} icon="stop" chip="red" disabled=${p.running === 0 || stopping} title="停项目里所有在跑的进程，子孙先停" onClick=${stopAll} />
         ${stopping && html`<div class="mono pv-prog" role="status">还有 ${p.running} 个在跑，继续停</div>`}
       </div>
     </div>

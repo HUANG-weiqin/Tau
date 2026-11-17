@@ -72,7 +72,7 @@ export function SwitchModelDialog({ app, onClose }) {
           ? html`<div class="callout">没有这个进程。</div>`
           : html`<${Fragment}>
           <div class="sw-now" aria-label="这个进程现在冻结的模型">
-            <span class="label">现在</span>
+            <span class="kicker">现在</span>
             <span class="sw-now-m"><b>${cur ? cur.model.name : frozenModel}</b><span class="mono">${frozenModel}</span></span>
             <span class="sw-now-t"><span class="label dim">THINK</span><span class="num">${frozenThinking ?? "—"}</span></span>
           </div>

@@ -1,0 +1,40 @@
+/* diff 窗：居中、占满高度，diff 在里面自己滚动 */
+.diff-sub { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; min-width: 0; }
+.diff-sub .mono { overflow-wrap: anywhere; }
+.diff-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 4px 22px 14px; }
+.diff-box { flex: 1; min-height: 0; overflow: auto; background: var(--ink0); box-shadow: inset 0 0 0 1px var(--ink4); font-family: var(--mono); font-size: 12.5px; line-height: 1.7; padding: 4px 0 8px; scrollbar-width: thin; scrollbar-color: var(--fg3) transparent; outline: none; }
+.diff-box:focus-visible { box-shadow: inset 0 0 0 2px var(--acc); }
+.diff-lines { min-width: max-content; }
+.diff-count { font-size: 11.5px; white-space: nowrap; }
+
+/* 一行：左边是粘住的行号槽（旧、新、符号），右边是文字 */
+.df { display: flex; padding-right: 16px; }
+.df-g { position: sticky; left: 0; z-index: 1; flex: none; display: flex; background: var(--ink0); }
+.df-n { width: calc(var(--gw, 2ch) + 1.6ch); padding: 0 .8ch; text-align: right; color: var(--fg3); user-select: none; }
+.df-s { width: 2.4ch; text-align: center; font-weight: 700; color: var(--fg3); user-select: none; }
+.df-t { white-space: pre; padding-left: .5ch; }
+/* hunk 头和说明行没有行号槽：文字自己粘在左边，横向滚动时不会滚出去 */
+.df.hunk .df-t, .df.meta .df-t { position: sticky; left: 0; padding-left: 14px; }
+
+/* 增删的底色同时铺在行号槽上：槽是不透明的，底色叠在它上面 */
+.df.add { background: rgba(255, 230, 0, .08); }
+.df.add .df-g { background: linear-gradient(rgba(255, 230, 0, .08), rgba(255, 230, 0, .08)), var(--ink0); }
+.df.add .df-s { color: var(--acc); }
+.df.del { background: rgba(255, 90, 54, .09); }
+.df.del .df-g { background: linear-gradient(rgba(255, 90, 54, .09), rgba(255, 90, 54, .09)), var(--ink0); }
+.df.del .df-s { color: var(--warn); }
+.df.del .df-t { color: var(--fg2); }
+.df.add .df-n, .df.del .df-n { color: var(--fg2); }
+
+/* 文件的说明行、没有换行符的提示：暗的 */
+.df.meta { color: var(--fg3); }
+.df.note .df-t { color: var(--fg3); }
+
+/* hunk 头：整行宽，不带行号 */
+.df.hunk { background: var(--ink3); color: var(--fg2); font-weight: 700; margin: 4px 0; }
+.diff-note { padding: 6px 14px; }
+
+.dlg.diffdlg .dlg-in { flex: 1; overflow: hidden; }
+@media (min-width: 760px) {
+  .dlg.diffdlg { top: 24px; bottom: 24px; max-height: none; }
+}

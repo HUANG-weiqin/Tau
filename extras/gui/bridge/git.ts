@@ -82,7 +82,7 @@ function branchOfHeader(header: string): string | undefined {
 
 export function createGit(run: GitRunner, allowed: () => Promise<string[]>) {
   async function git(dir: string, args: string[]) {
-    return run(["--no-optional-locks", "-c", "core.fsmonitor=false", "-C", dir, ...args]);
+    return run(["--no-optional-locks", "--literal-pathspecs", "-c", "core.fsmonitor=false", "-C", dir, ...args]);
   }
 
   async function checkDir(v: unknown): Promise<string> {

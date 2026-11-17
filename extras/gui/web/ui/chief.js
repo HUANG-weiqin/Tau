@@ -1,5 +1,5 @@
 // 总管弹窗：待你看、和总管的对话、写信框。总管是全局助手的进程，哪个预设由界面数据的 `chief` 记。
-import { html, Popover, Icon, Lamp, Fragment, useState, useRef, useEffect, useLayoutEffect } from "./common.js";
+import { html, Popover, Pill, Icon, Lamp, Fragment, useState, useRef, useEffect, useLayoutEffect } from "./common.js";
 import * as api from "../api.js";
 import * as gs from "../lib/state.js";
 import { toItems, clipText, canHandoff } from "../lib/messages.js";
@@ -86,7 +86,7 @@ function ForYou({ app, close }) {
   return html`<div class="ch-for">
     <h3 class="ch-sec"><span>待你看</span><span class="label dim">FOR YOU</span><span class="sep" aria-hidden="true"></span><span class="mono dim" style="font-weight:400;font-size:11px">${String(list.length).padStart(2, "0")}</span></h3>
     ${list.length === 0
-      ? html`<p class="ch-none"><${Icon} name="check" size=${14} sw=${3} color="#FFEF00" />没有要你看的。出错的进程和做完了还没合并的分支会出现在这里。</p>`
+      ? html`<p class="ch-none"><${Icon} name="check" size=${14} sw=${3} color="var(--acc)" />没有要你看的。出错的进程和做完了还没合并的分支会出现在这里。</p>`
       : html`<ul class="ch-list">
           ${shown.map((a) => {
             const e = app.entryOf(a.id);
@@ -98,8 +98,8 @@ function ForYou({ app, close }) {
                 <p>${proj ? html`<span class="dim ch-gap">${proj.name}</span>` : null}<b class="ch-gap">${e ? nameOf(app, e) : a.preset}</b><span class="mono dim ch-gap">${a.id}</span>
                   ${err ? ` 这一轮出错${a.detail ? "：" + clipText(a.detail, 60) : ""}。` : ` 做完了。分支 ${a.detail} 还没合并。`}</p>
                 <div class="ch-acts">
-                  <button type="button" class=${`pill bare ${err ? "" : "accent"}`} onClick=${() => go(a.id, err ? 0 : 1)}>${err ? "去看看" : "看改动"}</button>
-                  ${!err && html`<button type="button" class="pill bare" onClick=${() => { later.add(`${a.kind}:${a.id}`); again((n) => n + 1); }}>稍后</button>`}
+                  <${Pill} size="sm" kind=${err ? "" : "accent"} label=${err ? "去看看" : "看改动"} onClick=${() => go(a.id, err ? 0 : 1)} />
+                  ${!err && html`<${Pill} size="sm" label="稍后" onClick=${() => { later.add(`${a.kind}:${a.id}`); again((n) => n + 1); }} />`}
                 </div>
               </div>
             </li>`;
@@ -217,9 +217,9 @@ function Picker({ app, onDone }) {
       })}
     </div>
     <div class="ch-acts">
-      <button type="button" class="pill bare accent" disabled=${!pick || busy} onClick=${save}>设为总管</button>
-      ${list.length === 0 && html`<button type="button" class="pill bare" onClick=${(/** @type {Event} */ ev) => app.openDialog("openproj", /** @type {Element} */ (ev.currentTarget))}>新建预设</button>`}
-      ${onDone && html`<button type="button" class="pill bare" onClick=${onDone}>取消</button>`}
+      <${Pill} kind="accent" label="设为总管" disabled=${!pick || busy} onClick=${save} />
+      ${list.length === 0 && html`<${Pill} label="新建预设" onClick=${(/** @type {Event} */ ev) => app.openDialog("openproj", /** @type {Element} */ (ev.currentTarget))} />`}
+      ${onDone && html`<${Pill} label="取消" onClick=${onDone} />`}
     </div>
   </div>`;
 }
@@ -345,9 +345,9 @@ function Body({ app, close }) {
       <span class="ch-hico" aria-hidden="true"><span></span></span>
       <div class="ch-title">
         <h2>总管</h2>
-        <div><span class="label" style="color:var(--acc)">CHIEF</span><span class="dlg-sub">管着 ${app.projects.length} 个项目，${running} 个进程在跑</span></div>
+        <div><span class="label acc-fg">CHIEF</span><span class="dlg-sub">管着 ${app.projects.length} 个项目，${running} 个进程在跑</span></div>
       </div>
-      <button type="button" class="pill closer" aria-label="关闭总管" onClick=${close}><span class="mono">Esc</span><${Icon} name="close" size=${18} /></button>
+      <button type="button" class="closer" aria-label="关闭总管" onClick=${close}><span class="mono">Esc</span><${Icon} name="close" size=${13} sw=${2.8} /></button>
     </div>
     <${ForYou} app=${app} close=${close} />
     ${!app.ready

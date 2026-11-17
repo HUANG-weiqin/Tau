@@ -1,21 +1,19 @@
 /* 详情栏：外壳、竖选项卡、三页的内容 */
 .inspector { position: relative; flex: 1 1 356px; min-width: 0; display: flex; align-items: stretch; background: var(--ink2); color: var(--fg); border-left: 1px solid var(--ink0); min-height: 0; }
 .insp-col { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.insp-head { position: relative; z-index: 1; display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 18px; background: var(--ink0); overflow: hidden; flex: none; }
+.insp-head { position: relative; z-index: 1; display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 18px; background: var(--ink0); border-bottom: 1px solid var(--ink4); overflow: hidden; flex: none; }
 .insp-head h2 { position: relative; font-size: 15px; font-weight: 900; }
 .insp-head .label { position: relative; }
-.insp-sub { position: relative; margin-left: auto; font-size: 11px; color: var(--acc); }
+.insp-sub { position: relative; margin-left: auto; font-size: var(--fs-xs); color: var(--acc); }
 .insp-body { position: relative; z-index: 1; flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; animation: tau-panel var(--t-mid) var(--ease-in); }
 .insp-body > .inote { margin: 18px; }
-.insp-tabs { position: relative; flex: none; width: 52px; background: linear-gradient(180deg, #161716 0%, #0C0D0C 100%); border-left: 1px solid var(--ink0); display: flex; flex-direction: column; }
-.itab { position: relative; width: 100%; min-height: 78px; border: 0; border-bottom: 1px solid var(--ink3); padding: 12px 0 10px; background: transparent; color: var(--fg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; transition: background-color var(--t-fast) var(--ease-in); }
+.insp-tabs { position: relative; flex: none; width: 52px; background: linear-gradient(180deg, var(--ink1) 0%, var(--ink0) 100%); border-left: 1px solid var(--ink0); display: flex; flex-direction: column; }
+.itab { position: relative; width: 100%; min-height: 78px; border: 0; border-bottom: 1px solid var(--ink3); padding: 12px 0 10px; background: transparent; color: var(--fg); box-shadow: inset 0 1px 0 rgba(255,255,255,.04); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; transition: background-color var(--t-fast) var(--ease-in), color var(--t-fast) var(--ease-in); }
 .itab:hover { background: var(--ink3); }
-.itab-t { font-size: 12px; font-weight: 700; line-height: 1; }
+.itab-t { font-size: var(--fs-sm); font-weight: 700; line-height: 1; }
 .itab-n { position: absolute; left: 6px; top: 5px; font-size: 9px; line-height: 1; color: var(--fg3); }
-.itab[aria-selected="true"] { background: var(--sel); color: var(--ink); }
+.itab[aria-selected="true"] { background: var(--sel); color: var(--ink); box-shadow: inset -3px 0 0 var(--acc), inset 0 1px 0 rgba(255,255,255,.8); }
 .itab[aria-selected="true"] .itab-t { font-weight: 900; }
-.itab[aria-selected="true"]::after { content: ""; position: absolute; right: 0; top: 0; bottom: 0; width: 4px; background: var(--acc); }
-.itab[aria-selected="true"]::before { content: ""; position: absolute; left: -8px; top: 50%; margin-top: -8px; border-right: 8px solid var(--sel); border-top: 8px solid transparent; border-bottom: 8px solid transparent; }
 .itab[aria-selected="true"] .itab-n { color: var(--ink-2); }
 .itab-c { display: flex; align-items: center; gap: 4px; font-stretch: 62%; font-weight: 800; font-size: 13px; line-height: 1; color: var(--fg2); }
 .itab-c i { width: 6px; height: 6px; background: var(--acc); }
@@ -32,7 +30,7 @@
 .istat { display: flex; flex-direction: column; gap: 6px; padding: 12px 16px 12px; min-width: 0; container-type: inline-size; }
 .istat + .istat { border-left: 1px solid var(--ink4); }
 .istat dt { display: contents; font-size: 11px; color: var(--fg2); }
-.istat dt .label { order: 0; color: var(--fg3); font-size: 9px; }
+.istat dt .label { order: 0; color: var(--fg3); font-size: var(--fs-micro); }
 .istat dt > span:last-child { order: 2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 数字按格宽定字号：--n 是折算的字数（inspector.js 的 Stats 算），压窄的数字一个字约 .5em。短的停在 --big，长的缩小，不出格。 */
 .istat dd { --big: 42px; order: 1; display: flex; align-items: baseline; min-width: 0; overflow: hidden; font-stretch: 62%; font-weight: 800; font-size: min(var(--big), calc(100cqi / var(--n, 3) / .5)); line-height: .95; white-space: nowrap; }
@@ -72,7 +70,7 @@
 .ipreset-h .tag { margin-left: auto; }
 .ipreset-h .tag.line { color: var(--fg2); }
 
-/* 改动：标签、文件树、diff、提交 */
+/* 改动：标签、文件树、提交（diff 在 diff.css） */
 .ichips { display: flex; flex-wrap: wrap; gap: 6px; }
 .ichips > div { display: flex; }
 .ichips dt { background: #3A3B38; font-size: 11px; font-weight: 700; line-height: 1.5; padding: 3px 8px; }
@@ -88,36 +86,14 @@
 .ttools { display: flex; justify-content: flex-end; padding: 0 14px 4px; color: var(--fg2); }
 .trow.file { min-height: 30px; transition: background-color var(--t-fast) var(--ease-in); }
 .trow.file:hover { background: var(--ink3); }
-.trow.file.sel { background: var(--sel); color: var(--ink); }
 .trow-n { flex: 1; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
-.trow.file.sel .trow-n { font-weight: 700; }
 .tl { position: absolute; top: 0; bottom: auto; height: auto; width: 1px; background: var(--fg3); }
 .tl.h { top: 50%; width: 10px; height: 1px; }
-.trow.sel .tl { background: var(--ink); }
-.tsel { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--acc); }
 .tmark { width: 16px; height: 16px; flex: none; display: grid; place-items: center; font-family: var(--mono); font-size: 10px; font-weight: 700; line-height: 1; box-shadow: inset 0 0 0 1px var(--fg2); color: var(--fg); }
 .tmark.add { background: var(--acc); color: var(--ink); box-shadow: none; }
 .tmark.del { box-shadow: inset 0 0 0 1px var(--warn); color: var(--warn); }
-.trow.sel .tmark:not(.add) { box-shadow: inset 0 0 0 1px var(--ink); color: var(--ink); }
 .idelta { font-size: 11px; white-space: nowrap; }
 .idelta b { font-weight: 700; }
-.idelta .dk { color: var(--ink-2); }
-.diffbox { margin: 0 18px; background: var(--ink0); box-shadow: inset 0 0 0 1px var(--ink4); min-width: 0; }
-.diff-h { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--ink4); font-size: 11px; font-weight: 700; }
-.diff-f { flex: 1; }
-.diff-body { max-height: 440px; overflow: auto; padding: 6px 0 8px; font-family: var(--mono); font-size: 11.5px; line-height: 1.75; }
-.diff-lines { min-width: max-content; }
-.df { display: grid; grid-template-columns: 22px auto; padding-right: 10px; }
-.df-s { text-align: center; font-weight: 700; color: var(--fg3); }
-.df-t { white-space: pre; }
-.df.add { background: rgba(236, 237, 233, .07); }
-.df.add .df-s { color: var(--acc); }
-.df.del .df-s { color: var(--warn); }
-.df.del .df-t { color: var(--fg2); }
-.df.hd .df-t, .df.hunk .df-t { color: var(--fg2); }
-.df.hunk { background: var(--ink3); }
-.df.hunk .df-t { color: var(--fg2); font-weight: 700; }
-.diff-note { padding: 6px 10px; }
 .icommits { display: flex; flex-direction: column; gap: 7px; }
 .icommits li { display: grid; grid-template-columns: 62px minmax(0, 1fr) auto; column-gap: 8px; align-items: baseline; font-size: 12.5px; }
 .icommits .mono { font-size: 11px; }
@@ -159,7 +135,6 @@
   .itab-foot { display: none; }
   .istat { padding: 12px 12px 10px; }
   .istat dd { --big: 36px; }
-  .diff-body { max-height: 320px; }
 }
 
 .ilink { color: var(--acc); }

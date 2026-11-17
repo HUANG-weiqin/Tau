@@ -621,6 +621,28 @@ test("git：status、diff、log、branches 的结果；每条 git 命令的第�
   assert.throws(() => readFileSync(join(repo, ".git", "index.lock")));
 });
 
+test("git：file 按字面当路径，foo[1].txt 不会匹配 foo1.txt", async (t) => {
+  const e = await setupBridge(t, { service: true });
+  const repo = makeRepo(e.dir);
+  writePreset(e, "proj", repo);
+  writeFileSync(join(repo, "foo[1].txt"), "x\n");
+  writeFileSync(join(repo, "foo1.txt"), "y\n");
+  sh(repo, "add", "."), sh(repo, "commit", "-m", "glob");
+  writeFileSync(join(repo, "foo[1].txt"), "x2\n");
+  writeFileSync(join(repo, "foo1.txt"), "y2\n");
+  const d = (await post(e.port, "/api/git", { workdir: repo, what: "diff", file: "foo[1].txt" })).json;
+  assert.match(d.text, /\+x2/);
+  assert.doesNotMatch(d.text, /y2/);
+  // 已跟踪的 a[b].txt 不能因为未跟踪的 ab.txt 被当成新文件。
+  writeFileSync(join(repo, "a[b].txt"), "t\n");
+  sh(repo, "add", "."), sh(repo, "commit", "-m", "bracket");
+  writeFileSync(join(repo, "a[b].txt"), "t2\n");
+  writeFileSync(join(repo, "ab.txt"), "n\n");
+  const d2 = (await post(e.port, "/api/git", { workdir: repo, what: "diff", file: "a[b].txt" })).json;
+  assert.match(d2.text, /-t\n/);
+  assert.match(d2.text, /\+t2/);
+});
+
 test("git：diff 超过 256 KB 截断；坏的 file 参数 400；不是仓库回 repo: false；what 不认识 400", async (t) => {
   const e = await setupBridge(t, { service: true });
   const repo = makeRepo(e.dir);

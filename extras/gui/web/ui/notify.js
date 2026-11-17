@@ -18,7 +18,7 @@ function drawIcon(dot) {
   c.width = c.height = 64;
   const g = c.getContext("2d");
   if (!g) return "";
-  g.fillStyle = "#0C0D0C";
+  g.fillStyle = "#0B0C0B";
   g.fillRect(0, 0, 64, 64);
   g.fillStyle = "#ECEDE9";
   g.font = '800 46px "Archivo Variable", "Noto Sans SC Variable", sans-serif';
@@ -26,7 +26,7 @@ function drawIcon(dot) {
   g.textBaseline = "alphabetic";
   g.fillText("τ", 32, 50);
   if (dot) {
-    g.fillStyle = "#FFEF00";
+    g.fillStyle = "#FFE600";
     g.fillRect(40, 0, 24, 24);
   }
   return c.toDataURL("image/png");

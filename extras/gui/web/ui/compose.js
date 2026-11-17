@@ -1,6 +1,6 @@
 // 写信框：调度台底座。左边写给谁、它在哪个阶段；右边是墨井，墨井底行是“寄出以后会怎样”、快捷键和寄出键。
 // Ctrl+Enter 寄出，Enter 换行，/ 跳过来，Esc 离开（全局键在 app.js）。能贴图片（base64 放进 images）。
-import { html, Icon, Lamp, Tex, pad2, useState, useRef, useEffect, useLayoutEffect } from "./common.js";
+import { html, Icon, Lamp, Pill, Tex, pad2, useState, useRef, useEffect, useLayoutEffect } from "./common.js";
 import { contextPercent } from "../lib/format.js";
 import { useAttach, AttachBar, Thumbs } from "./attach.js";
 import { refusesImages } from "../lib/derive.js";
@@ -118,10 +118,7 @@ export function Compose({ app, e, name, note = null }) {
             <span class="dk-count mono"><b>${String(chars).padStart(4, "0")}</b> 字${images.length > 0 ? ` · ${images.length} 图` : ""}</span>
           </div>
           <div class="dk-keys" aria-hidden="true"><kbd>CTRL</kbd><i>+</i><kbd class="ent">↵</kbd></div>
-          <button type="submit" class=${`pill dk-go ${can ? "accent" : ""}`} disabled=${!can} title="Ctrl+Enter">
-            <span>${busy ? "寄出中" : "寄出"}</span>
-            <span class="chip" aria-hidden="true"><${Icon} name="arrow" size=${16} sw=${3} /></span>
-          </button>
+          <${Pill} type="submit" kind=${can ? "accent" : ""} class="dk-go" icon="arrow" disabled=${!can} title="Ctrl+Enter" label=${busy ? "寄出中" : "寄出"} />
         </div>
       </div>
     </div>

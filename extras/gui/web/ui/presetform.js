@@ -216,7 +216,7 @@ export function PresetFields({ form, app, placeholder = "my-project", promptHint
     <${AgentsMdField} form=${form} />
     <label class="field">提示词${edit ? "" : "（可以以后在编辑器里补）"}<textarea class="input" rows=${edit ? 7 : 3} value=${form.prompt} onInput=${(/** @type {any} */ e) => form.setPrompt(e.currentTarget.value)} placeholder=${promptHint}></textarea></label>
     <div class="adv">
-      <button type="button" class="adv-h" aria-expanded=${form.advanced} onClick=${() => form.setAdvanced(!form.advanced)}><span class="label">高级</span><span class="dim" style="font-size:12px">options</span><span class="sep"></span><${Icon} name=${form.advanced ? "up" : "down"} size=${13} sw=${2.8} /></button>
+      <button type="button" class="adv-h" aria-expanded=${form.advanced} onClick=${() => form.setAdvanced(!form.advanced)}><span class="kicker">高级</span><span class="dim" style="font-size:12px">options</span><span class="sep"></span><${Icon} name=${form.advanced ? "up" : "down"} size=${13} sw=${2.8} /></button>
       ${form.advanced && html`<label class="field" style="margin-top:10px">options：一行 JSON，只收服务认的键
         <input class="input mono" type="text" value=${form.options} placeholder='{"temperature":0.2}' aria-invalid=${optErr !== ""} onInput=${(/** @type {any} */ e) => form.setOptions(e.currentTarget.value)} />
         ${optErr !== "" && html`<span class="dnote" style="color:var(--warn);font-size:11.5px">${optErr}</span>`}
@@ -234,9 +234,9 @@ function AgentsMdField({ form }) {
   const locked = !exists && !agents;
   return html`<div class="field">AGENTS.md
     <div class="agents-row">
-      <button type="button" class="toggle" aria-pressed=${agents} disabled=${locked} onClick=${() => form.setAgents(!agents)}>拼上项目的 AGENTS.md</button>
+      <span class="toggles"><button type="button" class="toggle" aria-pressed=${agents} disabled=${locked} onClick=${() => form.setAgents(!agents)}>拼上项目的 AGENTS.md</button></span>
       <span class="dnote">${agentsInfo === null ? "正在查…" : exists ? formatBytes(agentsInfo.bytes) : "项目里没有 AGENTS.md"}</span>
-      ${edit && agentsState === "stale" && agents && html`<button type="button" class="toggle" aria-pressed=${regen} onClick=${() => form.setRegen(!regen)}>保存时重新拼</button>`}
+      ${edit && agentsState === "stale" && agents && html`<span class="toggles"><button type="button" class="toggle" aria-pressed=${regen} onClick=${() => form.setRegen(!regen)}>保存时重新拼</button></span>`}
     </div>
     ${edit && agentsState === "stale" && html`<span class="dnote" style="font-size:11.5px;color:var(--acc)">AGENTS.md 改过了，预设里拼的还是旧的。</span>`}
     ${edit && agentsState === "missing" && html`<span class="dnote" style="font-size:11.5px;color:var(--warn)">项目里的 AGENTS.md 没了，预设里拼的是旧的。</span>`}

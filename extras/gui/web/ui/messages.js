@@ -90,14 +90,14 @@ function CallStrip({ call, running, app, since }) {
     : st === "skipped" ? html`<span class="cr">未执行</span>`
     : st === "error" ? html`<span class="cr"><span class="tag warn" style="margin-right:6px">出错</span><span class="ell">${r?.summary}</span></span>`
     : st === "pending" ? html`<span class="cr"><span class=${running ? "pulse" : ""} style="width:8px;height:8px;background:var(--acc);display:inline-block"></span>${running ? html`运行中<span class="mono run-s">${formatElapsed(app.now - app.clock(since))}</span>` : "没有结果"}</span>`
-    : html`<span class="cr"><${Icon} name="check" size=${12} sw=${3.4} color="#FFEF00" /><span class="ell">${r?.summary ?? ""}</span></span>`;
+    : html`<span class="cr"><${Icon} name="check" size=${12} sw=${3.4} color="var(--acc)" /><span class="ell">${r?.summary ?? ""}</span></span>`;
   const head = html`<span class="clabel">${label}</span><span class="cbody"><span class="csum">${call.summary || call.name}</span>${right}</span>`;
   const live = st === "pending" && running;
   return html`<li class=${`call ${st} ${live ? "run" : ""}`}>
     ${can ? html`<button type="button" class="chead" aria-expanded=${open} onClick=${() => setOpen(!open)}>${head}</button>` : html`<div class="chead">${head}</div>`}
     ${open && r && html`<div class="cout">
       ${call.name === "bash" && typeof call.args["command"] === "string" && call.summary !== call.args["command"] ? html`<pre class="ccmd">$ ${call.args["command"]}</pre>` : ""}
-      ${r.images.length > 0 && html`<div class="thumbs" style="padding:8px 12px 0 72px">${r.images.map((im) => html`<${Thumb} hash=${im.hash} fetchBlob=${app.blob} />`)}</div>`}
+      ${r.images.length > 0 && html`<div class="thumbs" style="padding:8px 14px 0 14px">${r.images.map((im) => html`<${Thumb} hash=${im.hash} fetchBlob=${app.blob} />`)}</div>`}
       <pre>${r.text.length > 20000 ? r.text.slice(0, 20000) + `\n…（还有 ${formatBytes(r.text.length - 20000)}）` : r.text}</pre>
     </div>`}
     ${live && html`<${Scan} />`}

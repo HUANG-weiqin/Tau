@@ -141,7 +141,7 @@
 
 git：
 
-- 一律 `git --no-optional-locks -c core.fsmonitor=false -C <目录> …`，不经 shell，有超时。diff 另加 `--no-ext-diff` 和 `--no-textconv`，不跑仓库里配置的外部程序。
+- 一律 `git --no-optional-locks --literal-pathspecs -c core.fsmonitor=false -C <目录> …`，不经 shell，有超时。文件路径按字面传：`foo[1].txt` 不会匹配 `foo1.txt`。diff 另加 `--no-ext-diff` 和 `--no-textconv`，不跑仓库里配置的外部程序。
 - 输出超过缓冲上限时：`diff` 截断并标 `truncated`；`status` 回 500，不解析半截输出。
 - 工作目录必须是某个预设的 `workdir`（读法同上，经 `check`），或者界面数据 `folders` 里的文件夹。否则回 403。比较时不分大小写。
 - `what`：

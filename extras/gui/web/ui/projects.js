@@ -148,7 +148,7 @@ export function ProjectsDialog({ app, onClose }) {
       <${DlgHead} icon="grid" title="全部项目" en="ALL PROJECTS" sub=${`${app.projects.length} 个，钉住 ${pinnedAll.length} 个`} onClose=${close} />
       <div class="dlg-body">
         <label class="pj-search">
-          <${Icon} name="search" size=${16} sw=${2.4} color="#A3A59F" />
+          <${Icon} name="search" size=${16} sw=${2.4} color="var(--fg2)" />
           <input type="text" value=${query} placeholder="搜项目名或路径" aria-label="搜项目名或路径" autofocus onInput=${(/** @type {any} */ e) => setQuery(e.currentTarget.value)} />
           <span class="mono dim" style="font-size:11px">${q === "" ? app.projects.length : `${shown} / ${app.projects.length}`}</span>
         </label>

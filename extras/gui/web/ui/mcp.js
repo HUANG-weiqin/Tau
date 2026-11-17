@@ -181,7 +181,7 @@ export function McpSection({ app, installed, onChanged }) {
           <div class="td-act">
             ${s.error !== undefined
               ? html`<span class="dnote">改好配置再列</span>`
-              : html`<${Pill} kind=${active ? "" : "accent"} label=${listing ? "正在列…" : "列出工具"} disabled=${busy !== ""} onClick=${() => list(s.name)} />`}
+              : html`<${Pill} size="sm" kind=${active ? "" : "accent"} label=${listing ? "正在列…" : "列出工具"} disabled=${busy !== ""} onClick=${() => list(s.name)} />`}
           </div>
         </li>`;
       })}
@@ -192,7 +192,7 @@ export function McpSection({ app, installed, onChanged }) {
       ${listed.instructions !== undefined && listed.instructions !== "" &&
       html`<div class="mcp-instr">
         <button type="button" class="adv-h" aria-expanded=${openInstr} onClick=${() => setOpenInstr(!openInstr)}>
-          <${Icon} name=${openInstr ? "up" : "down"} size=${13} sw=${2.8} /><span class="label">服务器的说明</span>
+          <${Icon} name=${openInstr ? "up" : "down"} size=${13} sw=${2.8} /><span class="kicker">服务器的说明</span>
           <span class="sep"></span><span class="dim" style="font-size:12px">${listed.instructions.length} 字</span>
         </button>
         ${openInstr && html`<pre class="mcp-instr-t mono">${listed.instructions}</pre>`}
@@ -251,7 +251,7 @@ export function McpSection({ app, installed, onChanged }) {
           return html`<li class="td-row" key=${name}>
             <div class="td-main"><div class="td-h"><b class="mono">${name}</b>${users.length > 0 && html`<span class="tag acc">${users.length} 个预设在用</span>`}</div>
               <p class="td-d">工具定义还在，服务器上已经没有这个工具了。</p></div>
-            <div class="td-act">${users.length > 0 ? html`<span class="dnote">预设 ${users.join("、")} 在用它，先去预设里取消</span>` : html`<${Pill} label=${busy === `remove:${name}` ? "正在删…" : "删除"} disabled=${busy !== ""} onClick=${() => remove(name)} />`}</div>
+            <div class="td-act">${users.length > 0 ? html`<span class="dnote">预设 ${users.join("、")} 在用它，先去预设里取消</span>` : html`<${Pill} size="sm" label=${busy === `remove:${name}` ? "正在删…" : "删除"} disabled=${busy !== ""} onClick=${() => remove(name)} />`}</div>
           </li>`;
         })}
       </ul>
@@ -260,7 +260,7 @@ export function McpSection({ app, installed, onChanged }) {
     ${note !== "" && html`<p class="dnote" style="margin-top:8px;color:var(--acc)">${note}</p>`}
     ${err !== "" && html`<${CheckStrip} ok=${false} text=${err} label="mcp" />`}
     <div class="mcp-relay">
-      <span class="label">中转</span>
+      <span class="kicker">中转</span>
       ${relayErr !== ""
         ? html`<span class="mono">${relayErr}</span>`
         : status === null

@@ -180,7 +180,7 @@ export function MemoryDialog({ app, onClose }) {
               </div>
               ${long && !expanded ? html`<div class="mem-fold">${preview(en.value)}<span class="dim"> …共 ${utf8Bytes(en.value)} 字节</span></div>` : html`<pre class="mem-pre">${en.value === "" ? "（空）" : en.value}</pre>`}
               ${ask
-                ? html`<div class="mem-ask" role="alert"><span>删掉“${en.key}”？删了找不回。</span><${Pill} label="取消" disabled=${busy} onClick=${() => setAsking(null)} /><${Pill} kind="warn" icon="trash" label=${busy ? "删除中" : "删掉"} disabled=${busy} onClick=${() => remove(en)} /></div>`
+                ? html`<div class="mem-ask" role="alert"><span>删掉“${en.key}”？删了找不回。</span><${Pill} size="sm" label="取消" disabled=${busy} onClick=${() => setAsking(null)} /><${Pill} size="sm" kind="warn" icon="trash" label=${busy ? "删除中" : "删掉"} disabled=${busy} onClick=${() => remove(en)} /></div>`
                 : html`<div class="mem-links">
                     ${long && html`<button type="button" class="link" aria-expanded=${expanded} onClick=${() => toggle(en.key)}>${expanded ? "折起" : "看全文"}</button>`}
                     <button type="button" class="link" disabled=${editing || busy} onClick=${() => {

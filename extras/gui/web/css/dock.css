@@ -50,16 +50,16 @@
     linear-gradient(var(--c), var(--c)) 100% 100% / var(--a) var(--w) no-repeat,
     linear-gradient(var(--c), var(--c)) 100% 100% / var(--w) var(--a) no-repeat;
 }
-.dk-br.g { inset: -4px; transition: opacity var(--t-fast) var(--ease-in); }
+.dk-br.g { inset: -4px; --a: 7px; --w: 1.5px; opacity: .45; transition: opacity var(--t-fast) var(--ease-in); }
 .dk-br.y { inset: -8px; opacity: 0; --c: var(--acc); --a: 16px; --w: 3px; transition: opacity var(--t-mid) var(--ease-in), inset var(--t-mid) var(--ease-in); }
 .dock:focus-within .dk-br.g { opacity: 0; }
 .dock:focus-within .dk-br.y { opacity: 1; inset: -4px; }
 
 /* 输入：平时两行；往上长，最高约台面的两成（或 8 行，取小的），再多在框里滚。 */
 .dk-in {
-  flex: none; display: block; width: 100%; min-height: calc(2 * 1.5 * 15px + 12px); max-height: min(calc(8 * 1.5 * 15px + 12px), 17vh);
+  flex: none; display: block; width: 100%; min-height: calc(2 * 1.5 * 14.5px + 10px); max-height: min(calc(8 * 1.5 * 14.5px + 10px), 17vh);
   padding: 6px 16px 3px; border: 0; background: transparent; resize: none; outline: none !important;
-  font-size: 15px; line-height: 1.5; color: var(--fg); caret-color: var(--acc);
+  font-size: var(--fs-body); line-height: 1.5; color: var(--fg); caret-color: var(--acc);
   scrollbar-width: thin; scrollbar-color: var(--ink5) transparent;
 }
 .dk-in::placeholder { color: var(--fg3); }
@@ -71,7 +71,7 @@
 /* 说明只占一行，全文在悬停提示里：出错时最要紧的是消息区，写信框不能因为它长高。 */
 .dk-pre p { flex: 1; min-width: 0; font-size: 11.5px; line-height: 1.5; color: var(--fg2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 有说明时，空着的墨井只露一行；写起来照样往上长。 */
-.dk-well.pre .dk-in { min-height: calc(1.5 * 15px + 12px); }
+.dk-well.pre .dk-in { min-height: calc(1.5 * 14.5px + 10px); }
 
 .dk-thumbs { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 16px 0; }
 .dk-thumbs .cthumb img { height: 48px; }
@@ -91,17 +91,17 @@
 .dock.has .dk-count b { color: var(--fg); }
 .dk-xl { display: none !important; }
 
-.dock kbd { display: inline-grid; place-items: center; min-width: 20px; height: 18px; padding: 0 5px; border: 1px solid var(--ink5); border-bottom-width: 2px; background: var(--ink2); color: var(--fg2); font-family: var(--mono); font-size: 10px; font-weight: 700; line-height: 1; }
-.dk-keys { flex: none; display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--fg3); }
+.dock kbd { display: inline-grid; place-items: center; min-width: 20px; height: 18px; padding: 0 5px; border: 1px solid var(--ink5); border-bottom-width: 2px; background: var(--ink2); color: var(--fg2); font-family: var(--mono); font-size: var(--fs-micro); font-weight: 700; line-height: 1; box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 1.5px 0 var(--ink0); }
+.dk-keys { flex: none; display: flex; align-items: center; gap: 4px; font-size: var(--fs-xs); color: var(--fg3); }
 .dk-keys kbd { height: 22px; min-width: 28px; padding: 0 6px; transition: background-color var(--t-fast) var(--ease-in), color var(--t-fast) var(--ease-in); }
-.dk-keys kbd.ent { font-size: 13px; }
+.dk-keys kbd.ent { font-size: var(--fs-base); }
 .dk-keys i { font-style: normal; }
 .dock.has .dk-keys kbd { background: var(--fg); color: var(--ink); border-color: var(--fg2); }
 
-.dk-go { flex: none; min-height: 34px; padding: 0 4px 0 16px; font-size: 14px; font-weight: 900; letter-spacing: .12em; }
-.dk-go .chip { width: 26px; height: 26px; }
-.dk-go[disabled] { opacity: 1; border-color: var(--ink5); color: var(--fg3); }
-.dk-go[disabled] .chip { background: var(--ink4); color: var(--fg3); }
+.dk-go { flex: none; min-height: 34px; --ch: 8px; --ch-in: 6.5px; }
+.dk-go .pill-txt { padding: 0 14px 0 13px; font-size: var(--fs-base); font-weight: 900; letter-spacing: .1em; }
+.dk-go .chip { width: 28px; }
+.dk-go[disabled] { opacity: 1; --b-top: var(--ink4); --b-mid: var(--ink3); --b-ledge: var(--ink0); --b-bg: var(--ink2); --b-fg: var(--fg3); --b-tick: var(--fg3); --c-bg: var(--ink3); --c-fg: var(--fg3); }
 
 /* 够宽时露出快捷键提示 */
 @container dock (min-width: 860px) {

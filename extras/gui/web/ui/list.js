@@ -97,7 +97,7 @@ function TeamRow({ app, e, n, t, nested = false, tag }) {
   const wait = e.status === "error" || e.status === "running";
   return html`<button type="button" class=${`row team ${nested ? "nested" : ""}`} data-st=${e.status} aria-current=${cur ? "true" : undefined} onClick=${() => app.focusProcess(e.id)} onContextMenu=${processMenu(e.id, (row) => app.openDialog("editpreset", row, { preset: e.preset }))}>
     ${nested && html`<span class="tl" aria-hidden="true"></span>`}
-    ${cur && html`<span class="rbar" aria-hidden="true"></span><span class="rnotch" aria-hidden="true"></span>`}
+    ${cur && html`<span class="rbar" aria-hidden="true"></span>`}
     <span class="num rn">${n}</span>
     <span class="rmain">
       <span class="rname"><b>${e.name}</b><span class="mono dim ell">${nested ? e.id : e.preset}</span></span>
@@ -137,7 +137,7 @@ function TeamGroup({ app, t, i, searching }) {
     ${t.shown.map((e) => html`<${TeamRow} key=${e.id} app=${app} e=${e} n="↳" t=${t} nested tag=${app.gui.forkedFrom[e.id] ? "分叉 · " : ""} />`)}
     ${folded.length > 0 && !searching && html`<button type="button" class="row more" aria-expanded=${open} onClick=${() => app.setGui((g) => ({ collapsed: { ...g.collapsed, ["open:" + key]: !open } }))}>
       <span class="tl" aria-hidden="true"></span>
-      <span class="chev" style=${open ? "" : "transform:rotate(-90deg)"}><${Icon} name="down" size=${12} sw=${2.8} color="#A3A59F" /></span>
+      <span class="chev" style=${open ? "" : "transform:rotate(-90deg)"}><${Icon} name="down" size=${12} sw=${2.8} color="var(--fg2)" /></span>
       <span style="font-size:12px;font-weight:700">另有 ${folded.length} 个</span><span class="dim" style="font-size:11px">${open ? "收起" : "展开"}</span>
     </button>`}
     ${(open || searching) && folded.map((e) => html`<${TeamRow} key=${e.id} app=${app} e=${e} n="↳" t=${t} nested />`)}
@@ -154,7 +154,7 @@ function TempRow({ app, e }) {
   const at = app.lastAt[e.id];
   const endedLabel = e.self.phase.tag === "idle" ? d.endedText : "";
   return html`<button type="button" class=${`row temp ${e.status}`} data-st=${e.status} aria-current=${cur ? "true" : undefined} onClick=${() => app.focusProcess(e.id)} onContextMenu=${processMenu(e.id)}>
-    ${cur && html`<span class="rbar" aria-hidden="true"></span><span class="rnotch" aria-hidden="true"></span>`}
+    ${cur && html`<span class="rbar" aria-hidden="true"></span>`}
     <span class=${`glyph ${e.status} ${e.status === "running" ? "pulse" : ""}`} aria-hidden="true"></span>
     <span class="rmain">
       <span class="ttitle ell" style=${t.known ? "" : "font-family:var(--mono);font-size:12px"}>${t.title}</span>
@@ -203,19 +203,20 @@ export function ProcList({ app }) {
     <div class="plist-top">
       <button type="button" class="phead" aria-label=${`聚焦项目：${p.name}`} onClick=${() => app.focusProject(p.key)}>
         <span class="num phead-n">${pi >= 0 ? pad2(pi + 1) : "··"}</span>
-        <span class="phead-t"><span class="phead-name ell">${ptitle.big}</span>${ptitle.small !== "" ? html`<span class="label dim ell">${ptitle.small}</span>` : html`<span class="label dim ell">项目</span>`}</span>
+        <span class="phead-t"><span class="phead-name ell">${ptitle.big}</span>${ptitle.small !== "" ? html`<span class="kicker dim ell">${ptitle.small}</span>` : html`<span class="kicker dim ell">项目</span>`}</span>
         <span style="align-self:start"><${Icon} name="ext" size=${16} /></span>
       </button>
       <div class="chips" role="group" aria-label="按状态筛选">
         ${FILTERS.map(([k, label]) => {
           const on = app.filter === k;
-          return html`<button type="button" class=${`chip ${k}`} aria-pressed=${on} onClick=${() => app.setFilter(k)}><span class="chip-l">${label}</span><span class="chip-n mono">${view.counts[k === "error" ? "error" : k === "running" ? "running" : "all"]}</span></button>`;
+          const cnt = view.counts[k === "error" ? "error" : k === "running" ? "running" : "all"];
+          return html`<button type="button" class=${`chip ${k} ${k === "error" && cnt > 0 ? "hot" : ""}`} aria-pressed=${on} onClick=${() => app.setFilter(k)}><span class="chip-l">${label}</span><span class="chip-n mono">${cnt}</span></button>`;
         })}
       </div>
       <div class="psearch">
         <label class="sr" for="proc-filter">搜索进程</label>
-        <div class="sbox"><${Icon} name="search" size=${14} color="#A3A59F" /><input id="proc-filter" type="search" placeholder="搜索" value=${app.query} onInput=${(/** @type {any} */ e) => app.setQuery(e.currentTarget.value)} autocomplete="off" /></div>
-        <${Pill} id="btn-newproc" label="新进程" icon="plus" onClick=${(/** @type {Event} */ e) => app.openDialog("newproc", /** @type {Element} */ (e.currentTarget))} title="Ctrl+N" />
+        <div class="sbox"><${Icon} name="search" size=${14} color="var(--fg2)" /><input id="proc-filter" type="search" placeholder="搜索" value=${app.query} onInput=${(/** @type {any} */ e) => app.setQuery(e.currentTarget.value)} autocomplete="off" /></div>
+        <${Pill} size="sm" id="btn-newproc" label="新进程" icon="plus" onClick=${(/** @type {Event} */ e) => app.openDialog("newproc", /** @type {Element} */ (e.currentTarget))} title="Ctrl+N" />
       </div>
     </div>
     <div class="plist-body">
@@ -231,7 +232,7 @@ export function ProcList({ app }) {
         ${temps.errors.map((e) => html`<${TempRow} key=${e.id} app=${app} e=${e} />`)}
         ${temps.running.map((e) => html`<${TempRow} key=${e.id} app=${app} e=${e} />`)}
         ${temps.idleCount > 0 && !searching && app.filter === "all" && html`<button type="button" class="row fold" aria-expanded=${idleOpen} onClick=${() => app.setGui((g) => ({ collapsed: { ...g.collapsed, "open:idle": !idleOpen } }))}>
-          <span class="chev" style=${idleOpen ? "" : "transform:rotate(-90deg)"}><${Icon} name="down" size=${12} sw=${2.8} color="#A3A59F" /></span>
+          <span class="chev" style=${idleOpen ? "" : "transform:rotate(-90deg)"}><${Icon} name="down" size=${12} sw=${2.8} color="var(--fg2)" /></span>
           <span style="font-size:12.5px;font-weight:700;white-space:nowrap">${idleOpen ? "收起空闲的" : `空闲的 ${temps.idleCount} 个`}</span>
           ${!idleOpen && latest !== undefined && html`<span class="dim ell" style="font-size:11px">最近一个 ${formatAgo(app.now - latest)}</span>`}
           <span class="mono dim" style="margin-left:auto;font-size:11px">${idleOpen ? "" : "展开"}</span>

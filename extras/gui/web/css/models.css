@@ -2,38 +2,38 @@
 
 /* 模型字段：左边一格供应商的拉宽小标签，中间名字，右边事实 */
 .mp { position: relative; }
-.mp-cur { position: relative; display: flex; align-items: stretch; gap: 0; width: 100%; min-height: 56px; padding: 0; border: 0; text-align: left; background: var(--ink0); box-shadow: inset 0 0 0 1px var(--fg3); color: var(--fg); transition: box-shadow var(--t-fast) var(--ease-in), background-color var(--t-fast) var(--ease-in); }
-.mp-cur:hover { background: var(--ink3); }
-.mp-cur[aria-expanded="true"] { box-shadow: inset 0 0 0 1px var(--acc); }
+.mp-cur { position: relative; display: flex; align-items: stretch; gap: 0; width: 100%; min-height: 56px; padding: 0; border: 1px solid var(--ink5); text-align: left; background: var(--ink0); box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 2px 0 var(--ink0); color: var(--fg); transition: border-color var(--t-fast) var(--ease-in), box-shadow var(--t-fast) var(--ease-in), background-color var(--t-fast) var(--ease-in); }
+.mp-cur:hover { background: var(--ink3); border-color: var(--fg3); }
+.mp-cur[aria-expanded="true"] { border-color: var(--acc); box-shadow: inset 0 0 0 1px var(--acc), 0 2px 0 var(--ink0); }
 .mp-prov { flex: none; width: 84px; display: flex; align-items: center; justify-content: center; padding: 6px; text-align: center; line-height: 1.25; color: var(--ink); background: var(--sel); overflow-wrap: anywhere; font-size: 9.5px; }
 .mp-cur.off .mp-prov { background: var(--ink5); color: var(--fg); }
 .mp-main { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 3px; padding: 8px 14px; }
 .mp-name { font-size: 17px; font-weight: 900; line-height: 1.15; letter-spacing: .02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mp-ref { font-size: 11px; color: var(--fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-ref { font-size: var(--fs-xs); color: var(--fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mp-cur > .tag { align-self: center; margin-right: 8px; }
 .mp-chev { flex: none; align-self: center; padding: 0 14px 0 8px; color: var(--fg2); }
 
 .mp-facts { flex: none; display: inline-flex; align-items: center; gap: 10px; align-self: center; margin-right: 6px; }
-.mp-win { font-size: 22px; min-width: 40px; text-align: right; }
-.mp-img { display: inline-block; min-width: 31px; text-align: center; font-size: 10px !important; }
+.mp-win { font-size: var(--fs-h2); min-width: 40px; text-align: right; }
+.mp-img { display: inline-block; min-width: 31px; text-align: center; font-size: var(--fs-micro) !important; }
 .mp-lv { display: inline-grid; grid-template-columns: repeat(6, 18px); gap: 2px; }
 .mp-lv i { display: grid; place-items: center; height: 18px; font-style: normal; font-family: var(--mono); font-size: 8.5px; line-height: 1; color: var(--fg3); box-shadow: inset 0 0 0 1px var(--ink4); }
 .mp-lv i.on { background: var(--fg); color: var(--ink); box-shadow: none; font-weight: 700; }
 
 .mp-hint { padding: 9px 12px; background: var(--ink3); box-shadow: inset 3px 0 0 var(--warn); font-size: 12.5px; line-height: 1.6; color: var(--fg); }
 .mp-hint.plain { box-shadow: inset 3px 0 0 var(--fg3); color: var(--fg2); }
-.mp-note { padding: 7px 12px; background: var(--ink3); box-shadow: inset 3px 0 0 var(--acc); font-size: 12px; line-height: 1.6; color: var(--fg); }
+.mp-note { padding: 7px 12px; background: var(--ink3); box-shadow: inset 3px 0 0 var(--acc); font-size: var(--fs-sm); line-height: 1.6; color: var(--fg); }
 
 /* 面板 */
 .mp-panel { display: flex; flex-direction: column; background: var(--ink0); box-shadow: inset 0 0 0 1px var(--ink4); animation: tau-rise var(--t-mid) var(--ease-in) both; }
 .mp-search { display: flex; align-items: center; gap: 10px; padding: 0 12px; border-bottom: 1px solid var(--ink4); color: var(--fg2); }
-.mp-search input { flex: 1; min-width: 0; min-height: 42px; border: 0; background: transparent; color: var(--fg); font-size: 14px; outline: none; }
-.mp-search input:focus-visible { outline: none; }
+.mp-search input { flex: 1; min-width: 0; min-height: 42px; border: 0; background: transparent; color: var(--fg); font-size: 14px; outline: none; box-shadow: none; }
+.mp-search input:focus-visible { outline: none; box-shadow: none; }
 .mp-search:focus-within { box-shadow: inset 0 -2px 0 var(--acc); }
-.mp-count { font-size: 11px; }
+.mp-count { font-size: var(--fs-xs); }
 .mp-recent { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 9px 12px; border-bottom: 1px solid var(--ink4); }
-.mp-recent .label { color: var(--acc); margin-right: 4px; }
-.mp-recent button { border: 0; background: var(--ink3); color: var(--fg); font-size: 12px; font-weight: 700; padding: 5px 10px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-recent .kicker { margin-right: 4px; }
+.mp-recent button { border: 0; background: var(--ink3); color: var(--fg); font-size: var(--fs-sm); font-weight: 700; padding: 5px 10px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 1.5px 0 var(--ink0); }
 .mp-recent button:hover { background: var(--ink5); }
 .mp-recent button.on { background: var(--sel); color: var(--ink); box-shadow: inset 3px 0 0 var(--acc); }
 .mp-list { max-height: 340px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--fg3) transparent; overscroll-behavior: contain; }
@@ -58,12 +58,41 @@
 .mp-row .mp-win { font-size: 18px; min-width: 34px; }
 .mp-row .mp-facts { margin-right: 0; gap: 8px; }
 
-/* 思考强度：一排分段按钮，选中的是黄块 */
-.seg3 { display: flex; flex-wrap: wrap; gap: 2px; }
-.seg3 button { flex: 1 1 0; min-width: 64px; min-height: 40px; padding: 0 10px; border: 0; background: var(--ink3); color: var(--fg); font-family: var(--mono); font-size: 12px; transition: background-color var(--t-fast) var(--ease-in), color var(--t-fast) var(--ease-in); }
-.seg3 button:hover { background: var(--ink5); }
-.seg3 button:active { background: var(--ink4); }
-.seg3 button[aria-pressed="true"] { background: var(--acc); color: var(--ink); font-weight: 800; --bk: var(--ink); }
+/* 思考强度：斜切联排机械键，选中的是信号黄实心键 */
+.seg3 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  padding: 1px 1px 2.5px 1px;
+  border: 0;
+  background: linear-gradient(180deg, #4A4D46 0%, var(--ink0) 55%);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%);
+}
+.seg3 button {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 58px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  background: #1E201C;
+  color: #9A9D96;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
+  transition: background-color var(--t-fast) var(--ease-in), color var(--t-fast) var(--ease-in), transform 70ms var(--ease-in);
+}
+.seg3 button:first-child { font-family: var(--ui); }
+.seg3 button[aria-pressed="false"]:hover { background: #262923; color: var(--fg); }
+.seg3 button:active { transform: translateY(1px); }
+.seg3 button[aria-pressed="true"] {
+  background: var(--acc);
+  color: var(--ink);
+  font-weight: 900;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .45);
+  --bk: var(--ink);
+}
 
 /* 检查条：能启动，或者警示色的错误原文 */
 .chk { display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; background: var(--ink0); box-shadow: inset 3px 0 0 var(--acc); font-size: 12.5px; line-height: 1.6; }
@@ -75,26 +104,63 @@
 
 /* 高级区 */
 .adv-h { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 0 2px; border: 0; background: transparent; color: var(--fg); }
-.adv-h:hover .label { color: var(--acc); }
+.adv-h:hover .kicker { color: var(--acc); }
 .input.ro { display: flex; align-items: center; color: var(--fg2); box-shadow: inset 0 0 0 1px var(--ink4); border: 0; font-weight: 400; }
 .input[aria-invalid="true"] { box-shadow: inset 0 0 0 2px var(--warn); }
 
 /* 改预设：头部压一条斜纹，和别的弹窗区分 */
 .dlg.editpreset::before { height: 8px; background: repeating-linear-gradient(-45deg, var(--acc) 0 10px, var(--ink0) 10px 20px); }
-.ep-keep { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; color: var(--fg2); }
+.ep-keep { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: var(--fs-sm); color: var(--fg2); }
 
-/* 换模型：当前冻结的模型是一块暗牌，两种选法并排 */
+/* 换模型：当前冻结的模型是一块暗牌，两种选法做在联排机械底座上 */
 .sw-now { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: stretch; background: var(--ink0); box-shadow: inset 0 0 0 1px var(--ink4); }
-.sw-now > .label { align-self: center; padding: 0 14px; color: var(--fg2); }
+.sw-now > .kicker { align-self: center; padding: 0 14px; color: var(--fg2); }
 .sw-now-m { min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 10px 0; }
-.sw-now-m b { font-size: 16px; font-weight: 900; }
-.sw-now-m .mono { font-size: 11px; color: var(--fg2); overflow-wrap: anywhere; }
+.sw-now-m b { font-size: var(--fs-h3); font-weight: 900; }
+.sw-now-m .mono { font-size: var(--fs-xs); color: var(--fg2); overflow-wrap: anywhere; }
 .sw-now-t { display: flex; align-items: center; gap: 6px; padding: 0 14px; }
 .sw-now-t .num { font-size: 26px; color: var(--acc); }
-.sw-mode { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
-.sw-mode button { min-height: 44px; border: 0; background: var(--ink3); color: var(--fg); font-size: 13px; font-weight: 700; transition: background-color var(--t-fast) var(--ease-in); }
-.sw-mode button:hover { background: var(--ink5); }
-.sw-mode button[aria-pressed="true"] { background: var(--sel); color: var(--ink); box-shadow: inset 0 -3px 0 var(--acc); font-weight: 900; --bk: var(--ink); }
+.sw-mode {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  padding: 1px 1px 2.5px 1px;
+  border: 0;
+  background: linear-gradient(180deg, #4A4D46 0%, var(--ink0) 55%);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%);
+}
+.sw-mode button {
+  position: relative;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 0;
+  background: #1E201C;
+  color: #9A9D96;
+  font-size: var(--fs-base);
+  font-weight: 700;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
+  transition: background-color var(--t-fast) var(--ease-in), color var(--t-fast) var(--ease-in), transform 70ms var(--ease-in);
+}
+.sw-mode button[aria-pressed="false"]:hover { background: #262923; color: var(--fg); }
+.sw-mode button:active { transform: translateY(1px); }
+.sw-mode button[aria-pressed="true"] {
+  background: var(--sel);
+  color: var(--ink);
+  font-weight: 900;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9);
+  --bk: var(--ink);
+}
+.sw-mode button[aria-pressed="true"]::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 4px;
+  height: 4px;
+  border-top: 2px solid var(--ink);
+  border-left: 2px solid var(--ink);
+  pointer-events: none;
+}
 .sw-cost { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; background: var(--ink3); box-shadow: inset 3px 0 0 var(--acc); font-size: 12.5px; line-height: 1.65; }
 .sw-cost li { position: relative; padding-left: 16px; }
 .sw-cost li::before { content: ""; position: absolute; left: 0; top: .7em; width: 8px; height: 2px; background: var(--fg3); }
@@ -109,15 +175,15 @@
 .st-row + .st-row { box-shadow: inset 0 1px 0 var(--ink3); }
 .st-row.off { color: var(--fg2); }
 .st-row .st-n { flex: 1 1 0; min-width: 0; display: flex; align-items: baseline; gap: 10px; overflow: hidden; }
-.st-row .st-n b { font-size: 13px; font-weight: 800; white-space: nowrap; }
-.st-row .mono { font-size: 11px; color: var(--fg2); }
-.st-row .ct { font-size: 11px; color: var(--fg2); min-width: 44px; text-align: right; }
+.st-row .st-n b { font-size: var(--fs-base); font-weight: 800; white-space: nowrap; }
+.st-row .mono { font-size: var(--fs-xs); color: var(--fg2); }
+.st-row .ct { font-size: var(--fs-xs); color: var(--fg2); min-width: 44px; text-align: right; }
 
 @media (max-width: 759px) {
   .mp-facts .mp-lv { display: none; }
   .mp-win { font-size: 18px; }
   .mp-prov { width: 64px; }
   .sw-now { grid-template-columns: minmax(0, 1fr); }
-  .sw-now > .label, .sw-now-t { padding: 8px 14px 0; }
+  .sw-now > .kicker, .sw-now-t { padding: 8px 14px 0; }
   .seg3 button { min-width: 52px; }
 }

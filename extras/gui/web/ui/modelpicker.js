@@ -83,7 +83,7 @@ export function ModelPicker({ app, value, onPick, label = "模型" }) {
           const m = p?.models[0];
           if (p && m) pick(`${p.id}/${m.id}`);
         }} /><span class="mono mp-count">${groups.reduce((n, p) => n + p.models.length, 0)}</span></div>
-      ${recent.length > 0 && html`<div class="mp-recent"><span class="label">最近用过</span>${recent.map((r) => html`<button type="button" key=${r.ref} class=${r.ref === value ? "on" : ""} title=${r.ref} onClick=${() => pick(r.ref)}>${r.model.name}</button>`)}</div>`}
+      ${recent.length > 0 && html`<div class="mp-recent"><span class="kicker acc-fg">最近用过</span>${recent.map((r) => html`<button type="button" key=${r.ref} class=${r.ref === value ? "on" : ""} title=${r.ref} onClick=${() => pick(r.ref)}>${r.model.name}</button>`)}</div>`}
       <div class="mp-list">
         ${groups.length === 0 && html`<p class="mp-none">没有匹配的模型。</p>`}
         ${groups.map(

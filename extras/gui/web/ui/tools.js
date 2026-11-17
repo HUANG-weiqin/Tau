@@ -89,7 +89,7 @@ export function ToolsDialog({ app, onClose }) {
                     </div>
                     <div class="td-act">
                       ${ask?.kind === "remove" && ask.name === t.name
-                        ? html`<div class="td-ask"><span>删了找不回。</span><span class="row2"><${Pill} kind="warn" label="删除" disabled=${busy} onClick=${() => act(() => api.removeTool(t.name))} /><${Pill} label="取消" onClick=${() => setAsk(null)} /></span></div>`
+                        ? html`<div class="td-ask"><span>删了找不回。</span><span class="row2"><${Pill} size="sm" kind="warn" label="删除" disabled=${busy} onClick=${() => act(() => api.removeTool(t.name))} /><${Pill} size="sm" label="取消" onClick=${() => setAsk(null)} /></span></div>`
                         : t.usedBy.length > 0
                           ? html`<span class="dnote">有预设在用，不能删</span>`
                           : html`<button type="button" class="link" disabled=${busy} onClick=${() => setAsk({ kind: "remove", name: t.name })}>删除</button>`}
@@ -115,11 +115,11 @@ export function ToolsDialog({ app, onClose }) {
                   </div>
                   <div class="td-act">
                     ${t.status === "none"
-                      ? html`<${Pill} kind="accent" label="安装" disabled=${busy} onClick=${() => act(() => api.installTool(t.name))} />`
+                      ? html`<${Pill} size="sm" kind="accent" label="安装" disabled=${busy} onClick=${() => act(() => api.installTool(t.name))} />`
                       : t.status === "differs"
                         ? ask?.kind === "replace" && ask.name === t.name
-                          ? html`<div class="td-ask"><span>覆盖 ${t.name}.json，里面改过的内容会丢。</span><span class="row2"><${Pill} kind="warn" label="覆盖" disabled=${busy} onClick=${() => act(() => api.installTool(t.name, true))} /><${Pill} label="取消" onClick=${() => setAsk(null)} /></span></div>`
-                          : html`<${Pill} label="更新" disabled=${busy} onClick=${() => setAsk({ kind: "replace", name: t.name })} />`
+                          ? html`<div class="td-ask"><span>覆盖 ${t.name}.json，里面改过的内容会丢。</span><span class="row2"><${Pill} size="sm" kind="warn" label="覆盖" disabled=${busy} onClick=${() => act(() => api.installTool(t.name, true))} /><${Pill} size="sm" label="取消" onClick=${() => setAsk(null)} /></span></div>`
+                          : html`<${Pill} size="sm" label="更新" disabled=${busy} onClick=${() => setAsk({ kind: "replace", name: t.name })} />`
                         : html`<span class="dnote">已是库里的样子</span>`}
                   </div>
                 </li>`;

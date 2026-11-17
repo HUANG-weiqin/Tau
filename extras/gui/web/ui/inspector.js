@@ -1,5 +1,6 @@
 // 详情栏和竖选项卡。
 // 进程三页：概况、改动、后台。项目三页：概况、分支、后台。`app.tab` 是 0 到 2。
+// 改动页的文件树只列文件，点一个文件弹出 diff 窗（`diff.js`）。
 // git 和后台 log 的数据自己轮询：对象换了就重读，之后每 10 秒读一次，页面藏起来时不读。
 // 这里直接调 `api.js`，不用 `app.git`：那个出错会弹提示，轮询会一直弹。
 import { html, Icon, Tex, useEffect, useRef, useState, Fragment } from "./common.js";
@@ -19,8 +20,7 @@ const PROJ_TABS = [
   ["branch", "分支"],
   ["term", "后台"],
 ];
-const POLL_MS = 10_000;
-const MAX_DIFF_LINES = 3000;
+export const POLL_MS = 10_000;
 /** 轮询到的数据：`key` 是它属于哪个对象，对不上就当没有。 */
 const NONE = { key: /** @type {string | null} */ (null), value: /** @type {any} */ (null), error: /** @type {string | null} */ (null), loading: true };
 
@@ -31,7 +31,7 @@ const NONE = { key: /** @type {string | null} */ (null), value: /** @type {any} 
  * @param {number} ms
  * @param {unknown} [bump]
  */
-function usePoll(key, fn, ms, bump) {
+export function usePoll(key, fn, ms, bump) {
   const [st, setSt] = useState(NONE);
   const fnRef = useRef(fn);
   fnRef.current = fn;
@@ -97,9 +97,9 @@ function Note({ children, kind = "" }) {
 }
 
 /** 增删行数：增加加粗，删除灰。没有数字（没跟踪的新文件）就不显示。 */
-function Delta({ add, del, dark = false }) {
+export function Delta({ add, del }) {
   if ((add === null && del === null) || (!add && !del)) return null;
-  return html`<span class="mono idelta"><b>+${add ?? 0}</b>${del ? html` <span class=${dark ? "dk" : "dim"}>−${del}</span>` : ""}</span>`;
+  return html`<span class="mono idelta"><b>+${add ?? 0}</b>${del ? html` <span class="dim">−${del}</span>` : ""}</span>`;
 }
 
 /** @param {{ tools: string[] | null }} p */
@@ -110,7 +110,7 @@ function ToolTags({ tools }) {
 }
 
 /** 读取状态：读到前、出错时的占位。有旧值时调用方自己决定还显不显示。 */
-function Waiting({ st, what }) {
+export function Waiting({ st, what }) {
   if (st.error !== null) return html`<${Note} kind="warn">${what}：${st.error}<//>`;
   return html`<${Note}>读取中…<//>`;
 }
@@ -139,7 +139,7 @@ function SegmentRuler({ app, id, self, threshold }) {
       </div>
       <div class="cc-rule">
         <div class="cc-bar">${Array.from({ length: 10 }, (_, i) => html`<span class=${i < full ? "f" : i === full && part ? "p" : ""}></span>`)}</div>
-        ${mark !== null && html`<span class=${`cc-flag ${mark > 55 ? "r" : ""}`} style=${`left:${mark}%`}><span class="label">自动换段</span><span class="mono">${mark}%</span></span>`}
+        ${mark !== null && html`<span class=${`cc-flag ${mark > 55 ? "r" : ""}`} style=${`left:${mark}%`}><span class="kicker">自动换段</span><span class="mono">${mark}%</span></span>`}
       </div>
     </div>
     ${from > 1 && html`<p class="inote">更早的 ${from - 1} 段都换过段了。</p>`}
@@ -288,7 +288,7 @@ function ProjOverview({ app, status, branches }) {
 /* ------------------------------------------------------------------ 改动 */
 
 /** @param {{ path: string, status: string, add: number | null, del: number | null }[]} files */
-function buildTree(files) {
+export function buildTree(files) {
   const mk = (/** @type {string} */ name) => ({ name, dirs: /** @type {Map<string, any>} */ (new Map()), files: /** @type {any[]} */ ([]), add: 0, del: 0, count: 0 });
   const root = mk("");
   for (const f of files) {
@@ -320,7 +320,7 @@ function buildTree(files) {
  * 目录行的 `key` 是它从根起的路径；`closed` 里有的目录只出一行，不出里面的东西。
  * @param {any} node @param {number} depth @param {any[]} out @param {string} prefix @param {Set<string> | null} closed
  */
-function flatten(node, depth, out = [], prefix = "", closed = null) {
+export function flatten(node, depth, out = [], prefix = "", closed = null) {
   const byName = (/** @type {any} */ a, /** @type {any} */ b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
   for (const d of [...node.dirs.values()].sort(byName)) {
     let cur = d;
@@ -340,7 +340,7 @@ function flatten(node, depth, out = [], prefix = "", closed = null) {
 }
 
 /** porcelain 的两位状态码 → 一个字母和读屏用的字。 */
-function statusLetter(/** @type {string} */ code) {
+export function statusLetter(/** @type {string} */ code) {
   if (code === "??") return ["A", "新"];
   const c = code[0] !== " " && code[0] !== undefined ? code[0] : (code[1] ?? "M");
   const label = { A: "新", M: "改", D: "删", R: "改名", C: "复制", U: "冲突", T: "改类型" }[/** @type {"A"} */ (c)] ?? "改";
@@ -350,7 +350,8 @@ function statusLetter(/** @type {string} */ code) {
 /** 文件多时，一开始只展开最上一层目录。 */
 const TREE_OPEN_MAX = 15;
 
-function FileTree({ files, selected, onSelect }) {
+/** @param {{ files: any[], onOpen: (path: string, el: Element) => void }} p */
+function FileTree({ files, onOpen }) {
   const tree = buildTree(files);
   const dirKeys = flatten(tree, 0).filter((r) => r.kind === "dir");
   const [closed, setClosed] = useState(() => new Set(files.length > TREE_OPEN_MAX ? dirKeys.filter((r) => r.depth > 0).map((r) => r.key) : []));
@@ -373,71 +374,18 @@ function FileTree({ files, selected, onSelect }) {
       }
       const f = r.file;
       const [letter, label] = statusLetter(f.status);
-      const sel = selected === f.path;
       const nested = r.depth > 0;
       const left = 25 + (r.depth - 1) * 16;
       return html`<li key=${f.path}>
-        <button type="button" class=${`trow file ${sel ? "sel" : ""}`} aria-pressed=${sel} onClick=${() => onSelect(f.path)} style=${`padding-left:${nested ? 42 + (r.depth - 1) * 16 : 18}px`}>
+        <button type="button" class="trow file" aria-haspopup="dialog" onClick=${(/** @type {Event} */ ev) => onOpen(f.path, /** @type {Element} */ (ev.currentTarget))} style=${`padding-left:${nested ? 42 + (r.depth - 1) * 16 : 18}px`}>
           ${nested && html`<span aria-hidden="true" class="tl" style=${`left:${left}px;${r.last ? "height:50%" : "bottom:0"}`}></span><span aria-hidden="true" class="tl h" style=${`left:${left}px`}></span>`}
-          ${sel && html`<span aria-hidden="true" class="tsel"></span>`}
           <span class=${`tmark ${letter === "A" ? "add" : letter === "D" ? "del" : ""}`} aria-label=${label}>${letter}</span>
           <span class="mono trow-n">${f.name}</span>
-          <${Delta} add=${f.add} del=${f.del} dark=${sel} />
+          <${Delta} add=${f.add} del=${f.del} />
         </button>
       </li>`;
     })}
   </ul>`;
-}
-
-/** git diff 的原样输出，按行着色。不自己算 diff。 */
-function DiffText({ text, truncated }) {
-  const all = text.replace(/\r?\n$/, "").split(/\r?\n/);
-  const lines = all.slice(0, MAX_DIFF_LINES);
-  let inHunk = false;
-  const rows = lines.map((l, i) => {
-    let cls = "ctx";
-    let sign = " ";
-    let body = l;
-    if (l.startsWith("diff ")) {
-      inHunk = false;
-      cls = "hd";
-      sign = "";
-    } else if (l.startsWith("@@")) {
-      inHunk = true;
-      cls = "hunk";
-      sign = "";
-    } else if (!inHunk) {
-      cls = "hd";
-      sign = "";
-    } else if (l.startsWith("+")) {
-      cls = "add";
-      sign = "+";
-      body = l.slice(1);
-    } else if (l.startsWith("-")) {
-      cls = "del";
-      sign = "−";
-      body = l.slice(1);
-    } else if (l.startsWith("\\")) {
-      cls = "hd";
-      sign = "";
-    } else {
-      body = l.slice(1);
-    }
-    return html`<div key=${i} class=${`df ${cls}`}><span class="df-s" aria-hidden="true">${sign}</span><span class="df-t">${body}</span></div>`;
-  });
-  return html`<div class="diff-lines">${rows}</div>
-    ${(all.length > MAX_DIFF_LINES || truncated) && html`<p class="inote diff-note">${truncated ? "diff 太长，只显示了前 256 KB。" : `diff 太长，只显示前 ${MAX_DIFF_LINES} 行。`}</p>`}`;
-}
-
-function DiffBox({ workdir, file, info, bump }) {
-  const d = usePoll(`d|${workdir}|${file}`, () => api.git(workdir, "diff", file), POLL_MS, bump);
-  const v = d.value;
-  return html`<div class="diffbox">
-    <div class="diff-h"><span class="mono ell diff-f">${file}</span><span class="diff-r">${info && html`<${Delta} add=${info.add} del=${info.del} />`}</span></div>
-    <div class="diff-body" tabindex="0" aria-label=${`${file} 的 diff`}>
-      ${v ? (v.text === "" ? html`<p class="inote diff-note">没有文本改动。</p>` : html`<${DiffText} text=${v.text} truncated=${v.truncated === true} />`) : html`<${Waiting} st=${d} what="读不到 diff" />`}
-    </div>
-  </div>`;
 }
 
 function fmtCommitTime(/** @type {number} */ t, /** @type {number} */ now) {
@@ -459,16 +407,9 @@ function unmergedOf(/** @type {any} */ b) {
 }
 
 function ProcChanges({ app, workdir, status }) {
-  const [sel, setSel] = useState(/** @type {string | null} */ (null));
   const st = status.value;
   const files = st && st.repo ? st.files : [];
   const sig = files.map((f) => `${f.path}:${f.status}:${f.add}:${f.del}`).join("|");
-  // 选中的文件没了，或还没选：选第一个。
-  useEffect(() => {
-    if (files.length === 0) {
-      if (sel !== null) setSel(null);
-    } else if (sel === null || !files.some((f) => f.path === sel)) setSel(flatten(buildTree(files), 0).find((r) => r.kind === "file")?.file.path ?? files[0].path);
-  }, [sig]);
   const br = usePoll(st && st.repo ? `br|${workdir}` : null, () => api.git(workdir, "branches"), 3 * POLL_MS);
   const lg = usePoll(st && st.repo ? `lg|${workdir}` : null, () => api.git(workdir, "log"), 3 * POLL_MS, sig);
   if (!st) return html`<div class="ipage"><div class="ibody"><${Waiting} st=${status} what="读不到 git 状态" /></div></div>`;
@@ -479,7 +420,6 @@ function ProcChanges({ app, workdir, status }) {
   const mine = bd && Array.isArray(bd.branches) ? bd.branches.find((b) => b.current) : null;
   const onMain = mine && mine.name === bd.main;
   const shared = app.entries.filter((e) => e.workdir !== null && pathKey(e.workdir) === pathKey(workdir)).length;
-  const info = sel !== null ? (files.find((f) => f.path === sel) ?? null) : null;
   return html`<div class="ipage">
     <${Stats}
       items=${[
@@ -497,9 +437,8 @@ function ProcChanges({ app, workdir, status }) {
       ${shared <= 1 && html`<${Note}>这是工作目录里的改动，git 的原样输出。<//>`}
       <section class="isection flush">
         <div class="pad"><${Sec} zh="工作区" en="FILES" right=${files.length} /></div>
-        ${files.length === 0 ? html`<div class="pad"><${Note}>工作区是干净的。<//></div>` : html`<${FileTree} files=${files} selected=${sel} onSelect=${setSel} />`}
+        ${files.length === 0 ? html`<div class="pad"><${Note}>工作区是干净的。<//></div>` : html`<${FileTree} files=${files} onOpen=${(/** @type {string} */ file, /** @type {Element} */ el) => app.openDialog("diff", el, { workdir, file, files })} />`}
       </section>
-      ${sel !== null && html`<${DiffBox} key=${sel} workdir=${workdir} file=${sel} info=${info} bump=${sig} />`}
       <section class="isection">
         <${Sec} zh="提交" en="COMMITS" right=${lg.value ? lg.value.commits.length : ""} />
         ${lg.value ? (lg.value.commits.length === 0 ? html`<${Note}>还没有提交。<//>` : html`<${CommitList} commits=${lg.value.commits} now=${Date.now()} />`) : html`<${Waiting} st=${lg} what="读不到提交" />`}
