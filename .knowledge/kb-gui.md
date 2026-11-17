@@ -29,7 +29,8 @@
 |---|---|
 | `extras/package.json` | 上层的依赖，精确锁定（[D63](kb-decisions.md#d63-上层的依赖随便加)） |
 | `extras/gui/bridge/main.ts` | 桥的入口，Node 直接运行 |
-| `extras/gui/bridge/*.ts` | 桥的各部分：检查和路由、转发、预设、git、后台命令、界面数据、选文件夹 |
+| `extras/gui/bridge/server.ts` | `createBridge`：检查和路由。测试用它在进程里起桥，可以换掉 git 和选文件夹 |
+| `extras/gui/bridge/*.ts` | 其余各部分：`forward.ts` 转发，`static.ts` 静态文件，`presets.ts`、`git.ts`、`bg.ts`、`state.ts`、`pick.ts`，`util.ts` 放公用的小函数 |
 | `extras/gui/web/index.html` | 页面 |
 | `extras/gui/web/lib/*.js` | 页面的纯逻辑。不碰 DOM，不发请求。文件头写 `// @ts-check`，类型用 JSDoc |
 | `extras/gui/web/ui/*.js` | 组件 |
@@ -76,6 +77,8 @@
 
 请求的正文是 JSON 对象。出错回 4xx 或 5xx，正文 `{ "error": "<中文原因>" }`。
 
+正文上限：`/api/tau` 是 32 MiB，因为图片是 base64；其余是 1 MiB。
+
 | 路径 | 请求 | 回 |
 |---|---|---|
 | `/api/tau` | 一条协议请求 | 管道回的每一行原样分块写回，管道关闭就结束。浏览器断开，桥就断开管道。连不上管道回 503 |
@@ -84,7 +87,7 @@
 | `/api/git` | `{ workdir, what, file? }` | 见下 |
 | `/api/bg` | `{ processes }` | `{ logs }`，见下 |
 | `/api/state` | `{ set? }` | `{ state }`。`set` 的每个顶层键覆盖进文件，再回整个文件 |
-| `/api/pick-folder` | `{}` | `{ path }`，取消时是 `null` |
+| `/api/pick-folder` | `{}` | `{ path }`，取消时是 `null`。同时只开一个对话框，第二个请求回 409 |
 
 `/api/tau` 只查正文是带字符串 `op` 的对象，其余交给服务校验。
 
@@ -96,12 +99,13 @@
 
 git：
 
-- 一律 `git --no-optional-locks -C <工作目录> …`，不经 shell，有超时。
+- 一律 `git --no-optional-locks -c core.fsmonitor=false -C <目录> …`，不经 shell，有超时。diff 另加 `--no-ext-diff` 和 `--no-textconv`，不跑仓库里配置的外部程序。
+- 输出超过缓冲上限时：`diff` 截断并标 `truncated`；`status` 回 500，不解析半截输出。
 - 工作目录必须是某个预设的 `workdir`，或者界面数据 `folders` 里的文件夹。否则回 403。比较时不分大小写。
 - `what`：
   - `status`：`{ repo, branch?, files }`。每个文件 `{ path, status, add, del }`，`status` 是 porcelain 的两个字母，`add`、`del` 来自 `diff --numstat HEAD`，拿不到时是 `null`。不是仓库时 `{ repo: false }`。
-  - `diff`：`{ text, truncated }`。已跟踪的文件用 `diff HEAD -- <文件>`，未跟踪的用 `diff --no-index`。超过 256 KB 截断。
-  - `log`：`{ commits }`，最近 30 个。每个 `{ hash, short, subject, author, time }`。
+  - `diff`：`{ text, truncated }`。`file` 是 `status` 给的路径，相对仓库根，所以在仓库根上跑。未跟踪的文件用 `diff --no-index`，其余用 `diff HEAD -- <文件>`，还没有提交时退回 `diff --cached`。超过 256 KB 截断。
+  - `log`：`{ commits }`，最近 30 个。每个 `{ hash, short, subject, author, time }`，`time` 是毫秒。
   - `branches`：`{ main, branches }`。主分支是 `main`，没有就 `master`，都没有是 `null`。每个分支 `{ name, current, ahead, behind, merged, add, del }`，和主分支比。
 
 后台命令：
@@ -111,7 +115,7 @@ git：
 
 ### 界面数据
 
-`~/.tau/extras/gui/state.json`。桥只查它是 JSON 对象，有大小上限。写的时候先写临时文件再改名。键由页面定：
+`~/.tau/extras/gui/state.json`。桥只查它是 JSON 对象，上限 1 MiB。写的时候先写临时文件再改名，多个写入排队做。文件坏了回 500，不覆盖。键由页面定：
 
 | 键 | 内容 |
 |---|---|
@@ -147,7 +151,7 @@ git：
 
 - **普通的 `git status` 会写 `index.lock`。** 一律带 `--no-optional-locks`（[设计稿第 1 节](../docs/design/gui.md#1-定位)）。
 - **连管道不能半关闭。** 见 [kb-service 的坑点](kb-service.md#坑点)。
-- **import map 是内联脚本。** 改了 `index.html` 的 import map，桥要重启才能算出新的哈希。
+- **`index.html` 只在桥启动时读一次。** import map 是内联脚本，桥启动时算它的哈希写进 CSP。改了 `index.html` 要重启桥。其余静态文件每次请求现读。
 
 ## 关联模块
 

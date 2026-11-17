@@ -1,6 +1,6 @@
 # 界面执行清单
 
-`updated: 2026-11-17` · **当前：还没开始。**
+`updated: 2026-11-17` · **当前：第 0、1 步做完，第 2 到 4 步在做。**
 
 按顺序做。每一步结束时，测试全部通过。界面长什么样、数据从哪来，见[界面设计稿](../design/gui.md)。上层的通用规则见 [kb-extras](../../.knowledge/kb-extras.md)。本清单只列任务和验收，不复述设计。
 
@@ -17,27 +17,27 @@
 
 ## 第 0 步：骨架
 
-- [ ] `extras/package.json`：`"type": "module"`，依赖精确锁定。依赖只有 `preact`、`htm` 和设计稿第 8 节的三套字体。从 npm 装，**要用户点头**。
-- [ ] 目录：`extras/gui/bridge/` 放 HTTP 桥，是 Node 直接运行的 `.ts`；`extras/gui/web/` 放页面，是浏览器直接加载的 `.js`。
-- [ ] 页面的纯逻辑放进不碰 DOM 的模块：状态合并、增量读、筛选、标题、当前进程。类型用 JSDoc 写，由 tsc 查（`checkJs`）。
-- [ ] tsconfig 加上 `extras`，不查 `node_modules`。扫描测试 `test/extras-imports.test.ts` 跳过 `node_modules`。
-- [ ] 界面的测试放在 `test/extras/gui/`，`npm test` 照旧一次跑完。
-- [ ] 新建 `.knowledge/kb-gui.md`，登记进 INDEX。
+- [x] `extras/package.json`：`"type": "module"`，依赖精确锁定。依赖只有 `preact`、`htm` 和设计稿第 8 节的三套字体。从 npm 装，**要用户点头**。
+- [x] 目录：`extras/gui/bridge/` 放 HTTP 桥，是 Node 直接运行的 `.ts`；`extras/gui/web/` 放页面，是浏览器直接加载的 `.js`。
+- [x] 页面的纯逻辑放进不碰 DOM 的模块：状态合并、增量读、筛选、标题、当前进程。类型用 JSDoc 写，由 tsc 查（`checkJs`）。
+- [x] tsconfig 加上 `extras`，不查 `node_modules`。扫描测试 `test/extras-imports.test.ts` 跳过 `node_modules`。
+- [x] 界面的测试放在 `test/extras/gui/`，`npm test` 照旧一次跑完。
+- [x] 新建 `.knowledge/kb-gui.md`，登记进 INDEX。
 
 **验收**：空骨架下三条门槛都过。扫描测试不扫 `node_modules`，照样能发现违规。
 
 ## 第 1 步：HTTP 桥
 
-- [ ] `~/.tau` 的路径和端口能用参数指定。测试用临时目录。
-- [ ] 照 [HTTP 桥要做的检查](../../.knowledge/kb-extras.md#http-桥要做的检查)收请求：GET 送页面，POST 收接口。
-- [ ] 转发线协议：一个 POST 带一条协议请求。桥连管道（`TAU_PIPE` 有值就用它），回来的每一行原样分块写回。客户端断开，桥就断开管道。连管道时不半关闭（[kb-service 的坑点](../../.knowledge/kb-service.md#坑点)）。
-- [ ] 读预设：列出 `presets/` 下的预设，解析 front matter。不导入 `src/`，自己写解析。读不懂的预设照样列出，标上读不懂。
-- [ ] 写预设：打开项目时新建预设，只写预设认识的字段。文件已经存在就拒绝，不覆盖。
-- [ ] git：只跑固定的几条只读命令（改动、diff、提交、分支），都带 `--no-optional-locks`。工作目录必须是某个预设的 `workdir`，或者记下的项目文件夹。
-- [ ] 后台命令：列出 `extras/bg/` 下某个进程的 log，读末尾一段。
-- [ ] 界面自己的数据：读写 `extras/gui/` 下的 JSON 文件，先写临时文件再改名。
-- [ ] 选文件夹：经 PowerShell 弹出系统的选文件夹对话框。
-- [ ] 测试：每条检查的反例；转发对着测试服务（模型用 faux），含 `watch` 的分块推送和客户端断开；git 命令都带 `--no-optional-locks`，工作目录不对时拒绝；写预设不覆盖；改名写入中途失败时旧文件完好。
+- [x] `~/.tau` 的路径和端口能用参数指定。测试用临时目录。
+- [x] 照 [HTTP 桥要做的检查](../../.knowledge/kb-extras.md#http-桥要做的检查)收请求：GET 送页面，POST 收接口。
+- [x] 转发线协议：一个 POST 带一条协议请求。桥连管道（`TAU_PIPE` 有值就用它），回来的每一行原样分块写回。客户端断开，桥就断开管道。连管道时不半关闭（[kb-service 的坑点](../../.knowledge/kb-service.md#坑点)）。
+- [x] 读预设：列出 `presets/` 下的预设，解析 front matter。不导入 `src/`，自己写解析。读不懂的预设照样列出，标上读不懂。
+- [x] 写预设：打开项目时新建预设，只写预设认识的字段。文件已经存在就拒绝，不覆盖。
+- [x] git：只跑固定的几条只读命令（改动、diff、提交、分支），都带 `--no-optional-locks`。工作目录必须是某个预设的 `workdir`，或者记下的项目文件夹。
+- [x] 后台命令：列出 `extras/bg/` 下某个进程的 log，读末尾一段。
+- [x] 界面自己的数据：读写 `extras/gui/` 下的 JSON 文件，先写临时文件再改名。
+- [x] 选文件夹：经 PowerShell 弹出系统的选文件夹对话框。
+- [x] 测试：每条检查的反例；转发对着测试服务（模型用 faux），含 `watch` 的分块推送和客户端断开；git 命令都带 `--no-optional-locks`，工作目录不对时拒绝；写预设不覆盖；改名写入中途失败时旧文件完好。
 
 **验收**：测试全过。在测试服务上，浏览器能打开页面；`Host` 不对、方法不对、`Content-Type` 不对时都被拒绝。
 
@@ -51,7 +51,7 @@
 - [ ] 主区：铭牌、消息流、写信框（`send`）、停止、出错带和 D25 的预告。
 - [ ] 新进程弹窗、打开项目弹窗（含新建预设）。
 - [ ] 视觉：设计稿第 8 节的颜色、字体和材质。
-- [ ] 测试：纯逻辑的单元测试。至少有：增量读跨过换段、`watch` 重连后不丢不重、标题跳过 `spawn` 的信头、分叉的标题、当前进程的规则、筛选的计数。
+- [x] 测试：纯逻辑的单元测试。至少有：增量读跨过换段、`watch` 重连后不丢不重、标题跳过 `spawn` 的信头、分叉的标题、当前进程的规则、筛选的计数。
 
 **验收**：在测试服务上，模型用 Haiku，从界面走完一遍：打开项目、建预设、开进程、寄信、看着流式文字写完、停止、看到出错带。
 
