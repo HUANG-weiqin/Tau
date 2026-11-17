@@ -45,7 +45,7 @@ export function NewProcDialog({ app, onClose }) {
         </div>
         <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px">
           <p class="dnote" style="flex:1 1 260px">同一个预设能开好几个进程，它们共用这个预设的记忆库。要临时的，选不带记忆的。</p>
-          <${Pill} label="新建预设" icon="ext" chip="gray" onClick=${(/** @type {Event} */ e) => app.openDialog("openproj", /** @type {Element} */ (e.currentTarget), { folder: project?.path })} />
+          <${Pill} label="新建预设" icon="ext" chip="gray" onClick=${(/** @type {Event} */ e) => app.openDialog("newpreset", /** @type {Element} */ (e.currentTarget), { back: true })} />
         </div>
         <${SecHead} n="02" title="第一封信" en="FIRST LETTER" />
         <textarea class="letter-in" rows="3" placeholder=${sel ? `给 ${app.gui.names[sel.id] ?? sel.id} 的第一封信` : "先选一个预设"} value=${text} disabled=${!sel}

@@ -21,6 +21,7 @@ import { ProjectsDialog } from "./ui/projects.js";
 import { CleanDialog } from "./ui/clean.js";
 import { NewProcDialog } from "./ui/newproc.js";
 import { OpenProjDialog } from "./ui/openproj.js";
+import { NewPresetDialog } from "./ui/newpreset.js";
 
 /**
  * 页面上所有模块拿到的唯一对象 `app`。每次渲染重新生成，只读；改东西调用下面的动作。
@@ -59,7 +60,7 @@ import { OpenProjDialog } from "./ui/openproj.js";
  * @property {"all" | "running" | "error"} filter 进程栏的筛选。
  * @property {string} query 进程栏的搜索词。
  * @property {number} tab 详情栏现在的选项卡，0 到 2。聚焦进程时 0 概况、1 改动、2 后台；聚焦项目时 0 概况、1 分支、2 后台。
- * @property {{ name: string, rect: { left: number, top: number, right: number, bottom: number } | null, props: any } | null} dialog 打开着的弹窗：`chief | newproc | openproj | projects | clean`。`props` 是打开时传的。
+ * @property {{ name: string, rect: { left: number, top: number, right: number, bottom: number } | null, props: any } | null} dialog 打开着的弹窗：`chief | newproc | newpreset | openproj | projects | clean`。`props` 是打开时传的。
  *
  * 读取（函数）
  * @typedef {object} AppReaders
@@ -589,7 +590,7 @@ const ANCHORS = { chief: "btn-chief", newproc: "btn-newproc", openproj: "btn-ope
 function openDialog(name, anchor, props) {
   const el = anchor ?? document.getElementById(/** @type {any} */ (ANCHORS)[name] ?? "") ?? null;
   const r = el ? el.getBoundingClientRect() : null;
-  if (name === "newproc" || name === "openproj") reloadPresets();
+  if (name === "newproc" || name === "openproj" || name === "newpreset") reloadPresets();
   S.dialog = { name, rect: r ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom } : null, props: props ?? null };
   writeHash();
   schedule();
@@ -791,6 +792,7 @@ function Root() {
     </div>
     ${d && d.name === "chief" && html`<${ChiefDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "newproc" && html`<${NewProcDialog} app=${app} onClose=${close} />`}
+    ${d && d.name === "newpreset" && html`<${NewPresetDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "openproj" && html`<${OpenProjDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "projects" && html`<${ProjectsDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "clean" && html`<${CleanDialog} app=${app} onClose=${close} />`}

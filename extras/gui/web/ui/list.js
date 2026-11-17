@@ -206,7 +206,9 @@ export function ProcList({ app }) {
     </div>
     <div class="plist-body">
       <div class="plist-scroll" ref=${scroll}>
-        ${hasTeam && html`<${GroupHead} title="常驻团队" en="TEAM" count=${pad2(view.teams.length)} />`}
+        ${(hasTeam || app.filter === "all") && html`<${GroupHead} title="常驻团队" en="TEAM" count=${pad2(view.teams.length)}>
+          <button type="button" id="btn-newpreset" class="gbtn" aria-haspopup="dialog" onClick=${(/** @type {Event} */ e) => app.openDialog("newpreset", /** @type {Element} */ (e.currentTarget))}><${Icon} name="plus" size=${14} sw=${2.4} />预设</button>
+        </${GroupHead}>`}
         ${view.teams.map((t, i) => html`<${TeamGroup} key=${t.presetId} app=${app} t=${t} i=${i} searching=${searching} />`)}
         ${view.teams.length === 0 && app.filter === "all" && !searching && html`<div class="hint">这个项目里没有带记忆的预设。</div>`}
         ${hasTemp && html`<${GroupHead} title="临时" en="TEMP" count=${pad2(tempTotal)}>
