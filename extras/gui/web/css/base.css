@@ -88,8 +88,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px
 .tag.line { background: transparent; box-shadow: inset 0 0 0 1px currentColor; padding: 0 5px; font-size: 10.5px; }
 .badge { position: absolute; right: -5px; top: -5px; width: 12px; height: 12px; background: var(--acc); border: 2px solid var(--ink1); }
 .badge.warn { background: var(--warn); }
-.cur { display: inline-block; width: 8px; height: 17px; margin-left: 4px; vertical-align: -3px; background: var(--ink); animation: tau-blink 1.1s steps(1) infinite; }
+.cur { display: inline-block; width: 8px; height: 17px; margin-left: 4px; vertical-align: -3px; background: var(--ink); }
 .cur.y { background: var(--acc); }
+.cur.bye { opacity: 0; transition: opacity var(--t-leave) var(--ease-out); }
 .pulse { animation: tau-pulse 2.4s ease-in-out infinite; }
 .sep { flex: 1; height: 1px; background: var(--ink4); }
 
@@ -138,7 +139,6 @@ textarea.input { padding: 10px 12px; line-height: 1.6; resize: vertical; }
 .toggle[aria-pressed="true"] { background: var(--sel); color: var(--ink); box-shadow: inset 3px 0 0 var(--acc); }
 
 /* 动效。减少动画时全部瞬间切换。 */
-@keyframes tau-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
 @keyframes tau-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
 @keyframes tau-panel { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
 @keyframes tau-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }

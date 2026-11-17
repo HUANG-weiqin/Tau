@@ -1,6 +1,7 @@
 // 消息流里的条目：换段带、交接说明、来信、助手的话、工具调用。
 // 每个条目是网格里的两格：左边时间戳，右边内容；整行的带跨两列。
-import { html, Icon, Thumb, clockS, useState, Fragment } from "./common.js";
+import { html, Icon, Thumb, clockS, useState, useEffect, Fragment } from "./common.js";
+import { Typer, claim, release } from "./typer.js";
 import { formatClock, formatBytes, formatElapsed } from "../lib/format.js";
 
 /** 左边的时间戳，窄屏隐藏。 */
@@ -101,16 +102,40 @@ function CallStrip({ call, running, app, since }) {
   </li>`;
 }
 
-/** 助手的一条消息：思考、文字、工具调用。 */
-export function AssistantRow({ app, item, running }) {
-  const hasBody = item.text.trim() !== "" || item.calls.length > 0 || item.thinking.trim() !== "" || item.errorMessage;
+/** 工作条：模型在想、在写。 */
+const Working = ({ text, secs }) => html`<span class="wk-l">MODEL</span>
+  <span class="wk-t">${text}</span>
+  <span class="wk-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+  ${secs !== undefined && html`<span class="wk-s mono">${secs}</span>`}
+  <${Scan} />`;
+
+/**
+ * 助手的一条消息：思考、文字、工具调用。`slot` 是它的记录键（typer.js 的 slotKey）。
+ * 这条消息刚写完、字还没吐完时，接手那条记录：字接着吐；那时下面有工作条的，先放一条一样的“幽灵”工作条，
+ * 字追平了它收起，工具条长出来，字不再往上窜。没有记录：直接显示，没有动画。
+ * @param {{ app: any, item: any, running: boolean, slot?: string }} p
+ */
+export function AssistantRow({ app, item, running, slot = "" }) {
+  const hasText = item.text.trim() !== "";
+  const [claimed] = useState(() => (slot !== "" ? claim(slot, item.text) : null));
+  const [ghost] = useState(() => claimed !== null && claimed.bar);
+  const [caught, setCaught] = useState(claimed === null);
+  // 没有文字就没有要追的东西：记录用完，画过一帧以后直接收起。
+  useEffect(() => {
+    if (!claimed || hasText) return;
+    release(claimed);
+    requestAnimationFrame(() => requestAnimationFrame(() => setCaught(true)));
+  }, []);
+  const hasBody = hasText || item.calls.length > 0 || item.thinking.trim() !== "" || item.errorMessage;
   if (!hasBody) return null;
+  const calls = item.calls.length > 0 && html`<ul class="calls">${item.calls.map((c, i) => html`<${CallStrip} key=${c.id + ":" + i} call=${c} running=${running} app=${app} since=${item.ts} />`)}</ul>`;
   return html`<${Ts} ts=${item.ts} app=${app} pad=${4} />
     <div class="abox">
       ${item.thinking.trim() !== "" && html`<details class="think"><summary>思考 · ${Array.from(item.thinking).length} 字</summary><p>${item.thinking}</p></details>`}
-      ${item.text.trim() !== "" && html`<p class="atext">${item.text}</p>`}
+      ${hasText && html`<${Typer} text=${item.text} claimed=${claimed} final=${true} onCaught=${claimed ? () => setCaught(true) : undefined} />`}
       ${item.errorMessage && html`<div class="aerr"><span class="tag warn">模型出错</span><span class="mono">${item.errorMessage}</span></div>`}
-      ${item.calls.length > 0 && html`<ul class="calls">${item.calls.map((c, i) => html`<${CallStrip} key=${c.id + ":" + i} call=${c} running=${running} app=${app} since=${item.ts} />`)}</ul>`}
+      ${ghost && html`<div class=${`gx ${caught ? "out" : "in"}`} aria-hidden="true"><div class="gi"><div class="working"><${Working} text="模型在写" /></div></div></div>`}
+      ${claimed ? calls && html`<div class=${`gx ${caught ? "in" : ""}`}><div class="gi">${calls}</div></div>` : calls}
     </div>`;
 }
 
@@ -120,19 +145,28 @@ export function OrphanRow({ app, item }) {
     <ul class="calls"><li class="call ok"><div class="chead"><span class="clabel"><span class="cl">${item.name.toUpperCase()}</span></span><span class="cbody"><span class="csum">${item.result.summary}</span><span class="cr dim">没有对应的调用</span></span></div></li></ul>`;
 }
 
-/** 模型正在写的文字，末尾带闪烁的光标。 */
-export function LiveRow({ app, text, purpose, since }) {
+/** 模型正在写的文字：字在上，工作条在字的下面，像出纸口。`slot` 是这段字将来那条消息的记录键。 */
+export function LiveRow({ app, slot, text, purpose, since }) {
   const doing = purpose === "handoff" ? "在写交接说明" : text === "" ? "在想" : "在写";
   return html`<div class="ts wide-only live"><span class="tag">现在</span><span class="tick" aria-hidden="true"></span></div>
     <div class="abox">
-      <div class="working" role="status">
-        <span class="wk-l">MODEL</span>
-        <span class="wk-t">模型${doing}</span>
-        <span class="wk-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span class="wk-s mono">${since === null ? "" : formatElapsed(app.now - app.clock(since))}</span>
-        <${Scan} />
-      </div>
-      ${text !== "" && html`<p class="atext">${text}<span class="cur" aria-hidden="true"></span></p>`}
+      <${Typer} text=${text} live=${true} slot=${slot} />
+      <div class="working" role="status"><${Working} text=${"模型" + doing} secs=${since === null ? "" : formatElapsed(app.now - app.clock(since))} /></div>
+    </div>`;
+}
+
+/**
+ * 写完了、历史还没读到那条消息：留住这段字，接着吐完，等消息行来接手。
+ * `bar`：后面没有新的正在写的行时，工作条留着，消息行来了再收起。
+ * @param {{ rec: import("./typer.js").Rec, bar: boolean }} p
+ */
+export function HeldRow({ rec, bar }) {
+  const [claimed] = useState(() => claim(rec.key, rec.text));
+  rec.bar = bar;
+  return html`<div class="ts wide-only live"><span class="tag">现在</span><span class="tick" aria-hidden="true"></span></div>
+    <div class="abox">
+      <${Typer} text=${rec.text} claimed=${claimed} />
+      ${bar && html`<div class="working" role="status"><${Working} text="模型在写" /></div>`}
     </div>`;
 }
 

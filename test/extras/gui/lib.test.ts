@@ -9,6 +9,7 @@ import { removePlan, skippedFor } from "../../../extras/gui/web/lib/remove.js";
 import { addFork, mergeSeen, movePinned, normalizeState, pathKey, pinFolder, prunePatch, setCurrent } from "../../../extras/gui/web/lib/state.js";
 import { allProcs, childCounts, emptyStore, reduce, streamingText } from "../../../extras/gui/web/lib/store.js";
 import { extractTitle, processTitle } from "../../../extras/gui/web/lib/titles.js";
+import { newPace, paceArrive, paceStep } from "../../../extras/gui/web/lib/pace.js";
 
 type Self = import("../../../extras/gui/web/lib/types.js").Self;
 type Msg = import("../../../extras/gui/web/lib/types.js").Message;
@@ -711,4 +712,102 @@ test("state: prunePatch 清掉没了的进程，被还在的分叉指着的标�
 
 test("messages: 换段的信是固定的一句，点名 handoff 工具", () => {
   assert.equal(HANDOFF_LETTER, "请现在调用 handoff 工具换段，这一轮不做别的事。换段以后回一句“已换段”就结束。");
+});
+
+// ---------- pace ----------
+
+/** 确定性的小随机数：线性同余。 */
+function lcg(seed: number) {
+  let s = seed >>> 0;
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
+const between = (r: () => number, lo: number, hi: number) => lo + (hi - lo) * r();
+
+type Pace = import("../../../extras/gui/web/lib/pace.js").Pace;
+
+/** 按 16ms 一帧模拟：`arrivals` 是 [时刻 ms, 字数]，`endAt` 之后置 ending。返回每帧的 [时刻, 已吐字数, 已到字数]。 */
+function simulate(arrivals: [number, number][], untilMs: number, endAt: number | null = null) {
+  let p: Pace = newPace();
+  let received = 0;
+  let i = 0;
+  const frames: [number, number, number][] = [];
+  for (let t = 0; t <= untilMs; t += 16) {
+    while (i < arrivals.length && arrivals[i]![0] <= t) {
+      p = paceArrive(p, arrivals[i]![0], arrivals[i]![1]);
+      received += arrivals[i]![1];
+      i++;
+    }
+    p = paceStep(p, t, received, endAt !== null && t >= endAt, 0.016);
+    frames.push([t, p.shown, received]);
+  }
+  return frames;
+}
+const steps = (frames: [number, number, number][], fromMs: number) => {
+  const out: number[] = [];
+  for (let i = 1; i < frames.length; i++) if (frames[i]![0] >= fromMs) out.push(frames[i]![1] - frames[i - 1]![1]);
+  return out;
+};
+
+test("pace: 平稳的小块，热身以后相邻两帧的前进量几乎不变，也不超过已到的字数", () => {
+  const r = lcg(11);
+  const arrivals: [number, number][] = [];
+  for (let t = 600; t < 8000; t += between(r, 20, 45)) arrivals.push([t, 1 + Math.floor(r() * 4)]);
+  const frames = simulate(arrivals, 8000);
+  for (const f of frames) assert.ok(f[1] <= f[2] + 1e-9);
+  const d = steps(frames, 1100);
+  const mean = d.reduce((a, b) => a + b, 0) / d.length;
+  let worst = 0;
+  for (let i = 1; i < d.length; i++) worst = Math.max(worst, Math.abs(d[i]! - d[i - 1]!) / mean);
+  assert.ok(worst < 0.1, `相邻两帧最大变化 ${worst}`);
+});
+
+test("pace: 一批一批地来，流没结束时没有一帧停住", () => {
+  // 固定一个典型序列：连着几个 700ms 的空档会让缓冲见底，那是算法的极限，不是这条测试要抓的。
+  const r = lcg(11);
+  const arrivals: [number, number][] = [];
+  for (let t = 600; t < 12000; ) {
+    const gap = between(r, 250, 700);
+    t += gap;
+    arrivals.push([t, Math.max(1, Math.round((gap / 1000) * 90 * between(r, 0.7, 1.3)))]);
+  }
+  const last = arrivals[arrivals.length - 1]![0];
+  const frames = simulate(arrivals, last);
+  for (const d of steps(frames, 2600)) assert.ok(d > 0);
+});
+
+test("pace: 最后一块到了以后置 ending，700ms 内追平，比不置 ending 快", () => {
+  // 一批一批的流，末尾有积压：追平靠的是 ending 分支，不是前馈。
+  const r = lcg(5);
+  const arrivals: [number, number][] = [];
+  for (let t = 600; t < 6000; ) {
+    const gap = between(r, 250, 700);
+    t += gap;
+    arrivals.push([t, Math.max(1, Math.round((gap / 1000) * 90 * between(r, 0.7, 1.3)))]);
+  }
+  const end = arrivals[arrivals.length - 1]![0];
+  const catchAt = (endAt: number | null) => simulate(arrivals, end + 3000, endAt).find((f) => f[0] >= end && f[1] >= f[2] - 1e-6)?.[0];
+  const withEnding = catchAt(end);
+  const without = catchAt(null);
+  assert.ok(withEnding !== undefined && withEnding - end <= 700, `追平用了 ${withEnding === undefined ? "∞" : withEnding - end}ms`);
+  assert.ok(without === undefined || without - end > withEnding - end + 100, "不置 ending 应该明显更慢");
+});
+
+test("pace: 一次来 1000 字，1.5 秒内追平", () => {
+  const frames = simulate([[100, 1000]], 3000);
+  const caught = frames.find((f) => f[0] >= 100 && f[1] >= f[2] - 1e-6);
+  assert.ok(caught && caught[0] - 100 <= 1500, `追平用了 ${caught ? caught[0] - 100 : "∞"}ms`);
+});
+
+test("pace: 平稳地流到一半突然来 1000 字，1 秒后积压不到 150 字", () => {
+  // 开头一次来一大块时前馈就够快；流到一半来一大块，靠的是积压太多时的加速。
+  const r = lcg(3);
+  const arrivals: [number, number][] = [];
+  for (let t = 100; t < 5000; t += between(r, 20, 45)) arrivals.push([t, 1 + Math.floor(r() * 4)]);
+  arrivals.push([5000, 1000]);
+  const frames = simulate(arrivals, 6000);
+  const at = frames.find((f) => f[0] >= 6000)!;
+  assert.ok(at[2] - at[1] < 150, `1 秒后还积压 ${Math.round(at[2] - at[1])} 字`);
 });
