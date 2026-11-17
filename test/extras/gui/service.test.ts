@@ -2,7 +2,8 @@
 import { test } from "node:test";
 import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
 import http from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -11,7 +12,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@ear
 import { sqliteMemory } from "../../../src/memory/kv.ts";
 import { serve } from "../../../src/server/serve.ts";
 import { createBridge } from "../../../extras/gui/bridge/server.ts";
-import { createServiceControl, newestMtime } from "../../../extras/gui/bridge/service.ts";
+import { createServiceControl, launchArgv, newestMtime, restartCommand } from "../../../extras/gui/bridge/service.ts";
 import type { ServiceOps } from "../../../extras/gui/bridge/service.ts";
 import { piCredentials } from "../../../extras/gui/bridge/credentials.ts";
 import { cleanTitle, TITLE_SYSTEM } from "../../../extras/gui/bridge/title.ts";
@@ -202,6 +203,36 @@ test("/api/service/restart：没有进程在跑，或者服务根本不在，直
     assert.equal((await call(b.port, "/api/service/restart", { service: true })).status, 202);
     assert.equal(f.calls.restart.length, 1);
   }
+});
+
+test("restartCommand：脚本路径加引号，-BridgeArgs 整体传给 restart.ps1，最后是 Start-Process", () => {
+  const argv = restartCommand("C:\\repo path\\extras\\gui\\restart.ps1", { service: true, bridge: true, bridgePid: 1234, bridgeArgs: ["--port", "4317"] });
+  assert.deepEqual(argv.slice(0, 3), ["-NoProfile", "-NonInteractive", "-Command"]);
+  const line = argv[3] ?? "";
+  assert.equal(
+    line,
+    `Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "C:\\repo path\\extras\\gui\\restart.ps1" -Service -Bridge -BridgePid 1234 -BridgeArgs "--port 4317"' -WindowStyle Hidden`,
+  );
+  const bridgeOnly = restartCommand("C:\\r\\restart.ps1", { service: false, bridge: true, bridgePid: 9, bridgeArgs: [] });
+  assert.ok(!(bridgeOnly[3] ?? "").includes("-Service"));
+  assert.ok((bridgeOnly[3] ?? "").includes('-BridgeArgs ""'));
+});
+
+test("launchArgv：父进程退出以后，Start-Process 起的孙进程照样跑完", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "tau-launch-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+  const out = join(dir, "out.txt");
+  const script = join(dir, "write.ps1");
+  writeFileSync(script, `Set-Content -Path '${out}' -Value ok`, "utf8");
+  const argv = launchArgv(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script]);
+  // 中间这层 node 相当于桥：spawn 完过一会儿退出，孙进程得自己活下来。
+  // 立刻退出的话 powershell 还没机会执行 Start-Process（非 detached 的子进程会被带走）；
+  // 真实的桥也活到这几百毫秒，restart.ps1 最后才停桥。
+  const js = `const{spawn}=require("node:child_process");const c=spawn("powershell.exe",${JSON.stringify(argv)},{stdio:"ignore",windowsHide:true});c.on("error",()=>{});c.unref();setTimeout(()=>process.exit(0),1500);`;
+  spawn(process.execPath, ["-e", js], { stdio: "ignore" }).unref();
+  for (let i = 0; i < 150 && !existsSync(out); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.equal(existsSync(out), true, "孙进程没写出文件：Start-Process 这条链断了");
+  assert.equal(readFileSync(out, "utf8").trim(), "ok");
 });
 
 test("静态文件：/web/ 每次都要校验（no-cache），vendor 照旧缓存", async (t) => {

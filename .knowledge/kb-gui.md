@@ -59,6 +59,7 @@
 - 别从 Claude 桌面版的进程树里起服务和桥：那棵树里读写 `AppData` 都被重定向进 Claude 包自己的目录，Agent 装的东西（`pip --user`、`npm -g`）外面看不到。从桌面快捷方式、自己的终端或者界面的按钮起都没有这个问题。
 - 服务和桥都用干净的环境起（`cleanenv.ps1` 的 `Start-Clean`）：环境按注册表的机器和用户变量、`Volatile Environment` 和系统固定的几个重建，清空进程自己的环境再填。服务把自己的环境交给 Agent 的 bash，所以从哪里运行脚本（包括另一个 Agent 的会话）都不会把调用方的变量和令牌带进去。
 - `restart.ps1`：`-Service` 只重启服务，`-Bridge` 只重启桥，都不写就两个都重启。按命令行找到正在运行的 node 进程，停掉，用干净的环境再起，等管道或端口起来。服务先于桥重启，桥最后。界面的按钮也是跑它，多带 `-BridgePid`（桥自己的 PID）和 `-BridgeArgs`（桥原来的命令行参数，新桥原样带上）。
+- 桥不直接跑 `restart.ps1`：它起一个不 detached 的 `powershell.exe`，这条命令只做 `Start-Process -FilePath 'powershell.exe' -ArgumentList '…' -WindowStyle Hidden`，由孙进程跑脚本（`launchArgv`）。为什么不能自己跑，见[坑点](#坑点)。
 - 脚本文件带 UTF-8 BOM：桥用 Windows PowerShell 5.1 跑 `restart.ps1`，没有 BOM 会把中文读成乱码。
 
 ### 路径
@@ -314,7 +315,7 @@ D58：项目的上下文由上层拼。界面把 `<工作目录>/AGENTS.md` 拼�
 |---|---|
 | `test/extras/gui/bridge.test.ts` | 每条检查的反例；GET 不出目录；转发对着测试服务（临时目录、测试管道、faux 模型），含 `watch` 分块推送和浏览器断开；预设经 `check` 读（带 `options` 的读得出、读不出和装不下的错误文字和 `start` 一字不差、服务不在回 503）、新建不覆盖和删除；`inspect` 转发读到冻结的快照；换段信真的换段、信带进新段；git 带 `--no-optional-locks`、工作目录不对时拒绝；界面数据改名写入；模型目录和 pi-ai 一致、key 状态四种且值不进回复、auth.json 坏了或不存在、改了不用重启；改预设只换收到的字段（顺序、CRLF、BOM、正文原样，`null` 删行）、读不出或起不来改回旧文件、服务不在改回去、请求不合法；新建带 `handoff`、`options` |
 | `test/extras/tools/tools.test.ts` | 工具库：四个脚本在真的服务和 Git Bash 里跑（截断和存文件、退出码、超时结束整个进程组、7 天清理；后台立刻返回、跑完寄信、同名拒绝；peek 的输出；wait 等到结束、超时、停止）；桥的列、装、改过后拒绝覆盖、更新、预设用到时拒删；装好的定义内核 `check` 读得出 |
-| `test/extras/gui/service.test.ts` | 旧代码的判断（修改时间对比、服务不在、缓存和作废）；重启接口（有进程在跑回 409 且不动、`force`、只重启桥、参数不对），全部用假的 runner 和假的 `ps`；`/web/` 的缓存头；自动标题（假模型：提示词、输出上限、思考关掉、整理标题、各种错误码）；只读凭据库；标题的条件和 `titled`；助手文字第一行去标记 |
+| `test/extras/gui/service.test.ts` | 旧代码的判断（修改时间对比、服务不在、缓存和作废）；重启接口（有进程在跑回 409 且不动、`force`、只重启桥、参数不对）用假的 runner 和假的 `ps`，另有生成的重启命令行和真跑一次 powershell 的“父进程退出后孙进程还在”；`/web/` 的缓存头；自动标题（假模型：提示词、输出上限、思考关掉、整理标题、各种错误码）；只读凭据库；标题的条件和 `titled`；助手文字第一行去标记 |
 | `test/extras/gui/agentsmd.test.ts` | 拼 AGENTS.md：加块和去块互逆（CRLF、BOM、手写的末尾空行字节不变）、换块在原处、给了 prompt 块留着、没有结束标记当没有块；接口：`/api/agents-md`、新建拼上或不拼或没有文件拒绝、CLAUDE.md 不认、改预设的不传不动、过期、重新拼、文件没了拒绝且旧文件不变、去掉、拼完装不下窗口改回旧文件、文件里有标记行或为空拒绝 |
 | `test/extras/gui/memory.test.ts` | 记忆页的纯逻辑（字节序排序、折叠、编辑状态、写回复的判读、冲突后字和版本的处理）；经桥对着真的服务：新键、改、兄弟先写造成的冲突不覆盖、删、已删键的冲突、超限 |
 | `test/extras/gui/image.test.ts` | 图片常量和 `src/` 的真常量一致；缩放尺寸、原样发的条件、压缩尝试的顺序、张数；快照多带的输入类型和阈值、不收图片的判断；段尺比例和九成警告；排队的信、谁在等谁 |
@@ -328,6 +329,7 @@ D58：项目的上下文由上层拼。界面把 `<工作目录>/AGENTS.md` 拼�
 - **连管道不能半关闭。** 见 [kb-service 的坑点](kb-service.md#坑点)。
 - **`index.html` 只在桥启动时读一次。** import map 是内联脚本，桥启动时算它的哈希写进 CSP。改了 `index.html` 要重启桥。其余静态文件每次请求现读，带 `no-cache`，浏览器每次校验。
 - **重启服务会中断在跑的进程。** 在跑的库外副作用（工具调用）按崩溃处理，报“被中断”，不自动重做。所以界面在有进程在跑时先确认，桥的 `/api/service/restart` 也拦。
+- **`detached: true` 起不了 powershell。** Windows 上那样起的 `powershell.exe` 立刻 `exit 0`，命令一行都不执行；`detached` 起 `cmd.exe` 也一样。不 detached 的子进程又会被桥的死带走。所以重启走 `Start-Process` 这一层：桥起 powershell，powershell 起孙进程。桥被杀时孙进程已经在跑——`restart.ps1` 把停桥放在最后，中间隔着重启服务的几秒。验证重启成功看 node 进程的 PID 和创建时间，别看回执：`/api/service/restart` 的 202 只说明脚本被起了。
 
 ## 关联模块
 

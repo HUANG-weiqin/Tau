@@ -46,7 +46,30 @@ const SOURCE_EXTS = [".ts", ".js", ".json"];
 
 const FIND_SCRIPT = String.raw`$p = Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match 'src[\\/]main\.ts"?\s+serve\s*$' } | Select-Object -First 1; if ($p) { [DateTimeOffset]::new($p.CreationDate).ToUnixTimeMilliseconds() }`;
 
-/** 真实的实现：PowerShell 查进程，detached 的 powershell 跑 restart.ps1。 */
+/** 命令行里的一个参数：空的、带空白或引号的都加双引号。 */
+function quoteArg(a: string): string {
+  return a === "" || /[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a;
+}
+
+/**
+ * 起一个独立的 powershell 跑 `target` 命令行的 argv。
+ * 不能用 detached：Windows 上那样起的 powershell 立刻退出，什么都不执行（见 kb-gui 的坑点）。
+ * 非 detached 的子进程又会被桥的死带走，所以让 powershell 用 Start-Process 拉起孙进程。
+ */
+export function launchArgv(target: string[]): string[] {
+  const line = target.map(quoteArg).join(" ");
+  return ["-NoProfile", "-NonInteractive", "-Command", `Start-Process -FilePath 'powershell.exe' -ArgumentList '${line.replace(/'/g, "''")}' -WindowStyle Hidden`];
+}
+
+/** 跑 restart.ps1 的 powershell argv。纯函数，测试直接比字符串。 */
+export function restartCommand(script: string, f: { service: boolean; bridge: boolean; bridgePid: number; bridgeArgs: string[] }): string[] {
+  const target = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script];
+  if (f.service) target.push("-Service");
+  if (f.bridge) target.push("-Bridge", "-BridgePid", String(f.bridgePid), "-BridgeArgs", f.bridgeArgs.join(" "));
+  return launchArgv(target);
+}
+
+/** 真实的实现：PowerShell 查进程，独立的 powershell 跑 restart.ps1。 */
 export const realOps: ServiceOps = {
   serviceStartedAt: () =>
     new Promise((resolve) => {
@@ -57,10 +80,7 @@ export const realOps: ServiceOps = {
     }),
   restart({ service, bridge, bridgePid, bridgeArgs, repo }) {
     const script = path.join(repo, "extras", "gui", "restart.ps1");
-    const args = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script];
-    if (service) args.push("-Service");
-    if (bridge) args.push("-Bridge", "-BridgePid", String(bridgePid), "-BridgeArgs", bridgeArgs.join(" "));
-    const child = spawn("powershell.exe", args, { detached: true, stdio: "ignore", windowsHide: true });
+    const child = spawn("powershell.exe", restartCommand(script, { service, bridge, bridgePid, bridgeArgs }), { stdio: "ignore", windowsHide: true });
     child.on("error", () => {});
     child.unref();
   },
