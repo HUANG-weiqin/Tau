@@ -1,6 +1,6 @@
 // 聚焦的进程：铭牌、消息流、写信框。出错时铭牌变橙，流的末尾是结束带。
 import { html, Icon, Pill, Tex, Contour, pad2, useRef, useState, useLayoutEffect, Fragment } from "./common.js";
-import { toItems, foldMiddle, forkPoints, turnStart } from "../lib/messages.js";
+import { toItems, foldMiddle, forkPoints, turnStart, clipText } from "../lib/messages.js";
 import { segmentMessages } from "../lib/history.js";
 import { contextPercent, formatClock } from "../lib/format.js";
 import { Band, FoldRow, Ts, UserRow, HandoffRow, AssistantRow, OrphanRow, LiveRow } from "./messages.js";
@@ -46,7 +46,7 @@ function Plate({ app, e }) {
       <div style="position:relative">
         <div class="plate-top"><span class="tag">当前聚焦</span><span class="mono" style="font-size:11px">${app.project?.name ?? "总管"} / ${e.id}</span></div>
         <div class="plate-name">
-          <h1 class=${e.kind === "temp" ? "small" : ""}>${big}</h1>
+          <h1 class=${e.kind === "temp" ? "small" : ""} title=${big}>${big}</h1>
           <span class="label" style="font-size:15px;letter-spacing:.16em">${e.preset}</span>
         </div>
         ${e.kind === "temp" && title.note && html`<div class="mono" style="font-size:11px;margin-top:6px">${title.note}</div>`}
@@ -218,7 +218,8 @@ export function ProcessView({ app }) {
   }
   const ended = e.self.phase.tag === "idle" ? e.self.phase.ended : undefined;
   const note = e.status === "error" || ended === "stopped" || ended === "stepLimit" ? carryNote(ended) : null;
-  const name = e.kind === "temp" ? app.titleOf(e.id).title : e.name;
+  // 临时进程的标题是第一封信的第一行，可能很长；写信框里只写开头。
+  const name = e.kind === "temp" ? clipText(app.titleOf(e.id).title, 16) : e.name;
   return html`<${Fragment}>
     <${Plate} app=${app} e=${e} />
     <${Stream} app=${app} e=${e} />

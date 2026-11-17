@@ -10,7 +10,7 @@
 .plate-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
 .plate-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-top: 12px; }
 .plate h1 { font-size: 64px; line-height: 1; font-weight: 900; letter-spacing: .04em; overflow-wrap: anywhere; }
-.plate h1.small { font-size: 36px; letter-spacing: .01em; line-height: 1.15; }
+.plate h1.small { font-size: 36px; letter-spacing: .01em; line-height: 1.15; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 .plate-tags { margin: 18px 0 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .plate-tags > div { display: flex; }
 .plate-tags dt { background: var(--ink); color: var(--fg); font-size: 11px; font-weight: 700; line-height: 1.5; padding: 3px 8px; }

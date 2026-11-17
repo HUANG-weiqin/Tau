@@ -49,6 +49,7 @@
   - `--host`：额外认的 `Host` 名字，可以写多次，给 Tailscale 用。
 - 管道：`TAU_PIPE` 有值就用它，否则用 `\\.\pipe\tau`，和 CLI 一样。
 - `start.ps1`：管道不在就起服务，端口没人听就起桥，都和终端脱开，日志写进 `~/.tau/extras/gui/`。然后打开页面。不做开机自启。
+- 从自己的终端运行 `start.ps1`。服务把自己的环境变量交给 Agent 的 bash，在别的程序（例如另一个 Agent 的会话）里起，会把那个程序的变量和令牌带进去。
 
 ### 路径
 
@@ -155,6 +156,7 @@ git：
 ## 坑点
 
 - **普通的 `git status` 会写 `index.lock`。** 一律带 `--no-optional-locks`（[设计稿第 1 节](../docs/design/gui.md#1-定位)）。
+- **服务的环境变量会进 Agent 的 bash。** 起服务的那个程序的环境原样传下去，所以从干净的终端起（见[启动](#启动)）。
 - **连管道不能半关闭。** 见 [kb-service 的坑点](kb-service.md#坑点)。
 - **`index.html` 只在桥启动时读一次。** import map 是内联脚本，桥启动时算它的哈希写进 CSP。改了 `index.html` 要重启桥。其余静态文件每次请求现读。
 
