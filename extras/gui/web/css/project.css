@@ -45,7 +45,7 @@
 .pv-act li { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 14px; padding: 14px 0; border-bottom: 1px solid rgba(17,18,17,.22); }
 .pv-act li:first-child { padding-top: 4px; }
 .pv-ts { font-size: 11px; color: var(--ink-2); padding-top: 3px; }
-.pv-ab { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 620px; }
+.pv-ab { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: var(--col); }
 .pv-ah { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; }
 .pv-ah b { font-weight: 900; }
 .pv-at { font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
