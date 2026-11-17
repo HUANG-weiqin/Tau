@@ -11,6 +11,9 @@ export type Kind = (typeof KINDS)[number];
 /** 交接说明（新段第一条）开头的固定文字。抄自内核的 `HANDOFF_HEADER`（src/kernel/context.ts）：extras 不能导入 src/，测试核对两处一致。 */
 export const HANDOFF_HEADER = "（这是你在上一个工作段结束时写的交接说明。）\n\n";
 
+/** 交接说明里，带过去的用户消息前面的一行固定文字。抄自内核的 `CARRY_HEADER`（src/kernel/context.ts），测试核对两处一致。 */
+export const CARRY_HEADER = "（下面是写交接说明时还没处理的用户消息。）";
+
 /** 不搜这两个工具自己的调用和结果，免得搜出自己的回声。 */
 const SELF_TOOLS = new Set(["history_search", "history_read"]);
 
@@ -147,14 +150,15 @@ export function callText(name: string, args: unknown): string {
 }
 
 /**
- * 一条消息拆成若干“部分”：用户的文字（交接说明单独一类，可搜的文字去掉开头的固定文字）、助手的每个文字块、助手的每个工具调用（见 `callText`）、
- * 工具结果的文字。思考块不搜；这两个工具自己的调用和结果不搜。
+ * 一条消息拆成若干“部分”：用户的文字（交接说明单独一类，可搜的文字去掉固定文字：开头那行，和带过去的信前面那行）、
+ * 助手的每个文字块、助手的每个工具调用（见 `callText`）、工具结果的文字。思考块不搜；这两个工具自己的调用和结果不搜。
  */
 export function messageParts(m: any): Part[] {
   if (m?.role === "user") {
     const text = textOf(m.content);
     if (m.tau?.handoff !== true) return [{ kind: "user", text }];
-    return [{ kind: "handoff", text: text.startsWith(HANDOFF_HEADER) ? text.slice(HANDOFF_HEADER.length) : text }];
+    // 和 GUI 一样按“\n\n + 这一行”锚，只切内核写的那一处；正文里恰好有这几个字也不会被切两次。
+    return [{ kind: "handoff", text: text.startsWith(HANDOFF_HEADER) ? text.slice(HANDOFF_HEADER.length).replace(`\n\n${CARRY_HEADER}`, "") : text }];
   }
   if (m?.role === "assistant") {
     const out: Part[] = [];
@@ -329,6 +333,8 @@ export interface ScanResult {
   missing: number[];
   /** 读到的段数。 */
   read: number;
+  /** 范围里要扫的段数：`segment` 或旧段，去掉 `before` 之外的。`read` 加没扫的段等于它。 */
+  scope: number;
   /** 扫完了。时间到了没扫完是 false。 */
   complete: boolean;
   /** 没扫完时：第一个没扫的段。 */
@@ -344,12 +350,16 @@ function wanted(part: Part, o: ScanOptions): boolean {
 export async function scanHistory(o: ScanOptions): Promise<ScanResult> {
   const budget = o.budgetMs ?? SCAN_MS;
   const start = o.now();
-  const segs: number[] = [];
+  let segs: number[] = [];
   if (o.segment !== undefined) segs.push(o.segment);
   else for (let s = o.current - 1; s >= 1; s--) segs.push(s);
-  const r: ScanResult = { total: 0, bySegment: [], hits: [], missing: [], read: 0, complete: true };
+  // before 之外的段不进范围：不读，也不算“读不到”。before=X:0 连第 X 段也不算：段内序号从 0 起，X:0 之前的位置不存在。
+  if (o.before !== undefined) {
+    const { seg, seq } = o.before;
+    segs = segs.filter((s) => s < seg || (s === seg && seq > 0));
+  }
+  const r: ScanResult = { total: 0, bySegment: [], hits: [], missing: [], read: 0, scope: segs.length, complete: true };
   for (const seg of segs) {
-    if (o.before !== undefined && seg > o.before.seg) continue;
     if (o.now() - start >= budget) {
       r.complete = false;
       r.resumeSeg = seg;
@@ -418,9 +428,26 @@ export function formatSearch(r: ScanResult, v: SearchView): string {
     "。";
   const head = [NOTICE, range];
 
+  if (r.scope === 0) {
+    // 三种来路：segment 与 before 冲突；before 已经到最早的位置；这个进程本来就没有旧段。
+    head.push(
+      v.segment !== undefined && v.before !== undefined
+        ? `范围是空的：第 ${v.segment} 段不比 ${fmtPos(v.before)} 更旧。去掉 before，或者把 segment 换成更旧的段。`
+        : v.before !== undefined
+          ? `${fmtPos(v.before)} 之前没有内容，已经到最早的位置了。去掉 before 可以搜全部旧段。`
+          : "这个进程还没有旧段。当前段的内容你已经有了。",
+    );
+    return head.join("\n");
+  }
   if (r.read === 0 && r.complete) {
-    if (r.missing.length === 0) head.push("这个进程还没有旧段。当前段的内容你已经有了。");
-    else head.push(v.segment !== undefined ? "这一段读不到，没有可搜的内容。" : `这个进程还没有可搜的旧段：${rangesText(r.missing)}都已被清理或读不到。`);
+    // 范围里的段都读不到：说清是哪一段范围，免得模型以为整个进程的历史没了。
+    head.push(
+      v.segment !== undefined
+        ? "这一段读不到，没有可搜的内容。去掉 segment 可以搜其它旧段。"
+        : v.before !== undefined
+          ? `${fmtPos(v.before)} 之前的旧段都读不到：${rangesText(r.missing)}（多半已被清理）。去掉 before 可以搜其它旧段。`
+          : `这个进程还没有可搜的旧段：${rangesText(r.missing)}都已被清理或读不到。`,
+    );
     return head.join("\n");
   }
 
@@ -428,19 +455,25 @@ export function formatSearch(r: ScanResult, v: SearchView): string {
     const lines = [...head];
     const more = shown < r.total;
     const last = r.hits[shown - 1];
-    const cont = more && last !== undefined ? fmtPos(last.pos) : !r.complete ? `${(r.resumeSeg ?? 0) + 1}:0` : "";
+    // 续搜的位置不超过当前段：超了会被参数校验拒掉。
+    const cont = more && last !== undefined ? fmtPos(last.pos) : !r.complete ? `${Math.min((r.resumeSeg ?? 0) + 1, v.current)}:0` : "";
     if (r.total > 0) {
       const dist = r.bySegment.slice(0, DIST_SEGMENTS).map(([s, n]) => `第 ${s} 段 ${n} 条`);
       if (r.bySegment.length > DIST_SEGMENTS) dist.push(`…另有 ${r.bySegment.length - DIST_SEGMENTS} 段`);
       lines.push(`${r.complete ? "命中" : "至少命中"} ${r.total} 条（${dist.join("、")}）${more ? `，显示最近 ${shown} 条` : ""}：`);
       for (const h of r.hits.slice(0, shown)) lines.push(hitLine(h));
     } else if (r.complete) {
-      lines.push("没有命中。换个词，或者少写几个词（多个词要同时出现）；kind: handoff 可以看各段的交接说明。");
+      // 给了 before 就说清是在哪个位置之前，别让模型以为改词就能搜到。
+      lines.push(v.before === undefined ? "没有命中。换个词，或者少写几个词（多个词要同时出现）；kind: handoff 可以看各段的交接说明。" : `在 ${fmtPos(v.before)} 之前没有命中。换个词，或者少写几个词。`);
     } else {
-      lines.push("目前没有命中。");
+      lines.push(r.read === 0 ? "一段都没扫到，还不知道有没有命中。" : "目前没有命中。");
     }
     if (!r.complete) {
-      lines.push(`时间到了（${seconds} 秒），第 ${r.resumeSeg} 段和更旧的段没扫，命中数只是至少，零命中不等于没有。${more ? "还有更旧的命中没显示。" : ""}续搜：${CONTINUE}before=${cont}`);
+      lines.push(
+        r.read === 0
+          ? `时间到了（${seconds} 秒），第 ${r.resumeSeg} 段和更旧的段都没扫，所以还不知道有没有命中。续搜：${CONTINUE}before=${cont}`
+          : `时间到了（${seconds} 秒），第 ${r.resumeSeg} 段和更旧的段没扫，命中数只是至少，零命中不等于没有。${more ? "还有更旧的命中没显示。" : ""}续搜：${CONTINUE}before=${cont}`,
+      );
     } else if (more) {
       lines.push(`还有更旧的命中：${CONTINUE}before=${cont}`);
     }

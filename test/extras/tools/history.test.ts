@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
-import { HANDOFF_HEADER as KERNEL_HANDOFF_HEADER } from "../../../src/kernel/context.ts";
+import { CARRY_HEADER as KERNEL_CARRY_HEADER, HANDOFF_HEADER as KERNEL_HANDOFF_HEADER } from "../../../src/kernel/context.ts";
 import type { ToolDef } from "../../../src/kernel/types.ts";
 import { sqliteMemory } from "../../../src/memory/kv.ts";
 import { serve } from "../../../src/server/serve.ts";
@@ -21,6 +21,7 @@ import {
   byteLength,
   callText,
   capBytes,
+  CARRY_HEADER,
   clip,
   fmtTime,
   fold,
@@ -316,6 +317,18 @@ describe("扫描", () => {
     assert.equal(all.total, 0);
   });
 
+  test("scope：范围里要扫几段；before 之外的段不算在里面", async () => {
+    assert.equal((await scanHistory(base({ current: 4, terms: ["alpha"], ...fake(segs()) }))).scope, 3);
+    assert.equal((await scanHistory(base({ current: 4, terms: ["alpha"], segment: 2, ...fake(segs()) }))).scope, 1);
+    assert.equal((await scanHistory(base({ current: 4, terms: ["alpha"], before: { seg: 2, seq: 1 }, ...fake(segs()) }))).scope, 2);
+    // before 的序号是 0：这一段没有更旧的位置，它自己也不算进范围。
+    assert.equal((await scanHistory(base({ current: 4, terms: ["alpha"], before: { seg: 2, seq: 0 }, ...fake(segs()) }))).scope, 1);
+    assert.equal((await scanHistory(base({ current: 4, terms: ["alpha"], segment: 3, before: { seg: 3, seq: 0 }, ...fake(segs()) }))).scope, 0);
+    // segment 与 before 冲突：范围是空的，和“这个进程没有旧段”不是一回事。
+    assert.equal((await scanHistory(base({ current: 4, terms: ["alpha"], segment: 2, before: { seg: 1, seq: 0 }, ...fake(segs()) }))).scope, 0);
+    assert.equal((await scanHistory(base({ current: 1, terms: ["alpha"], ...fake({}) }))).scope, 0);
+  });
+
   test("读不到的段：跳过，记下，不中断", async () => {
     const s: Record<number, Row[] | null> = { ...segs(), 2: null };
     const r = await scanHistory(base({ current: 4, terms: ["alpha"], ...fake(s) }));
@@ -399,11 +412,14 @@ describe("扫描", () => {
     assert.equal(r.hits[0]!.snippet, "交接 alpha");
   });
 
-  test("交接说明：可搜的文字去掉开头的固定文字，片段和查询都不靠它", async () => {
+  test("交接说明：可搜的文字去掉开头和中间的固定文字，片段和查询都不靠它", async () => {
     assert.equal(HANDOFF_HEADER, KERNEL_HANDOFF_HEADER, "和内核的固定文字一致");
+    assert.equal(CARRY_HEADER, KERNEL_CARRY_HEADER, "和内核的固定文字一致");
     assert.deepEqual(messageParts(handoff("目标是 X")), [{ kind: "handoff", text: "目标是 X" }]);
     // 没有这句固定文字（不该有，但不能因此丢内容）：原样。
     assert.deepEqual(messageParts(user("没有开头", { tau: { letters: [], handoff: true } })), [{ kind: "handoff", text: "没有开头" }]);
+    // 带过去的信：内核在中间写的那句固定文字也去掉，信本身照常可搜。
+    assert.deepEqual(messageParts(user(`${HANDOFF_HEADER}目标\n\n${CARRY_HEADER}\n\n进入第二段`, { tau: { letters: [], handoff: true } })), [{ kind: "handoff", text: "目标\n\n进入第二段" }]);
     const s = { 1: rowsOf(handoff("目标是 X"), user("交接说明 在这里")) };
     // 固定文字里的词搜不到交接说明，用户消息里写了就是用户消息的命中。
     const header = await scanHistory(base({ current: 2, terms: parseQuery("上一个工作段结束时写的"), ...fake(s) }));
@@ -415,9 +431,13 @@ describe("扫描", () => {
     // 正文里的词照常命中，片段从正文取。
     const body = await scanHistory(base({ current: 2, terms: parseQuery("目标"), kind: "handoff", ...fake(s) }));
     assert.deepEqual(body.hits.map((h) => [h.pos.seq, h.snippet]), [[0, "目标是 X"]]);
+    // 中间那句固定文字也不靠它命中。
+    const carry = { 1: rowsOf(user(`${HANDOFF_HEADER}目标\n\n${CARRY_HEADER}\n\n进入第二段 alpha`, { tau: { letters: [], handoff: true } })) };
+    assert.equal((await scanHistory(base({ current: 2, terms: parseQuery("没处理的用户消息"), kind: "handoff", ...fake(carry) }))).total, 0);
+    assert.equal((await scanHistory(base({ current: 2, terms: parseQuery("进入第二段"), kind: "handoff", ...fake(carry) }))).total, 1);
     // 带过去的信、图片：开头的固定文字照样去掉。
-    const withImage = { role: "user", content: [text(`${HANDOFF_HEADER}目标\n\n（下面是写交接说明时还没处理的用户消息。）`), { type: "image", data: "blob:x", mimeType: "image/png" }], timestamp: T, tau: { letters: [], handoff: true } };
-    assert.deepEqual(messageParts(withImage), [{ kind: "handoff", text: "目标\n\n（下面是写交接说明时还没处理的用户消息。）\n[图片]" }]);
+    const withImage = { role: "user", content: [text(`${HANDOFF_HEADER}目标\n\n${CARRY_HEADER}`), { type: "image", data: "blob:x", mimeType: "image/png" }], timestamp: T, tau: { letters: [], handoff: true } };
+    assert.deepEqual(messageParts(withImage), [{ kind: "handoff", text: "目标\n[图片]" }]);
   });
 
   test("命中带时间；工具结果带对应调用的摘要，配不上只写工具名，出错写明", async () => {
@@ -529,6 +549,60 @@ describe("搜索结果的文字", () => {
   test("范围行写明 segment 和 before 的限制", async () => {
     const r = await scanHistory(base({ current: 5, terms: ["x"], segment: 2, before: { seg: 2, seq: 9 }, ...fake({ 2: rowsOf(user("x")) }) }));
     assert.equal(formatSearch(r, view(5, { segment: 2, before: { seg: 2, seq: 9 } })).split("\n")[1], "范围：当前是第 5 段，旧段共 4 个；只搜第 2 段；只搜比 2:9 更旧的位置。");
+  });
+
+  test("范围是空的：segment 与 before 冲突，不写成“还没有旧段”", async () => {
+    const r = await scanHistory(base({ current: 5, terms: ["x"], segment: 2, before: { seg: 1, seq: 0 }, ...fake({ 2: rowsOf(user("x")) }) }));
+    assert.deepEqual([r.scope, r.read, r.complete], [0, 0, true]);
+    const out = formatSearch(r, view(5, { segment: 2, before: { seg: 1, seq: 0 } }));
+    assert.ok(out.endsWith("范围是空的：第 2 段不比 1:0 更旧。去掉 before，或者把 segment 换成更旧的段。"), out);
+    assert.ok(!out.includes("还没有旧段"));
+  });
+
+  test("一段都没扫到：写“还不知道有没有命中”，不写“没有命中”", async () => {
+    const s = { 1: rowsOf(user("x")) };
+    // 预算一开始就到期：一段都没读。
+    const zero = await scanHistory(base({ current: 3, terms: ["x"], budgetMs: 0, ...fake(s) }));
+    assert.deepEqual([zero.read, zero.scope, zero.complete], [0, 2, false]);
+    const out = formatSearch(zero, view(3));
+    assert.ok(out.includes("一段都没扫到，还不知道有没有命中。"), out);
+    assert.ok(!out.includes("目前没有命中"));
+    // 读了但段没了，也没扫完。
+    const gone = await scanHistory(base({ current: 4, terms: ["x"], budgetMs: 1, ...fake({}, { t: 0, step: 30_000 }) }));
+    assert.deepEqual([gone.read, gone.missing, gone.complete], [0, [3], false]);
+    assert.ok(formatSearch(gone, view(4)).includes("一段都没扫到，还不知道有没有命中。"));
+    // 续搜的 before 不超过当前段：超了会被 history_search 的参数校验拒掉。
+    const seg = await scanHistory(base({ current: 4, terms: ["x"], segment: 4, budgetMs: 0, ...fake(s) }));
+    assert.ok(formatSearch(seg, view(4, { segment: 4 })).trimEnd().endsWith("续搜：其它参数照旧，加上 before=4:0"));
+  });
+
+  test("before 到最早的位置、segment 与 before 取不出位置：各自说清，不提示“换个词”", async () => {
+    const oldest = await scanHistory(base({ current: 4, terms: ["x"], before: { seg: 1, seq: 0 }, ...fake({ 1: rowsOf(user("x")) }) }));
+    assert.equal(oldest.scope, 0);
+    assert.ok(formatSearch(oldest, view(4, { before: { seg: 1, seq: 0 } })).endsWith("1:0 之前没有内容，已经到最早的位置了。去掉 before 可以搜全部旧段。"));
+    // segment 撞上 before 的序号 0：这一段没有比 3:0 更旧的位置，换词也没用。
+    const same = await scanHistory(base({ current: 4, terms: ["x"], segment: 3, before: { seg: 3, seq: 0 }, ...fake({ 3: rowsOf(user("x")) }) }));
+    assert.equal(same.scope, 0);
+    assert.ok(formatSearch(same, view(4, { segment: 3, before: { seg: 3, seq: 0 } })).endsWith("范围是空的：第 3 段不比 3:0 更旧。去掉 before，或者把 segment 换成更旧的段。"));
+    const older = await scanHistory(base({ current: 4, terms: ["y"], before: { seg: 2, seq: 0 }, ...fake({ 1: rowsOf(user("x")) }) }));
+    assert.ok(formatSearch(older, view(4, { before: { seg: 2, seq: 0 } })).endsWith("在 2:0 之前没有命中。换个词，或者少写几个词。"));
+    // 没给 before 时照旧。
+    const plain = await scanHistory(base({ current: 2, terms: ["没有的词"], ...fake({ 1: rowsOf(user("x")) }) }));
+    assert.ok(formatSearch(plain, view(2)).endsWith("没有命中。换个词，或者少写几个词（多个词要同时出现）；kind: handoff 可以看各段的交接说明。"));
+  });
+
+  test("before 之前的段读不到：说清是这个范围，不写“这个进程还没有可搜的旧段”", async () => {
+    const r = await scanHistory(base({ current: 4, terms: ["x"], before: { seg: 2, seq: 0 }, ...fake({}) }));
+    assert.deepEqual([r.scope, r.read, r.missing, r.complete], [1, 0, [1], true]);
+    const out = formatSearch(r, view(4, { before: { seg: 2, seq: 0 } }));
+    assert.ok(out.endsWith("2:0 之前的旧段都读不到：第 1 段（多半已被清理）。去掉 before 可以搜其它旧段。"), out);
+    assert.ok(!out.includes("这个进程还没有可搜的旧段"));
+  });
+
+  test("segment 指向被删的段：写明下一步", async () => {
+    const r = await scanHistory(base({ current: 3, terms: ["x"], segment: 2, ...fake({}) }));
+    const out = formatSearch(r, view(3, { segment: 2 }));
+    assert.ok(out.endsWith("这一段读不到，没有可搜的内容。去掉 segment 可以搜其它旧段。"), out);
   });
 
   test("输出到上限：少显示命中，计数照数，续搜指到最后一条显示的", async () => {
@@ -941,6 +1015,9 @@ describe("真的服务", () => {
     const hand = await tool("history_search", { query: "gamma", kind: "handoff" }, main);
     assert.match(hand.text, /命中 1 条（第 2 段 1 条）/);
     assert.match(hand.text, /\[2:0\] .* handoff（交接说明）：/);
+    // 带过去的信中间那句固定文字不靠它命中；信本身照常命中。
+    const carry = await tool("history_search", { query: "没处理的用户消息", kind: "handoff" }, main);
+    assert.match(carry.text, /没有命中/, carry.text);
     const calls = await tool("history_search", { query: "second-segment-output", kind: "tool_call" }, main);
     assert.match(calls.text, /\[2:1\] .* tool_call（bash）：/);
   });
@@ -990,6 +1067,21 @@ describe("真的服务", () => {
     const r = await tool("history_search", { query: "x", max_hits: 100 }, main);
     assert.equal(r.isError, true);
     assert.match(r.text, /max_hits 必须是 1 到 30 的整数/);
+    // before 比当前段还新：范围行会写一句不起作用的约束，所以直接拒绝。
+    const far = await tool("history_search", { query: "x", before: "9:0" }, main);
+    assert.equal(far.isError, true);
+    assert.match(far.text, /before 是 9:0，但现在是第 4 段/);
+  });
+
+  test("history_search：范围为空、before 到最早，各说清楚", async () => {
+    const empty = await tool("history_search", { query: "结论", segment: 2, before: "1:0" }, main);
+    assert.equal(empty.isError, false, empty.text);
+    assert.match(empty.text, /范围是空的：第 2 段不比 1:0 更旧/);
+    assert.ok(!empty.text.includes("还没有旧段"));
+    const same = await tool("history_search", { query: "结论", segment: 3, before: "3:0" }, main);
+    assert.match(same.text, /范围是空的：第 3 段不比 3:0 更旧/);
+    const oldest = await tool("history_search", { query: "结论", before: "1:0" }, main);
+    assert.ok(oldest.text.trimEnd().endsWith("1:0 之前没有内容，已经到最早的位置了。去掉 before 可以搜全部旧段。"), oldest.text);
   });
 
   test("history_read：读目标和前后各一条，标出配对的位置", async () => {
