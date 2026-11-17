@@ -70,10 +70,20 @@ function usePoll(key, fn, ms, bump) {
 
 /* ------------------------------------------------------------------ 小件 */
 
-/** 三格数字。`items`：`{ en, label, value, unit?, warn?, hot? }`。 */
+/** 三格数字。`items`：`{ en, label, value, unit?, warn?, hot? }`，或者 `{ en, label, pair: [上, 下] }`（两个数上下两行）。 */
 function Stats({ items }) {
   return html`<dl class="istats">
-    ${items.map((it) => html`<div class=${`istat ${it.hot ? "hot" : ""}`}><dt><span class="label">${it.en}</span><span>${it.label}</span></dt><dd class=${it.warn ? "warn" : ""}><span>${it.value}</span>${it.unit ? html`<span class="u"> ${it.unit}</span>` : ""}</dd></div>`)}
+    ${items.map((it) => {
+      const head = html`<dt><span class="label">${it.en}</span><span>${it.label}</span></dt>`;
+      // 两个数（增和删）上下两行，各占半高，合起来和旁边的大字一样高。
+      if (it.pair) {
+        const n = Math.max(...it.pair.map((s) => s.length));
+        return html`<div class="istat">${head}<dd class="pair" style=${`--n:${Math.max(2.5, n).toFixed(2)}`}>${it.pair.map((s) => html`<span>${s}</span>`)}</dd></div>`;
+      }
+      // 折算的字数：大字一个算一个，单位是小字，一个算 0.4，再加上中间的空格。CSS 按它和格宽定字号，长的数字缩小，不出格。
+      const n = String(it.value).length + (it.unit ? 0.5 + String(it.unit).length * 0.4 : 0);
+      return html`<div class=${`istat ${it.hot ? "hot" : ""}`}>${head}<dd class=${it.warn ? "warn" : ""} style=${`--n:${Math.max(2.5, n).toFixed(2)}`}><span>${it.value}</span>${it.unit ? html`<span class="u"> ${it.unit}</span>` : ""}</dd></div>`;
+    })}
   </dl>`;
 }
 
@@ -474,7 +484,7 @@ function ProcChanges({ app, workdir, status }) {
     <${Stats}
       items=${[
         { en: "FILES", label: "改动文件", value: files.length },
-        { en: "DIFF", label: "增 / 删", value: `+${add}`, unit: `−${del}` },
+        { en: "DIFF", label: "增 / 删", pair: [`+${add}`, `−${del}`] },
         { en: "AHEAD", label: bd && bd.main ? `领先 ${bd.main}` : "领先主分支", value: mine && !onMain ? mine.ahead : "—", unit: mine && !onMain ? "提交" : "" },
       ]}
     />

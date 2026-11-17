@@ -29,14 +29,18 @@
 .ipage { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .istats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--ink4); flex: none; }
 /* 三格数字：英文小标签在上，压窄的大数字，中文说明在下。 */
-.istat { display: flex; flex-direction: column; gap: 6px; padding: 12px 16px 12px; min-width: 0; }
+.istat { display: flex; flex-direction: column; gap: 6px; padding: 12px 16px 12px; min-width: 0; container-type: inline-size; }
 .istat + .istat { border-left: 1px solid var(--ink4); }
 .istat dt { display: contents; font-size: 11px; color: var(--fg2); }
 .istat dt .label { order: 0; color: var(--fg3); font-size: 9px; }
 .istat dt > span:last-child { order: 2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.istat dd { order: 1; display: flex; align-items: baseline; font-stretch: 62%; font-weight: 800; font-size: 42px; line-height: .95; white-space: nowrap; }
-.istat dd .u { font-size: 16px; color: var(--fg2); }
+/* 数字按格宽定字号：--n 是折算的字数（inspector.js 的 Stats 算），压窄的数字一个字约 .5em。短的停在 --big，长的缩小，不出格。 */
+.istat dd { --big: 42px; order: 1; display: flex; align-items: baseline; min-width: 0; overflow: hidden; font-stretch: 62%; font-weight: 800; font-size: min(var(--big), calc(100cqi / var(--n, 3) / .5)); line-height: .95; white-space: nowrap; }
+.istat dd .u { font-size: max(11px, .38em); color: var(--fg2); }
 .istat dd.warn { color: var(--warn); }
+/* 两个数上下两行（改动的增和删）：各占半高，合起来和旁边的大字一样高；下面那个用次要色。 */
+.istat dd.pair { flex-direction: column; align-items: flex-start; gap: 0; font-size: min(calc(var(--big) * .5), calc(100cqi / var(--n, 3) / .5)); line-height: .95; }
+.istat dd.pair > span + span { color: var(--fg2); }
 .istat.hot dd > span:first-child { background: var(--acc); color: var(--ink); padding: 1px 7px 0 5px; }
 .ibody { flex: 1; display: flex; flex-direction: column; gap: 24px; padding: 20px 18px 64px; min-width: 0; }
 .ibody.wide { gap: 22px; padding: 18px 0 64px; }
@@ -154,7 +158,7 @@
   .inspector { min-height: 360px; }
   .itab-foot { display: none; }
   .istat { padding: 12px 12px 10px; }
-  .istat dd { font-size: 36px; }
+  .istat dd { --big: 36px; }
   .diff-body { max-height: 320px; }
 }
 
