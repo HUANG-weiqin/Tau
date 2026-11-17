@@ -85,6 +85,7 @@
 | `/api/tau` | 一条协议请求 | 管道回的每一行原样分块写回，管道关闭就结束。浏览器断开，桥就断开管道。连不上管道回 503 |
 | `/api/presets` | `{}` | `{ presets }`，见下 |
 | `/api/presets/create` | `{ id, workdir, model, tools, thinking?, prompt }` | `{ ok: true }`。文件已经存在回 409，不覆盖 |
+| `/api/presets/delete` | `{ id }` | `{ ok: true }`。ID 的检查和新建一样；没有这个文件回 404。只删 `presets/<ID>.md`，记忆库不动 |
 | `/api/git` | `{ workdir, what, file? }` | 见下 |
 | `/api/bg` | `{ processes }` | `{ logs }`，见下 |
 | `/api/state` | `{ set? }` | `{ state }`。`set` 的每个顶层键覆盖进文件，再回整个文件 |
@@ -97,6 +98,7 @@
 - 解析照内核的读取规则（[设计稿第 2 节](../docs/design/mvp.md#2-预设)）：两行 `---` 之间是 `键: 值`，认 `workdir`、`model`、`tools`、`thinking`、`handoff`。不查模型目录。
 - 每个预设回 `{ id, ok: true, workdir, model, tools, memory, thinking?, handoff? }`。`memory` 是 `tools` 里有没有 `memory`。读不懂的回 `{ id, ok: false, error }`，照样列出。
 - 新建时只写认识的字段，提示词写在第二个 `---` 后面。ID 只许字母、数字、`.`、`_`、`-`，工作目录必须是存在的绝对路径。
+- 删除只认 ID，检查和新建一样。桥不查这个预设有没有进程，也不查是不是总管的预设；这两条由页面拦（[设计稿 7.7](../docs/design/gui.md#77-删除)）。
 
 git：
 
@@ -141,17 +143,20 @@ git：
 - 进程归到哪个项目、常驻还是临时：先看 `seen`，没有就用当前的预设文件，并记进 `seen`。
 - 段号从 1 开始。临时进程的标题取第 1 段第一条用户消息的第一行；第一行是信头 `（来自…）` 时取第二行。
 - 模块：`app.js` 是根组件，组装一个只读的 `app` 对象给各块用（数据、读法和动作，JSDoc 写在文件开头）；`conn.js` 管连接和增量读；`api.js` 发请求；`ui/` 每块一个文件；`css/` 每块一个文件，`styles.css` 只 `@import` 它们。
-- 地址栏的 hash 记聚焦的对象和开着的弹窗：`#p=<进程 ID>`、`#proj=<项目键>`、`#dlg=chief|newproc|openproj|projects|clean`，可以用 `&` 连起来。项目键是 `lib/state.js` 的 `pathKey`。
+- 地址栏的 hash 记聚焦的对象和开着的弹窗：`#p=<进程 ID>`、`#proj=<项目键>`、`#dlg=chief|newproc|newpreset|openproj|projects|clean`。删除的确认框不进 hash，可以用 `&` 连起来。项目键是 `lib/state.js` 的 `pathKey`。
 - 改界面数据时先重读文件，在新读到的内容上改，再写回去，几个页面同时开着也不互相覆盖。页面回到前台时和每 30 秒也重读一次。
-- 进程在 `ps` 里没了，就从 `seen`、`titles`、`mine`、`forkedFrom`、`current` 里删掉它的键，文件不会一直长。写失败以后 30 秒内不再自动写，不会反复重试。
+- 进程在 `ps` 里没了，就从 `seen`、`titles`、`mine`、`forkedFrom`、`current` 里删掉它的键，文件不会一直长。例外：还在的分叉指着的那个标题留着（`lib/state.js` 的 `prunePatch`）。
+- 删进程：`ui/remove.js` 的确认框贴着点的按钮或行，状态不在 `app` 里，也不进 hash。删之前，临时进程的标题先缓存（`ui/titlecache.js`，清理旧进程共用）。`app.remove` 和 `app.deletePreset` 不弹提示，被拒绝时原因写在确认框里。收到 `removed` 时，删的是聚焦的进程就聚焦它的项目。
+- 建预设：`ui/presetform.js` 是“打开项目”和“新预设”共用的表。显示名写进 `names`，不写预设文件。从“新进程”弹窗进“新预设”时，建好以后回到“新进程”，选中新建的预设。
+- “换段”：`lib/messages.js` 的 `HANDOFF_LETTER` 是固定的一封信，用 `send` 寄，请模型调用 `handoff`。内核没有从外面强制换段的请求。写失败以后 30 秒内不再自动写，不会反复重试。
 - 只跟最近看过的几个进程读全部历史。别的进程只读当前段最后一条消息，拿到最后动静的时间。
 
 ## 测试
 
 | 文件 | 测什么 |
 |---|---|
-| `test/extras/gui/bridge.test.ts` | 每条检查的反例；GET 不出目录；转发对着测试服务（临时目录、测试管道、faux 模型），含 `watch` 分块推送和浏览器断开；预设的解析和新建不覆盖；git 带 `--no-optional-locks`、工作目录不对时拒绝；界面数据改名写入 |
-| `test/extras/gui/lib.test.ts` | 纯逻辑：增量读跨换段、重连后不丢不重、标题、当前进程、筛选计数、全部停止和清理的顺序 |
+| `test/extras/gui/bridge.test.ts` | 每条检查的反例；GET 不出目录；转发对着测试服务（临时目录、测试管道、faux 模型），含 `watch` 分块推送和浏览器断开；预设的解析、新建不覆盖和删除；git 带 `--no-optional-locks`、工作目录不对时拒绝；界面数据改名写入 |
+| `test/extras/gui/lib.test.ts` | 纯逻辑：增量读跨换段、重连后不丢不重、标题、当前进程、筛选计数、全部停止和清理的顺序、删进程的拒绝条件、`prunePatch` |
 
 ## 坑点
 
