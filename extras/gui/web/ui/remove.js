@@ -41,9 +41,9 @@ export function ConfirmLayer({ app }) {
   return a.kind === "process" ? html`<${RemoveBox} key=${"p" + a.id} app=${app} id=${a.id} rect=${a.rect} onClose=${close} />` : html`<${DeletePresetBox} key=${"s" + a.id} app=${app} id=${a.id} rect=${a.rect} onClose=${close} />`;
 }
 
-/** @param {{ title: string, sub?: string, onClose: () => void, children?: any, foot: (close: () => void) => any, rect: Rect | null, label: string }} p */
-function Box({ title, sub, onClose, children, foot, rect, label }) {
-  return html`<${Popover} rect=${rect} onClose=${onClose} label=${label} width=${460} est=${300}>
+/** @param {{ title: string, sub?: string, onClose: () => void, onClosing?: () => void, children?: any, foot: (close: () => void) => any, rect: Rect | null, label: string }} p */
+function Box({ title, sub, onClose, onClosing, children, foot, rect, label }) {
+  return html`<${Popover} rect=${rect} onClose=${onClose} onClosing=${onClosing} label=${label} width=${460} est=${300}>
     ${(/** @type {() => void} */ close) => html`<${Fragment}>
       <${DlgHead} icon="trash" title=${title} en="DELETE" sub=${sub} onClose=${close} />
       <div class="dlg-body">${children}</div>
@@ -79,9 +79,11 @@ function RemoveBox({ app, id, rect, onClose }) {
   const e = app.byId[id];
   /** @type {[Run | null, (r: Run) => void]} */
   const [run, setRun] = useState(/** @type {Run | null} */ (null));
-  // 框关了就停：删完手上这一个，不再往下删。留下的永远是一棵完整的树，因为从叶子删起。
+  // 框一开始关就停：删完手上这一个，不再往下删。留下的永远是一棵完整的树，因为从叶子删起。
+  // 要在开始关的那一刻停，不能等卸载：离场动效的 160ms 里，本机的 remove 能删完一整棵树。
   const stopped = useRef(false);
   useEffect(() => () => void (stopped.current = true), []);
+  const halt = () => void (stopped.current = true);
   // 还没开始删时，进程没了（别处删了）就收起来。开始以后，删的进度由 go 管，进程一个个消失是正常的。
   useEffect(() => {
     if (!run && !app.store.procs[id]) onClose();
@@ -138,7 +140,7 @@ function RemoveBox({ app, id, rect, onClose }) {
   const nth = run && !run.over ? shown.done.length + shown.refused.length + (shown.at !== null && !shown.done.includes(shown.at) && !(shown.at in refusedBy) ? 1 : 0) : 0;
   const label = run && !run.over ? `删除中 ${nth}/${total}` : total > 1 ? `删除 ${total} 个` : "删除";
 
-  return html`<${Box} rect=${rect} onClose=${onClose} label="删除进程" title="删除进程" sub=${id}
+  return html`<${Box} rect=${rect} onClose=${onClose} onClosing=${halt} label="删除进程" title="删除进程" sub=${id}
     foot=${(/** @type {() => void} */ close) => html`<${Fragment}>
       <${Pill} label=${run && !run.over ? "停止" : run ? "关闭" : "取消"} onClick=${close} />
       ${!(run && run.over) && html`<${Pill} kind="warn" icon="trash" label=${label} disabled=${live.running.length > 0 || !!run} onClick=${() => go(close)} />`}

@@ -228,9 +228,10 @@ export function MenuLayer() {
  * `rect` 是按钮的位置（没有时居中）。`align` 为 "bottom" 时底边贴着按钮底边（总管）。
  * 手机宽度下铺满屏幕（样式在 dialogs.css）。
  * `est` 是弹窗大概多高，用来决定它离屏幕顶多远。
- * @param {{ rect?: { left: number, top: number, right: number, bottom: number } | null, onClose: () => void, label: string, width?: number, align?: "top" | "bottom", est?: number, class?: string, children?: any }} p
+ * `onClosing` 在开始关的那一刻同步调用（Esc、点背景、按钮都算），`onClose` 要等离场动效走完。
+ * @param {{ rect?: { left: number, top: number, right: number, bottom: number } | null, onClose: () => void, onClosing?: () => void, label: string, width?: number, align?: "top" | "bottom", est?: number, class?: string, children?: any }} p
  */
-export function Popover({ rect, onClose, label, width = 640, align = "top", est = 420, class: cls = "", children }) {
+export function Popover({ rect, onClose, onClosing, label, width = 640, align = "top", est = 420, class: cls = "", children }) {
   const [leaving, setLeaving] = useState(false);
   const root = useRef(/** @type {HTMLElement | null} */ (null));
   const back = useRef(/** @type {HTMLElement | null} */ (null));
@@ -238,9 +239,12 @@ export function Popover({ rect, onClose, label, width = 640, align = "top", est 
   // onClose 每次渲染都是新的；存进 ref，下面的 effect 只在挂载时跑一次，不抢焦点。
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const onClosingRef = useRef(onClosing);
+  onClosingRef.current = onClosing;
   const close = useCallback(() => {
     if (closing.current) return;
     closing.current = true;
+    onClosingRef.current?.();
     setLeaving(true);
     const quick = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     setTimeout(() => onCloseRef.current(), quick ? 0 : 160);
