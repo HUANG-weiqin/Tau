@@ -146,7 +146,7 @@ git：
 - 地址栏的 hash 记聚焦的对象和开着的弹窗：`#p=<进程 ID>`、`#proj=<项目键>`、`#dlg=chief|newproc|newpreset|openproj|projects|clean`。删除的确认框不进 hash，可以用 `&` 连起来。项目键是 `lib/state.js` 的 `pathKey`。
 - 改界面数据时先重读文件，在新读到的内容上改，再写回去，几个页面同时开着也不互相覆盖。页面回到前台时和每 30 秒也重读一次。
 - 进程在 `ps` 里没了，就从 `seen`、`titles`、`mine`、`forkedFrom`、`current` 里删掉它的键，文件不会一直长。例外：还在的分叉指着的那个标题留着（`lib/state.js` 的 `prunePatch`）。
-- 删进程：`ui/remove.js` 的确认框贴着点的按钮或行，状态不在 `app` 里，也不进 hash。删之前，临时进程的标题先缓存（`ui/titlecache.js`，清理旧进程共用）。`app.remove` 和 `app.deletePreset` 不弹提示，被拒绝时原因写在确认框里。收到 `removed` 时，删的是聚焦的进程就聚焦它的项目。
+- 删进程：`ui/remove.js` 的确认框贴着点的按钮或行，状态不在 `app` 里，也不进 hash。确认框列出整棵子树，从叶子删起（`lib/remove.js` 的 `removePlan`、`skippedFor`）；子树里有在跑的就不让删；被服务拒绝的，只跳过它的祖先；框中途关掉就停在删完手上这个。删之前，子树里的临时进程和被分叉指着的进程，标题先缓存（`ui/titlecache.js`，清理旧进程共用）。`app.remove` 和 `app.deletePreset` 不弹提示，被拒绝时原因写在确认框里。收到 `removed` 时，删的是聚焦的进程就聚焦它的项目。
 - 建预设：`ui/presetform.js` 是“打开项目”和“新预设”共用的表。显示名写进 `names`，不写预设文件。从“新进程”弹窗进“新预设”时，建好以后回到“新进程”，选中新建的预设。
 - “换段”：`lib/messages.js` 的 `HANDOFF_LETTER` 是固定的一封信，用 `send` 寄，请模型调用 `handoff`。内核没有从外面强制换段的请求。写失败以后 30 秒内不再自动写，不会反复重试。
 - 只跟最近看过的几个进程读全部历史。别的进程只读当前段最后一条消息，拿到最后动静的时间。

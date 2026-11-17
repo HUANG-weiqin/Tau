@@ -5,7 +5,7 @@ import { formatAgo, formatBytes, formatClock, formatContext, formatDuration, for
 import { applyEnd, applyMessage, emptyHistory, giveUp, known, lastTimestamp, noteSelf, plan, segmentMessages } from "../../../extras/gui/web/lib/history.js";
 import { CARRY_HEADER, describeNow, HANDOFF_LETTER, foldMiddle, forkPoints, HANDOFF_HEADER, INTERRUPTED, parseUser, phaseStartedAt, SKIPPED, splitLetters, summarizeCall, toItems, turnStart } from "../../../extras/gui/web/lib/messages.js";
 import { cleanPlan, stopOrder } from "../../../extras/gui/web/lib/order.js";
-import { removeBlock, removeBlockText } from "../../../extras/gui/web/lib/remove.js";
+import { removePlan, skippedFor } from "../../../extras/gui/web/lib/remove.js";
 import { addFork, mergeSeen, movePinned, normalizeState, pathKey, pinFolder, prunePatch, setCurrent } from "../../../extras/gui/web/lib/state.js";
 import { allProcs, childCounts, emptyStore, reduce, streamingText } from "../../../extras/gui/web/lib/store.js";
 import { extractTitle, processTitle } from "../../../extras/gui/web/lib/titles.js";
@@ -641,14 +641,51 @@ test("formatElapsed：跑了多久精确到秒", () => {
   assert.equal(formatElapsed(3_780_000), "1 小时 03 分");
 });
 
-test("remove: 在跑、有孩子才挡；空闲没孩子放行；原因写清楚", () => {
-  const all = [self("a"), self("b", { phase: running }), self("c", { parent: "a" }), self("d", { parent: "a" }), self("e", { parent: "b" })];
-  assert.equal(removeBlock("c", all), null);
-  assert.deepEqual(removeBlock("b", all), { running: true, children: ["e"] });
-  assert.deepEqual(removeBlock("a", all), { running: false, children: ["c", "d"] });
-  assert.equal(removeBlockText({ running: true, children: [] }), "进程在跑。先停止它。");
-  assert.equal(removeBlockText({ running: false, children: ["c", "d"] }), "它开的进程还在：c、d。要先删它们。");
-  assert.equal(removeBlockText({ running: true, children: ["x"] }), "进程在跑。先停止它。它开的进程还在：x。要先删它们。");
+test("remove: 单个进程的子树只有它自己；目标不在表里也是", () => {
+  const all = [self("a"), self("b")];
+  assert.deepEqual(removePlan("a", all), { order: ["a"], depth: { a: 0 }, parent: {}, running: [] });
+  assert.deepEqual(removePlan("zz", all).order, ["zz"]);
+});
+
+test("remove: 链和分叉的树，叶子在前，目标最后；只算目标往下的", () => {
+  const chain = [self("a"), self("b", { parent: "a" }), self("c", { parent: "b" }), self("x")];
+  const p = removePlan("a", chain);
+  assert.deepEqual(p.order, ["c", "b", "a"]);
+  assert.deepEqual(p.depth, { a: 0, b: 1, c: 2 });
+  assert.deepEqual(removePlan("b", chain).order, ["c", "b"]);
+  const tree = [self("r"), self("k2", { parent: "r" }), self("k1", { parent: "r" }), self("g", { parent: "k1" }), self("h", { parent: "k1" })];
+  const t = removePlan("r", tree);
+  assert.deepEqual(t.order, ["g", "h", "k1", "k2", "r"]);
+  for (const id of t.order) for (const [c, par] of Object.entries(t.parent)) if (par === id) assert.ok(t.order.indexOf(c) < t.order.indexOf(id));
+});
+
+test("remove: 子树里在跑的成员列出来，别的分支在跑不算", () => {
+  const all = [self("r"), self("k1", { parent: "r", phase: running }), self("k2", { parent: "r" }), self("g", { parent: "k2", phase: running }), self("o", { phase: running })];
+  assert.deepEqual(removePlan("r", all).running, ["k1", "g"]);
+  assert.deepEqual(removePlan("k1", all).running, ["k1"]);
+  assert.deepEqual(removePlan("o", all).running, ["o"]);
+  assert.deepEqual(removePlan("k2", [self("k2"), self("c", { parent: "k2" })]).running, []);
+});
+
+test("remove: 环不会死循环；父进程不在表里的不算子树", () => {
+  const cyc = [self("a", { parent: "b" }), self("b", { parent: "a" })];
+  const p = removePlan("a", cyc);
+  assert.deepEqual(p.order, ["b", "a"]);
+  assert.deepEqual(removePlan("b", cyc).order, ["a", "b"]);
+  const all = [self("a"), self("orphan", { parent: "gone" }), self("self", { parent: "self" })];
+  assert.deepEqual(removePlan("a", all).order, ["a"]);
+  assert.deepEqual(removePlan("self", all).order, ["self"]);
+});
+
+test("remove: 被拒绝的进程，只跳过它的祖先，别的分支照删", () => {
+  const all = [self("r"), self("k1", { parent: "r" }), self("k2", { parent: "r" }), self("g", { parent: "k1" }), self("h", { parent: "k1" })];
+  const { order, parent } = removePlan("r", all);
+  assert.deepEqual(skippedFor(order, parent, []), []);
+  assert.deepEqual(skippedFor(order, parent, ["g"]), ["k1", "r"], "h 和 k2 不在其中");
+  assert.deepEqual(skippedFor(order, parent, ["k2"]), ["r"]);
+  assert.deepEqual(skippedFor(order, parent, ["g", "k1"]), ["r"], "已被拒绝的不重复算作跳过");
+  assert.deepEqual(skippedFor(order, parent, ["r"]), []);
+  assert.deepEqual(skippedFor(["a", "b"], { a: "b", b: "a" }, ["a"]), ["b"], "环不死循环");
 });
 
 test("state: prunePatch 清掉没了的进程，被还在的分叉指着的标题留着，当前进程记录也清", () => {
