@@ -67,6 +67,7 @@ function Plate({ app, e }) {
       <${Ctx} e=${e} error=${error} segMessages=${e.self.messages} />
       <div class="plate-act">
         <${Pill} label="分叉" icon="fork" disabled=${running} title=${running ? "进程在跑时不能复制整个段。可以在某条消息上分叉" : "复制整个当前段，开一个新进程"} onClick=${() => app.fork(e.id)} />
+        <${Pill} label="换模型" icon="ext" disabled=${running} title=${running ? "进程在跑时不能换模型（要分叉）" : "带着当前这一段的上下文，用另一个模型分叉出一个新进程"} onClick=${(/** @type {Event} */ ev) => app.openDialog("switchmodel", /** @type {Element} */ (ev.currentTarget), { process: e.id })} />
         <${Pill} label="换段" icon="reply" disabled=${running || !canHandoff(app.messages(e.id))} title=${running ? "进程在跑时不能换段" : !canHandoff(app.messages(e.id)) ? "这一段里还没有助手的回复，没有可交接的内容" : "寄一封换段信：下一轮只带交接说明，不用按整段重新算"} onClick=${() => app.handoff(e.id)} />
         <${Pill} label="停止" icon="stop" chip="red" disabled=${!running} title="Ctrl+. 按两次" onClick=${() => app.stop(e.id)} />
         <${Pill} label="删除" icon="trash" chip="red" disabled=${running} title=${running ? "进程在跑时不能删除" : "删掉这个进程和它的全部段"} onClick=${(/** @type {Event} */ ev) => askRemove(e.id, /** @type {Element} */ (ev.currentTarget))} />

@@ -27,10 +27,10 @@
 
 | 路径 | 内容 |
 |---|---|
-| `extras/package.json` | 上层的依赖，精确锁定（[D63](kb-decisions.md#d63-上层的依赖随便加)） |
+| `extras/package.json` | 上层的依赖，精确锁定（[D63](kb-decisions.md#d63-上层的依赖随便加)）。`@earendil-works/pi-ai` 和根目录同一个版本，桥只用它的公开函数读模型目录 |
 | `extras/gui/bridge/main.ts` | 桥的入口，Node 直接运行 |
 | `extras/gui/bridge/server.ts` | `createBridge`：检查和路由。测试用它在进程里起桥，可以换掉 git 和选文件夹 |
-| `extras/gui/bridge/*.ts` | 其余各部分：`forward.ts` 转发，`static.ts` 静态文件，`presets.ts`（经 `check` 列预设，写和删预设文件）、`git.ts`、`bg.ts`、`state.ts`、`pick.ts`，`util.ts` 放公用的小函数 |
+| `extras/gui/bridge/*.ts` | 其余各部分：`forward.ts` 转发，`static.ts` 静态文件，`presets.ts`（经 `check` 列预设，写、改和删预设文件）、`models.ts`（模型目录和 key 状态）、`git.ts`、`bg.ts`、`state.ts`、`pick.ts`，`util.ts` 放公用的小函数 |
 | `extras/gui/web/index.html` | 页面 |
 | `extras/gui/web/lib/*.js` | 页面的纯逻辑。不碰 DOM，不发请求。文件头写 `// @ts-check`，类型用 JSDoc |
 | `extras/gui/web/ui/*.js` | 组件 |
@@ -47,6 +47,7 @@
   - `--port`：默认 4317。只在 `127.0.0.1` 上监听。
   - `--home`：默认 `~/.tau`。测试用临时目录。
   - `--host`：额外认的 `Host` 名字，可以写多次，给 Tailscale 用。
+  - 凭据文件 `~/.pi/agent/auth.json` 的路径是 `createBridge` 的选项 `authFile`，没有命令行参数；测试用临时文件。
 - 管道：`TAU_PIPE` 有值就用它，否则用 `\\.\pipe\tau`，和 CLI 一样。
 - `start.ps1`：管道不在就起服务，端口没人听就起桥，都和终端脱开，日志写进 `~/.tau/extras/gui/`。然后打开页面。不做开机自启。
 - 从自己的终端运行 `start.ps1`。服务把自己的环境变量交给 Agent 的 bash，在别的程序（例如另一个 Agent 的会话）里起，会把那个程序的变量和令牌带进去。
@@ -84,7 +85,9 @@
 |---|---|---|
 | `/api/tau` | 一条协议请求 | 管道回的每一行原样分块写回，管道关闭就结束。浏览器断开，桥就断开管道。连不上管道回 503 |
 | `/api/presets` | `{}` | `{ presets }`，见下。服务不在回 503 |
-| `/api/presets/create` | `{ id, workdir, model, tools, thinking?, prompt }` | `{ ok: true }`。文件已经存在回 409，不覆盖 |
+| `/api/presets/create` | `{ id, workdir, model, tools, thinking?, handoff?, options?, prompt }` | `{ ok: true }`。文件已经存在回 409，不覆盖 |
+| `/api/presets/update` | `{ id, model?, thinking?, tools?, handoff?, options?, prompt? }` | `{ ok: true, preset }`，`preset` 是改完 `check` 读到的样子。见下 |
+| `/api/models` | `{}` | `{ providers, auth }`，见下 |
 | `/api/presets/delete` | `{ id }` | `{ ok: true }`。ID 的检查和新建一样；没有这个文件回 404。只删 `presets/<ID>.md`，记忆库不动。桥不查这个预设还有没有进程，由页面拦：连着服务、这次连上以后收到过进程表，才让删 |
 | `/api/git` | `{ workdir, what, file? }` | 见下 |
 | `/api/bg` | `{ processes }` | `{ logs }`，见下 |
@@ -96,10 +99,23 @@
 预设：
 
 - 读预设不自己解析：列出 `presets/` 下的每个 `.md`，对每个文件名发一次 `check`（经管道，和 `/api/tau` 同一条管道）。读得出、能不能启动、错误文字都和 `start` 一致（[kb-service 的 `check`](kb-service.md#读记录和干跑inspectcheck)），预设以后加字段（例如 `options`）桥不用改。
-- 每个预设回 `{ id, ok: true, workdir, model, tools, memory, thinking?, handoff?, options? }`。`tools` 是内置工具加工具定义的名字，`memory` 是 `tools` 里有没有 `memory`。读不出，或者读得出但此刻起不来（`check` 的 `error` 不是 `null`，例如窗口装不下），回 `{ id, ok: false, error }`，照样列出，`error` 是服务给的原文。
+- 每个预设回 `{ id, ok: true, workdir, model, tools, memory, prompt, thinking?, handoff?, options? }`。`prompt` 是改预设时要显示的提示词。`tools` 是内置工具加工具定义的名字，`memory` 是 `tools` 里有没有 `memory`。读不出，或者读得出但此刻起不来（`check` 的 `error` 不是 `null`，例如窗口装不下），回 `{ id, ok: false, error }`，照样列出，`error` 是服务给的原文。
 - 连不上服务回 503，不当成每个预设都读不出：页面连上以后再读。
-- 新建时只写认识的字段，提示词写在第二个 `---` 后面。ID 只许字母、数字、`.`、`_`、`-`，工作目录必须是存在的绝对路径。模型、工具名只查格式，不查模型目录和工具定义：写出来的文件能不能用，由 `check` 说了算。
+- 新建时只写认识的字段，提示词写在第二个 `---` 后面。`thinking`、`handoff`（正整数）、`options`（对象，写成一行 JSON）有就写，没有不写。ID 只许字母、数字、`.`、`_`、`-`，工作目录必须是存在的绝对路径。模型、工具名只查格式，不查模型目录和工具定义：写出来的文件能不能用，由 `check` 说了算。
+- 改预设只换收到的字段，别的行、顺序、换行符、BOM、提示词原样：
+  - `thinking`、`handoff`、`options` 给 `null` 就删掉这一行；文件里没有的字段追加到头部末尾；`prompt` 给了才换整个正文。一个字段都没给回 400。
+  - ID 和工作目录不能改：body 里的 `workdir` 被忽略。文件没有头部回 400，文件不存在回 404。
+  - 写临时文件再改名，写完立刻发 `check`。读不出，或者 `check` 带回启动错误，就把旧文件按原字节改回去，回 422，`error` 是服务的原文；服务不在回 503，也改回去。
+  - 一次只改一个预设，排队做。
+  - 文件里本来就有的不认识的键照样保留，所以会被 `check` 拒绝，改回去。
 - 删除只认 ID，检查和新建一样。桥不查这个预设有没有进程，也不查是不是总管的预设；这两条由页面拦（[设计稿 7.7](../docs/design/gui.md#77-删除)）。
+
+模型目录和 key 状态（`models.ts`）：
+
+- 目录：用 pi-ai 的 `getBuiltinProviders`、`getBuiltinModels`、`builtinProviders`（显示名）和 `getSupportedThinkingLevels`，桥第一次收到请求时算一次。只含有模型的供应商。
+- `providers` 每项：`{ id, name, key, models }`。`models` 每项：`{ id, name, window, image, thinking }`，`thinking` 是支持的级别，已去掉预设不收的 `off`。
+- `key` 每次请求现读 `authFile`，只看每个条目的供应商名和 `type`：`key`（`api_key`）、`oauth`（tau 不支持，当作没配）、`unreadable`（`api_key` 但 key 不是字符串、`!` 开头或含 `$`，和 `src/server/credentials.ts` 的规则一致）、`none`。key 的值不进回复、日志和错误文字。
+- `auth` 是 `{ ok: true }`；文件读不出或不是 JSON 对象时是 `{ ok: false, error }`，`error` 是固定的中文，不带文件内容，这时每家都是 `none`。文件不存在算没配，`ok: true`。
 
 git：
 
@@ -134,6 +150,9 @@ git：
 | `titles` | 进程 ID → 标题 |
 | `collapsed` | 折叠状态 |
 | `cleanDays` | 清理的天数，默认 7 |
+| `recentModels` | 最近用过的模型（`<供应商>/<模型 ID>`），最新在前，最多 6 个 |
+| `defaultModel` | 设置里的默认模型。空字符串或没有就是没设 |
+| `defaultThinking` | 设置里的默认思考强度。空字符串或没有就是不思考 |
 
 ### 页面
 
@@ -155,11 +174,15 @@ git：
   - 读全部之前页面不就绪；没读到快照的进程是 `unknown`，不归进任何项目。
 - 段号从 1 开始。临时进程的标题取第 1 段第一条用户消息里第一封信正文的第一个非空行，信头不在正文里。
 - 模块：`app.js` 是根组件，组装一个只读的 `app` 对象给各块用（数据、读法和动作，JSDoc 写在文件开头）；`conn.js` 管连接和增量读；`api.js` 发请求；`ui/` 每块一个文件；`css/` 每块一个文件，`styles.css` 只 `@import` 它们。
-- 地址栏的 hash 记聚焦的对象和开着的弹窗：`#p=<进程 ID>`、`#proj=<项目键>`、`#dlg=chief|newproc|newpreset|openproj|projects|clean`。删除的确认框不进 hash，可以用 `&` 连起来。项目键是 `lib/state.js` 的 `pathKey`。
+- 地址栏的 hash 记聚焦的对象和开着的弹窗：`#p=<进程 ID>`、`#proj=<项目键>`、`#dlg=chief|newproc|newpreset|openproj|projects|clean|settings`。改预设和换模型的弹窗要靠打开时传的预设和进程，不进 hash；删除的确认框也不进 hash，可以用 `&` 连起来。项目键是 `lib/state.js` 的 `pathKey`。
 - 改界面数据时先重读文件，在新读到的内容上改，再写回去，几个页面同时开着也不互相覆盖。页面回到前台时和每 30 秒也重读一次。
 - 进程在 `ps` 里没了，就从 `titles`、`mine`、`forkedFrom`、`current` 里删掉它的键，文件不会一直长。例外：还在的分叉指着的那个标题留着（`lib/state.js` 的 `prunePatch`）。
 - 删进程：`ui/remove.js` 的确认框贴着点的按钮或行，状态不在 `app` 里，也不进 hash。确认框列出整棵子树，从叶子删起（`lib/remove.js` 的 `removePlan`、`skippedFor`）；子树里有在跑的就不让删；被服务拒绝的，只跳过它的祖先；框中途关掉就停在删完手上这个。删之前，子树里的临时进程和被分叉指着的进程，标题先缓存（`ui/titlecache.js`，清理旧进程共用）。`app.remove` 和 `app.deletePreset` 不弹提示，被拒绝时原因写在确认框里。收到 `removed` 时，删的是聚焦的进程就聚焦它的项目。
-- 建预设：`ui/presetform.js` 是“打开项目”和“新预设”共用的表。显示名写进 `names`，不写预设文件。从“新进程”弹窗进“新预设”时，建好以后回到“新进程”，选中新建的预设。
+- 模型选择：`lib/models.js` 放纯逻辑（窗口的写法、思考级别取最近一档、搜索、供应商排序、最近用过、默认模型、表单变成请求）；`ui/modelpicker.js` 是选择器和思考强度的按钮，共用；目录和 key 状态存在页面内存里（`app.models`），打开建预设、打开项目、改预设、换模型、设置时重读。
+- 建预设：`ui/presetform.js` 是“打开项目”、“新预设”和“改预设”共用的表。显示名写进 `names`，不写预设文件。新模型预填：先取调用方给的（新预设取项目里已有预设的），再取设置里的默认，再取最近用过的，最后是第一家配了 key 的第一个模型；不写死哪个模型。建完读一遍，起不来就弹出原因。从“新进程”弹窗进“新预设”时，建好以后回到“新进程”，选中新建的预设。
+- 改预设：`ui/editpreset.js`，只发和现在不同的字段（`buildUpdate`）。服务回 422 或 503 时，错误原文写在检查条里，弹窗不关。`app.updatePreset` 不弹提示，由弹窗写。
+- 换模型：`ui/switchmodel.js`。第一种换法先 `app.updatePreset`，再 `app.fork(id, undefined, preset)`；第二种直接带另一个预设分叉。`fork` 带 `preset` 时，新进程属于那个预设，带记忆的成为它的当前进程。
+- 设置：`ui/settings.js`。默认模型、默认思考强度、清理天数改一项记一项；key 状态只读。
 - 界面数据写失败以后 30 秒内不再自动写（清理旧键），不会反复重试。
 - 信的来历读段里消息的 `tau`（`lib/messages.js` 的 `parseUser`），不解析文字：
   - 一封信的发送者、跳数、`replyTo`（写信时它在等回信）、回信的结束原因来自 `tau.letters`；正文是消息文本里 `at` 指的那段。
@@ -173,8 +196,8 @@ git：
 
 | 文件 | 测什么 |
 |---|---|
-| `test/extras/gui/bridge.test.ts` | 每条检查的反例；GET 不出目录；转发对着测试服务（临时目录、测试管道、faux 模型），含 `watch` 分块推送和浏览器断开；预设经 `check` 读（带 `options` 的读得出、读不出和装不下的错误文字和 `start` 一字不差、服务不在回 503）、新建不覆盖和删除；`inspect` 转发读到冻结的快照；换段信真的换段、信带进新段；git 带 `--no-optional-locks`、工作目录不对时拒绝；界面数据改名写入 |
-| `test/extras/gui/lib.test.ts` | 纯逻辑：信的来历读 `tau`（发送者、跳数、回信、`after`、换段、`filled`，旧消息、被截过的消息）、`canHandoff`、进程按冻结的快照归类、增量读跨换段、重连后不丢不重、标题、当前进程、筛选计数、全部停止和清理的顺序、删进程的拒绝条件、`prunePatch`；吐字的节奏（平稳的小块、成批到、收尾追平、一次来一大块）和 `latestSeq` |
+| `test/extras/gui/bridge.test.ts` | 每条检查的反例；GET 不出目录；转发对着测试服务（临时目录、测试管道、faux 模型），含 `watch` 分块推送和浏览器断开；预设经 `check` 读（带 `options` 的读得出、读不出和装不下的错误文字和 `start` 一字不差、服务不在回 503）、新建不覆盖和删除；`inspect` 转发读到冻结的快照；换段信真的换段、信带进新段；git 带 `--no-optional-locks`、工作目录不对时拒绝；界面数据改名写入；模型目录和 pi-ai 一致、key 状态四种且值不进回复、auth.json 坏了或不存在、改了不用重启；改预设只换收到的字段（顺序、CRLF、BOM、正文原样，`null` 删行）、读不出或起不来改回旧文件、服务不在改回去、请求不合法；新建带 `handoff`、`options` |
+| `test/extras/gui/lib.test.ts` | 纯逻辑：信的来历读 `tau`（发送者、跳数、回信、`after`、换段、`filled`，旧消息、被截过的消息）、`canHandoff`、进程按冻结的快照归类、增量读跨换段、重连后不丢不重、标题、当前进程、筛选计数、全部停止和清理的顺序、删进程的拒绝条件、`prunePatch`；模型选择（窗口的写法、思考级别取最近一档、搜索、供应商排序、最近用过、默认模型、key 提示）、预设表变成请求（只发变了的字段）、换模型的补丁、界面数据的新键、快照多带的几项；吐字的节奏（平稳的小块、成批到、收尾追平、一次来一大块）和 `latestSeq` |
 
 ## 坑点
 

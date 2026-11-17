@@ -215,3 +215,16 @@ export function buildUpdate(orig, origPrompt, d) {
   return { ok: true, patch };
 }
 
+/**
+ * 换模型时改预设的补丁：模型和思考强度和预设文件现在的不同才发；思考强度去掉发 `null`。
+ * @param {{ model: string, thinking?: string }} file 预设文件现在读成的样子
+ * @param {string} model @param {string | undefined} thinking
+ * @returns {Record<string, unknown>}
+ */
+export function modelPatch(file, model, thinking) {
+  /** @type {Record<string, unknown>} */
+  const patch = {};
+  if (model.trim() !== file.model) patch["model"] = model.trim();
+  if (thinking !== file.thinking) patch["thinking"] = thinking === undefined ? null : thinking;
+  return patch;
+}

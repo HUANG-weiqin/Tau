@@ -23,6 +23,7 @@
 .chief-btn:hover { background: var(--ink4); }
 .chief-dia { width: 15px; height: 15px; background: var(--acc); transform: rotate(45deg); }
 .chief-n { position: absolute; right: -7px; top: -7px; min-width: 20px; height: 20px; padding: 0 4px; background: var(--acc); color: var(--ink); border: 2px solid var(--ink1); font-size: 13px; line-height: 16px; text-align: center; }
+.tile.set-btn { height: 44px; margin-top: 0; gap: 3px; }
 .rail-run { width: 52px; display: flex; flex-direction: column; align-items: center; gap: 4px; padding-top: 10px; border-top: 1px solid var(--ink4); }
 .rail-run-l { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--fg2); }
 
@@ -36,4 +37,5 @@
   .rail-run { display: none; }
   .tile-bar { left: 6px; right: 6px; top: auto; bottom: -8px; width: auto; height: 4px; }
   .chief-btn { width: 44px; height: 48px; gap: 6px; }
+  .tile.set-btn { width: 44px; height: 48px; }
 }

@@ -62,6 +62,10 @@ export function Rail({ app }) {
       </button>
     </div>
     <div class="rail-base">
+      <button type="button" id="btn-settings" class="tile tool set-btn" aria-haspopup="dialog" aria-label="设置，Ctrl+," title="设置 Ctrl+," onClick=${(/** @type {Event} */ e) => app.openDialog("settings", /** @type {Element} */ (e.currentTarget))}>
+        <${Icon} name="sliders" size=${16} sw=${2.4} color="#A3A59F" />
+        <span class="mono" style="font-size:10.5px;color:#A3A59F">设置</span>
+      </button>
       <button type="button" id="btn-chief" class="chief-btn" aria-haspopup="dialog" aria-label=${chiefCount ? `总管，${chiefCount} 件事待你看，Ctrl+K` : "总管，Ctrl+K"} onClick=${(/** @type {Event} */ e) => app.openDialog("chief", /** @type {Element} */ (e.currentTarget))}>
         <span class="chief-dia" aria-hidden="true"></span>
         <span style="font-size:11px;font-weight:900;line-height:1">总管</span>

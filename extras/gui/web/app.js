@@ -23,6 +23,8 @@ import { NewProcDialog } from "./ui/newproc.js";
 import { OpenProjDialog } from "./ui/openproj.js";
 import { NewPresetDialog } from "./ui/newpreset.js";
 import { EditPresetDialog } from "./ui/editpreset.js";
+import { SwitchModelDialog } from "./ui/switchmodel.js";
+import { SettingsDialog } from "./ui/settings.js";
 import { pushRecent } from "./lib/models.js";
 import { ConfirmLayer, confirmOpen } from "./ui/remove.js";
 
@@ -66,7 +68,7 @@ import { ConfirmLayer, confirmOpen } from "./ui/remove.js";
  * @property {"all" | "running" | "error"} filter 进程栏的筛选。
  * @property {string} query 进程栏的搜索词。
  * @property {number} tab 详情栏现在的选项卡，0 到 2。聚焦进程时 0 概况、1 改动、2 后台；聚焦项目时 0 概况、1 分支、2 后台。
- * @property {{ name: string, rect: { left: number, top: number, right: number, bottom: number } | null, props: any } | null} dialog 打开着的弹窗：`chief | newproc | newpreset | openproj | projects | clean | editpreset`。`props` 是打开时传的。
+ * @property {{ name: string, rect: { left: number, top: number, right: number, bottom: number } | null, props: any } | null} dialog 打开着的弹窗：`chief | newproc | newpreset | openproj | projects | clean | settings | editpreset | switchmodel`。`props` 是打开时传的。
  *
  * 读取（函数）
  * @typedef {object} AppReaders
@@ -87,7 +89,7 @@ import { ConfirmLayer, confirmOpen } from "./ui/remove.js";
  * @property {(id: string, text: string, images?: string[]) => Promise<void>} send 寄信。界面寄过信的常驻进程成为当前进程。
  * @property {(id: string) => Promise<void>} handoff 换段：寄一封换段信（`send` 带 `handoff`）。段里已有助手消息才生效，见 `canHandoff`。
  * @property {(preset: string, text: string, images?: string[]) => Promise<string>} start 建进程，回进程 ID。记进 `mine`，常驻预设成为当前进程，并聚焦它。
- * @property {(id: string, before?: number) => Promise<string>} fork 分叉，回新进程 ID。`before` 是当前段里一条用户消息的段内序号；不给就复制整个当前段（源进程必须空闲）。
+ * @property {(id: string, before?: number, preset?: string) => Promise<string>} fork 分叉，回新进程 ID。`before` 是当前段里一条用户消息的段内序号；不给就复制整个当前段（源进程必须空闲）。`preset` 是换角色：新进程用这个预设（读文件现在的样子），记忆库也跟着它走。
  * @property {(id: string) => Promise<void>} stop 停这一轮。
  * @property {(project: Project) => Promise<void>} stopAll 停项目里所有在跑的进程，子孙先停，反复做到都空闲为止。
  * @property {(id: string) => Promise<void>} remove 删一个空闲进程。被拒绝时抛错，原因是服务给的；不弹提示，由调用方写在确认框里。
@@ -545,14 +547,17 @@ function compute() {
           return pid;
         })(),
       ),
-    fork: (id, before) =>
+    fork: (id, before, preset) =>
       loud(
         (async () => {
-          const r = await api.tauCommand({ op: "fork", process: id, ...(before !== undefined ? { before } : {}) });
+          const r = await api.tauCommand({ op: "fork", process: id, ...(before !== undefined ? { before } : {}), ...(preset !== undefined ? { preset } : {}) });
           const pid = r.process ?? "";
           if (!pid) throw new Error("服务没有回进程 ID");
           const src = byId[id];
-          await setGui((g) => ({ ...gs.addFork(g, pid, id), ...(src && src.kind === "team" ? gs.setCurrent(g, src.preset, pid) : {}) }));
+          // 换了预设，新进程属于新预设：带记忆的，它成为新预设的当前进程。
+          const dest = preset ?? src?.preset;
+          const team = preset === undefined ? src?.kind === "team" : !!(S.presets[preset]?.ok && /** @type {any} */ (S.presets[preset]).memory);
+          await setGui((g) => ({ ...gs.addFork(g, pid, id), ...(dest && team ? gs.setCurrent(g, dest, pid) : {}) }));
           follow(pid);
           setRoute({ proc: pid, proj: null });
           return pid;
@@ -644,9 +649,9 @@ function compute() {
 }
 
 /* 弹窗的锚点：约定的按钮。 */
-const ANCHORS = { chief: "btn-chief", newproc: "btn-newproc", openproj: "btn-open", projects: "btn-all", clean: "btn-clean" };
+const ANCHORS = { chief: "btn-chief", newproc: "btn-newproc", openproj: "btn-open", projects: "btn-all", clean: "btn-clean", settings: "btn-settings" };
 /** 写进地址栏 hash 的弹窗。别的弹窗要靠打开时传的东西，刷新以后还原不了。 */
-const HASH_DIALOGS = ["chief", "newproc", "newpreset", "openproj", "projects", "clean"];
+const HASH_DIALOGS = ["chief", "newproc", "newpreset", "openproj", "projects", "clean", "settings"];
 
 /** @param {string} name @param {Element | null} [anchor] @param {any} [props] */
 function openDialog(name, anchor, props) {
@@ -654,7 +659,7 @@ function openDialog(name, anchor, props) {
   const r = el ? el.getBoundingClientRect() : null;
   if (name === "newproc" || name === "openproj" || name === "newpreset" || name === "editpreset") reloadPresets();
   // 这几个弹窗显示 key 状态：打开时重读，pi 里改了就是新的。
-  if (["openproj", "newpreset", "editpreset"].includes(name)) reloadModels();
+  if (["openproj", "newpreset", "editpreset", "switchmodel", "settings"].includes(name)) reloadModels();
   S.dialog = { name, rect: r ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom } : null, props: props ?? null };
   writeHash();
   schedule();
@@ -726,6 +731,11 @@ function onKey(e, app) {
   if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === "n") {
     e.preventDefault();
     app.openDialog("newproc");
+    return;
+  }
+  if (e.ctrlKey && !e.altKey && e.key === ",") {
+    e.preventDefault();
+    app.openDialog("settings");
     return;
   }
   if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === "k") {
@@ -870,7 +880,9 @@ function Root() {
     ${d && d.name === "openproj" && html`<${OpenProjDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "projects" && html`<${ProjectsDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "clean" && html`<${CleanDialog} app=${app} onClose=${close} />`}
+    ${d && d.name === "settings" && html`<${SettingsDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "editpreset" && html`<${EditPresetDialog} app=${app} onClose=${close} />`}
+    ${d && d.name === "switchmodel" && html`<${SwitchModelDialog} app=${app} onClose=${close} />`}
     <${ConfirmLayer} app=${app} />
     <${TipLayer} />
     <${MenuLayer} />

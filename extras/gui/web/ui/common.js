@@ -37,6 +37,7 @@ const ICONS = {
   folder: ["M3 6h6l2 2h10v11H3z"],
   pin: ["M9 3h6l-1 7 3 3H7l3-3z", "M12 13v8"],
   image: ["M3 5h18v14H3z", "M3 16l5-5 4 4 3-3 6 6", "circle:15.5:9:1.6"],
+  sliders: ["M4 7h8", "M18 7h2", "circle:15:7:2.5", "M4 17h2", "M12 17h8", "circle:9:17:2.5"],
   info: ["M12 11v6", "M12 7v1", "M3 3h18v18H3z"],
   warn: ["M12 4l9 16H3z", "M12 10v5", "M12 17.5v.5"],
 };

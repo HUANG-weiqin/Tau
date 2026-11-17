@@ -10,7 +10,7 @@ import { addFork, movePinned, normalizeState, pathKey, pinFolder, prunePatch, se
 import { allProcs, childCounts, emptyStore, reduce, streamingText } from "../../../extras/gui/web/lib/store.js";
 import { extractTitle, processTitle } from "../../../extras/gui/web/lib/titles.js";
 import { newPace, paceArrive, paceStep } from "../../../extras/gui/web/lib/pace.js";
-import { buildCreate, buildUpdate, defaultModelRef, filterCatalog, findModel, formatWindow, keyHint, keyLabel, nearestLevel, parseOptions, pushRecent, recentEntries, sortProviders, splitModel } from "../../../extras/gui/web/lib/models.js";
+import { buildCreate, buildUpdate, defaultModelRef, filterCatalog, findModel, formatWindow, keyHint, keyLabel, modelPatch, nearestLevel, parseOptions, pushRecent, recentEntries, sortProviders, splitModel } from "../../../extras/gui/web/lib/models.js";
 
 type Self = import("../../../extras/gui/web/lib/types.js").Self;
 type Msg = import("../../../extras/gui/web/lib/types.js").Message;
@@ -1022,6 +1022,16 @@ test("预设表: 改预设只发变了的字段；没变就是空补丁；提示
   for (const bad of [{ handoff: "0" }, { handoff: "1.5" }, { handoff: "abc" }, { options: "[" }, { model: " " }]) {
     assert.equal(buildUpdate(ORIG, "p", { ...DRAFT, ...bad }).ok, false, JSON.stringify(bad));
   }
+});
+
+test("换模型: 改预设的补丁只带和文件不同的模型和思考强度", () => {
+  const file = { model: "x/m", thinking: "low" };
+  assert.deepEqual(modelPatch(file, "x/m", "low"), {});
+  assert.deepEqual(modelPatch(file, "y/n", "low"), { model: "y/n" });
+  assert.deepEqual(modelPatch(file, "x/m", "high"), { thinking: "high" });
+  assert.deepEqual(modelPatch(file, "x/m", undefined), { thinking: null });
+  assert.deepEqual(modelPatch({ model: "x/m" }, "y/n", undefined), { model: "y/n" });
+  assert.deepEqual(modelPatch({ model: "x/m" }, " y/n ", "max"), { model: "y/n", thinking: "max" });
 });
 
 test("预设表: 新建只带填了的 thinking、handoff、options", () => {
