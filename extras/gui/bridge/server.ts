@@ -11,7 +11,9 @@ import { createGit, runGit } from "./git.ts";
 import type { GitRunner } from "./git.ts";
 import { pickFolder as realPick } from "./pick.ts";
 import type { PickFolder } from "./pick.ts";
-import { createPreset, deletePreset, listPresets, presetWorkdirs } from "./presets.ts";
+import { buildCatalog, readKeys } from "./models.ts";
+import type { CatalogProvider } from "./models.ts";
+import { createPreset, deletePreset, listPresets, presetWorkdirs, updatePreset } from "./presets.ts";
 import { contentType, readStatic, routeStatic } from "./static.ts";
 import { createStateStore } from "./state.ts";
 import { HttpError, isObject } from "./util.ts";
@@ -34,6 +36,8 @@ export interface BridgeOptions {
   /** 测试注入。 */
   git?: GitRunner;
   pickFolder?: PickFolder;
+  /** pi 的凭据文件，只读它每个条目的 provider 名和类型。默认 ~/.pi/agent/auth.json。 */
+  authFile?: string;
 }
 
 export interface Bridge {
@@ -80,6 +84,8 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
     const folders = state.read().folders;
     return [...(await presetWorkdirs(home, pipe)), ...(Array.isArray(folders) ? folders.filter((f): f is string => typeof f === "string") : [])];
   });
+  const authFile = opts.authFile ?? path.join(os.homedir(), ".pi", "agent", "auth.json");
+  let catalog: CatalogProvider[] | null = null;
   const pick = opts.pickFolder ?? realPick;
   let picking = false;
 
@@ -118,6 +124,14 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
       case "presets/create":
         createPreset(home, body);
         return json(res, 200, { ok: true });
+      case "presets/update":
+        return json(res, 200, { ok: true, preset: await updatePreset(home, pipe, body) });
+      case "models": {
+        // 目录算一次；key 状态每次现读，pi 里改了不用重启。
+        catalog ??= buildCatalog();
+        const { keys, auth } = readKeys(authFile);
+        return json(res, 200, { providers: catalog.map((p) => ({ ...p, key: keys.get(p.id) ?? "none" })), auth });
+      }
       case "presets/delete":
         deletePreset(home, body);
         return json(res, 200, { ok: true });

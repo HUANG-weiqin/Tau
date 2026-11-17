@@ -816,3 +816,181 @@ test("git：输出超过缓冲上限时，diff 照常截断，status 回 500", a
   writePreset(e2, "huge", repo);
   assert.equal((await post(e2.port, "/api/git", { workdir: repo, what: "status" })).status, 500);
 });
+
+// 模型目录和 key 状态
+
+test("模型目录：供应商、模型、窗口、能不能收图、思考级别都来自 pi-ai；key 状态读 auth.json，值不进回复；改了不用重启", async (t) => {
+  const { getBuiltinModels, getBuiltinProviders } = await import("@earendil-works/pi-ai/providers/all");
+  const { getSupportedThinkingLevels } = await import("@earendil-works/pi-ai");
+  const dir = mkdtempSync(join(tmpdir(), "tau-gui-auth-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const authFile = join(dir, "auth.json");
+  const e = await setupBridge(t, { authFile });
+
+  // 文件不存在：全是“没配”。
+  const none = await post(e.port, "/api/models", {});
+  assert.equal(none.status, 200, none.text);
+  assert.ok(none.json.providers.length > 10);
+  assert.ok(none.json.providers.every((p: any) => p.key === "none"));
+  assert.deepEqual(none.json.auth, { ok: true });
+
+  // 目录和 pi-ai 一致，思考级别是 pi-ai 算的（去掉预设不收的 off）。
+  const ids = getBuiltinProviders().filter((p) => getBuiltinModels(p).length > 0);
+  assert.deepEqual(none.json.providers.map((p: any) => p.id), ids);
+  const oc = none.json.providers.find((p: any) => p.id === "opencode-go");
+  assert.equal(typeof oc.name, "string");
+  const want = getBuiltinModels("opencode-go").find((m) => m.id === "deepseek-v4.1-flash");
+  const got = oc.models.find((m: any) => m.id === "deepseek-v4.1-flash");
+  assert.ok(want && got);
+  assert.deepEqual(got, {
+    id: want.id,
+    name: want.name,
+    window: want.contextWindow,
+    image: want.input.includes("image"),
+    thinking: getSupportedThinkingLevels(want).filter((l) => l !== "off"),
+  });
+  assert.equal(got.image, true);
+  for (const p of none.json.providers) {
+    const real = getBuiltinModels(p.id);
+    assert.equal(p.models.length, real.length, p.id);
+    for (const [i, m] of p.models.entries()) assert.deepEqual(m.thinking, getSupportedThinkingLevels(real[i]!).filter((l) => l !== "off"), `${p.id}/${m.id}`);
+  }
+
+  // 三种状态加“读不了”；回复里没有 key 的任何一部分。
+  writeFileSync(
+    authFile,
+    JSON.stringify({
+      anthropic: { type: "api_key", key: "sk-ant-SECRET-1111" },
+      openai: { type: "oauth", access: "OAUTH-SECRET-2222", refresh: "OAUTH-SECRET-3333", expires: 1 },
+      google: { type: "api_key", key: "!op read SECRET-cmd" },
+      deepseek: { type: "api_key", key: "pre$SECRET-var" },
+      "opencode-go": { type: "api_key", key: 12345 },
+      "not-a-provider": { type: "api_key", key: "sk-SECRET-orphan" },
+    }),
+  );
+  const mixed = await post(e.port, "/api/models", {});
+  const status = Object.fromEntries(mixed.json.providers.map((p: any) => [p.id, p.key]));
+  assert.equal(status["anthropic"], "key");
+  assert.equal(status["openai"], "oauth");
+  assert.equal(status["google"], "unreadable");
+  assert.equal(status["deepseek"], "unreadable");
+  assert.equal(status["opencode-go"], "unreadable");
+  assert.equal(status["mistral"], "none");
+  assert.doesNotMatch(mixed.text, /SECRET|12345|op read/);
+
+  // 文件坏了：全是“没配”，说明原因，不带文件内容。
+  writeFileSync(authFile, '{"anthropic": {"type": "api_key", "key": "sk-LEAK-9999"');
+  const bad = await post(e.port, "/api/models", {});
+  assert.equal(bad.status, 200);
+  assert.ok(bad.json.providers.every((p: any) => p.key === "none"));
+  assert.equal(bad.json.auth.ok, false);
+  assert.equal(typeof bad.json.auth.error, "string");
+  assert.doesNotMatch(bad.text, /LEAK|9999/);
+  assert.equal((await raw(e.port, "/api/models")).status, 405, "GET");
+});
+
+// 改预设
+
+const read = (e: Env, id: string) => readFileSync(join(e.home, "presets", `${id}.md`), "utf8");
+const upd = (e: Env, body: Record<string, unknown>) => post(e.port, "/api/presets/update", body);
+
+test("改预设：只换收到的字段，别的行、顺序、换行符、正文原样；写完经 check 读得出", async (t) => {
+  const e = await setupBridge(t, { service: true });
+  const file = `---\nworkdir: ${e.work}\nmodel: ${e.model}\ntools: read, bash\nhandoff: 150000\noptions: {"temperature":0.2}\n---\n提示词\n第二行\n`;
+  writeFileSync(join(e.home, "presets", "a.md"), file);
+
+  // 只改 thinking：追加到头部末尾，别的行不动。
+  const r1 = await upd(e, { id: "a", thinking: "high" });
+  assert.equal(r1.status, 200, r1.text);
+  assert.equal(r1.json.ok, true);
+  assert.equal(r1.json.preset.id, "a");
+  assert.equal(r1.json.preset.thinking, "high");
+  assert.equal(read(e, "a"), file.replace('{"temperature":0.2}\n---', '{"temperature":0.2}\nthinking: high\n---'));
+
+  // 改已有的行：留在原位。
+  const r2 = await upd(e, { id: "a", tools: ["read", "write", "memory"], thinking: "low", handoff: 160000, options: { temperature: 0.5 } });
+  assert.equal(r2.status, 200, r2.text);
+  assert.equal(read(e, "a"), `---\nworkdir: ${e.work}\nmodel: ${e.model}\ntools: read, write, memory\nhandoff: 160000\noptions: {"temperature":0.5}\nthinking: low\n---\n提示词\n第二行\n`);
+
+  // null 删掉这一行；提示词整个换掉。
+  const r3 = await upd(e, { id: "a", thinking: null, handoff: null, options: null, prompt: "新的\n" });
+  assert.equal(r3.status, 200, r3.text);
+  assert.equal(read(e, "a"), `---\nworkdir: ${e.work}\nmodel: ${e.model}\ntools: read, write, memory\n---\n新的\n`);
+  assert.equal(r3.json.preset.thinking, undefined);
+
+  // CRLF 和 BOM 照旧；没提到 prompt 就不动正文。
+  writeFileSync(join(e.home, "presets", "crlf.md"), `﻿---\r\nworkdir: ${e.work}\r\nmodel: ${e.model}\r\ntools: read\r\n---\r\n正文\r\n`);
+  const r4 = await upd(e, { id: "crlf", thinking: "medium" });
+  assert.equal(r4.status, 200, r4.text);
+  assert.equal(read(e, "crlf"), `﻿---\r\nworkdir: ${e.work}\r\nmodel: ${e.model}\r\ntools: read\r\nthinking: medium\r\n---\r\n正文\r\n`);
+
+  // ID 和工作目录不能改：body 里的 workdir 被忽略。没有临时文件留下。
+  const before = read(e, "a");
+  const r5 = await upd(e, { id: "a", workdir: join(e.dir, "elsewhere"), model: e.model });
+  assert.equal(r5.status, 200, r5.text);
+  assert.equal(read(e, "a"), before);
+  assert.deepEqual(listDir(join(e.home, "presets")).sort(), ["a.md", "crlf.md"]);
+});
+
+test("改预设：读不出或起不来就改回旧文件，错误原文回给页面", async (t) => {
+  const e = await setupBridge(t, { service: true });
+  const file = `---\nworkdir: ${e.work}\nmodel: ${e.model}\ntools: read, bash, memory\n---\n提示词\n`;
+  writeFileSync(join(e.home, "presets", "a.md"), file);
+  const cases: [Record<string, unknown>, RegExp][] = [
+    [{ model: "nobody/none" }, /模型目录里没有/],
+    [{ options: { model: "x" } }, /options/],
+    [{ handoff: 5000 }, /窗口太小/],
+    [{ tools: ["read", "ghost"] }, /ghost/],
+  ];
+  for (const [patch, re] of cases) {
+    const r = await upd(e, { id: "a", ...patch });
+    assert.equal(r.status, 422, r.text);
+    assert.match(r.json.error, re);
+    assert.equal(read(e, "a"), file, JSON.stringify(patch));
+  }
+  assert.deepEqual(listDir(join(e.home, "presets")), ["a.md"], "没有临时文件");
+
+  // 文件里本来就有不认识的键：保留它，所以 check 读不出，改回去。
+  const odd = `---\nworkdir: ${e.work}\nmodel: ${e.model}\ntools: read\ncolor: red\n---\n`;
+  writeFileSync(join(e.home, "presets", "odd.md"), odd);
+  const r = await upd(e, { id: "odd", thinking: "low" });
+  assert.equal(r.status, 422);
+  assert.match(r.json.error, /color/);
+  assert.equal(read(e, "odd"), odd);
+});
+
+test("改预设：服务不在时回 503 并改回去；请求不合法 400；没有这个预设 404；只收 POST", async (t) => {
+  const e = await setupBridge(t);
+  writePreset(e, "a");
+  const before = read(e, "a");
+  const r = await upd(e, { id: "a", thinking: "low" });
+  assert.equal(r.status, 503);
+  assert.equal(read(e, "a"), before, "改回去了");
+  assert.deepEqual(listDir(join(e.home, "presets")), ["a.md"]);
+
+  for (const id of ["", "../a", "a/b", "..", "a.", 7, undefined]) assert.equal((await upd(e, { id, thinking: "low" })).status, 400, JSON.stringify(id));
+  assert.equal((await upd(e, { id: "ghost", thinking: "low" })).status, 404);
+  for (const patch of [{ thinking: "huge" }, { thinking: 3 }, { model: "a/b\nx: y" }, { model: "nomodel" }, { model: "" }, { tools: "read" }, { tools: ["a,b"] }, { handoff: 0 }, { handoff: 1.5 }, { handoff: "9" }, { options: [] }, { options: "x" }, { prompt: 3 }, {}]) {
+    assert.equal((await upd(e, { id: "a", ...patch })).status, 400, JSON.stringify(patch));
+  }
+  assert.equal(read(e, "a"), before, "出错的都没动文件");
+  writeFileSync(join(e.home, "presets", "nofm.md"), "只有正文\n");
+  assert.equal((await upd(e, { id: "nofm", thinking: "low" })).status, 400);
+  assert.equal(read(e, "nofm"), "只有正文\n");
+  assert.equal((await raw(e.port, "/api/presets/update")).status, 405, "GET");
+});
+
+test("新建预设：也收 thinking、handoff、options，写成一行；不合法的 400", async (t) => {
+  const e = await setupBridge(t, { service: true });
+  const ok = await post(e.port, "/api/presets/create", { id: "n", workdir: e.work, model: e.model, tools: ["read"], thinking: "high", handoff: 150000, options: { temperature: 0.3, metadata: { a: "b\nc" } }, prompt: "p" });
+  assert.equal(ok.status, 200, ok.text);
+  assert.equal(read(e, "n"), `---\nworkdir: ${e.work}\nmodel: ${e.model}\ntools: read\nthinking: high\nhandoff: 150000\noptions: {"temperature":0.3,"metadata":{"a":"b\\nc"}}\n---\np\n`);
+  const lst = (await post(e.port, "/api/presets", {})).json.presets[0];
+  assert.equal(lst.ok, true, JSON.stringify(lst));
+  assert.deepEqual(lst.options, { temperature: 0.3, metadata: { a: "b\nc" } });
+  const base = { workdir: e.work, model: e.model, tools: ["read"], prompt: "p" };
+  for (const patch of [{ handoff: 0 }, { handoff: "1" }, { options: [] }, { options: 5 }]) {
+    assert.equal((await post(e.port, "/api/presets/create", { ...base, id: "w", ...patch })).status, 400, JSON.stringify(patch));
+  }
+  assert.deepEqual(listDir(join(e.home, "presets")), ["n.md"]);
+});
