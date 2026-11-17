@@ -1,6 +1,6 @@
 /* 主区：铭牌、消息流、写信框 */
 .main { position: relative; flex: 999 1 480px; min-width: 0; display: flex; flex-direction: column; background: var(--stage); overflow: hidden; min-height: 0; --bk: #111211; }
-.main > .carry, .main > .compose { position: relative; z-index: 2; }
+.main > .carry, .main > .dock { position: relative; z-index: 2; }
 
 .plate-wrap { position: relative; z-index: 2; flex: none; display: flex; flex-wrap: wrap; align-items: stretch; background: linear-gradient(160deg, #20211F 0%, #0C0D0C 100%); color: var(--fg); --pc: var(--acc); }
 .plate-wrap.err { --pc: var(--warn); }
@@ -144,12 +144,6 @@ button.chead:hover { background: var(--ink3); }
 .carry { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: var(--ink0); color: var(--fg2); font-size: 11.5px; min-width: 0; }
 .carry .mono { font-size: 11.5px; }
 
-.compose { flex: none; background: var(--ink1); color: var(--fg); border-top: 1px solid var(--ink0); }
-.crow { display: flex; align-items: stretch; }
-.crow:focus-within { box-shadow: inset 0 2px 0 var(--acc); }
-.clab { display: flex; align-items: center; padding: 0 16px; background: var(--ink0); font-size: 13px; font-weight: 700; white-space: nowrap; }
-.cin { flex: 1; min-width: 0; min-height: 60px; max-height: 190px; border: 0; background: transparent; padding: 20px 16px; resize: none; font-size: 14px; line-height: 1.5; color: var(--fg); outline: none !important; display: block; }
-.cthumbs { display: flex; gap: 8px; padding: 10px 16px 0 88px; flex-wrap: wrap; }
 .cthumb { position: relative; }
 .cthumb img { height: 56px; display: block; box-shadow: 0 0 0 1px var(--ink4); }
 .cthumb button { position: absolute; right: -6px; top: -6px; width: 20px; height: 20px; padding: 0; border: 0; background: var(--warn); color: var(--ink); display: grid; place-items: center; }
@@ -186,6 +180,5 @@ button.chead:hover { background: var(--ink3); }
   .plate-r { padding: 14px 16px; flex-basis: 100%; }
   .plate h1 { font-size: 48px; }
   .ctx-big { font-size: 64px; }
-  .cthumbs { padding-left: 16px; }
 }
 @media (max-width: 1399px) { .xl-only { display: none !important; } }

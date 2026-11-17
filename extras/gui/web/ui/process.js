@@ -121,6 +121,16 @@ function Stream({ app, e }) {
     if (stick.current) n.scrollTop = n.scrollHeight;
     else setFresh(true);
   }, [sig, openMid, openPre]);
+  // 写信框长高时台面变矮：贴着底的，继续贴着底。
+  useLayoutEffect(() => {
+    const n = el.current;
+    if (!n) return;
+    const ro = new ResizeObserver(() => {
+      if (stick.current) n.scrollTop = n.scrollHeight;
+    });
+    ro.observe(n);
+    return () => ro.disconnect();
+  }, []);
 
   /** @type {any[]} */
   const rows = [];
@@ -226,7 +236,6 @@ export function ProcessView({ app }) {
   return html`<${Fragment}>
     <${Plate} app=${app} e=${e} />
     <${Stream} app=${app} e=${e} />
-    ${note && html`<div class="carry"><span class="tag warn" style="flex:none">自动加在信前</span><span class="mono ell" title=${note}>${note}</span></div>`}
-    <${Compose} key=${e.id} app=${app} id=${e.id} name=${name} />
+    <${Compose} key=${e.id} app=${app} e=${e} name=${name} note=${note} />
   </${Fragment}>`;
 }

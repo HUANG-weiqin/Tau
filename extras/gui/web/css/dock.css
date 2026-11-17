@@ -1,0 +1,127 @@
+/* 写信框：调度台底座。消息区是主角，底座尽量矮：空着时整条约 120px。
+   左边写给谁，右边是墨井；墨井底行是“寄出以后会怎样”、快捷键和寄出键。
+   焦点在框里时：顶边亮成一道黄，墨井四角上括号，LETTER 变黄。黄只做记号，不做大块。
+   排法按底座自己的宽度（容器查询）：窄了收掉快捷键提示，手机上左块变成一行抬头。 */
+.dock { position: relative; z-index: 2; flex: none; container: dock / inline-size; background: var(--ink2); color: var(--fg); --bk: var(--acc); box-shadow: 0 -12px 24px rgba(12,13,12,.2); }
+
+/* 顶边：平时是一道斜纹的钢边，写信时亮黄。出错时斜纹换成警示橙。 */
+.dk-edge { position: relative; height: 5px; background: var(--ink0); overflow: hidden; }
+.dk-edge::before { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(-45deg, #4A4B47 0 2px, transparent 2px 7px); }
+.dk-edge::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px; background: var(--acc); transform: scaleX(0); transform-origin: 0 50%; transition: transform var(--t-mid) var(--ease-in); }
+.dock:focus-within .dk-edge::after { transform: none; }
+.dock.k-err .dk-edge::before { background: repeating-linear-gradient(-45deg, var(--warn) 0 2px, transparent 2px 7px); }
+
+.dk-grid { display: grid; grid-template-columns: 200px minmax(0, 1fr); }
+
+/* 左：写给谁、它在哪个阶段 */
+.dk-side { position: relative; display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 8px 14px 9px 16px; background: var(--ink3); border-right: 1px solid var(--ink0); overflow: hidden; }
+.dk-side > :not(.tx) { position: relative; }
+.dk-lbl { display: flex; align-items: center; gap: 8px; }
+.dk-letter { font-stretch: 125%; font-weight: 800; font-size: 10px; line-height: 1.2; letter-spacing: .32em; color: var(--fg3); transition: color var(--t-fast) var(--ease-in); }
+.dock:focus-within .dk-letter { color: var(--acc); }
+.dk-tick { flex: 1; height: 1px; min-width: 8px; background: var(--ink5); }
+.dk-who { display: flex; align-items: baseline; gap: 7px; min-width: 0; cursor: text; }
+.dk-to { flex: none; font-size: 11px; font-weight: 700; color: var(--fg2); }
+.dk-name { min-width: 0; font-size: 23px; font-weight: 900; line-height: 1.15; letter-spacing: .02em; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dk-name.small { font-size: 16px; letter-spacing: 0; }
+.dk-ids { display: flex; flex-direction: column; font-size: 10.5px; line-height: 1.4; color: var(--fg3); min-width: 0; }
+.dk-ids > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-pid { font-weight: 400; color: var(--fg2); }
+.dk-st { margin-top: auto; padding-top: 5px; display: flex; align-items: center; gap: 6px; font-size: 12px; border-top: 1px solid var(--ink5); min-width: 0; white-space: nowrap; }
+.dk-st .lamp i { width: 10px; height: 10px; }
+.dk-st b { font-weight: 800; overflow: hidden; text-overflow: ellipsis; }
+.dk-st .mono { font-size: 11px; color: var(--fg2); }
+.dock.k-run .dk-st .lamp { color: var(--acc); }
+.dock.k-err .dk-st .lamp { color: var(--warn); }
+
+/* 右：墨井。比底座深两格，带淡网格。焦点时四角上信号黄括号。 */
+.dk-well { position: relative; display: flex; flex-direction: column; min-width: 0; margin: 8px 12px 8px 14px; background: var(--ink0); box-shadow: inset 0 0 0 1px var(--ink4); transition: box-shadow var(--t-fast) var(--ease-in); }
+.dk-well > :not(.tx):not(.dk-br) { position: relative; z-index: 1; }
+.dock:focus-within .dk-well { box-shadow: inset 0 0 0 1px var(--ink5); }
+/* 四角括号：平时是灰的小括号，标出“字写在这里”；写信时换成信号黄的大括号，从外面收进来。 */
+.dk-br { position: absolute; z-index: 3; pointer-events: none; --c: #5A5B57; --a: 10px; --w: 2px;
+  background:
+    linear-gradient(var(--c), var(--c)) 0 0 / var(--a) var(--w) no-repeat,
+    linear-gradient(var(--c), var(--c)) 0 0 / var(--w) var(--a) no-repeat,
+    linear-gradient(var(--c), var(--c)) 100% 0 / var(--a) var(--w) no-repeat,
+    linear-gradient(var(--c), var(--c)) 100% 0 / var(--w) var(--a) no-repeat,
+    linear-gradient(var(--c), var(--c)) 0 100% / var(--a) var(--w) no-repeat,
+    linear-gradient(var(--c), var(--c)) 0 100% / var(--w) var(--a) no-repeat,
+    linear-gradient(var(--c), var(--c)) 100% 100% / var(--a) var(--w) no-repeat,
+    linear-gradient(var(--c), var(--c)) 100% 100% / var(--w) var(--a) no-repeat;
+}
+.dk-br.g { inset: -4px; transition: opacity var(--t-fast) var(--ease-in); }
+.dk-br.y { inset: -8px; opacity: 0; --c: var(--acc); --a: 16px; --w: 3px; transition: opacity var(--t-mid) var(--ease-in), inset var(--t-mid) var(--ease-in); }
+.dock:focus-within .dk-br.g { opacity: 0; }
+.dock:focus-within .dk-br.y { opacity: 1; inset: -4px; }
+
+/* 输入：平时两行；往上长，最高约台面的两成（或 8 行，取小的），再多在框里滚。 */
+.dk-in {
+  flex: none; display: block; width: 100%; min-height: calc(2 * 1.5 * 15px + 12px); max-height: min(calc(8 * 1.5 * 15px + 12px), 17vh);
+  padding: 6px 16px 3px; border: 0; background: transparent; resize: none; outline: none !important;
+  font-size: 15px; line-height: 1.5; color: var(--fg); caret-color: var(--acc);
+  scrollbar-width: thin; scrollbar-color: var(--ink5) transparent;
+}
+.dk-in::placeholder { color: var(--fg3); }
+
+/* 自动加在信前的说明：印在墨井顶上，最多两行，全文在悬停提示里。 */
+.dk-pre { display: flex; align-items: flex-start; gap: 10px; margin: 6px 12px 0 16px; padding: 0 0 6px 10px; border-left: 3px solid var(--fg3); border-bottom: 1px dashed var(--ink5); min-width: 0; }
+.dk-pre.err { border-left-color: var(--warn); }
+.dk-pre .tag { flex: none; margin-top: 1px; }
+.dk-pre p { min-width: 0; font-size: 11.5px; line-height: 1.5; color: var(--fg2); overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+
+.dk-thumbs { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 16px 0; }
+.dk-thumbs .cthumb img { height: 48px; }
+
+/* 底行：寄出以后会怎样、快捷键、寄出键 */
+.dk-row { display: flex; align-items: center; gap: 12px; padding: 3px 5px 4px 16px; border-top: 1px solid var(--ink3); min-width: 0; }
+.dk-fate { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.dk-tok { flex: none; font-stretch: 62%; font-weight: 900; font-size: 26px; line-height: 1; letter-spacing: -.005em; color: var(--fg); }
+.dk-tcap { flex: none; font-size: 12px; font-weight: 900; color: var(--fg2); white-space: nowrap; }
+.dk-fate p { min-width: 0; font-size: 12px; font-weight: 800; line-height: 1.3; color: var(--fg); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.dock.k-run .dk-tok { color: var(--acc); }
+.dock.k-err .dk-tok { color: var(--warn); }
+
+.dk-hints { flex: none; display: none; align-items: center; gap: 12px; font-size: 11px; color: var(--fg3); }
+.dk-hints > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.dk-count b { font-weight: 700; color: var(--fg3); }
+.dock.has .dk-count b { color: var(--fg); }
+.dk-xl { display: none !important; }
+
+.dock kbd { display: inline-grid; place-items: center; min-width: 20px; height: 18px; padding: 0 5px; border: 1px solid var(--ink5); border-bottom-width: 2px; background: var(--ink2); color: var(--fg2); font-family: var(--mono); font-size: 10px; font-weight: 700; line-height: 1; }
+.dk-keys { flex: none; display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--fg3); }
+.dk-keys kbd { height: 22px; min-width: 28px; padding: 0 6px; transition: background-color var(--t-fast) var(--ease-in), color var(--t-fast) var(--ease-in); }
+.dk-keys kbd.ent { font-size: 13px; }
+.dk-keys i { font-style: normal; }
+.dock.has .dk-keys kbd { background: var(--fg); color: var(--ink); border-color: var(--fg2); }
+
+.dk-go { flex: none; min-height: 34px; padding: 0 4px 0 16px; font-size: 14px; font-weight: 900; letter-spacing: .12em; }
+.dk-go .chip { width: 26px; height: 26px; }
+.dk-go[disabled] { opacity: 1; border-color: var(--ink5); color: var(--fg3); }
+.dk-go[disabled] .chip { background: var(--ink4); color: var(--fg3); }
+
+/* 够宽时露出快捷键提示 */
+@container dock (min-width: 860px) {
+  .dk-hints { display: flex; }
+}
+@container dock (min-width: 1200px) {
+  .dk-grid { grid-template-columns: 236px minmax(0, 1fr); }
+  .dk-name { font-size: 24px; }
+  .dk-xl { display: inline-flex !important; }
+}
+
+/* 手机：左块变成一行抬头（名字和阶段），墨井占满。 */
+@container dock (max-width: 600px) {
+  .dk-grid { grid-template-columns: minmax(0, 1fr); }
+  .dk-side { flex-direction: row; align-items: center; gap: 10px; padding: 7px 12px; border-right: 0; border-bottom: 1px solid var(--ink0); }
+  .dk-lbl, .dk-ids { display: none; }
+  .dk-who { flex: 1; }
+  .dk-st { margin-top: 0; padding-top: 0; border-top: 0; flex: none; }
+  .dk-st .mono { display: none; }
+  .dk-well { margin: 8px 10px 9px; }
+  .dk-in { max-height: 24vh; padding-left: 12px; padding-right: 12px; }
+  .dk-row { gap: 8px; padding-left: 12px; }
+  .dk-keys { display: none; }
+  .dk-tok { font-size: 22px; }
+  .dk-pre { margin-left: 12px; }
+}

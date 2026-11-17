@@ -229,6 +229,6 @@ export function ProjectView({ app }) {
         </div>
       </div>
     </div>
-    ${target && html`<${Compose} key=${target.id} app=${app} id=${target.id} name=${`${target.name} ${target.preset}`} />`}
+    ${target && html`<${Compose} key=${target.id} app=${app} e=${target} name=${target.name} />`}
   </${Fragment}>`;
 }
