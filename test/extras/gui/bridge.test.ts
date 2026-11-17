@@ -5,7 +5,7 @@ import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -911,9 +911,157 @@ test("模型目录：供应商、模型、窗口、能不能收图、思考级�
   assert.equal((await raw(e.port, "/api/models")).status, 405, "GET");
 });
 
+// 填写和清除 api_key（D69）
+
+async function keysEnv(t: TestContext, name = "auth.json") {
+  const root = mkdtempSync(join(tmpdir(), "tau-gui-keys-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const authFile = join(root, "agent", name);
+  const e = await setupBridge(t, { authFile });
+  const set = (provider: unknown, key: unknown) => post(e.port, "/api/keys/set", { provider, key });
+  const clear = (provider: unknown) => post(e.port, "/api/keys/clear", { provider });
+  const status = async (provider: string) => (await post(e.port, "/api/models", {})).json.providers.find((p: any) => p.id === provider).key;
+  return { e, authFile, set, clear, status, dir: join(root, "agent") };
+}
+
+test("填 key：文件和目录都不存在也能建；换已有 api_key 只换 key，别的字段留着；清掉；响应是 key 状态，值不进任何响应", async (t) => {
+  const { authFile, set, clear, status, dir } = await keysEnv(t);
+  assert.equal(await status("anthropic"), "none");
+
+  const created = await set("anthropic", "  sk-ant-SECRET-1111  ");
+  assert.equal(created.status, 200, created.text);
+  assert.deepEqual(created.json, { ok: true, key: "key" });
+  assert.doesNotMatch(created.text, /SECRET|1111/);
+  // 存的是 trim 后的值；格式和 pi 的一样。
+  assert.equal(readFileSync(authFile, "utf8"), `${JSON.stringify({ anthropic: { type: "api_key", key: "sk-ant-SECRET-1111" } }, null, 2)}\n`);
+  assert.equal(await status("anthropic"), "key", "写完立刻读到，不用重启");
+
+  // 换：保留这一条的其它字段，只换 key；其它条目原样。
+  const before = { zeta: { type: "oauth", access: "A", refresh: "R", expires: 1, extra: { n: [1, 2] } }, anthropic: { type: "api_key", key: "old", note: "x" }, alpha: { type: "api_key", key: "keep", more: true } };
+  writeFileSync(authFile, `${JSON.stringify(before, null, 2)}\n`);
+  const swapped = await set("anthropic", "sk-ant-NEW-2222");
+  assert.deepEqual(swapped.json, { ok: true, key: "key" });
+  assert.doesNotMatch(swapped.text, /NEW|2222|old/);
+  assert.equal(readFileSync(authFile, "utf8"), `${JSON.stringify({ ...before, anthropic: { type: "api_key", key: "sk-ant-NEW-2222", note: "x" } }, null, 2)}\n`);
+
+  // 读不了的（含 $）换成好的以后变成已配。
+  writeFileSync(authFile, JSON.stringify({ openai: { type: "api_key", key: "a$b" } }));
+  assert.equal(await status("openai"), "unreadable");
+  assert.deepEqual((await set("openai", "sk-fixed")).json, { ok: true, key: "key" });
+  assert.equal(await status("openai"), "key");
+
+  // 清掉：只删这一家，其它原样；没有这一条就什么也不做。
+  writeFileSync(authFile, `${JSON.stringify(before, null, 2)}\n`);
+  const cleared = await clear("anthropic");
+  assert.deepEqual(cleared.json, { ok: true, key: "none" });
+  const { anthropic: _gone, ...rest } = before;
+  assert.equal(readFileSync(authFile, "utf8"), `${JSON.stringify(rest, null, 2)}\n`);
+  assert.equal(await status("anthropic"), "none");
+  const bytes = readFileSync(authFile);
+  assert.deepEqual((await clear("anthropic")).json, { ok: true, key: "none" });
+  assert.deepEqual(readFileSync(authFile), bytes);
+
+  // 文件不存在时清掉：成功，也不建文件。
+  rmSync(dir, { recursive: true });
+  assert.deepEqual((await clear("anthropic")).json, { ok: true, key: "none" });
+  assert.equal(existsSync(authFile), false);
+
+  // 写完没有残留的临时文件。
+  await set("anthropic", "k1");
+  await set("anthropic", "k2");
+  await clear("anthropic");
+  assert.deepEqual(readdirSync(dir), ["auth.json"]);
+});
+
+test("填 key：文件读不出（坏 JSON、顶层是数组、顶层是字符串）时填和清都 409，文件字节不变，回复不带文件内容", async (t) => {
+  const { authFile, set, clear, dir } = await keysEnv(t);
+  mkdirSync(dir, { recursive: true });
+  for (const content of ['{"anthropic": {"type": "api_key", "key": "sk-LEAK-9999"', '[{"anthropic":{"type":"api_key","key":"sk-LEAK-9999"}}]', '"sk-LEAK-9999"', ""]) {
+    writeFileSync(authFile, content);
+    const bytes = readFileSync(authFile);
+    for (const r of [await set("anthropic", "sk-NEW-SECRET"), await clear("anthropic")]) {
+      assert.equal(r.status, 409, content);
+      assert.equal(typeof r.json.error, "string");
+      assert.doesNotMatch(r.text, /LEAK|9999|NEW-SECRET/);
+    }
+    assert.deepEqual(readFileSync(authFile), bytes, content);
+  }
+  assert.deepEqual(readdirSync(dir), ["auth.json"]);
+});
+
+test("填 key：OAuth 条目和未知类型的条目，填和清都 409，文件字节不变", async (t) => {
+  const { authFile, set, clear, dir } = await keysEnv(t);
+  mkdirSync(dir, { recursive: true });
+  const text = `${JSON.stringify({ openai: { type: "oauth", access: "OAUTH-SECRET-1", refresh: "OAUTH-SECRET-2", expires: 1 }, google: { type: "weird", key: "X-SECRET" }, mistral: "oops", xai: null }, null, 2)}\n`;
+  writeFileSync(authFile, text);
+  const bytes = readFileSync(authFile);
+  for (const [p, want] of [["openai", /OAuth 登录的，tau 不改/], ["google", /不是 api_key，tau 不改/], ["mistral", /不是 api_key，tau 不改/], ["xai", /不是 api_key，tau 不改/]] as const) {
+    for (const r of [await set(p, "sk-new"), await clear(p)]) {
+      assert.equal(r.status, 409, p);
+      assert.match(r.json.error, want, p);
+      assert.doesNotMatch(r.text, /SECRET|sk-new/);
+    }
+  }
+  assert.deepEqual(readFileSync(authFile), bytes);
+  assert.deepEqual(readdirSync(dir), ["auth.json"]);
+});
+
+test("填 key：不合格的 key 都 400，文件不变，错误文字里没有 key 的任何字符", async (t) => {
+  const { e, authFile, set, dir } = await keysEnv(t);
+  mkdirSync(dir, { recursive: true });
+  const text = `${JSON.stringify({ openai: { type: "api_key", key: "keep" } }, null, 2)}\n`;
+  writeFileSync(authFile, text);
+  const bad: unknown[] = [
+    "!op read SECRET-cmd",
+    "  !SECRET",
+    "pre$SECRET-var",
+    "",
+    "   \t ",
+    "sk-SECRET\nsk-more",
+    "sk-SECRET\r\nx",
+    "sk-SECRET\u0000x",
+    "sk-SECRET\u007fx",
+    "sk-SECRET\ttab",
+    `SECRET${"x".repeat(5000)}`,
+    "密".repeat(1366), // 4098 字节：字符数不到 4096，字节数超了
+    12345,
+    null,
+    ["sk-SECRET"],
+    { key: "sk-SECRET" },
+    true,
+  ];
+  for (const key of bad) {
+    const r = await set("anthropic", key);
+    assert.equal(r.status, 400, JSON.stringify(key)?.slice(0, 40));
+    assert.doesNotMatch(r.text, /SECRET|xxxx|密|12345/);
+  }
+  assert.equal((await post(e.port, "/api/keys/set", { provider: "anthropic" })).status, 400, "没有 key");
+  assert.deepEqual(readFileSync(authFile, "utf8"), text);
+  assert.equal(existsSync(join(dir, "auth.json.tmp")), false);
+  // 边界：恰好 4096 字节可以，trim 后的值被存下。
+  const edge = "k".repeat(4096);
+  assert.equal((await set("anthropic", ` ${edge} `)).status, 200);
+  assert.equal(JSON.parse(readFileSync(authFile, "utf8")).anthropic.key, edge);
+  assert.equal((await set("anthropic", `${edge}k`)).status, 400);
+});
+
+test("填 key：provider 必须是模型目录里的供应商；只收 POST；key 最长的请求装得下", async (t) => {
+  const { e, authFile, set, clear } = await keysEnv(t);
+  for (const p of ["nobody", "", "__proto__", "constructor", 5, null, undefined, ["anthropic"]]) {
+    assert.equal((await set(p, "sk-ok")).status, 400, String(p));
+    assert.equal((await clear(p)).status, 400, String(p));
+  }
+  assert.equal(existsSync(authFile), false);
+  assert.equal((await raw(e.port, "/api/keys/set")).status, 405, "GET");
+  assert.equal((await raw(e.port, "/api/keys/clear")).status, 405, "GET");
+  assert.equal((await post(e.port, "/api/keys/set", [])).status, 400);
+  // 4096 字节的 key 经整个请求链路。
+  assert.equal((await set("anthropic", "x".repeat(4096))).status, 200);
+});
+
 // 改预设
 
-const read = (e: Env, id: string) => readFileSync(join(e.home, "presets", `${id}.md`), "utf8");
+const read =(e: Env, id: string) => readFileSync(join(e.home, "presets", `${id}.md`), "utf8");
 const upd = (e: Env, body: Record<string, unknown>) => post(e.port, "/api/presets/update", body);
 
 test("改预设：只换收到的字段，别的行、顺序、换行符、正文原样；写完经 check 读得出", async (t) => {

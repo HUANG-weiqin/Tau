@@ -11,7 +11,7 @@ import { allProcs, childCounts, emptyStore, reduce, streamingLive, streamingText
 import { extractTitle, processTitle } from "../../../extras/gui/web/lib/titles.js";
 import { appendDelta, argsPreview, ARGS_KEEP, tailLines } from "../../../extras/gui/web/lib/stream.js";
 import { newPace, paceArrive, paceStep } from "../../../extras/gui/web/lib/pace.js";
-import { buildCreate, buildUpdate, defaultModelRef, filterCatalog, findModel, formatWindow, keyHint, keyLabel, modelPatch, nearestLevel, parseOptions, pushRecent, recentEntries, sortProviders, splitModel } from "../../../extras/gui/web/lib/models.js";
+import { buildCreate, buildUpdate, defaultModelRef, filterCatalog, findModel, formatWindow, keyActions, keyHint, keyLabel, modelPatch, nearestLevel, parseOptions, pushRecent, recentEntries, sortProviders, splitModel } from "../../../extras/gui/web/lib/models.js";
 import { markdownToHtml, safeHref } from "../../../extras/gui/web/lib/markdown.js";
 import { firstLine, lastReply, notifyText, shouldNotify, tabTitle, trackResults, unseenCount, watchAttention } from "../../../extras/gui/web/lib/notify.js";
 
@@ -982,9 +982,17 @@ test("models: key 状态的字", () => {
   assert.equal(keyLabel("unreadable"), "tau 读不了");
 });
 
+test("models: key 的动作：没配填、已配和读不了换、只有已配能清、OAuth 没有、文件读不出都不可用", () => {
+  assert.deepEqual(keyActions("none", true), { set: "填 key", clear: false });
+  assert.deepEqual(keyActions("key", true), { set: "换 key", clear: true });
+  assert.deepEqual(keyActions("unreadable", true), { set: "换 key", clear: false });
+  assert.equal(keyActions("oauth", true), null);
+  for (const k of ["key", "none", "unreadable", "oauth"] as const) assert.equal(keyActions(k, false), null);
+});
+
 test("models: 没配 key 的供应商，选中时给提示；配了的没有提示", () => {
   assert.equal(keyHint("key"), null);
-  assert.match(keyHint("none")!, /还没配 key.*第一次调模型时会出错.*auth.json/);
+  assert.match(keyHint("none")!, /还没配 key.*第一次调模型时会出错.*设置里填/);
   assert.match(keyHint("oauth")!, /OAuth.*不支持/);
   assert.match(keyHint("unreadable")!, /字面量/);
 });

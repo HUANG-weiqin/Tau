@@ -171,13 +171,22 @@
 .st-big .num { font-size: 64px; color: var(--fg); }
 .st-big .num.ok { color: var(--acc); }
 .st-prov { display: flex; flex-direction: column; max-height: 280px; overflow-y: auto; box-shadow: inset 0 0 0 1px var(--ink4); background: var(--ink0); scrollbar-width: thin; scrollbar-color: var(--fg3) transparent; }
-.st-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; min-height: 40px; }
+.st-row { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 8px 12px; min-height: 40px; }
 .st-row + .st-row { box-shadow: inset 0 1px 0 var(--ink3); }
 .st-row.off { color: var(--fg2); }
-.st-row .st-n { flex: 1 1 0; min-width: 0; display: flex; align-items: baseline; gap: 10px; overflow: hidden; }
+.st-row .st-n { flex: 1 1 120px; min-width: 0; display: flex; align-items: baseline; gap: 10px; overflow: hidden; }
 .st-row .st-n b { font-size: var(--fs-base); font-weight: 800; white-space: nowrap; }
 .st-row .mono { font-size: var(--fs-xs); color: var(--fg2); }
 .st-row .ct { font-size: var(--fs-xs); color: var(--fg2); min-width: 44px; text-align: right; }
+/* 动作在牌的右边；展开的输入框和错误独占一行 */
+.st-acts { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.st-row .link { color: var(--acc); font-weight: 800; white-space: nowrap; }
+.st-row .link.warn { color: var(--warn); }
+.st-row .link[disabled] { opacity: .4; pointer-events: none; }
+.st-sub { flex: 1 1 100%; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 0 4px; }
+.st-sub .input { flex: 1 1 200px; width: auto; min-width: 0; }
+.st-row .input.mono { font-size: var(--fs-base); color: var(--fg); }
+.st-err { flex: 1 1 100%; min-width: 0; font-size: var(--fs-sm); line-height: 1.6; color: var(--warn); overflow-wrap: anywhere; }
 
 @media (max-width: 759px) {
   .mp-facts .mp-lv { display: none; }
@@ -186,4 +195,10 @@
   .sw-now { grid-template-columns: minmax(0, 1fr); }
   .sw-now > .kicker, .sw-now-t { padding: 8px 14px 0; }
   .seg3 button { min-width: 52px; }
+}
+
+@media (max-width: 480px) {
+  .st-row .st-n { flex-basis: 100%; }
+  .st-row .ct { min-width: 0; text-align: left; }
+  .st-row .st-acts { margin-left: auto; }
 }

@@ -1,5 +1,6 @@
 // 桥自己的只读凭据库：规则和 src/server/credentials.ts 一样（D23），extras/ 不许导入 src/，所以抄一份。
 // 只认 api_key 条目；`!` 开头或含 `$` 的 key 不认；每次现读，pi 改了不用重启。
+// 这里只读；写在 keys.ts，那里只动 api_key 条目。
 import { readFile } from "node:fs/promises";
 import type { ApiKeyCredential, CredentialStore } from "@earendil-works/pi-ai";
 

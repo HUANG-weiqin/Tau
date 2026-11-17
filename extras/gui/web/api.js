@@ -164,6 +164,11 @@ export const mcpInstall = (/** @type {string} */ workdir, /** @type {string} */ 
 /** relay 的状态。桥只查，不拉起。 */
 export const mcpStatus = () => post("/api/mcp/status", {});
 
+/** 填或换一家供应商的 api_key。成功回 { ok, key: KeyStatus }；key 只进这一个请求，不回显。 */
+export const setKey = (/** @type {string} */ provider, /** @type {string} */ key) => post("/api/keys/set", { provider, key });
+/** 清掉一家供应商的 api_key。成功回 { ok, key: KeyStatus }。 */
+export const clearKey = (/** @type {string} */ provider) => post("/api/keys/clear", { provider });
+
 /** @type {Map<string, Promise<string | null>>} */
 const blobs = new Map();
 /**

@@ -96,8 +96,8 @@ export function filterCatalog(providers, query) {
 export function keyHint(k) {
   if (k === "key") return null;
   if (k === "oauth") return "这家在 pi 里是 OAuth 登录，tau 不支持，进程第一次调模型时会出错；要换成 API key，在 pi 的 auth.json 里配。";
-  if (k === "unreadable") return "tau 只认字面量的 key，不认 ! 开头的命令和含 $ 的写法，进程第一次调模型时会出错；在 pi 的 auth.json 里改成字面量。";
-  return "这家还没配 key，进程第一次调模型时会出错；key 在 pi 的 auth.json 里配。";
+  if (k === "unreadable") return "tau 只认字面量的 key，不认 ! 开头的命令和含 $ 的写法，进程第一次调模型时会出错；在设置里换成字面量的 key。";
+  return "这家还没配 key，进程第一次调模型时会出错；key 在设置里填。";
 }
 
 /**
@@ -132,6 +132,16 @@ export function recentEntries(providers, recent) {
 /** @param {KeyStatus} k */
 export function keyLabel(k) {
   return k === "key" ? "已配" : k === "oauth" ? "OAuth（tau 不支持）" : k === "unreadable" ? "tau 读不了" : "没配";
+}
+
+/**
+ * 一家供应商一行右边有哪些动作：填或换 key 的字，能不能清。OAuth 的没有动作；auth.json 读不出时都不可用。
+ * @param {KeyStatus} k @param {boolean} authOk
+ * @returns {{ set: "填 key" | "换 key", clear: boolean } | null}
+ */
+export function keyActions(k, authOk) {
+  if (!authOk || k === "oauth") return null;
+  return { set: k === "none" ? "填 key" : "换 key", clear: k === "key" };
 }
 
 /**

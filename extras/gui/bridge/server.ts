@@ -13,6 +13,7 @@ import { pickFolder as realPick } from "./pick.ts";
 import type { PickFolder } from "./pick.ts";
 import { piCredentials } from "./credentials.ts";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { clearKey, setKey } from "./keys.ts";
 import { buildCatalog, readKeys } from "./models.ts";
 import type { CatalogProvider } from "./models.ts";
 import { agentsMdInfo } from "./agentsmd.ts";
@@ -159,6 +160,16 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
         catalog ??= buildCatalog();
         const { keys, auth } = readKeys(authFile);
         return json(res, 200, { providers: catalog.map((p) => ({ ...p, key: keys.get(p.id) ?? "none" })), auth });
+      }
+      case "keys/set":
+      case "keys/clear": {
+        catalog ??= buildCatalog();
+        const provider = body.provider;
+        if (typeof provider !== "string" || !catalog.some((p) => p.id === provider)) throw new HttpError(400, "provider 必须是模型目录里的供应商");
+        // 同步写，读、改、写之间没有 await。key 的值只在这里和 keys.ts 里过，不记录。
+        if (name === "keys/set") setKey(authFile, provider, body.key);
+        else clearKey(authFile, provider);
+        return json(res, 200, { ok: true, key: readKeys(authFile).keys.get(provider) ?? "none" });
       }
       case "service":
         return json(res, 200, await control.status());
