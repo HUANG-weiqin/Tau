@@ -2,7 +2,7 @@
 import { effectOf } from "../kernel/decide.ts";
 import { textContent, unreachable } from "../kernel/types.ts";
 import type { DatabaseSync } from "node:sqlite";
-import type { AssistantMessage, Effect, Input, Message, Process, ProcessId, ToolCall, ToolResultContent } from "../kernel/types.ts";
+import type { AssistantMessage, DeclaredCall, Effect, Input, Message, Process, ProcessId, ToolCall, ToolResultContent } from "../kernel/types.ts";
 import type { Image } from "../images.ts";
 import { putBlobs } from "../store/blobs.ts";
 import { loadProcess, loadSegment, putMail, tx } from "../store/db.ts";
@@ -13,8 +13,11 @@ export interface Job {
   effect: Effect;
 }
 
-/** 工具的结果。带图的 `content` 输出还带着要存的图片：内容里是 `blob:<hash>` 引用，字节由执行器在上报结果的事务里插入 `blobs`。 */
-export type ToolOutput = ToolResultContent & { images?: readonly Image[] };
+/**
+ * 工具的结果。带图的 `content` 输出还带着要存的图片：内容里是 `blob:<hash>` 引用，字节由执行器在上报结果的事务里插入 `blobs`。
+ * `calls` 是 `content` 输出声明的库内动作：执行器原样放进结果的输入，不解释它。
+ */
+export type ToolOutput = ToolResultContent & { images?: readonly Image[]; calls?: readonly DeclaredCall[] };
 
 /** 真正的动作。抛出或拒绝时，执行器把它上报为失败的结果。 */
 export interface Actions {
@@ -122,7 +125,7 @@ function act(actions: Actions, job: Job, signal: AbortSignal): Promise<Outcome> 
       );
     case "runTool":
       return attempt(() => actions.runTool(job, e.call, signal)).then(
-        ({ images = [], ...content }): Outcome => ({ input: { kind: "toolResult", n: e.n, outcome: { status: "ok", content } }, images }),
+        ({ images = [], calls, ...content }): Outcome => ({ input: { kind: "toolResult", n: e.n, outcome: { status: "ok", content, ...(calls ? { calls: [...calls] } : {}) } }, images }),
         (err: unknown): Outcome => ({ input: { kind: "toolResult", n: e.n, outcome: { status: "ok", content: { content: textContent(`工具执行失败：${message(err)}`), isError: true } } }, images: [] }),
       );
     default:

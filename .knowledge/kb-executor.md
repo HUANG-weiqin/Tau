@@ -56,6 +56,7 @@ abort(id, n)
 ```
 
 - `startNext` 返回时动作已经开始。没有 `pending` 行时返回 `null`。
+- 结果的输入怎么构造：模型回复是 `modelResult`；工具结果是 `toolResult`，`ToolOutput` 里的 `images` 在同一个事务里存进 `blobs`，`calls`（工具定义声明的库内动作）原样放进输入的 `outcome`，不进内容。执行器不解释 `calls`，也不检查它：声明由 `handleNext` 在处理这条结果时执行（[kb-store](kb-store.md#声明的库内动作)）。
 - 返回的 promise 在结果写回或被丢弃之后完成。`complete` 抛出（例如库已关）时，promise 被拒绝。
 - 中止开关在 `finally` 里删掉。
 - 执行器不自己发现行被删了。服务的 `pump` 在 `handleNext` 返回 `abort` 时调用 `exec.abort`，然后循环 `startNext` 直到 `null`（`src/server/serve.ts`，[kb-service.md](kb-service.md#pump)）。
@@ -152,7 +153,7 @@ abort(id, n)
 | `claim` 提交之后、动作开始之前 | `running` 行 | `interrupted`：和下面两行无法区分 |
 | 动作运行中 | `running` 行 | `interrupted`：外部世界可能已经改了 |
 | 动作结束之后、`complete` 提交之前 | `running` 行 | `interrupted`：结果丢失 |
-| `complete` 提交之后 | 结果在信箱里 | 照常处理 |
+| `complete` 提交之后 | 结果在信箱里 | 照常处理。结果带 `calls` 时，声明的库内动作在处理它的事务里执行，恰好一次 |
 | 停止删掉 `running` 行之后、动作结束之前 | 没有行，进程 `idle` | 什么都不送 |
 | 恢复提交之后 | 没有 `running` 行 | 再恢复一次什么都不改 |
 
@@ -225,6 +226,7 @@ abort(id, n)
   - 旧动作这时才结束，写库失败（`not open`），信箱不变。
   - 恢复之后立刻再崩溃一次，什么都不变。
 - 跑到收敛后断言：信箱和副作用表都空，全部 `idle`；每条用户消息恰好出现一次（被 prune、remove 删掉的，删之前先记进归档，一并计入）；没有动作被开始两次；每个工具调用恰好一个结果；每条助手消息只写一次。
+- 工具里有一个声明库内动作的定义（`decl`）：它的结果带随机的 `post`、`stop_process`、`memory_set`、`memory_get` 和不能声明的 `handoff`。声明的结果在每个事务边界上崩溃，包括“结果已提交、还没处理”的窗口；断言成功和失败的声明结果都出现过。
 - 最后断言每种事务之后都崩溃过，`running` 窗口也崩溃过，三种删除（prune、remove、sweep）都真的发生过。
 
 ### 执行器测试（`test/store/executor.test.ts`）

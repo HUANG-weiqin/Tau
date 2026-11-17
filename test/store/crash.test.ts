@@ -10,7 +10,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { createExecutor } from "../../src/executor/executor.ts";
 import type { Executor, Job, ToolOutput } from "../../src/executor/executor.ts";
 import { textContent, unreachable, userLetter } from "../../src/kernel/types.ts";
-import type { AssistantMessage, Input, Message, PresetSnapshot, ToolCall } from "../../src/kernel/types.ts";
+import type { AssistantMessage, DeclaredCall, Input, Message, PresetSnapshot, ToolCall } from "../../src/kernel/types.ts";
 import { BLOB_PREFIX } from "../../src/store/blobs.ts";
 import { loadProcess, loadProcesses, openDb } from "../../src/store/db.ts";
 import { handleNext, pruneSegments, removeProcess, send, startProcess, sweepBlobs } from "../../src/store/inputs.ts";
@@ -31,9 +31,15 @@ const REMOVES = 4;
 const SWEEPS = 2;
 const DELETE_FROM = 14;
 /** 窗口小一些，让换段也会发生。 */
-const CRASH_PRESET: PresetSnapshot = { ...PRESET, contextWindow: 60_000, handoff: 10_000, input: ["text", "image"] };
-/** read 是库外工具；memory_*、self、handoff 是库内工具；bash 不在预设里；nope 不存在。 */
-const TOOLS = ["read", "read", "read", "memory_get", "memory_set", "self", "handoff", "bash", "nope"];
+const CRASH_PRESET: PresetSnapshot = {
+  ...PRESET,
+  contextWindow: 60_000,
+  handoff: 10_000,
+  input: ["text", "image"],
+  toolDefs: [{ name: "decl", description: "声明库内动作", parameters: { type: "object" }, command: "x", timeout: 60, output: "content" }],
+};
+/** read、decl 是库外工具（decl 的结果声明库内动作）；memory_*、self、handoff 是库内工具；bash 不在预设里；nope 不存在。 */
+const TOOLS = ["read", "read", "read", "decl", "decl", "decl", "decl", "memory_get", "memory_set", "self", "handoff", "bash", "nope"];
 
 type Kind = "start" | "send" | "stop" | "handle" | "claim" | "complete" | "prune" | "remove" | "sweep";
 
@@ -51,7 +57,7 @@ function model(job: Job): AssistantMessage {
   if (x < 0.95) {
     const calls: ToolCall[] = [];
     for (let i = 0, k = 1 + Math.floor(r() * 3); i < k; i++) {
-      const name = TOOLS[Math.floor(r() * TOOLS.length)]!;
+      const name = i === 0 && r() < 0.4 ? "decl" : TOOLS[Math.floor(r() * TOOLS.length)]!;
       calls.push(toolCall(`${id}#${e.n}.${i}`, name, name === "read" ? { path: "a" } : name.startsWith("memory_") ? { key: "k", value: `v${e.n}` } : {}));
     }
     return reply("toolUse", calls, usage);
@@ -64,9 +70,25 @@ interface InFlight {
   done: Promise<void>;
 }
 
+/** decl 的结果声明的动作：寄给 p1 或 p2（可能不存在、可能是自己）、停止它们、写读记忆，偶尔声明不能声明的 handoff。 */
+function declared(callId: string): ToolOutput {
+  const r = rng(hash(callId));
+  const pid = () => `p${1 + Math.floor(r() * 2)}`;
+  const menu: (() => DeclaredCall)[] = [
+    () => ({ name: "post", arguments: { to: pid(), text: `声明 ${callId}` } }),
+    () => ({ name: "stop_process", arguments: { process: pid() } }),
+    () => ({ name: "memory_set", arguments: { key: `d-${callId}`, value: callId } }),
+    () => ({ name: "memory_get", arguments: { key: "d" } }),
+    () => ({ name: "handoff", arguments: {} }),
+  ];
+  const calls = Array.from({ length: 1 + Math.floor(r() * 3) }, () => menu[Math.floor(r() * menu.length)]!());
+  return { ...res(`out:${callId}`), calls };
+}
+
 /** 每个 read 结果都带一张图片，像带图的 content 输出：内容里是引用，图片的字节由执行器在上报结果的事务里存。 */
 function toolOutput(call: ToolCall): ToolOutput {
   const r = rng(hash(call.id));
+  if (call.name === "decl") return declared(call.id);
   if (call.name !== "read") return res(`out:${call.id}`);
   const [image] = checkImages([png(10, 10, 1000 + Math.floor(r() * 40)).toString("base64")]);
   return { content: [{ type: "text", text: `out:${call.id}` }, { type: "image", data: BLOB_PREFIX + image!.hash, mimeType: image!.mimeType }], isError: false, images: [image!] };
@@ -102,6 +124,8 @@ interface Run {
   spawned: number;
   /** 被删掉的消息里的用户消息（不含换段时带进新段的副本）：它们在删除之前已经提交，仍然算“恰好出现一次”。 */
   archive: string[];
+  /** 带声明动作的工具结果（按工具调用 ID）是不是错误：进程被删以后消息没了，所以在处理时记。 */
+  declared: Map<string, boolean>;
   prunes: number;
   removes: number;
   sweeps: number;
@@ -180,6 +204,7 @@ async function step(run: Run, kind: Kind): Promise<void> {
     case "handle": {
       const h = handleNext(db, run.memory, now);
       assert.ok(h);
+      for (const m of h.segment) if (m.role === "toolResult" && m.content.some((c) => c.type === "text" && /\n\n\[(post|stop_process|memory_set|memory_get|handoff)\] /.test(c.text))) run.declared.set(m.toolCallId, m.isError);
       if (h.abort === null) return;
       // 被删掉的 running 行一定是这一生开始的动作。中止它，等它的结果被丢弃：完成的事务什么都不写。
       const [f] = inflight.splice(inflight.findIndex((x) => jobKey(x.gate.job) === `${h.process.id}#${h.abort}`), 1);
@@ -307,11 +332,11 @@ function userText(m: Message): string {
 }
 
 /** 从空库开始跑到没有事可做。给了 `crashAt` 时，在第 crashAt 步之后崩溃一次。 */
-async function play(empty: Empty, seed: number, crashAt: number | null): Promise<{ steps: number; asked: number; backs: number; blobs: number; toolImages: number; did: Run["did"]; crashed: { kind: Kind; window: boolean } | null }> {
+async function play(empty: Empty, seed: number, crashAt: number | null): Promise<{ steps: number; asked: number; backs: number; blobs: number; toolImages: number; declared: { ok: number; failed: number }; did: Run["did"]; crashed: { kind: Kind; window: boolean } | null }> {
   const path = join(empty.dir, `${seed}-${crashAt ?? "none"}.db`);
   copyFileSync(empty.path, path);
   const { dbs } = empty;
-  const run: Run = { path, dbs, memory: fakeMemory(), rand: rng(seed), clock: 0, life: boot(path, dbs), started: [], users: [], stops: 0, asked: 0, processes: [], spawned: 0, archive: [], prunes: 0, removes: 0, sweeps: 0, did: { pruned: 0, removed: 0, swept: 0, toolImages: 0 } };
+  const run: Run = { path, dbs, memory: fakeMemory(), rand: rng(seed), clock: 0, life: boot(path, dbs), started: [], users: [], stops: 0, asked: 0, processes: [], spawned: 0, archive: [], declared: new Map(), prunes: 0, removes: 0, sweeps: 0, did: { pruned: 0, removed: 0, swept: 0, toolImages: 0 } };
   let steps = 0;
   let crashed: { kind: Kind; window: boolean } | null = null;
   for (let kinds = enabled(run); kinds.length > 0; kinds = enabled(run)) {
@@ -349,7 +374,8 @@ async function play(empty: Empty, seed: number, crashAt: number | null): Promise
   const blobs = blobCount(db);
   const toolImages = messages.filter((m) => m.role === "toolResult" && m.content.some((c) => c.type === "image")).length;
   db.close();
-  return { steps, asked: run.asked, backs, blobs, toolImages, did: run.did, crashed };
+  const declared = { ok: [...run.declared.values()].filter((e) => !e).length, failed: [...run.declared.values()].filter((e) => e).length };
+  return { steps, asked: run.asked, backs, blobs, toolImages, declared, did: run.did, crashed };
 }
 
 /** 一个空库的模板。新建库要建表、落盘，在 Windows 上比复制文件慢十几倍，几百次重放都从复制它开始。 */
@@ -373,9 +399,12 @@ test("随机序列：真库上每一步之后不变量都成立，最后全部�
   let backs = 0;
   let blobs = 0;
   let toolImages = 0;
+  const declared = { ok: 0, failed: 0 };
   const did = { pruned: 0, removed: 0, swept: 0, toolImages: 0 };
   for (const seed of SEEDS) {
     const r = await play(empty, seed, null);
+    declared.ok += r.declared.ok;
+    declared.failed += r.declared.failed;
     asked += r.asked;
     backs += r.backs;
     blobs += r.blobs;
@@ -387,6 +416,7 @@ test("随机序列：真库上每一步之后不变量都成立，最后全部�
   }
   assert.ok(blobs > 0, "没有覆盖到带图片的信");
   assert.ok(toolImages + did.toolImages > 0, "没有覆盖到带图的工具结果");
+  assert.ok(declared.ok > 0 && declared.failed > 0, `声明的动作成功 ${declared.ok} 条、失败 ${declared.failed} 条：没有覆盖到`);
   assert.ok(did.pruned > 0, "没有覆盖到真的删掉旧段的 pruneSegments");
   assert.ok(did.removed > 0, "没有覆盖到成功的 removeProcess");
   assert.ok(did.swept > 0, "没有覆盖到真的删掉图片的 sweepBlobs");

@@ -72,11 +72,15 @@
 - `output: content`：
   - 标准输出和标准错误分开收。
   - 退出码不是 0：结果是错误，文字和 `text` 时一样。
-  - 退出码是 0：丢掉标准错误。标准输出必须是一个 JSON 数组，每项是 `{ "type": "text", "text": … }` 或 `{ "type": "image", "path": … }`。
-  - 先解析 JSON，检查每一项的格式和图片的张数（不超过 `IMAGES_PER_MESSAGE`），再读图片文件。读之前先看大小，超过 `IMAGE_MAX_BYTES` 就不读。
+  - 退出码是 0：丢掉标准错误。标准输出必须是一个 JSON 数组，每项是 `{ "type": "text", "text": … }`、`{ "type": "image", "path": … }` 或 `{ "type": "call", "name": 字符串, "arguments"?: 对象 }`（见下面的“声明库内动作”）。
+  - 先解析 JSON，按这个顺序检查：每一项的格式，`call` 的个数（不超过 `CALLS_PER_RESULT`，8），图片的张数（不超过 `IMAGES_PER_MESSAGE`）；再读图片文件。读之前先看大小，超过 `IMAGE_MAX_BYTES` 就不读。
   - `path` 只认 Windows 的绝对路径：盘符开头或 UNC。msys 的 `/tmp/x.png` 不认，和预设的 `workdir` 一样。
   - 文本项按顺序用换行连起来，成为结果的文本块。图片按[入口检查](kb-service.md#图片)检查，存进 `blobs`。
-  - 不合法时，结果是错误：`content 输出不合法：<说明>`。不合法包括：标准输出超过上限被截断、不是合法 JSON、不是数组、项的格式不对、图片超过张数、`path` 不是 Windows 的绝对路径、文件读不出、图片不合格（5.6）。
+  - 不合法时，结果是错误：`content 输出不合法：<说明>`。不合法包括：标准输出超过上限被截断、不是合法 JSON、不是数组、项的格式不对、图片超过张数、`path` 不是 Windows 的绝对路径、文件读不出、图片不合格（5.6）、`call` 项的 `name` 不是字符串或 `arguments` 不是对象（包括数组和 `null`）、`call` 超过个数。
+  - 声明库内动作（[D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)）：
+    - `call` 项不进内容块。按顺序收进结果的 `calls`（`{ name, arguments }` 的数组）；`arguments` 省略时是 `{}`。没有 `call` 时，结果里没有 `calls` 这个键。
+    - 格式不对、超过个数，整份输出不合法，不留任何声明。退出码不是 0、超时、中止、输出被截断时，也没有声明。`output: text` 的工具定义不解释 `call` 项。
+    - `runToolDef` 只解析，不执行：`calls` 随结果交给执行器，原样放进结果的输入（[kb-executor](kb-executor.md#运行工具actionsts)），由 `handleNext` 在处理这条结果的事务里执行（[kb-store 的声明的库内动作](kb-store.md#声明的库内动作)）。
 - MCP 不进内核：上层的中转进程为每个 MCP 工具生成工具定义（[kb-extras](kb-extras.md#pi-web-的功能在-v2-上的做法)）。
 
 事务和崩溃：和 bash 一样。被中断就报“被中断”，不重做。带图的 `content` 结果，图片在执行器上报结果的事务里插入 `blobs`（[kb-executor](kb-executor.md#失败怎样变成结果)、[kb-store 的图片](kb-store.md#图片)）。
@@ -380,6 +384,7 @@ WRAPPER = echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$
 | 命令不读标准输入 | 400 万字节的参数，命令 `echo` 立刻退出：写入的 `EPIPE` 被忽略，测试进程没有退出（拿掉错误监听器，这个测试就失败） |
 | 退出码、环境、超时、中止、输出上限 | 和 bash 一样：非零是错误且 stderr 合在输出里；`TAU_PROCESS`、`TAU_PIPE` 在，`MSYS_NO_PATHCONV` 不在；定义的 `timeout`；调用前和运行中中止；巨量输出只留头尾 |
 | `content` 输出 | 文本项连成一个文本块，退出码 0 时丢掉 stderr；退出码不是 0 时和 `text` 的结果完全一样；超时的结果；空数组 |
+| `content` 里的 `call` | 按顺序收进 `calls`、`arguments` 省略为 `{}`、只有 `call` 时内容为空、不收图片的模型照样有 `calls`；8 个合法 9 个不合法；`name` 不是字符串、`arguments` 是数组、`null`、字符串都整份不合法；检查顺序（格式、个数、图片张数）；退出码不是 0、超时、截断时没有声明；`text` 输出不解释 `call` |
 | `content` 不合法 | 每一种：被截断、不是 JSON、空输出、不是数组、项不是对象、`type` 不认识和字段缺失或类型不对、图片超过张数（文件不存在也是这个原因：不读文件）、`path` 不是 Windows 的绝对路径（相对、msys、盘符相对、单斜杠）、文件不存在、是目录、UNC 路径读不出、超过 `IMAGE_MAX_BYTES`（不读）、类型不认识、尺寸超限、第二张不合格时说明里的序号、不收图片的模型同样检查 |
 | 图片 | 引用、类型、字节在 `images` 里；只有图片没有文本块；同一张出现两次；`path` 用正斜杠；不收图片的模型在原位置换成说明，没有 `images` |
 

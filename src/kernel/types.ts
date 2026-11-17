@@ -106,10 +106,16 @@ export interface ToolResultContent {
   isError: boolean;
 }
 
+/** 工具定义在结果里声明的库内动作（D64 第 10 组）：名字和参数，由 `handleNext` 执行。 */
+export interface DeclaredCall {
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
 export type Input =
   | { kind: "letter"; letter: Letter }
   | { kind: "modelResult"; n: number; outcome: { status: "ok"; message: AssistantMessage } | { status: "interrupted" } }
-  | { kind: "toolResult"; n: number; outcome: { status: "ok"; content: ToolResultContent } | { status: "interrupted" } }
+  | { kind: "toolResult"; n: number; outcome: { status: "ok"; content: ToolResultContent; calls?: DeclaredCall[] } | { status: "interrupted" } }
   | { kind: "stop" };
 
 export interface Env {

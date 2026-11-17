@@ -76,10 +76,11 @@ type Ended = "done" | "stepLimit" | "stopped" | { error: string };
 type Input =
   | { kind: "letter"; letter: Letter }
   | { kind: "modelResult"; n: number; outcome: { status: "ok"; message: AssistantMessage } | { status: "interrupted" } }
-  | { kind: "toolResult"; n: number; outcome: { status: "ok"; content: ToolResultContent } | { status: "interrupted" } }
+  | { kind: "toolResult"; n: number; outcome: { status: "ok"; content: ToolResultContent; calls?: DeclaredCall[] } | { status: "interrupted" } }
   | { kind: "stop" };
 
 interface ToolResultContent { content: Content[]; isError: boolean }
+interface DeclaredCall { name: string; arguments: Record<string, unknown> }
 
 type Effect =
   | { kind: "callModel"; n: number; purpose: Purpose }
@@ -91,6 +92,7 @@ interface Env { now: Instant; memoryView: string }
 - 输入不带 ID 和时间。事务保证恰好处理一次，时间来自 `Env.now`。
 - 模型失败写在助手消息的 `stopReason` 和 `errorMessage` 里，没有单独的输入。
 - 工具失败是工具结果的 `isError`。
+- `calls` 只由执行器原样转交工具定义 content 输出里的声明；存储层在 `decide` 之前执行并去掉它，`decide` 不读它（[kb-store](kb-store.md#声明的库内动作)）。
 - `Env.memoryView` 是这个进程的记忆库现在的视图，没有记忆库时为空。`decide` 只在开段时用它。
 
 ### 函数

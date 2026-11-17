@@ -6,10 +6,13 @@ import type { Image } from "../images.ts";
 import { IMAGE_UNSUPPORTED } from "../kernel/context.ts";
 import { IMAGES_PER_MESSAGE } from "../kernel/derive.ts";
 import { textContent } from "../kernel/types.ts";
-import type { Content, ToolDef, ToolResultContent } from "../kernel/types.ts";
+import type { Content, DeclaredCall, ToolDef, ToolResultContent } from "../kernel/types.ts";
 import { BLOB_PREFIX } from "../store/blobs.ts";
 import { runCommand } from "./bash.ts";
 import type { BashContext } from "./bash.ts";
+
+/** 一条结果最多声明这么多个库内动作。 */
+export const CALLS_PER_RESULT = 8;
 
 /** `accepts`：进程的模型收图片。不收时，图片照样检查，但不存，每张换成一行说明，和信一样。 */
 export async function runToolDef(def: ToolDef, args: unknown, workdir: string, signal: AbortSignal, ctx: BashContext, accepts: boolean): Promise<ToolOutput> {
@@ -21,12 +24,14 @@ export async function runToolDef(def: ToolDef, args: unknown, workdir: string, s
 
 const invalid = (why: string): ToolResultContent => ({ content: textContent(`content 输出不合法：${why}`), isError: true });
 
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
 // 只认盘符路径和 UNC 路径，和预设的 workdir 一样：msys 的 /tmp/x.png 会落在服务当前盘符下。
 const isWindowsAbsolute = (p: string): boolean => /^[A-Za-z]:[\\/]/.test(p) || /^[\\/]{2}[^\\/]/.test(p);
 
-type Item = { type: "text"; text: string } | { type: "image"; path: string };
+type Item = { type: "text"; text: string } | { type: "image"; path: string } | { type: "call"; call: DeclaredCall };
 
-/** 退出码 0 时的标准输出：先解析 JSON，查每一项的格式和图片张数，再读图片文件（先看大小）。 */
+/** 退出码 0 时的标准输出：先解析 JSON，查每一项的格式、声明的个数和图片张数，再读图片文件（先看大小）。 */
 async function fromContentOutput(stdout: { text: string; truncated: boolean }, accepts: boolean): Promise<ToolOutput> {
   if (stdout.truncated) return invalid("标准输出超过上限，被截断了");
   let raw: unknown;
@@ -38,11 +43,14 @@ async function fromContentOutput(stdout: { text: string; truncated: boolean }, a
   if (!Array.isArray(raw)) return invalid("必须是 JSON 数组");
   const items: Item[] = [];
   for (const [i, v] of raw.entries()) {
-    const o = typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+    const o = isObject(v) ? v : {};
     if (o.type === "text" && typeof o.text === "string") items.push({ type: "text", text: o.text });
     else if (o.type === "image" && typeof o.path === "string") items.push({ type: "image", path: o.path });
-    else return invalid(`第 ${i + 1} 项的格式不对，只能是 { "type": "text", "text": 字符串 } 或 { "type": "image", "path": 字符串 }`);
+    else if (o.type === "call" && typeof o.name === "string" && (o.arguments === undefined || isObject(o.arguments))) items.push({ type: "call", call: { name: o.name, arguments: o.arguments ?? {} } });
+    else return invalid(`第 ${i + 1} 项的格式不对，只能是 { "type": "text", "text": 字符串 }、{ "type": "image", "path": 字符串 } 或 { "type": "call", "name": 字符串, "arguments": 对象（可省略） }`);
   }
+  const calls = items.flatMap((it) => (it.type === "call" ? [it.call] : []));
+  if (calls.length > CALLS_PER_RESULT) return invalid(`有 ${calls.length} 个 call，最多 ${CALLS_PER_RESULT} 个`);
   const paths = items.flatMap((it) => (it.type === "image" ? [it.path] : []));
   if (paths.length > IMAGES_PER_MESSAGE) return invalid(`有 ${paths.length} 张图片，最多 ${IMAGES_PER_MESSAGE} 张`);
   const bad = paths.find((p) => !isWindowsAbsolute(p));
@@ -53,10 +61,11 @@ async function fromContentOutput(stdout: { text: string; truncated: boolean }, a
   } catch (e) {
     return invalid(e instanceof Error ? e.message : String(e));
   }
-  if (!accepts) return { content: lines(items.map((it) => (it.type === "text" ? it.text : IMAGE_UNSUPPORTED))), isError: false };
+  const declared = calls.length > 0 ? { calls } : {};
+  if (!accepts) return { content: lines(items.flatMap((it) => (it.type === "text" ? [it.text] : it.type === "image" ? [IMAGE_UNSUPPORTED] : []))), isError: false, ...declared };
   const text = items.flatMap((it) => (it.type === "text" ? [it.text] : [])).join("\n");
   const blocks = images.map((im): Content => ({ type: "image", data: BLOB_PREFIX + im.hash, mimeType: im.mimeType }));
-  return { content: [...lines(text === "" ? [] : [text]), ...blocks], isError: false, ...(images.length > 0 ? { images } : {}) };
+  return { content: [...lines(text === "" ? [] : [text]), ...blocks], isError: false, ...(images.length > 0 ? { images } : {}), ...declared };
 }
 
 const lines = (parts: string[]): Content[] => (parts.join("\n") === "" ? [] : textContent(parts.join("\n")));

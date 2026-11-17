@@ -8,7 +8,7 @@ import { MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } f
 import { textContent, unreachable } from "../kernel/types.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { PhaseView, Projection } from "../kernel/observe.ts";
-import type { Env, Instant, Memory, Message, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Versioned } from "../kernel/types.ts";
+import type { DeclaredCall, Env, Instant, Memory, Message, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Versioned } from "../kernel/types.ts";
 import { loadProcess, loadProcesses, putMail } from "./db.ts";
 
 /** 读预设的函数，由服务传进来；测试传假的。读不出时抛出，原因是错误信息。 */
@@ -100,6 +100,41 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
     }
     default:
       throw new Error(`不是库内工具：${call.name}`);
+  }
+}
+
+/** 工具定义能在结果里声明的库内动作。不含 `handoff`、`self`：它们不是“动作”，或者只在模型调用时有意义。 */
+const DECLARABLE: readonly string[] = ["post", "spawn", "stop_process", "memory_get", "memory_set", "memory_delete"];
+
+/**
+ * 执行工具结果声明的库内动作（D64 第 10 组），按顺序，复用 `runInStore`：发信人是这个进程，跳数、`replyTo`、`spawn` 的 ID 照常算，记忆是这个预设的库。
+ * 不看预设有没有 `agents`、`memory`。第一个失败的那项什么都不写，其余写“未执行”；前面成功的不回滚。
+ * 每项写成以 `[<name>] ` 开头的一段，段之间空一行，接在工具自己的最后一个文本块后面（没有文本块就新建一个，放在最前面）。任何一项失败，整条 `isError` 为 true。
+ * 永不抛错。`p` 和 `segment` 是处理这条结果之前的记录和当前段。
+ */
+export function runDeclared(db: DatabaseSync, memory: Memory, p: Process, segment: readonly Message[], content: ToolResultContent, calls: readonly DeclaredCall[], now: Instant, readPreset: ReadPreset = noPresets): ToolResultContent {
+  let failed = false;
+  const parts = calls.map((c, i) => {
+    if (failed) return `[${c.name}] 未执行。`;
+    const r = declare(db, memory, p, segment, c, i, now, readPreset);
+    failed = r.isError;
+    return `[${c.name}] ${r.content.map((b) => (b.type === "text" ? b.text : "")).join("")}`;
+  });
+  const text = parts.join("\n\n");
+  const at = content.content.findLastIndex((b) => b.type === "text");
+  const blocks = [...content.content];
+  const old = blocks[at];
+  if (old?.type === "text") blocks[at] = { type: "text", text: `${old.text}\n\n${text}` };
+  else blocks.unshift({ type: "text", text });
+  return { content: blocks, isError: content.isError || failed };
+}
+
+function declare(db: DatabaseSync, memory: Memory, p: Process, segment: readonly Message[], c: DeclaredCall, i: number, now: Instant, readPreset: ReadPreset): ToolResultContent {
+  if (!DECLARABLE.includes(c.name)) return fail(`不能在结果里声明这个动作。能声明的有：${DECLARABLE.join("、")}。`);
+  try {
+    return runInStore(db, memory, p, segment, { type: "toolCall", id: `declared-${i}`, name: c.name, arguments: c.arguments as ToolCall["arguments"] }, now, readPreset);
+  } catch (e) {
+    return fail(`执行出错：${e instanceof Error ? e.message : String(e)}`);
   }
 }
 

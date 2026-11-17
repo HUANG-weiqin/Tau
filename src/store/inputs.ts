@@ -8,7 +8,7 @@ import type { Effect, Input, Instant, Memory, MemoryFailure, MemoryOp, Message, 
 import type { Image } from "../images.ts";
 import { letterContent } from "./blobs.ts";
 import { appendMessages, loadProcess, loadProcesses, loadSegment, putMail, saveProcess, tx } from "./db.ts";
-import { envFor, runInStore } from "./instore.ts";
+import { envFor, runDeclared, runInStore } from "./instore.ts";
 import type { ReadPreset } from "./instore.ts";
 
 /**
@@ -154,16 +154,29 @@ export function handleNext(db: DatabaseSync, memory: Memory, now: Instant, readP
     const old = loadProcess(db, row.process_id as string);
     if (!old) throw new Error(`信箱里的输入属于一个不存在的进程：${String(row.process_id)}`);
     const seg = loadSegment(db, old);
-    const { process: p, append, out } = decide(old, seg, JSON.parse(row.input_json as string) as Input, envFor(memory, old.preset, now));
+    const before = effectOf(old, seg);
+    const input = declaredFirst(db, memory, old, seg, before, JSON.parse(row.input_json as string) as Input, now, readPreset);
+    const { process: p, append, out } = decide(old, seg, input, envFor(memory, old.preset, now));
     const sameSegment = p.segment.seq === old.segment.seq;
     saveProcess(db, p);
     appendMessages(db, p, sameSegment ? seg.length : 0, append);
     for (const { to, letter } of out) putMail(db, to, { kind: "letter", letter });
     db.prepare("DELETE FROM mailbox WHERE seq = ?").run(row.seq as number);
     const segment = sameSegment ? [...seg, ...append] : append;
-    const abort = syncEffects(db, memory, p, segment, effectOf(old, seg), now, readPreset);
+    const abort = syncEffects(db, memory, p, segment, before, now, readPreset);
     return { process: p, segment, abort };
   });
+}
+
+/**
+ * 工具结果声明的库内动作（D64 第 10 组），在 `decide` 之前、同一个事务里执行；返回去掉 `calls`、带着执行结果的输入。
+ * 条件：这条结果正是 `effectOf(旧记录, 当前段)` 在等的那次 `runTool`（编号相同），而且结果是 ok。其余情形原样返回，声明不执行。永不抛错。
+ */
+function declaredFirst(db: DatabaseSync, memory: Memory, old: Process, seg: readonly Message[], before: Effect | null, input: Input, now: Instant, readPreset?: ReadPreset): Input {
+  if (input.kind !== "toolResult" || input.outcome.status !== "ok") return input;
+  const { content, calls, ...rest } = input.outcome;
+  if (!calls?.length || before?.kind !== "runTool" || before.n !== input.n) return input;
+  return { ...input, outcome: { ...rest, content: runDeclared(db, memory, old, seg, content, calls, now, readPreset) } };
 }
 
 /** 第 4.4 节第 4 步：只在等的副作用编号变了才动。返回被删掉的 `running` 行的编号。 */

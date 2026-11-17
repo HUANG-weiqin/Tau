@@ -69,7 +69,7 @@ interface Memory {
 ### 谁有记忆库
 
 - 预设 `tools` 含 `memory` 的进程有记忆库，`ns` 等于预设 ID。它有三个记忆工具。
-- 不含 `memory` 时，没有记忆库和记忆工具。`Env.memoryView` 为空，处理输入不碰记忆。
+- 不含 `memory` 时，模型没有记忆工具，`Env.memoryView` 为空，提示词里不挂记忆。但工具定义仍能在结果里声明 `memory_get`、`memory_set`、`memory_delete`，在处理这条结果的事务里读写 `ns` 等于预设 ID 的库，不看预设有没有 `memory`（[kb-store](kb-store.md#声明的库内动作)，[D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)）。
 - 同一个预设的进程共用一个库。并行写同一个键，靠版本号发现冲突。
 - 视图是开段时的快照。要拿到现在的值和版本号，用 `memory_get`。
 - 记忆变化不通知兄弟进程。

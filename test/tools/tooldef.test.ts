@@ -234,3 +234,69 @@ describe("content 输出", () => {
     });
   });
 });
+
+describe("content 输出里声明库内动作（D64 第 10 组）", () => {
+  const call = (name: unknown, args?: unknown) => ({ type: "call", name, ...(args === undefined ? {} : { arguments: args }) });
+  const bad = async (body: string, why: RegExp) => {
+    const r = await content(body);
+    assert.equal(r.isError, true);
+    assert.match(textOfResult(r), new RegExp(`^content 输出不合法：${why.source}`));
+    assert.equal("calls" in r, false);
+    assert.equal("images" in r, false);
+  };
+
+  test("call 项按顺序收进 calls；arguments 省略时是 {}；文本照常", async () => {
+    const r = await content(JSON.stringify([{ type: "text", text: "好" }, call("post", { to: "b", text: "x" }), call("stop_process")]));
+    assert.deepEqual(r, { content: [{ type: "text", text: "好" }], isError: false, calls: [{ name: "post", arguments: { to: "b", text: "x" } }, { name: "stop_process", arguments: {} }] });
+  });
+
+  test("只有 call：内容是空的；没有 call 时结果里没有 calls 这个键", async () => {
+    assert.deepEqual(await content(JSON.stringify([call("self")])), { content: [], isError: false, calls: [{ name: "self", arguments: {} }] });
+    assert.equal("calls" in (await content(JSON.stringify([{ type: "text", text: "a" }]))), false);
+  });
+
+  test("模型不收图片时 calls 照样在", async () => {
+    const p = await image("c-noimg.png", png(4, 4, 9));
+    const r = await content(JSON.stringify([item(p), call("memory_get", { key: "k" })]), false);
+    assert.deepEqual(r, { content: [{ type: "text", text: IMAGE_UNSUPPORTED }], isError: false, calls: [{ name: "memory_get", arguments: { key: "k" } }] });
+  });
+
+  test("最多 8 个：8 个合法，9 个整份不合法", async () => {
+    const some = (n: number) => JSON.stringify(Array.from({ length: n }, () => call("self")));
+    assert.equal(((await content(some(8))).calls ?? []).length, 8);
+    await bad(some(9), /有 9 个 call，最多 8 个/);
+  });
+
+  test("name 不是字符串、arguments 不是对象：整份不合法，不留任何声明", async () => {
+    await bad(JSON.stringify([call("self"), call(5)]), /第 2 项的格式不对/);
+    await bad(JSON.stringify([call(undefined)]), /第 1 项的格式不对/);
+    await bad(JSON.stringify([call("post", [])]), /第 1 项的格式不对/);
+    await bad(JSON.stringify([call("post", null)]), /第 1 项的格式不对/);
+    await bad(JSON.stringify([call("post", "x")]), /第 1 项的格式不对/);
+  });
+
+  test("先查每一项的格式，再查 call 个数，最后查图片张数", async () => {
+    const calls = Array.from({ length: 9 }, () => call("self"));
+    const images = Array.from({ length: IMAGES_PER_MESSAGE + 1 }, (_, i) => item(`C:\不存在\${i}.png`));
+    await bad(JSON.stringify([...calls, ...images, { type: "audio" }]), /第 \d+ 项的格式不对/);
+    await bad(JSON.stringify([...calls, ...images]), /有 9 个 call/);
+    await bad(JSON.stringify([call("self"), ...images]), /有 3 张图片/);
+  });
+
+  test("退出码不是 0、超时：没有声明", async () => {
+    const r = await runToolDef(def(`echo '[{"type":"call","name":"self"}]'; exit 2`, { output: "content" }), {}, dir, signal(), CTX, true);
+    assert.equal(r.isError, true);
+    assert.equal("calls" in r, false);
+    const t = await runToolDef(def(`echo '[{"type":"call","name":"self"}]'; sleep 60`, { output: "content", timeout: 1 }), {}, dir, signal(), CTX, true);
+    assert.equal(t.isError, true);
+    assert.equal("calls" in t, false);
+  });
+
+  test("输出被截断：整份不合法，没有声明", () => bad(JSON.stringify([call("self"), { type: "text", text: "字".repeat(30_000) }]), /标准输出超过上限/));
+
+  test("text 输出的工具不解释 call 项：原样是文字", async () => {
+    const r = await text(`echo '[{"type":"call","name":"self"}]'`);
+    assert.equal(r.isError, false);
+    assert.match(r.text, /"type":"call"/);
+  });
+});
