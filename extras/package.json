@@ -1,0 +1,15 @@
+{
+  "name": "tau-extras",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.21"
+  },
+  "dependencies": {
+    "@fontsource-variable/archivo": "5.3.0",
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
+    "@fontsource-variable/noto-sans-sc": "5.3.1",
+    "htm": "3.1.1",
+    "preact": "10.29.8"
+  }
+}

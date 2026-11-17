@@ -12,7 +12,7 @@ const EXT = /\.(ts|mts|cts|js|mjs|cjs)$/;
 function extrasFiles(): string[] {
   if (!existsSync(extras)) return [];
   return readdirSync(extras, { recursive: true, withFileTypes: true })
-    .filter((e) => e.isFile() && EXT.test(e.name))
+    .filter((e) => e.isFile() && EXT.test(e.name) && !e.parentPath.split(/[\\/]/).includes("node_modules"))
     .map((e) => join(e.parentPath, e.name));
 }
 
@@ -52,6 +52,10 @@ export function violations(file: string, src: string): string[] {
 test("extras/ 不导入仓库里 extras/ 之外的文件", () => {
   const bad = extrasFiles().flatMap((f) => violations(f, readFileSync(f, "utf8")).map((v) => `${relative(extras, f)}: ${v}`));
   assert.deepEqual(bad, []);
+});
+
+test("扫描跳过 node_modules", () => {
+  assert.equal(extrasFiles().some((f) => f.split(/[\\/]/).includes("node_modules")), false);
 });
 
 test("扫描能发现违规", () => {
