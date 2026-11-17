@@ -33,7 +33,7 @@
 ### 依赖规则
 
 - 只依赖线协议、CLI、工具定义和预设。不导入 `src/`。`test/extras-imports.test.ts` 负责检查。
-- 只用 Node 的内置模块和外部命令（例如 PowerShell）。要加 npm 依赖，和 `src/` 一样先在[决策记录](kb-decisions.md)写理由。
+- npm 依赖随便加，不用写决策记录。依赖写在 `extras/` 自己的 `package.json` 里，精确锁定版本，和根目录的 `src/` 白名单分开（[D63](kb-decisions.md#d63-上层的依赖随便加)）。外部命令（例如 PowerShell）照样能用。
 - 连管道时，`TAU_PIPE` 有值就用它，否则用默认的管道，和 CLI 一样。这样在测试服务里，上层的工具定义也不会连到正式服务。
 
 ### Pi Web 的功能在 v2 上的做法
@@ -186,7 +186,7 @@ mkdir -p "$HOME/.tau/extras/bg"
 ## 坑点
 
 - **`tau.cmd` 经 cmd.exe 解析参数。** 上层寄信要直接连管道，或者经 bash 用 `tau` 脚本（[kb-service](kb-service.md#坑点)）。
-- **相对路径也能越界。** `../src/…`、`file:` 和绝对路径，扫描测试都会查。npm 包名不查，由依赖白名单管。
+- **相对路径也能越界。** `../src/…`、`file:` 和绝对路径，扫描测试都会查。npm 包名不查：上层的依赖随便加（D63）。
 - **上层没在运行时，它的功能不生效。** 提醒、续跑、HTTP 桥都是这样。信在库里，不丢。
 
 ## 关联模块
