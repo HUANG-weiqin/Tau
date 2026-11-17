@@ -81,6 +81,7 @@
     - `call` 项不进内容块。按顺序收进结果的 `calls`（`{ name, arguments }` 的数组）；`arguments` 省略时是 `{}`。没有 `call` 时，结果里没有 `calls` 这个键。
     - 格式不对、超过个数，整份输出不合法，不留任何声明。退出码不是 0、超时、中止、输出被截断时，也没有声明。`output: text` 的工具定义不解释 `call` 项。
     - `runToolDef` 只解析，不执行：`calls` 随结果交给执行器，原样放进结果的输入（[kb-executor](kb-executor.md#运行工具actionsts)），由 `handleNext` 在处理这条结果的事务里执行（[kb-store 的声明的库内动作](kb-store.md#声明的库内动作)）。
+    - 工具里要寄信、建进程、停进程，用声明，不在命令里跑 `tau send`、`tau start`、`tau stop`：那样不原子，崩溃后重做会重复，`start` 建的进程也没有父进程。
 - MCP 不进内核：上层的中转进程为每个 MCP 工具生成工具定义（[kb-extras](kb-extras.md#pi-web-的功能在-v2-上的做法)）。
 
 事务和崩溃：和 bash 一样。被中断就报“被中断”，不重做。带图的 `content` 结果，图片在执行器上报结果的事务里插入 `blobs`（[kb-executor](kb-executor.md#失败怎样变成结果)、[kb-store 的图片](kb-store.md#图片)）。

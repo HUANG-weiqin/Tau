@@ -73,7 +73,7 @@ interface Memory {
 - 同一个预设的进程共用一个库。并行写同一个键，靠版本号发现冲突。
 - 视图是开段时的快照。要拿到现在的值和版本号，用 `memory_get`。
 - 记忆变化不通知兄弟进程。
-- 协议也能读写任何 `ns` 的记忆（D64 第 6 组），不要求预设存在、也不要求有 `memory`：`memory`、`memory_write`（[kb-service](kb-service.md#读写记忆memorymemory_write)）。`ns` 过预设 ID 的检查（`checkPresetId`，和 `loadPreset` 同一个函数）。
+- 协议也能读写任何 `ns` 的记忆（D64 第 6 组），不要求预设存在、也不要求有 `memory`：`memory`、`memory_write`（[kb-service](kb-service.md#读写记忆memorymemory_write)）。`ns` 过预设 ID 的检查（`checkPresetId`，和 `loadPreset` 同一个函数）。管道不认调用方是谁：有 bash 或能连管道的工具定义的进程，都能写任何预设的库。
 - 协议写入和兄弟进程的 `memory_set` 效果一样：改库，不写任何进程记录、段和信箱。已有进程当前段的 `memoryView` 不变；同预设之后开的新段（`start`、换段、`spawn`、带 `preset` 的 `fork`）看得到，前提是预设含 `memory`；不带 `preset` 的 `fork` 复制源进程段里的视图，看不到。记忆不是进程状态，它像 `now` 一样经 `Env` 进 `decide`。
 - 没有不带版本号的强写，没有 `memory_view`（视图是渲染的结论，进程的在 `segment.memoryView`，`inspect` 能给），没有单键的读（`entries` 一次全给，带版本）。
 

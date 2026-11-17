@@ -4,8 +4,10 @@ import { toItems, foldMiddle, forkPoints, turnStart, clipText, phaseStartedAt, H
 import { askRemove } from "./remove.js";
 import { segmentMessages } from "../lib/history.js";
 import { contextPercent, formatClock } from "../lib/format.js";
-import { Band, FoldRow, Ts, UserRow, HandoffRow, AssistantRow, OrphanRow, LiveRow } from "./messages.js";
+import { Band, FoldRow, Ts, UserRow, HandoffRow, AssistantRow, OrphanRow, LiveRow, HeldRow } from "./messages.js";
 import { Compose } from "./compose.js";
+import { Follower } from "./follow.js";
+import { slotKey, pending } from "./typer.js";
 
 /** 上一轮没有正常结束时，下一条消息前面自动加的说明（内核 decide.ts 的 `endedNote`，这里只用来预告）。 */
 const WAITED = "如果有进程在等你回信，它们已经收到上一轮的结束通知，之后的回复不会寄给它们。";
@@ -96,8 +98,9 @@ function EndBand({ app, e, ts, turn, msgs }) {
 
 /** 消息流。往上翻着读的时候不拽到底，只在底下提示。 */
 function Stream({ app, e }) {
-  const el = useRef(/** @type {HTMLElement | null} */ (null));
-  const stick = useRef(true);
+  const scrollEl = useRef(/** @type {HTMLElement | null} */ (null));
+  const flowEl = useRef(/** @type {HTMLElement | null} */ (null));
+  const follow = useRef(/** @type {Follower | null} */ (null));
   const [fresh, setFresh] = useState(false);
   const [openMid, setOpenMid] = useState(false);
   const [openPre, setOpenPre] = useState(false);
@@ -113,24 +116,37 @@ function Stream({ app, e }) {
 
   const onFork = (/** @type {number} */ seq) => app.fork(e.id, seq);
   const items = toItems(msgs);
+  // 正在写的字将来是当前段第 e.self.messages 条消息。写完了、历史还没读到那条的，先留住（typer.js）。
+  const awaiting = e.self.phase.tag === "awaitingModel";
+  const liveSeq = awaiting ? e.self.messages : -1;
+  const holds = msgs.length < e.self.messages ? pending(e.id, cur, msgs.length, liveSeq) : [];
   const sig = `${cur}:${msgs.length}:${live.length}:${e.self.phase.tag}`;
 
+  // 跟着末尾走（留白进纸，见 follow.js）：往上翻着读的时候不拽，只提示。
   useLayoutEffect(() => {
-    const n = el.current;
-    if (!n) return;
-    if (stick.current) n.scrollTop = n.scrollHeight;
-    else setFresh(true);
-  }, [sig, openMid, openPre]);
-  // 写信框长高时台面变矮：贴着底的，继续贴着底。
-  useLayoutEffect(() => {
-    const n = el.current;
-    if (!n) return;
-    const ro = new ResizeObserver(() => {
-      if (stick.current) n.scrollTop = n.scrollHeight;
-    });
-    ro.observe(n);
-    return () => ro.disconnect();
+    const n = scrollEl.current;
+    const c = flowEl.current;
+    if (!n || !c) return;
+    const f = new Follower(n, c, setFresh);
+    follow.current = f;
+    f.snap();
+    return () => {
+      f.destroy();
+      follow.current = null;
+    };
   }, []);
+  // 切了聚焦的进程：组件复用，直接到底。
+  const shownId = useRef(e.id);
+  useLayoutEffect(() => {
+    if (shownId.current === e.id) return;
+    shownId.current = e.id;
+    follow.current?.snap();
+  }, [e.id]);
+  // “有新消息”按数据算：来了消息或新字、并且没跟着末尾。用户自己展开东西不算。
+  useLayoutEffect(() => {
+    const f = follow.current;
+    if (f && !f.stick) setFresh(true);
+  }, [sig]);
 
   /** @type {any[]} */
   const rows = [];
@@ -179,8 +195,14 @@ function Stream({ app, e }) {
     const last = msgs[msgs.length - 1];
     const turnMsgs = turn !== null ? msgs.slice(turn) : msgs;
     rows.push(html`<${EndBand} app=${app} e=${e} ts=${last ? last.timestamp : null} turn=${turn} msgs=${turnMsgs} />`);
-  } else if (e.self.phase.tag === "awaitingModel") rows.push(html`<${LiveRow} app=${app} text=${live} purpose=${e.self.phase.purpose} since=${phaseStartedAt(msgs, "awaitingModel")} />`);
-  else if (msgs.length === 0 && segs.length === 0) rows.push(html`<div class="wide-only"></div><p class="hintp">${running || e.status === "fresh" ? "正在读取消息…" : "这一段还没有消息。"}</p>`);
+  } else {
+    // 写完了、历史还没到的字留着；后面有新的正在写的行时，工作条只留在最后那行。
+    for (const r of holds) rows.push(html`<${HeldRow} key=${`held${r.key}`} rec=${r} bar=${!awaiting} />`);
+    if (awaiting) {
+      const slot = slotKey(e.id, cur, liveSeq);
+      rows.push(html`<${LiveRow} key=${`live${slot}`} app=${app} slot=${slot} text=${live} purpose=${e.self.phase.purpose} since=${phaseStartedAt(msgs, "awaitingModel")} />`);
+    } else if (holds.length === 0 && msgs.length === 0 && segs.length === 0) rows.push(html`<div class="wide-only"></div><p class="hintp">${running || e.status === "fresh" ? "正在读取消息…" : "这一段还没有消息。"}</p>`);
+  }
 
   return html`<div class="stage">
     <${Tex} kind="tx-grid-l" mask="radial-gradient(ellipse 85% 80% at 90% 90%, #000 0%, transparent 72%)" />
@@ -188,14 +210,10 @@ function Stream({ app, e }) {
     <span class="bignum wide-only" aria-hidden="true">${pad2(cur)}</span>
     <span class="vlabel wide-only" aria-hidden="true">PROC ${e.id} / SEG ${pad2(cur)} / ${e.self.phase.tag === "idle" ? "IDLE" : `STEP ${String(e.self.phase.steps).padStart(3, "0")}`} / ${e.self.messages} MSG${ended !== undefined ? ` / ENDED: ${typeof ended === "object" ? "ERROR" : String(ended).toUpperCase()}` : ""}</span>
     <span class="cross wide-only" style="left:116px;top:10px"></span><span class="cross" style="right:10px;bottom:10px"></span>
-    <div class="scroll" ref=${el} onScroll=${(/** @type {any} */ ev) => {
-      const n = ev.currentTarget;
-      stick.current = n.scrollHeight - n.scrollTop - n.clientHeight < 64;
-      if (stick.current) setFresh(false);
-    }}>
-      <div class="stream"><span class="vrule wide-only" aria-hidden="true"></span>${rows}</div>
+    <div class="scroll" ref=${scrollEl} tabindex="0">
+      <div class="stream" ref=${flowEl}><span class="vrule wide-only" aria-hidden="true"></span>${rows}</div>
     </div>
-    ${fresh && html`<button type="button" class="jump" onClick=${() => { const n = el.current; if (n) n.scrollTo({ top: n.scrollHeight }); stick.current = true; setFresh(false); }}><${Icon} name="down" size=${14} sw=${3} />有新消息</button>`}
+    ${fresh && html`<button type="button" class="jump" onClick=${() => follow.current?.attach()}><${Icon} name="down" size=${14} sw=${3} />有新消息</button>`}
   </div>`;
 }
 
@@ -209,16 +227,18 @@ function describeStart(m) {
 
 /**
  * 条目变成行。`onFork` 非 null 时用户消息带分叉入口（只有当前段的用户消息）。
+ * 助手消息带它的记录键，刚写完的那条靠它接手正在吐的字（typer.js）。
+ * 行的 key 带进程 ID：切聚焦的进程时 Stream 不重建，行不能串。
  * @param {any} app @param {any} e @param {any[]} items @param {number} seg @param {boolean} running @param {((seq: number) => void) | null} onFork
  */
 function renderItems(app, e, items, seg, running, onFork) {
   /** @type {any[]} */
   const out = [];
   for (const it of items) {
-    if (it.kind === "user") out.push(html`<${UserRow} key=${`u${seg}:${it.seq}`} app=${app} item=${it} onFork=${onFork} />`);
-    else if (it.kind === "handoff") out.push(html`<${HandoffRow} key=${`h${seg}:${it.seq}`} app=${app} item=${it} segment=${seg} />`);
-    else if (it.kind === "assistant") out.push(html`<${AssistantRow} key=${`a${seg}:${it.seq}`} app=${app} item=${it} running=${running && e.self.phase.tag === "awaitingTool"} />`);
-    else if (it.kind === "orphanResult") out.push(html`<${OrphanRow} key=${`o${seg}:${it.seq}`} app=${app} item=${it} />`);
+    if (it.kind === "user") out.push(html`<${UserRow} key=${`u${e.id}:${seg}:${it.seq}`} app=${app} item=${it} onFork=${onFork} />`);
+    else if (it.kind === "handoff") out.push(html`<${HandoffRow} key=${`h${e.id}:${seg}:${it.seq}`} app=${app} item=${it} segment=${seg} />`);
+    else if (it.kind === "assistant") out.push(html`<${AssistantRow} key=${`a${e.id}:${seg}:${it.seq}`} app=${app} item=${it} running=${running && e.self.phase.tag === "awaitingTool"} slot=${slotKey(e.id, seg, it.seq)} />`);
+    else if (it.kind === "orphanResult") out.push(html`<${OrphanRow} key=${`o${e.id}:${seg}:${it.seq}`} app=${app} item=${it} />`);
   }
   return out;
 }

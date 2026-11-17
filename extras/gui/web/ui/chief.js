@@ -4,6 +4,8 @@ import * as api from "../api.js";
 import * as gs from "../lib/state.js";
 import { toItems, clipText, HANDOFF_LETTER } from "../lib/messages.js";
 import { attention } from "../lib/derive.js";
+import { Typer, claim, pending, slotKey } from "./typer.js";
+import { Follower } from "./follow.js";
 
 /** 草稿记着，关掉再开还在。 */
 let draft = "";
@@ -118,11 +120,17 @@ function Letter({ letter }) {
   return html`<div class="ch-me"><div class="ch-who"><span>${who}</span><span class="ch-chip mono">${letter.id}</span></div><p>${letter.text}</p></div>`;
 }
 
-/** 总管说的话和它调的工具。 @param {{ text: string, calls: any[], error?: string | null, live?: boolean, wait?: boolean }} p */
-function Said({ text, calls, error, live, wait }) {
+/**
+ * 总管说的话和它调的工具。`slot` 是记录键（typer.js 的 slotKey）：live 的行用它记正在吐的字；
+ * 消息行用它接手刚写完、还没吐完的字；`held` 是写完了、历史还没读到的那段字。旧的直接显示。
+ * @param {{ text: string, calls: any[], error?: string | null, live?: boolean, slot?: string, held?: boolean, wait?: boolean }} p
+ */
+function Said({ text, calls, error, live = false, slot = "", held = false, wait }) {
+  const [claimed] = useState(() => (!live && slot !== "" ? claim(slot, text) : null));
+  const typed = live || (claimed !== null && text.trim() !== "");
   return html`<div class="ch-bot">
     <div class="ch-bot-l"><span class="ch-dia" aria-hidden="true"></span>总管</div>
-    ${text.trim() !== "" && html`<p>${text}${live && html`<span class="cur y" aria-hidden="true"></span>`}</p>`}
+    ${typed ? html`<${Typer} text=${text} live=${live} slot=${slot} claimed=${claimed} final=${!live && !held} cls="" cur="y" />` : text.trim() !== "" && html`<p>${text}</p>`}
     ${wait && html`<p class="dim"><span class="pulse">正在想…</span></p>`}
     ${error && html`<p><span class="tag warn">模型出错</span> <span class="mono" style="font-size:12px">${error}</span></p>`}
     ${calls.length > 0 && html`<ul class="ch-calls">${calls.map((c) => html`<li class=${c.status === "error" || c.status === "interrupted" ? "w" : ""}><b>${String(c.name).toUpperCase()}</b><span class="ell">${c.summary || c.name}</span>${c.status === "pending" ? html`<span class="pulse" style="width:7px;height:7px;background:var(--acc);flex:none"></span>` : null}</li>`)}</ul>`}
@@ -131,24 +139,29 @@ function Said({ text, calls, error, live, wait }) {
 
 /** 弹窗里的对话：总管当前段的消息。 @param {{ app: import("../app.js").App, e: import("../lib/derive.js").Entry }} p */
 function Log({ app, e }) {
-  const el = useRef(/** @type {HTMLElement | null} */ (null));
-  const stick = useRef(true);
+  const scrollEl = useRef(/** @type {HTMLElement | null} */ (null));
+  const flowEl = useRef(/** @type {HTMLElement | null} */ (null));
   const [more, setMore] = useState(false);
   const msgs = app.messages(e.id);
   const items = toItems(msgs).filter((it) => it.kind !== "fold" && it.kind !== "orphanResult");
   const shown = more ? items : items.slice(-SHOW);
   const phase = e.self.phase.tag;
   const live = phase === "awaitingModel" ? app.streamText(e.id) : "";
-  const sig = `${msgs.length}:${live.length}:${phase}:${shown.length}`;
+  // 正在写的字将来是当前段第 e.self.messages 条消息；写完了、历史还没读到那条的，先留住（typer.js）。
+  const seg = e.self.segment;
+  const liveSeq = phase === "awaitingModel" ? e.self.messages : -1;
+  const holds = msgs.length < e.self.messages ? pending(e.id, seg, msgs.length, liveSeq) : [];
+  // 贴底跟随：弹窗里没有“有新消息”的提示，往上翻着读时只是不拽。
   useLayoutEffect(() => {
-    const n = el.current;
-    if (n && stick.current) n.scrollTop = n.scrollHeight;
-  }, [sig]);
+    const n = scrollEl.current;
+    const c = flowEl.current;
+    if (!n || !c) return;
+    const f = new Follower(n, c, () => {});
+    f.snap();
+    return () => f.destroy();
+  }, []);
 
-  return html`<div class="ch-log" ref=${el} onScroll=${(/** @type {any} */ ev) => {
-    const n = ev.currentTarget;
-    stick.current = n.scrollHeight - n.scrollTop - n.clientHeight < 48;
-  }}>
+  return html`<div class="ch-log" ref=${scrollEl} tabindex="0"><div class="ch-flow" ref=${flowEl}>
     ${items.length > shown.length && html`<button type="button" class="link" style="align-self:flex-start" onClick=${() => setMore(true)}>更早的 ${items.length - shown.length} 条<${Icon} name="up" size=${12} sw=${2.8} /></button>`}
     ${msgs.length === 0 && html`<p class="dnote">${phase === "idle" && e.status !== "fresh" ? "这一段还没有消息。" : "正在读取对话…"}</p>`}
     ${shown.map((it) => {
@@ -156,12 +169,13 @@ function Log({ app, e }) {
       if (it.kind === "handoff") return html`<p key=${`h${it.seq}`} class="ch-hand mono">这一段从上一段的交接说明开始</p>`;
       if (it.kind === "assistant") {
         if (it.text.trim() === "" && it.calls.length === 0 && !it.errorMessage) return null;
-        return html`<${Said} key=${`a${it.seq}`} text=${it.text} calls=${it.calls} error=${it.errorMessage} />`;
+        return html`<${Said} key=${`a${e.id}:${seg}:${it.seq}`} text=${it.text} calls=${it.calls} error=${it.errorMessage} slot=${slotKey(e.id, seg, it.seq)} />`;
       }
       return null;
     })}
-    ${phase === "awaitingModel" && html`<${Said} text=${live} calls=${[]} live=${live !== ""} wait=${live === ""} />`}
-  </div>`;
+    ${holds.map((r) => html`<${Said} key=${`held${r.key}`} text=${r.text} calls=${[]} slot=${r.key} held=${true} />`)}
+    ${phase === "awaitingModel" && html`<${Said} key=${`live${slotKey(e.id, seg, liveSeq)}`} text=${live} calls=${[]} live=${true} slot=${slotKey(e.id, seg, liveSeq)} wait=${live === ""} />`}
+  </div></div>`;
 }
 
 /** 没选总管预设时，从预设里选一个。 @param {{ app: import("../app.js").App, onDone?: () => void }} p */

@@ -41,7 +41,7 @@
 
 .stage { position: relative; flex: 1 1 0; min-height: 300px; overflow: hidden; }
 .scroll { position: absolute; inset: 0; z-index: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(17,18,17,.4) transparent; }
-.stream { position: relative; z-index: 1; min-height: 100%; padding: 24px 40px 26px 0; display: grid; grid-template-columns: 104px minmax(0, 1fr); column-gap: 24px; row-gap: 18px; align-content: start; }
+.stream { position: relative; z-index: 1; min-height: 100%; padding: 24px 40px 34px 0; display: grid; grid-template-columns: 104px minmax(0, 1fr); column-gap: 24px; row-gap: 18px; align-content: start; }
 .vrule { position: absolute; left: 104px; top: 0; bottom: 0; width: 1px; background: var(--ink); }
 .bignum { position: absolute; z-index: 0; right: 36px; bottom: 6px; font-stretch: 62%; font-weight: 900; font-size: 180px; line-height: .8; color: transparent; -webkit-text-stroke: 1.5px rgba(17,18,17,.24); pointer-events: none; user-select: none; }
 .vlabel { position: absolute; z-index: 0; right: 12px; top: 28px; writing-mode: vertical-rl; font-family: var(--mono); font-size: 10px; letter-spacing: .24em; color: rgba(17,18,17,.55); pointer-events: none; white-space: nowrap; max-height: calc(100% - 56px); overflow: hidden; }
@@ -90,7 +90,8 @@
 .hbody.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .carried { border-top: 1px dashed rgba(17,18,17,.4); padding: 8px 12px 0; }
 
-.abox { display: flex; flex-direction: column; gap: 10px; max-width: var(--col); min-width: 0; }
+/* 助手的消息会长（吐字、工作条、工具条），不能当滚动锚点：不然字一长，浏览器就把页面跟着一行一行往上挪，留白进纸就没了。 */
+.abox { display: flex; flex-direction: column; gap: 10px; max-width: var(--col); min-width: 0; overflow-anchor: none; }
 .atext { max-width: var(--col); font-size: 15px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
 .think { font-size: 12px; color: var(--ink-2); }
 .think summary { cursor: pointer; }
@@ -125,7 +126,16 @@ button.chead:hover { background: var(--ink3); }
 .wk-dots i:nth-child(2) { animation-delay: .4s; }
 .wk-dots i:nth-child(3) { animation-delay: .8s; }
 .wk-s { margin-left: auto; font-size: 12px; color: var(--fg2); }
-.working + .atext { margin-top: 12px; }
+/* 长出来、收起来：高度从 0 到内容高，台面跟着走，不跳。
+   间距在 .gi 里面：收着的 .gx 也占一格 .abox 的 gap，用负的上边距抵掉。 */
+.gx { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows var(--t-mid) var(--ease-in), opacity var(--t-mid) var(--ease-in); }
+.gx.in { grid-template-rows: 1fr; opacity: 1; }
+.gx.out { grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows var(--t-leave) var(--ease-out), opacity var(--t-leave) var(--ease-out); }
+.gx > .gi { min-height: 0; overflow: hidden; }
+.gx > .gi > * { margin-top: 10px; }
+.abox > .gx { margin-top: -10px; }
+/* 收起的幽灵工作条还留在 DOM 里：里面的动画停掉，不白跑。 */
+.gx.out *, .gx.out *::before, .gx.out *::after { animation: none; }
 .scan { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; overflow: hidden; background: rgba(255, 239, 0, .14); pointer-events: none; }
 .scan::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 28%; background: var(--acc); animation: tau-scan 1.6s var(--ease-in) infinite; }
 @keyframes tau-scan { from { transform: translateX(-100%); } to { transform: translateX(360%); } }
@@ -174,7 +184,7 @@ button.chead:hover { background: var(--ink3); }
   .plist { height: auto; }
   .main { height: auto; min-height: 90vh; flex: none; width: 100%; }
   .stage { min-height: 70vh; flex: 1 0 auto; }
-  .stream { grid-template-columns: minmax(0, 1fr); padding: 20px 16px 24px; }
+  .stream { grid-template-columns: minmax(0, 1fr); padding: 20px 16px 34px; }
   .endband { grid-template-columns: minmax(0, 1fr); padding: 0 16px; }
   .plate { padding: 20px 56px 22px 20px; flex-basis: 100%; }
   .plate-r { padding: 14px 16px; flex-basis: 100%; }

@@ -145,7 +145,7 @@ MVP 清单还留着一项没核实：GPT-5 的 400K 条目的输入上限（[MVP
 规格和顺序见 [D64](../../.knowledge/kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)。
 
 - [x] 文档：D64、AGENTS.md 的准入规则和预算、kb-extending 的原则 8、kb-contract、kb-extras、设计稿第 2 节、界面设计稿第 11 节。
-- [ ] 推导测试：文档提交后出新题，Sonnet 和 Haiku 都要 5 题全对。
+- [x] 推导测试：文档提交后出新题，Sonnet 和 Haiku 都要 5 题全对。（第七、八次没通过，见 [D65](../../.knowledge/kb-decisions.md#d65-推导测试第七次)、[D66](../../.knowledge/kb-decisions.md#d66-推导测试第八次)；文档已补。第九次通过，见 [D67](../../.knowledge/kb-decisions.md#d67-推导测试第九次)。）
 - [x] 在单独的分支上实现，每组先写最小反例测试：1、2（`inspect`、限度、`check`）→ 6（记忆）→ 11（`options`）→ 10（声明的动作）→ 7（换段信）→ 8、9（`from`、`reply`、`id`）→ 3（`tau`）→ 4、5（`since`、追加的消息、流式种类）。
 - [x] 随机序列和崩溃注入测试加上新的请求和声明的动作。
 - [x] 细节搬进各模块页（kb-kernel、kb-store、kb-service、kb-tools、kb-memory、kb-executor），D64 的规格改成链接。
