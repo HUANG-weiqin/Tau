@@ -8,7 +8,7 @@ export const INTERRUPTED = "被中断，结果未知";
 export const SKIPPED = "未执行";
 
 export function start(id: ProcessId, preset: PresetSnapshot, env: Env): Process {
-  return { id, preset, createdAt: env.now, segment: { seq: 1, memoryView: env.memoryView }, lastEffect: 0, phase: { tag: "idle" }, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+  return { id, preset, createdAt: env.now, segment: { seq: 1, memoryView: env.memoryView }, lastEffect: 0, phase: { tag: "idle" }, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, since: env.now };
 }
 
 /**
@@ -32,7 +32,7 @@ export function fork(id: ProcessId, source: Process, segment: readonly Message[]
   }
   const preset = to?.preset ?? source.preset;
   if (to && !preset.input.includes("image")) messages = messages.map(withoutImages);
-  const process: Process = { id, preset, createdAt: now, segment: { seq: 1, memoryView: to?.memoryView ?? source.segment.memoryView }, lastEffect: 0, phase, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+  const process: Process = { id, preset, createdAt: now, segment: { seq: 1, memoryView: to?.memoryView ?? source.segment.memoryView }, lastEffect: 0, phase, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, since: now };
   if (to) {
     // 超过阈值时第一次调用就是交接调用，带着整段，换到小窗口会失败。
     const used = estimatedUsed(process, messages);
@@ -245,7 +245,7 @@ function endTurn(d: Draft, turn: Turn, ended: Ended): void {
     push(d, userMessage(text, images, false, d.env.now, { letters: metas }));
   }
   if (ended === "done" && turn.queued.length > 0) return continueTurn(d, newTurn(turn.queued), wantsHandoff(d, turn.queued));
-  d.p = { ...d.p, phase: { tag: "idle", ended } };
+  d.p = { ...d.p, phase: { tag: "idle", ended }, since: d.env.now };
 }
 
 /**
@@ -322,7 +322,7 @@ function addUsage(u: Usage, m: Usage): Usage {
 
 /** 进入一个等待阶段：发出下一个副作用编号。 */
 function enter(d: Draft, phase: Exclude<Phase, { tag: "idle" }>): void {
-  d.p = { ...d.p, phase, lastEffect: d.p.lastEffect + 1 };
+  d.p = { ...d.p, phase, lastEffect: d.p.lastEffect + 1, since: d.env.now };
 }
 
 function overThreshold(d: Draft): boolean {

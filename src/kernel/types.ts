@@ -90,6 +90,8 @@ export interface Process {
   /** 建好后不变。CLI 建的进程没有。 */
   parent?: ProcessId;
   usage: Usage;
+  /** 进入当前阶段、或者发出当前副作用的时刻（D64 第 4 组）：`start`、`fork` 写建进程的时刻，`enter`、`endTurn` 写 `env.now`。运行中排队的信不动它。旧记录没有。 */
+  since?: Instant;
 }
 
 /** 发信的人：用户（人，或者上层程序），或者另一个进程。`reply` 有值表示这是回信。 */

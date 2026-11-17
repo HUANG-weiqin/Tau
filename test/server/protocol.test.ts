@@ -9,7 +9,7 @@ import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
+import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxThinking, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import type { FauxProviderHandle, RegisterFauxProviderOptions } from "@earendil-works/pi-ai";
 import { request } from "../../src/cli/main.ts";
 import { limits } from "../../src/kernel/derive.ts";
@@ -1410,4 +1410,110 @@ test("start、fork 带 id：ID 已存在回“进程 ID 已存在”，什么都
   const once = dumpDb(e);
   assert.equal(errorOf(await collect(e.pipe, { op: "fork", process: "x1", id: "x2" })), "进程 ID 已存在：x2");
   assert.equal(dumpDb(e), once);
+});
+
+// D64 第 5 组：watch 推追加的消息；流式预览的种类
+
+const messagesOf = (c: Client): Extract<Reply, { type: "message" }>[] => c.replies.filter((r) => r.type === "message");
+
+test("watch messages：每条 update 之后接着推这次追加的消息，带进程、段号、段内序号；和 history 一致", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  const w = open(e.pipe, { op: "watch", process: a, messages: true });
+  await until(() => w.replies.length === 1, "快照");
+  assert.equal(w.replies[0]?.type, "update", "快照之后才有增量，快照不带消息");
+
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("第二句。"))]);
+  await collect(e.pipe, { op: "send", process: a, text: "再说" });
+  await until(() => messagesOf(w).length === 2, "两条消息");
+  const rest = w.replies.slice(1).filter((r) => r.type !== "text");
+  assert.deepEqual(rest.map((r) => r.type), ["update", "message", "update", "message"], "每次处理输入：先 update，后这次追加的消息");
+  const full = segmentOf(e, a);
+  assert.deepEqual(messagesOf(w), [
+    { type: "message", process: a, segment: 1, seq: 2, message: full[2] },
+    { type: "message", process: a, segment: 1, seq: 3, message: full[3] },
+  ]);
+  // 这条 update 的 messages 已经包含刚推的那条：先 update 后消息，所以 update 里的条数等于消息的 seq 加一。
+  const ups = updates(w).slice(1);
+  assert.deepEqual(ups.map((u) => u.self.messages), [3, 4]);
+  w.socket.destroy();
+});
+
+test("watch messages：不带或为 false 时不推消息；不是布尔回 error", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  const plain = open(e.pipe, { op: "watch", process: a });
+  const off = open(e.pipe, { op: "watch", process: a, messages: false });
+  await until(() => plain.replies.length === 1 && off.replies.length === 1, "快照");
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("第二句。"))]);
+  await collect(e.pipe, { op: "send", process: a, text: "再说" });
+  await until(() => updates(plain).length === 3 && updates(off).length === 3, "增量");
+  assert.deepEqual([messagesOf(plain).length, messagesOf(off).length], [0, 0]);
+  plain.socket.destroy();
+  off.socket.destroy();
+  const bad = await collect(e.pipe, { op: "watch", process: a, messages: "yes" } as unknown as Request);
+  assert.match(errorOf(bad), /^无法识别的请求/);
+});
+
+test("watch messages：换段后从新段的第 0 条推起；history 读新段和推的一样", async (t) => {
+  const e = await setup(t);
+  const id = await startIdle(e);
+  const w = open(e.pipe, { op: "watch", process: id, messages: true });
+  await until(() => w.replies.length === 1, "快照");
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("交接说明")), fauxAssistantMessage(fauxText("新段里的回复"))]);
+  await collect(e.pipe, { op: "send", process: id, text: "换段后做这个", handoff: true });
+  assert.equal(loadProcess(e.svc.db, id)?.segment.seq, 2);
+  await until(() => messagesOf(w).filter((m) => m.segment === 2).length === 2, "新段的两条消息");
+  const got = messagesOf(w);
+  // 旧段：把交接说明那次调用写进的消息（合并的信本身是新段的第 0 条，不在旧段）。
+  assert.deepEqual(got.filter((m) => m.segment === 2).map((m) => m.seq), [0, 1]);
+  assert.ok(got.filter((m) => m.segment === 1).every((m, i, all) => i === 0 || m.seq === all[i - 1]!.seq + 1));
+  const fresh = (await collect(e.pipe, { op: "history", process: id })).flatMap((r) => (r.type === "message" ? [r.message] : []));
+  assert.deepEqual(got.filter((m) => m.segment === 2).map((m) => m.message), fresh);
+  w.socket.destroy();
+});
+
+test("watch messages：fork 只推新进程的 update，不推复制来的消息；之后新进程的消息照推", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e, "第一句。");
+  const w = open(e.pipe, { op: "watch", messages: true });
+  await until(() => w.replies.length === 1, "快照");
+  const b = receiptOf(await collect(e.pipe, { op: "fork", process: a }));
+  await until(() => updates(w).some((u) => u.self.id === b), "新进程的 update");
+  await sleep(100);
+  assert.equal(messagesOf(w).length, 0, "复制来的消息不推");
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("分叉后的回复。"))]);
+  await collect(e.pipe, { op: "send", process: b, text: "继续" });
+  await until(() => messagesOf(w).length === 2, "新进程自己的消息");
+  assert.deepEqual(messagesOf(w).map((m) => [m.process, m.segment, m.seq]), [[b, 1, 2], [b, 1, 3]], "序号接在复制来的两条后面");
+  w.socket.destroy();
+});
+
+test("text 的 kind：思考和工具调用的流只推给 watch 的订阅；start、send 的连接只收正文，不带 kind", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  const sub = open(e.pipe, { op: "watch", process: a });
+  await until(() => sub.replies.length === 1, "快照");
+  e.faux.appendResponses([
+    fauxAssistantMessage([fauxThinking("先想一想"), fauxToolCall("read", { path: "a.txt" })], { stopReason: "toolUse" }),
+    fauxAssistantMessage(fauxText("好了。")),
+  ]);
+  const replies = await collect(e.pipe, { op: "send", process: a, text: "你好" });
+  const texts = replies.filter((r) => r.type === "text");
+  assert.ok(texts.length > 0);
+  for (const r of texts) assert.equal("kind" in r, false, "start 的连接收到的 text 不带 kind");
+  assert.equal(texts.map((r) => r.delta).join(""), "好了。", "只有正文");
+  await until(() => sub.replies.some((r) => r.type === "text" && r.kind === "toolCall") && sub.replies.some((r) => r.type === "text" && r.delta === "好了。"), "订阅收到各种流");
+  const subTexts = sub.replies.filter((r) => r.type === "text");
+  const thinking = subTexts.filter((r) => r.kind === "thinking");
+  assert.ok(thinking.length > 0);
+  assert.equal(thinking.map((r) => r.delta).join(""), "先想一想");
+  const calls = subTexts.filter((r) => r.kind === "toolCall");
+  assert.ok(calls.length > 0);
+  assert.deepEqual(JSON.parse(calls.map((r) => r.delta).join("")), { path: "a.txt" });
+  // 正文没有 kind，编号是产生它的副作用编号。
+  const body = subTexts.filter((r) => r.kind === undefined);
+  assert.equal(body.map((r) => r.delta).join(""), "好了。");
+  assert.ok(body.every((r) => r.n === 4));
+  sub.socket.destroy();
 });

@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { format } from "node:util";
-import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
+import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxThinking, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import type { AssistantMessage, FauxProviderHandle, FauxResponseFactory, Message as AiMessage, MutableModels, RegisterFauxProviderOptions } from "@earendil-works/pi-ai";
 import { ago, main, request } from "../../src/cli/main.ts";
 import { contextUsed } from "../../src/kernel/derive.ts";
@@ -473,6 +473,24 @@ test("流式文本到达连接：各块拼起来等于最终回复；CLI 只打�
   // 每块写一次，最后写一个换行；最终回复的正文没有再写一遍。
   assert.equal(cap.out.length, Math.ceil(SECOND_REPLY.length / 4) + 1);
   assert.equal(cap.out.join(""), `${SECOND_REPLY}\n`);
+  assert.deepEqual(cap.err, []);
+  assertQuiet(e.svc);
+});
+
+test("思考和工具调用的流不到 CLI：start 的连接和 CLI 的输出只有正文", { timeout: 10_000 }, async (t) => {
+  const e = await setup(t, { dev: "read" });
+  e.faux.setResponses([fauxAssistantMessage([fauxThinking("先想一想"), fauxToolCall("read", { path: "nope.txt" })], { stopReason: "toolUse" }), fauxAssistantMessage(fauxText("只有正文。"))]);
+  const replies = await collect(e.pipe, { op: "start", preset: "dev", text: "读一下" });
+  const texts = replies.filter((r) => r.type === "text");
+  assert.ok(texts.length > 0);
+  assert.equal(texts.every((r) => !("kind" in r)), true);
+  assert.equal(texts.map((r) => r.delta).join(""), "只有正文。");
+  const id = replies[0]?.type === "receipt" ? replies[0].process : assert.fail("没有回执");
+
+  const cap = capture(t);
+  e.faux.setResponses([fauxAssistantMessage([fauxThinking("再想想"), fauxToolCall("read", { path: "nope.txt" })], { stopReason: "toolUse" }), fauxAssistantMessage(fauxText("还是只有正文。"))]);
+  assert.equal(await main(["send", id, "再读一下"], e.pipe), 0);
+  assert.equal(cap.out.join(""), "还是只有正文。\n");
   assert.deepEqual(cap.err, []);
   assertQuiet(e.svc);
 });

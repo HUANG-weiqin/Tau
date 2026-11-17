@@ -14,8 +14,8 @@ import type { Actions } from "./executor.ts";
 /** 模型请求在拿到成功的响应之前的重试次数，交给 pi-ai（设计稿 5.7）。 */
 export const MODEL_RETRIES = 5;
 
-/** `onText` 收到模型的流式文本和产生它的副作用编号；它只是预览，不进库。`pipe` 是服务实际监听的管道名，bash 工具把它交给命令（TAU_PIPE）。`readBlob` 读 blobs 表：调用模型之前，请求里的 `blob:<hash>` 换成真数据。 */
-export function createActions(models: Models, onText: (id: ProcessId, n: number, delta: string) => void, pipe: string, readBlob: (hash: string) => Buffer | undefined): Actions {
+/** `onText` 收到模型的流式文本和产生它的副作用编号；思考和工具调用参数的流带 `kind`，正文不带；它只是预览，不进库。`pipe` 是服务实际监听的管道名，bash 工具把它交给命令（TAU_PIPE）。`readBlob` 读 blobs 表：调用模型之前，请求里的 `blob:<hash>` 换成真数据。 */
+export function createActions(models: Models, onText: (id: ProcessId, n: number, delta: string, kind?: "thinking" | "toolCall") => void, pipe: string, readBlob: (hash: string) => Buffer | undefined): Actions {
   return {
     async callModel(job, signal) {
       const name = job.process.preset.model;
@@ -31,7 +31,11 @@ export function createActions(models: Models, onText: (id: ProcessId, n: number,
       if (thinking === undefined) delete (o as { reasoning?: unknown }).reasoning;
       else o.reasoning = thinking;
       const stream = models.streamSimple({ ...model, maxTokens: cap }, resolveImages(buildContext(job.process, job.segment), readBlob), o);
-      for await (const e of stream) if (e.type === "text_delta") onText(job.process.id, job.effect.n, e.delta);
+      for await (const e of stream) {
+        if (e.type === "text_delta") onText(job.process.id, job.effect.n, e.delta);
+        else if (e.type === "thinking_delta") onText(job.process.id, job.effect.n, e.delta, "thinking");
+        else if (e.type === "toolcall_delta") onText(job.process.id, job.effect.n, e.delta, "toolCall");
+      }
       return stream.result();
     },
     async runTool(job, call, signal) {

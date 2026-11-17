@@ -86,7 +86,7 @@ function assertDropped(w: World, input: Input): void {
 describe("4.3 start", () => {
   test("只建一个 idle 进程：段号 1，lastEffect 为 0，memoryView 取自 env", () => {
     const p = start("p1", P, env(123, "k: v"));
-    assert.deepEqual(p, { id: "p1", preset: P, createdAt: 123, segment: { seq: 1, memoryView: "k: v" }, lastEffect: 0, phase: { tag: "idle" }, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } });
+    assert.deepEqual(p, { id: "p1", preset: P, createdAt: 123, segment: { seq: 1, memoryView: "k: v" }, lastEffect: 0, phase: { tag: "idle" }, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, since: 123 });
     assert.equal("parent" in p, false, "没有 parent");
     assert.equal(effectOf(p, []), null);
   });

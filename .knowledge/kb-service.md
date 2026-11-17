@@ -107,12 +107,18 @@ pump()
 - 消息是库里存的 JSON，不做转换。读整段进内存再写出，不分批。
 - 客户端看到投影里的消息条数变了，就用 `from` 读新增的部分。
 
-`watch`（可选的 `process`）：
+`watch`（可选的 `process`，可选的 `messages`）：
 
-- 订阅表 `Set<{ socket, process, limit }>`，只在内存里，和观察者表分开。`settle` 不看它。
+- 订阅表 `Set<{ socket, process, messages, limit }>`，只在内存里，和观察者表分开。`settle` 不看它。
 - 订阅时先推快照：带 `process` 时推它的一条 `update`，不带时按进程 ID 推每个进程的 `update`。快照和登记在同一个同步调用里，所以先 `ps` 再 `watch` 不会漏。
 - `update` 只有 `self` 部分，不带兄弟和子进程。它由 `observe(新记录, 新段, [新记录], now)` 算出，用的是 `handleNext` 返回的 `process` 和 `segment`，不再读库。
 - 每次 `handleNext` 处理了某个进程的输入，`pump` 给订阅它的连接（或订阅全部的连接）推这个进程的 `update`。没有订阅时不算。
+- 带 `messages: true`（D64 第 5 组）的订阅，每推一条 `update`，接着推这次追加进段的消息，每条一行 `message`，带 `process`、`segment`、`seq`（和 `history` 的行同形，多一个 `process`）。顺序固定：先 `update`，后它之前追加的消息，所以 `update.messages` 已经把这些消息数在内。
+  - 数据来自 `handleNext` 返回的 `appended`，不读库。换段时 `segment` 是新段号、`seq` 从 0 推起；旧段在换段前已推完。
+  - `fork` 只推新进程的 `update`，不推复制来的消息：它们和源进程的段一样，要就用 `history` 读。
+  - 不带或为 `false` 时不推消息。`messages` 只能是布尔，别的类型回 `error`。
+  - 断线以后消息不补推，客户端用 `history` 的 `from` 补。
+  - 消息和 `update` 一样受写缓冲上限约束。
 - 流式文本照样推：`text`，带进程 ID 和副作用编号。不推最终回复：客户端看到进程回到 `idle`，自己用 `history` 读。
 - 删进程时推 `removed`：订阅这个进程的连接和订阅全部的连接都先收到它；订阅这个进程的随后关闭，订阅全部的照常订阅（见[删除](#删除)）。
 - 订阅不存在的进程回 `error`，然后关闭。订阅由客户端断开结束。服务登记订阅后恢复读取，请求行之后的字节丢掉，所以多发的字节不会挡住断开。
@@ -181,10 +187,10 @@ type Request =
 
 type Reply =
   | { type: "receipt"; process: string }                    // 命令的事务提交之后；fork 的回执带新进程的 ID
-  | { type: "text"; process: string; n: number; delta: string } // 流式文本，只是预览；n 是副作用编号
+  | { type: "text"; process: string; n: number; delta: string; kind?: "thinking" | "toolCall" } // 流式文本，只是预览；n 是副作用编号；kind 没有就是正文
   | { type: "final"; reply: string; ended: Ended | null }   // 从库里取
   | { type: "ps"; processes: Projection[] }
-  | { type: "message"; segment: number; seq: number; message: Message }
+  | { type: "message"; process?: string; segment: number; seq: number; message: Message } // history 的行没有 process；watch 推的有
   | { type: "end"; segment: number; messages: number }      // history 读完
   | { type: "process"; process: Process; messages: number; limits: Limits } // inspect 的一行
   | { type: "inspected"; count: number; now: Instant }      // inspect 的结束行
@@ -213,7 +219,7 @@ type Reply =
 | `memory` | `memory.entries(ns)` 或 `memory.namespaces()`；不开事务 | 一行 `memory` 或 `namespaces`，然后关闭 |
 | `memory_write` | `writeMemory`（见[读写记忆](#读写记忆memorymemory_write)） | 一行 `memory_written` 或 `memory_rejected`，然后关闭；请求不合格回 `error` |
 | `blob` | 读一张图片：`hash` 不带 `blob:` 前缀。不开写事务 | 一行 `blob`，然后关闭。`hash` 不存在回 `error` |
-| `watch` | 推快照，登记订阅 | 一直推 `update` 和 `text`，直到客户端断开 |
+| `watch` | 推快照，登记订阅 | 一直推 `update`、`text`，带 `messages: true` 时还有 `message`，直到客户端断开 |
 | `prune` | `pruneSegments`（见[删除](#删除)） | `receipt`，然后关闭；拒绝回 `error` |
 | `remove` | 查执行器 `busy`，再 `removeProcess`；提交之后推 `removed`，再回执 | `receipt`，然后关闭；拒绝回 `error` |
 | `sweep` | `sweepBlobs` | 一行 `swept`，然后关闭；拒绝回 `error` |
@@ -282,6 +288,7 @@ type Reply =
 
 - 执行器把模型的 `text_delta` 交给服务（[kb-executor.md](kb-executor.md#调用模型actionsts)）。服务转发给这个进程此刻的全部观察者和订阅（订阅它或订阅全部的 `watch`），一段一行 `text`，带进程 ID 和副作用编号 `n`。客户端用编号丢掉过时的文本。
 - 不进库，不进投影。`ps`、`stop`、`history` 的连接收不到。
+- `kind`（D64 第 5 组）：思考（`thinking_delta`）和工具调用参数的 JSON 片段（`toolcall_delta`）也转发，`text` 带 `kind: "thinking"` 或 `"toolCall"`；正文不带 `kind`。带 `kind` 的只推给订阅，不推给观察者：`start`、`send` 的连接只收正文，CLI 的输出不变。订阅收到所有的 `text`，不看它有没有 `messages`。
 - 观察者从登记那一刻起收，直到最终回复；订阅从订阅那一刻起收，直到断开。中途加入的连接从半句开始收。
 - 转发不看用途：交接调用写的交接说明，以及之后被丢弃的回复（`length`、`error`）的文字，都会发出去。
 

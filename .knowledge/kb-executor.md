@@ -87,7 +87,7 @@ abort(id, n)
 
 1. 按第一个 `/` 把快照里的模型 ID 拆成 provider 和模型 ID，用 `models.getModel` 现查。查不到就抛出 `模型目录里没有 <ID>`，执行器把它变成 `error` 回复。
 2. `models.streamSimple({ ...model, maxTokens: cap }, resolveImages(buildContext(process, segment), readBlob), { ...preset.options, signal, sessionId: process.id, maxTokens: cap, maxRetries: MODEL_RETRIES, reasoning? })`。先铺预设的 `options`（[kb-kernel](kb-kernel.md#预设选项)），再铺内核自己的键，内核的键赢：快照被手改成含 `maxTokens`、`sessionId`、`reasoning` 也一样。`options` 不参与 `cap`、启动检查和阈值的计算。`cap` = `min(model.maxTokens, outputMax(preset))`，`outputMax` 是窗口的 1/8。快照有 `thinking` 才传 `reasoning`，没有就连键都不传（`options` 里的 `reasoning` 也会被去掉）。预设没写 `options.thinkingBudgets` 就不传，写了就照它传（也不参与 `cap` 的计算）。轮次调用和交接调用一样。
-3. 只把 `text_delta` 事件连同进程 ID 和副作用编号交给 `onText`。服务怎样转发，见 [kb-service.md](kb-service.md#流式文本)。
+3. 把 `text_delta`、`thinking_delta`、`toolcall_delta` 事件的 `delta` 连同进程 ID 和副作用编号交给 `onText`；后两种带 `kind`（`thinking`、`toolCall`），正文不带。其余事件不转发。服务怎样转发，见 [kb-service.md](kb-service.md#流式文本)。
 4. 返回 `stream.result()`，也就是最终的助手消息。
 
 - 服务的模型目录来自 `@earendil-works/pi-ai/providers/all` 的 `builtinModels`，怎样创建见 [kb-service.md](kb-service.md#启动脚本和入口)。`createModels()` 返回空目录，测试用它装 faux provider。

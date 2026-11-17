@@ -32,6 +32,7 @@ test("自己：ID、预设、模型、阶段、第几段、本段开始多久、
     model: "faux/a",
     phase: { tag: "awaitingTool", steps: 1, queued: 2 },
     age: 8_000,
+    since: 0,
     segment: 1,
     segmentAge: 4_000,
     context: { used: contextUsed(w.p, seg), window: A.contextWindow, threshold: handoffThreshold(A) },

@@ -62,6 +62,7 @@ test("新进程记录的每个字段", () => {
     lastEffect: 0,
     phase: { tag: "idle" },
     usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    since: 777,
   });
   assert.equal("parent" in p, false);
   assert.ok(w.p.usage.input > 0 && w.p.lastEffect === 3, "源进程有用量和编号，新进程都不继承");

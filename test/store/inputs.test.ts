@@ -262,3 +262,17 @@ test("用户的信：信箱里是一个文本块、跳数 0、没有 replyTo；�
   assert.deepEqual(stripTau(loadSegment(db, p)), [{ role: "user", content: "你好", timestamp: 7 }]);
   assert.deepEqual(p.phase.tag === "awaitingModel" && [p.phase.turn.hops, p.phase.turn.replyTo], [0, []]);
 });
+
+test("handleNext 带上这次追加的消息和起点：同一段接在后面，换段从 0 起，没有追加时是空；记录的 since 是处理的时刻", (t) => {
+  const db = tempDb(t);
+  const memory = fakeMemory();
+  startProcess(db, memory, "p1", PRESET, "你好", 0);
+  const first = handleNext(db, memory, 7);
+  assert.deepEqual(first?.appended, { from: 0, messages: loadSegment(db, first!.process) });
+  assert.equal(first?.process.since, 7);
+  // 运行中到的信只排队：没有追加，since 不动。
+  send(db, "p1", userLetter("排队"));
+  const queued = handleNext(db, memory, 9);
+  assert.deepEqual(queued?.appended, { from: 1, messages: [] });
+  assert.equal(queued?.process.since, 7);
+});

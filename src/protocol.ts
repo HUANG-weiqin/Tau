@@ -26,8 +26,8 @@ export type Request =
   | { op: "memory"; ns?: string }
   /** 写记忆：`ops` 非空，按顺序在一个事务里执行，第一个失败整批回滚。`set` 的 `expected` 是 null 或正整数，`delete` 的是正整数；没有不带版本号的强写。 */
   | { op: "memory_write"; ops: MemoryOp[] }
-  /** 订阅变化，直到客户端断开。不带 process 时订阅全部进程。 */
-  | { op: "watch"; process?: string }
+  /** 订阅变化，直到客户端断开。不带 process 时订阅全部进程。`messages` 为真：每条 update 之后接着推这次追加进段的消息（D64 第 5 组）。 */
+  | { op: "watch"; process?: string; messages?: boolean }
   /** 删这个进程段号小于 `before` 的旧段。当前段不删；`before` 大于当前段号回 `error`。回执。 */
   | { op: "prune"; process: string; before: number }
   /** 删一个空闲、没人引用的进程的记录和全部段。拒绝回 `error`。成功时先给订阅推 `removed`，再回执。 */
@@ -38,8 +38,8 @@ export type Request =
 export type Reply =
   /** 命令写进库的事务提交之后才发。 */
   | { type: "receipt"; process: string }
-  /** 流式文本，只是预览。n 是产生它的副作用编号，客户端用它丢掉过时的文本。 */
-  | { type: "text"; process: string; n: number; delta: string }
+  /** 流式文本，只是预览。n 是产生它的副作用编号，客户端用它丢掉过时的文本。`kind` 没有就是正文；带 kind 的（思考、工具调用的参数）只推给 watch 的订阅。 */
+  | { type: "text"; process: string; n: number; delta: string; kind?: "thinking" | "toolCall" }
   /** 进程回到 idle 后，从库里取出的最终回复和结束原因。 */
   | { type: "final"; reply: string; ended: Ended | null }
   | { type: "ps"; processes: Projection[] }
@@ -57,7 +57,8 @@ export type Reply =
   | { type: "memory_written"; versions: (number | null)[] }
   /** memory_write 被拒绝（正常回复，不是 error）：第一个失败的下标，和 `Memory` 的失败形状。整批已回滚。 */
   | { type: "memory_rejected"; index: number; result: MemoryFailure }
-  | { type: "message"; segment: number; seq: number; message: Message }
+  /** history 的每条没有 `process`；watch 推的带 `process`（D64 第 5 组）。 */
+  | { type: "message"; process?: string; segment: number; seq: number; message: Message }
   /** history 读完：这一段的段号和消息条数。没收到它就断开，是没读完。 */
   | { type: "end"; segment: number; messages: number }
   /** watch 的快照和增量：进程此刻的 self 部分。 */

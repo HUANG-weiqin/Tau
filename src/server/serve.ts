@@ -26,6 +26,8 @@ export const WATCH_BUFFER_MAX = 1024 * 1024;
 interface Subscription {
   socket: Socket;
   process: ProcessId | undefined;
+  /** `watch` 带 `messages: true`：每条 update 之后接着推追加的消息。 */
+  messages: boolean;
   /** 推完快照时的 writableLength 加上 WATCH_BUFFER_MAX。 */
   limit: number;
 }
@@ -59,9 +61,10 @@ export async function serve(opts: ServeOptions): Promise<Service> {
     db,
     createActions(
       opts.models,
-      (id, n, delta) => {
-        const text: Reply = { type: "text", process: id, n, delta };
-        watchers.get(id)?.forEach((s) => reply(s, text));
+      (id, n, delta, kind) => {
+        // 带 kind 的（思考、工具调用）只推给订阅：start、send 的连接只收正文。
+        const text: Reply = { type: "text", process: id, n, delta, ...(kind === undefined ? {} : { kind }) };
+        if (kind === undefined) watchers.get(id)?.forEach((s) => reply(s, text));
         push(id, text);
       },
       opts.pipe,
@@ -77,7 +80,10 @@ export async function serve(opts: ServeOptions): Promise<Service> {
       const h = handleNext(db, memory, now, readPreset);
       if (!h) break;
       if (h.abort !== null) exec.abort(h.process.id, h.abort);
-      if (subscriptions.size > 0) push(h.process.id, update(h, now));
+      if (subscriptions.size > 0) {
+        push(h.process.id, update(h, now));
+        h.appended.messages.forEach((message, i) => push(h.process.id, { type: "message", process: h.process.id, segment: h.process.segment.seq, seq: h.appended.from + i, message }, true));
+      }
       settle(h.process);
     }
     for (let run = exec.startNext(); run; run = exec.startNext()) run.then(pump, fatal);
@@ -98,10 +104,10 @@ export async function serve(opts: ServeOptions): Promise<Service> {
     for (const s of set) reply(s, final).end();
   }
 
-  /** 给订阅这个进程的连接推一条回复。写缓冲超过上限的订阅就断开。 */
-  function push(id: ProcessId, r: Reply): void {
+  /** 给订阅这个进程的连接推一条回复；`onlyMessages` 时只推给要消息的订阅。写缓冲超过上限的订阅就断开。 */
+  function push(id: ProcessId, r: Reply, onlyMessages = false): void {
     for (const sub of subscriptions) {
-      if (sub.process !== undefined && sub.process !== id) continue;
+      if ((sub.process !== undefined && sub.process !== id) || (onlyMessages && !sub.messages)) continue;
       reply(sub.socket, r);
       if (sub.socket.writableLength > sub.limit) {
         subscriptions.delete(sub);
@@ -222,7 +228,7 @@ export async function serve(opts: ServeOptions): Promise<Service> {
           reply(s, { type: "update", self: observe(p, loadSegment(db, p), [p], now).self });
         }
         if (s.destroyed) return;
-        const sub: Subscription = { socket: s, process: req.process, limit: s.writableLength + WATCH_BUFFER_MAX };
+        const sub: Subscription = { socket: s, process: req.process, messages: req.messages === true, limit: s.writableLength + WATCH_BUFFER_MAX };
         subscriptions.add(sub);
         s.on("close", () => subscriptions.delete(sub));
         // readline 关闭后会暂停读取。恢复读取并丢掉请求行之后的字节，客户端断开才会变成 'end' 和 'close'。
@@ -312,7 +318,7 @@ function parseRequest(line: string): Request {
     if (r.op === "remove" && str(r, "process")) return r as Request;
     if (r.op === "prune" && str(r, "process") && "before" in r && num("before")) return r as Request;
     if (r.op === "history" && str(r, "process") && num("segment") && num("from")) return r as Request;
-    if (r.op === "watch" && (!("process" in r) || str(r, "process"))) return r as Request;
+    if (r.op === "watch" && (!("process" in r) || str(r, "process")) && ((r as Record<string, unknown>).messages === undefined || typeof (r as Record<string, unknown>).messages === "boolean")) return r as Request;
     if (r.op === "stop" && str(r, "process")) return r as Request;
     if (r.op === "fork" && str(r, "process") && num("before") && ((r as Record<string, unknown>).preset === undefined || str(r, "preset")) && idOk((r as Record<string, unknown>).id)) return r as Request;
     const images = "images" in r ? r.images : [];

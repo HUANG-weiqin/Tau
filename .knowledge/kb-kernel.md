@@ -40,6 +40,7 @@ interface Process {
   phase: Phase;
   parent?: ProcessId;                // 建好后不变；CLI 建的进程没有
   usage: Usage;                      // 累计用量；新进程全是 0
+  since?: Instant;                   // 进入当前阶段、或发出当前副作用的时刻；旧记录没有
 }
 
 interface Usage { input: number; output: number; cacheRead: number; cacheWrite: number }
@@ -64,6 +65,7 @@ type Ended = "done" | "stepLimit" | "stopped" | { error: string };
 - `turn.steps` 必须存：一轮可以跨越换段。
 - `turn.queued` 存信件原样，写进段时才渲染。`turn.hops` 是本轮已经写进段的信的最大跳数，`turn.replyTo` 是本轮结束时要寄回信的进程，去重。并进 `turn` 的规则见[回信](#回信)。
 - `Letter.hops` 是这封信被进程之间的信一路引出来的跳数。CLI 寄来的信 `hops` 为 0，没有 `replyTo`。`replyTo` 有值时，处理这封信的那一轮结束时把最终回复寄给它。
+- `since`（D64 第 4 组）：`start`、`fork` 写建进程的时刻；`enter`（发出副作用、进入等待阶段）和 `endTurn`（回到 `idle`）写 `env.now`，`decide` 仍是纯函数。运行中排队的信、空闲时的 `stop`、编号对不上被忽略的结果都不动它。模型出错或被停止时段里不写消息，进入 `idle` 的时刻从段里算不出来，所以存。结束时有排队的信、接着开新一轮，走 `enter`，是新一轮发出调用的时刻。投影的 `ProcessView.since` 照抄它，旧记录没有就没有这个键。
 - `parent` 由 `spawn` 设置，投影会带出来。`usage` 的累加规则见[累计用量](#累计用量)。
 - `purpose` 存在阶段里：它保存进入等待时的决定。
 - 进程在等的副作用编号就是 `lastEffect`，阶段里不另存。
@@ -594,7 +596,7 @@ interface Projection {
   idleChildren: number;                    // parent 是自己、处于 idle 的进程个数
 }
 
-interface ProcessView { id: ProcessId; preset: string; model: string; phase: PhaseView; age: number; parent?: ProcessId }
+interface ProcessView { id: ProcessId; preset: string; model: string; phase: PhaseView; age: number; since?: Instant; parent?: ProcessId }
 
 type PhaseView =
   | { tag: "idle"; ended?: Ended }
@@ -628,6 +630,7 @@ type PhaseView =
 | `test/kernel/safepoint.test.ts` | 安全点投递和 `handoff` |
 | `test/kernel/handoff-letter.test.ts` | 换段信：三个时机各生效一次；段里没有助手消息、非 `done` 结束、步数用完时作废；和阈值或 `handoff` 工具同时成立只换一次；交接中到的信去掉标记 |
 | `test/kernel/letters.test.ts` | 信的头和合并、两种形状、工具结果和新段第一条的张数、换段带全部段末消息 |
+| `test/kernel/since.test.ts` | `since` 在各转移上的值，`fork` 的 `since`，投影带 `since` |
 | `test/kernel/usage.test.ts` | 累计用量：每种回复都加，丢弃的和被中断的不加 |
 | `test/kernel/context.test.ts` | 系统提示词、工具描述、交接请求去掉段末用户消息 |
 | `test/kernel/acceptance.test.ts` | 换段不会无限循环；5 种窗口下，主路径和三条角落路径的交接请求加交接说明放得进窗口；工具调用太多的回复不写入 |

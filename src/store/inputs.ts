@@ -170,6 +170,8 @@ export interface Handled {
   process: Process;
   /** 处理之后的当前段。 */
   segment: readonly Message[];
+  /** 这次追加进段的消息和第一条的段内序号：换段时从 0 起，段号是 `process.segment.seq`。服务靠它推 watch 的消息，不读库。 */
+  appended: { from: number; messages: readonly Message[] };
   /** 这个事务删掉了一个 `running` 行时，是它的副作用编号：调用方要中止执行器里的这个动作。 */
   abort: number | null;
 }
@@ -192,7 +194,7 @@ export function handleNext(db: DatabaseSync, memory: Memory, now: Instant, readP
     db.prepare("DELETE FROM mailbox WHERE seq = ?").run(row.seq as number);
     const segment = sameSegment ? [...seg, ...append] : append;
     const abort = syncEffects(db, memory, p, segment, before, now, readPreset);
-    return { process: p, segment, abort };
+    return { process: p, segment, appended: { from: sameSegment ? seg.length : 0, messages: append }, abort };
   });
 }
 

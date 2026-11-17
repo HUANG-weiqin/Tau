@@ -15,6 +15,8 @@ export interface ProcessView {
   phase: PhaseView;
   /** 进程运行了多久（毫秒）。 */
   age: number;
+  /** 进入当前阶段、或者发出当前副作用的时刻；旧记录没有。 */
+  since?: Instant;
   /** 建好后不变；CLI 建的进程没有。 */
   parent?: ProcessId;
 }
@@ -60,7 +62,7 @@ export function observe(p: Process, segment: readonly Message[], siblings: reado
 }
 
 function view(p: Process, now: Instant): ProcessView {
-  return { id: p.id, preset: p.preset.id, model: p.preset.model, phase: phaseView(p), age: now - p.createdAt, ...(p.parent === undefined ? {} : { parent: p.parent }) };
+  return { id: p.id, preset: p.preset.id, model: p.preset.model, phase: phaseView(p), age: now - p.createdAt, ...(p.since === undefined ? {} : { since: p.since }), ...(p.parent === undefined ? {} : { parent: p.parent }) };
 }
 
 function phaseView(p: Process): PhaseView {

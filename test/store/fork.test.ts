@@ -60,7 +60,7 @@ test("fork 不带 before：新进程和复制的消息写进库，源进程不�
   const h = forkProcess(db, memory, "b", "a", undefined, 500);
   const p = loadProcess(db, "b")!;
   assert.deepEqual(p, h.process);
-  assert.deepEqual(p, { id: "b", preset: src.preset, createdAt: 500, segment: { seq: 1, memoryView: src.segment.memoryView }, lastEffect: 0, phase: { tag: "idle", ended: "done" }, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } });
+  assert.deepEqual(p, { id: "b", preset: src.preset, createdAt: 500, segment: { seq: 1, memoryView: src.segment.memoryView }, lastEffect: 0, phase: { tag: "idle", ended: "done" }, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, since: 500 });
   assert.deepEqual(loadSegment(db, p), seg);
   assert.deepEqual(h.segment, seg);
   assert.deepEqual(loadProcess(db, "a"), src);
@@ -184,7 +184,7 @@ test("fork 带预设：快照和记忆视图来自新预设，复制的消息不
   assert.deepEqual(p.preset, target);
   assert.equal(p.segment.memoryView, "k: 新预设的记忆");
   assert.deepEqual(loadSegment(db, p), seg);
-  assert.deepEqual({ ...p, preset: null, segment: null }, { id: "b", preset: null, createdAt: 500, segment: null, lastEffect: 0, phase: { tag: "idle", ended: "done" }, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } });
+  assert.deepEqual({ ...p, preset: null, segment: null }, { id: "b", preset: null, createdAt: 500, segment: null, lastEffect: 0, phase: { tag: "idle", ended: "done" }, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, since: 500 });
   assert.equal(mailbox(db).length, 0);
   assert.deepEqual(effectRows(db), []);
   assertStoreInvariants(db);

@@ -290,7 +290,7 @@ describe("5.4 handoff", () => {
   test("不存状态：purpose 之外没有新字段", () => {
     const w = withCalls(["h1"], LOW, "handoff");
     toolDone(w, "ok");
-    assert.deepEqual(Object.keys(w.p).sort(), ["createdAt", "id", "lastEffect", "phase", "preset", "segment", "usage"]);
+    assert.deepEqual(Object.keys(w.p).sort(), ["createdAt", "id", "lastEffect", "phase", "preset", "segment", "since", "usage"]);
   });
 
   test("handoff 在步数用完时也只是结束本轮", () => {
