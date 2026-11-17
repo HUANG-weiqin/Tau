@@ -1413,7 +1413,7 @@ fork 原来在这张表里，已进内核，见 [D49](#d49-fork-进内核)。
   4. **参数可传**：调用模型的参数，凡是 pi-ai 的 `streamSimple` 转发、又不归内核管的，预设都能写。
   - 补齐这四类的原语，不要求“本机用过”。功能本身照旧按 YAGNI 和[取舍顺序](kb-extending.md#取舍顺序)判，判的时候把这些原语当成已有的。
   - 以后内核加一样事实或控制，默认同时给上层。加库内工具时，在“能声明的库内动作”里列上它；记录加字段，`inspect` 自动读得到。
-- 原语，共 11 组（规格见下；实现以后，细节搬进各模块页）：
+- 原语，共 11 组（细节在各模块页，见下面的规格）：
 
   | # | 原语 | 类 | 上层做的代价 |
   |---|---|---|---|
@@ -1429,136 +1429,18 @@ fork 原来在这张表里，已进内核，见 [D49](#d49-fork-进内核)。
   | 10 | 工具定义在结果里声明库内动作 | 动作 | 不原子。工具里用 `tau send/start/stop`，崩溃后模型重做，信会重复，子进程会多一个（[原语表](kb-contract.md#原语和它在内核的理由)“进程之间”一行） |
   | 11 | 预设的 `options` | 参数 | 做不到。调用模型的参数，上层碰不到 |
 
-- 规格：
-  1. `inspect`
-     - 请求：`{ op: "inspect"; process?: string }`。
-     - 回复：每个进程一行 `{ type: "process"; process: Process; messages: number; limits: Limits }`，最后一行 `{ type: "inspected"; count: number; now: Instant }`，然后关闭。没收到结束行，就是没读完。
-     - 不带 `process` 时，回全部进程，按 ID 升序。带 `process` 时回这一个进程的一行，加结束行；没有这个进程就回 `error`，没有结束行。
-     - `process` 是原样的进程记录，出错原因不截短。`messages` 是同一次读取时当前段的条数。记录加上 `history` 读这一段的前 `messages` 条，就是那一刻的状态。
-     - 不开事务，不调 `pump`。逐行写，不拼成一个大串。
-     - 不做“`watch` 推原样记录”：体积大、频率高。要详情，就按需 `inspect`。
-  2. 限度和 `check`
-     - `Limits = { fixed: number; memoryMax: number; threshold: number }`，单位是 token，由纯函数 `limits(snapshot)` 算出。`startError` 改用它，文字不变。
-     - 投影的 `self.context` 加 `threshold`。`self` 的文字加一行“换段阈值”。`tau ps` 的文字不变。
-     - `check`：`{ op: "check"; preset: string }`。它和 `start`、`fork`、`spawn` 用同一个读预设的函数。
-       - 读得出：回 `{ type: "check"; snapshot: PresetSnapshot; limits: Limits; error: string | null }`。`error` 是 `startError` 的原文，`null` 表示此刻能启动。
-       - 读不出：回 `error`，文字和 `start` 一字不差。
-       - 不读库，不开事务。
-     - 契约：读预设时的任何拒绝，只许加在 `loadPreset`、`loadToolDefs`、`startError` 里。这样 `check` 和 `start` 永远一致。
-     - `check` 只描述此刻的文件。已有进程的限度，看 `inspect` 的 `limits`。
-  3. 段里的消息带结构
-     - 用户消息：`decide` 写进段的每条用户消息，带可选字段 `tau: { letters: LetterMeta[]; after?: Ended; handoff?: true }`。
-       - `LetterMeta = { from: Sender; hops: number; replyTo?: ProcessId; handoff?: true; at?: [number, number] }`。
-       - `at` 是这封信的正文在消息文本里的起止位置，按 UTF-16 算。消息文本：`content` 是字符串时就是它（没有图片时多是这样），是数组时是第一个文本块。
-       - `after` 是 [D25](#d25-上一轮没有正常结束时下一条消息加说明) 那句说明对应的上一轮结束原因。
-     - 换段后新段的第一条消息带 `handoff: true`，`letters` 是带过去的信，位置跟着平移。带过去的消息原来的 `after` 不带过去：说明的文字照旧在正文里，不在任何一封信的 `at` 里。
-     - 文本被 `clip` 截过时，这条消息的 `at` 全部去掉，别的照留。
-     - 工具结果：`decide` 补的工具结果带 `tau: { filled: "interrupted" | "skipped" }`。
-     - `buildContext` 发请求前去掉 `tau`。估算只数内容，不受影响。给模型看的文字一个字都不变。
-     - `history` 和 `fork` 原样带着它。旧消息没有这个字段。
-  4. `since`
-     - `Process` 加可选的 `since: Instant`：进入当前阶段、或者发出当前副作用的时刻。
-     - `decide` 发出副作用和结束一轮时写 `env.now`；`start`、`fork` 写建进程的时刻。`decide` 仍是纯函数。
-     - 投影的 `ProcessView` 也带上它。
-  5. 追加的消息和流式预览的种类
-     - `watch` 加可选的 `messages: true`。每推一条 `update`，接着推这次追加进段的消息，每条一行 `{ type: "message"; process; segment; seq; message }`。
-       - 换段时，从新段的第 0 条推起。
-       - `fork` 不推复制来的消息。
-       - 断线以后，照旧用 `history` 补。
-       - 推送不读库。
-     - 流式文本 `text` 加可选的 `kind: "thinking" | "toolCall"`，没有就是正文。执行器转发 pi-ai 的 `thinking_delta` 和 `toolcall_delta`。
-       - 带 `kind` 的只推给 `watch` 的订阅。`start`、`send` 的连接照旧只收正文，CLI 的输出不变。
-  6. 记忆走协议
-     - 读：`{ op: "memory"; ns?: string }`。
-       - 带 `ns`：回 `{ type: "memory"; ns; entries: { key; value; version }[] }`，按键的 UTF-8 字节序排。
-       - 不带 `ns`：回 `{ type: "namespaces"; ns: string[] }`，列出有键的全部 ns。
-     - 写：`{ op: "memory_write"; ops: MemoryOp[] }`。`MemoryOp` 是两种之一：`{ kind: "set"; ns; key; value; expected: number | null }`、`{ kind: "delete"; ns; key; expected: number }`。
-       - 整批在一个事务里，是第 8 个存储事务 `writeMemory`。按顺序执行，第一个失败就整批回滚。
-       - 成功回 `{ type: "memory_written"; versions: (number | null)[] }`。
-       - 失败回 `{ type: "memory_rejected"; index; result }`，`result` 是 `Memory` 的失败形状。版本冲突和超出上限都是正常回复，不是 `error`。
-       - 没有不带版本号的强写。
-     - `ns` 要过预设 ID 的检查，但不要求预设存在。
-     - 读写只经 `Memory` 接口。接口加 `entries(ns)` 和 `namespaces()`，注释加一句：写入随调用方的事务提交或回滚。
-     - 为什么不算旁路：
-       - 记忆不是进程状态（状态是进程记录加当前段）。它像 `now` 一样经 `Env` 进 `decide`，只在开新段时才读进段。
-       - 协议写入的效果，和同预设的兄弟进程写入一样。它不写任何进程记录、段和信箱。
-     - 不做：
-       - `memory_view`：视图是渲染出来的结论。进程此刻看到的视图在记录的 `segment.memoryView` 里，`inspect` 能给。
-       - 单键的 `memory_get`：库有上界，`entries` 一次全给，而且带版本。
-  7. 换段信
-     - `send` 加可选的 `handoff: boolean`。`Letter` 加可选的 `handoff: true`，只由协议的 `send` 产生。
-     - 生效的时机：这封信在下面三个时机之一写进段，紧接着开始调用模型。
-       - 空闲时收信。
-       - 安全点合并。
-       - 一轮以 `done` 结束后，用排队的信开新一轮。
-     - 生效的条件：这一批信里有带标记的，段里也有助手消息。这时下一次调用的用途是 `handoff`：先写交接说明，这封信作为段末的用户消息被带进新段，模型在新段里接着处理它。
-     - 其余情形标记作废，不留到下一轮：
-       - 一轮不是以 `done` 结束时合并的信。
-       - 步数用完、没有合并的信。
-       - 段里没有助手消息。
-       上层看 `final` 的结束原因，再用 `inspect` 或 `ps` 看段号，判断换没换成。
-     - 不加阶段、输入种类、事务和状态。标记只在信箱和 `turn.queued` 里，用掉以后就是 `phase.purpose`。
-     - 不变量要改。原来是“用途是 handoff，当且仅当用量到阈值，或者有成功的 handoff 调用”，改成两条蕴含：
-       - (a) 两者之一成立，推出用途是 handoff。
-       - (b) 用途是 handoff、两者又都不成立，推出段末是用户消息，并且段里有助手消息。
-     - `post`、`spawn`、`start` 不加这个参数。
-     - `send` 可以同时带 `handoff` 和第 8 组的 `from`，两者互不影响。
-  8. `send` 带 `from`、`reply`
-     - `send` 加两个可选字段：`from`（进程 ID）和 `reply`（布尔）。`reply` 为真时必须带 `from`。
-     - 带 `from: A` 的信和 A 调用 `post` 寄出的信同形，只多可选的图片和第 7 组的 `handoff`：
-       - 发送者从 A 的记录构造，永远不带 `reply`，所以不能伪造回信。
-       - 跳数：A 不空闲时是 `turn.hops + 1`，空闲时是 1。`post` 只在等工具时执行，这里 A 可能在等模型，所以不复用 `post` 的算法。
-       - `reply` 为真时，`replyTo` 是 A。
-     - 拒绝（回 `error`，什么都不写）：A 不存在、A 等于目标、跳数超过 `HOPS_MAX`。这些都在 `send` 的事务里查。
-     - 用哪个：一次工具调用里要寄的信，用 `post`，或者在结果里声明（第 10 条），这样信和工具结果在同一个事务里。不在工具调用里的调用方（上层程序、界面、计划任务），才用 `send` 带 `from`。
-     - `start` 不加这两个字段。
-  9. 调用方定的进程 ID
-     - `start`、`fork` 加可选的 `id`，只许 `[0-9a-z][0-9a-z_-]{0,31}`。原因：ID 原样进信头和 `self` 的文字，上层还拿它拼路径。
-     - ID 已存在：回 `error`“进程 ID 已存在：<id>”，什么都不写。所以回执丢了以后，用同一个 `id` 重试是幂等的。
-     - 删掉的 ID 可能被重新用上。上层按 (`id`, `createdAt`) 认进程。
-  10. 工具定义在结果里声明库内动作
-      - 工具定义的输出：
-        - 只对 `output: content` 的工具定义。JSON 数组里多一种项：`{ "type": "call", "name": 字符串, "arguments"?: 对象 }`。
-        - 一条结果最多 `CALLS_PER_RESULT`（8）个。
-        - 格式不对，整份输出不合法，不执行任何声明。
-        - 退出码不是 0、超时、中止、输出被截断时，没有声明。
-      - 执行器只是原样转交：工具结果的输入带上 `calls`，执行器不解释它。
-      - 执行的条件：`handleNext` 处理这条结果时，`effectOf(旧记录, 当前段)` 正是这次的 `runTool`（编号相同），而且结果是 ok。条件成立时，在调用 `decide` 之前、同一个事务里，按顺序执行声明的动作：
-        - 能声明的库内动作：`post`、`spawn`、`stop_process`、`memory_get`、`memory_set`、`memory_delete`。不看预设有没有 `agents`、`memory`：工具定义是预设作者列的，列了就是授权。这是接口的范围，不是权限边界。
-        - 声明的是 `handoff`、`self` 或别的名字，这一项失败。
-        - 用 `runInStore` 执行。发信人是这个进程，跳数、`replyTo`、`spawn` 的 ID 都照常算。
-        - 记忆写的是这个预设的库。预设没有 `memory` 时，视图照旧不进提示词。
-        - 某一项失败后，其余的写“未执行”。失败的那项什么都不写，前面成功的不回滚。
-        - 每项的结果写成以 `[<name>] ` 开头的一段，结果文字本身可以多行；段之间空一行，接在工具自己的文本后面。
-        - 任何一项失败，整条结果的 `isError` 是 true；都成功时是工具自己的值。
-        - 然后把去掉 `calls` 的结果交给 `decide`。
-        - 这一步永不抛错。
-      - 崩溃：
-        - 结果提交进信箱之前被杀：报“被中断”，声明的动作一个都没做。
-        - 提交之后被杀：重启后恰好执行一次。
-      - 不推翻不变量 4：这是结果里的声明，不是脚本中途调用。
-      - [D36](#d36-第-4-步第二部分进程之间的工具的执行和两处例外) 的两处读取例外，触发点多了声明的动作。
-      - [风险表](kb-contract.md#风险表)“子预设没有 agents”那一行，加上声明 `spawn` 的工具定义。
-  11. 预设的 `options`
-      - 预设加可选字段 `options`：一行 JSON 对象，不超过 `OPTIONS_MAX_BYTES`（4096 字节），冻结进快照。`{}` 等于不写。
-      - 白名单：pi-ai 1.0.0 的 `streamSimple` 转发、能用 JSON 写、又不归内核管的键。各键的类型：
-        - `temperature`：有限数。
-        - `cacheRetention`：`none`、`short`、`long` 之一。
-        - `transport`：`sse`、`websocket`、`websocket-cached`、`auto` 之一。
-        - `timeoutMs`、`websocketConnectTimeoutMs`：正整数。
-        - `maxRetryDelayMs`：非负整数。
-        - `metadata`：对象。
-        - `thinkingBudgets`：对象，键只能是 `minimal`、`low`、`medium`、`high`，值是正整数。
-        - `samplingParams`：对象，但不许有结构键和输出上限键。这些键是：`model`、`messages`、`input`、`instructions`、`system`、`tools`、`tool_choice`、`stream`、`stream_options`、`n`、`max_tokens`、`max_completion_tokens`、`max_output_tokens`、`previous_response_id`、`store`、`prompt_cache_key`、`reasoning`、`reasoning_effort`、`thinking`。
-      - 白名单外的键一律拒绝，报出键名和原因。这些键分几类：
-        - 内核管的：`signal`、`sessionId`、`maxTokens`、`maxRetries`、`reasoning`。
-        - 一轮的语义：`toolChoice`、`deferred`。
-        - 凭据：`apiKey`、`headers`、`env`。
-        - 函数。
-        - `streamSimple` 不转发的，含 `serviceTier`。
-      - 执行器先铺 `options`，再铺内核自己的键。`options` 不参与启动检查和阈值的计算。
-      - 白名单跟着 pi-ai 加键，算放宽，不算改契约。
-      - 做不到的照实写：原生的服务层级（只能经 `samplingParams.service_tier` 用在兼容 OpenAI 的适配器上）、各家 provider 的专有字段、按轮改参数、换段时用另一个模型。
+- 规格：每组的字段、检查顺序、拒绝的情形和崩溃语义在模块页，以代码和测试为准。下面每组只留概括和链接。
+  1. `inspect`：原样读进程记录，带当前段条数和限度，不开事务，不调 `pump`。不做“`watch` 推原样记录”。见 [kb-service](kb-service.md#读记录和干跑inspectcheck)。
+  2. 限度和 `check`：`limits(快照)` 给出固定部分、记忆上界和换段阈值，`startError` 用它；`check` 用 `start` 同一个读预设的函数干跑。读预设时的任何拒绝只许加在 `loadPreset`、`loadToolDefs`、`startError` 里，这样 `check` 和 `start` 永远一致。见 [kb-kernel](kb-kernel.md#常量)和 [kb-service](kb-service.md#读记录和干跑inspectcheck)。
+  3. 段里的消息带结构：用户消息和补的工具结果带可选的 `tau`，`buildContext` 发请求前去掉，给模型的文字不变。见 [kb-kernel](kb-kernel.md#tau消息带的结构)。
+  4. `since`：进程记录加可选的 `since`，`decide` 写 `env.now`，仍是纯函数。见 [kb-kernel](kb-kernel.md)的 `since` 一条。
+  5. `watch` 的 `messages: true` 推追加的消息；流式文本的 `kind` 区分思考和工具调用，只推给订阅。见 [kb-service](kb-service.md#历史和订阅)和[流式文本](kb-service.md#流式文本)。
+  6. 记忆走协议：`memory` 读，`memory_write` 整批带版本号写，是第 8 个存储事务 `writeMemory`。记忆不是进程状态，所以不算旁路。不做 `memory_view` 和单键的 `memory_get`。见 [kb-service](kb-service.md#读写记忆memorymemory_write)、[kb-memory](kb-memory.md)和 [kb-store](kb-store.md#存储事务)。
+  7. 换段信：`send` 带 `handoff`，三个时机、生效条件和作废的情形见 [kb-kernel](kb-kernel.md#换段信)。不变量 (a)(b) 两条蕴含见 [kb-kernel 的不变量](kb-kernel.md#不变量)。
+  8. `send` 带 `from`、`reply`：以进程的名义寄信，发送者和跳数从它的记录构造，不能伪造回信。见 [kb-store](kb-store.md#存储事务)和 [kb-service](kb-service.md#调用方定的-id-和以谁的名义寄信)。
+  9. 调用方定的进程 ID：`start`、`fork` 的 `id`，已存在就拒绝，重试幂等。见 [kb-service](kb-service.md#调用方定的-id-和以谁的名义寄信)。
+  10. 工具定义在结果里声明库内动作：`call` 项、个数上限、执行条件、能声明的名单、失败和崩溃语义见 [kb-tools](kb-tools.md#运行工具定义)、[kb-store](kb-store.md#声明的库内动作)和 [kb-executor](kb-executor.md#运行工具actionsts)。不推翻不变量 4：这是结果里的声明，不是脚本中途调用。[D36](#d36-第-4-步第二部分进程之间的工具的执行和两处例外) 的两处读取例外，触发点多了声明的动作。[风险表](kb-contract.md#风险表)“子预设没有 agents”那一行，加上声明 `spawn` 的工具定义。
+  11. 预设的 `options`：白名单、类型、大小上限和拒绝的类别见 [kb-kernel](kb-kernel.md#预设选项)，执行器的铺法见 [kb-executor](kb-executor.md#调用模型actionsts)。白名单跟着 pi-ai 加键，算放宽，不算改契约。做不到的照实写：原生的服务层级（只能经 `samplingParams.service_tier` 用在兼容 OpenAI 的适配器上）、各家 provider 的专有字段、按轮改参数、换段时用另一个模型。
 - 演进规则（契约）：
   - `Process`、`PresetSnapshot`、`Letter`、`Turn`、`Request`、`Reply` 和段里消息的 JSON，以后只加可选键。客户端忽略不认识的键。删字段、改名、改语义，按改契约做。
   - 这次加的都是可选键，所以 `SCHEMA_VERSION` 不变。旧行没有这个键，就等于没有，不写兼容代码。

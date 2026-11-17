@@ -146,6 +146,12 @@ pump()
 - 不读库，不开事务。它只描述此刻的文件；已有进程的限度看 `inspect` 的 `limits`。
 - 契约：读预设时的任何拒绝，只许加在 `loadPreset`、`loadToolDefs`、`startError` 里。这样 `check` 和 `start` 永远一致。
 
+### 调用方定的 ID 和以谁的名义寄信
+
+- `start`、`fork` 的 `id`：字符集 `[0-9a-z][0-9a-z_-]{0,31}`。已存在回 `error`，什么都不写，所以回执丢了以后用同一个 `id` 重试是幂等的。删掉的 ID 可能被重新用上，上层按（`id`，`createdAt`）认进程。
+- `start` 不带 `from`、`reply`、`handoff`：新进程的段是空的，没有可交接的内容，第一封信也没有在等的一轮。要回信的派生用 `spawn` 或声明的 `spawn`。
+- 一次工具调用里要寄的信，用 `post`，或者在工具结果里声明，这样信和工具结果在同一个事务里。不在工具调用里的调用方（上层程序、界面、计划任务）才用 `send` 带 `from`。
+
 ### 读写记忆（`memory`、`memory_write`）
 
 D64 第 6 组。服务不直接写 SQL，也不直接调 `memory.set`：读经 `Memory` 的 `entries`、`namespaces`，写经存储事务 `writeMemory`（[kb-store](kb-store.md#存储事务)）。两个都不调用 `pump`：不放输入，也不动进程。
