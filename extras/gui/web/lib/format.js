@@ -17,6 +17,18 @@ export function formatDuration(ms) {
 }
 
 /**
+ * 正在跑的东西跑了多久，精确到秒，每秒都变：0 秒 / 12 秒 / 1 分 05 秒 / 1 小时 03 分。
+ * @param {number} ms
+ */
+export function formatElapsed(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s} 秒`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} 分 ${String(s % 60).padStart(2, "0")} 秒`;
+  return `${Math.floor(m / 60)} 小时 ${String(m % 60).padStart(2, "0")} 分`;
+}
+
+/**
  * 多久以前：刚刚，或者“n 分钟前”。
  * @param {number} ms
  */

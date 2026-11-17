@@ -1,6 +1,6 @@
 // 聚焦的进程：铭牌、消息流、写信框。出错时铭牌变橙，流的末尾是结束带。
 import { html, Icon, Pill, Tex, Contour, pad2, useRef, useState, useLayoutEffect, Fragment } from "./common.js";
-import { toItems, foldMiddle, forkPoints, turnStart, clipText } from "../lib/messages.js";
+import { toItems, foldMiddle, forkPoints, turnStart, clipText, phaseStartedAt } from "../lib/messages.js";
 import { segmentMessages } from "../lib/history.js";
 import { contextPercent, formatClock } from "../lib/format.js";
 import { Band, FoldRow, Ts, UserRow, HandoffRow, AssistantRow, OrphanRow, LiveRow } from "./messages.js";
@@ -166,7 +166,7 @@ function Stream({ app, e }) {
     const last = msgs[msgs.length - 1];
     const turnMsgs = turn !== null ? msgs.slice(turn) : msgs;
     rows.push(html`<${EndBand} app=${app} e=${e} ts=${last ? last.timestamp : null} turn=${turn} msgs=${turnMsgs} />`);
-  } else if (e.self.phase.tag === "awaitingModel") rows.push(html`<${LiveRow} text=${live} />`);
+  } else if (e.self.phase.tag === "awaitingModel") rows.push(html`<${LiveRow} app=${app} text=${live} purpose=${e.self.phase.purpose} since=${phaseStartedAt(msgs, "awaitingModel")} />`);
   else if (msgs.length === 0 && segs.length === 0) rows.push(html`<div class="wide-only"></div><p class="hintp">${running || e.status === "fresh" ? "正在读取消息…" : "这一段还没有消息。"}</p>`);
 
   return html`<div class="stage">

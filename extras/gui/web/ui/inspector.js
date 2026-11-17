@@ -206,7 +206,7 @@ function ProjOverview({ app, status, branches }) {
 
 /** @param {{ path: string, status: string, add: number | null, del: number | null }[]} files */
 function buildTree(files) {
-  const mk = (/** @type {string} */ name) => ({ name, dirs: /** @type {Map<string, any>} */ (new Map()), files: /** @type {any[]} */ ([]), add: 0, del: 0 });
+  const mk = (/** @type {string} */ name) => ({ name, dirs: /** @type {Map<string, any>} */ (new Map()), files: /** @type {any[]} */ ([]), add: 0, del: 0, count: 0 });
   const root = mk("");
   for (const f of files) {
     const parts = f.path.split("/");
@@ -226,13 +226,18 @@ function buildTree(files) {
     for (const n of chain) {
       n.add += f.add ?? 0;
       n.del += f.del ?? 0;
+      n.count += 1;
     }
   }
   return root;
 }
 
-/** 摊平成一行行：目录行和文件行。只有一个子目录的目录链并成一行。 */
-function flatten(/** @type {any} */ node, depth, /** @type {any[]} */ out = []) {
+/**
+ * 摊平成一行行：目录行和文件行。只有一个子目录的目录链并成一行。
+ * 目录行的 `key` 是它从根起的路径；`closed` 里有的目录只出一行，不出里面的东西。
+ * @param {any} node @param {number} depth @param {any[]} out @param {string} prefix @param {Set<string> | null} closed
+ */
+function flatten(node, depth, out = [], prefix = "", closed = null) {
   const byName = (/** @type {any} */ a, /** @type {any} */ b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
   for (const d of [...node.dirs.values()].sort(byName)) {
     let cur = d;
@@ -241,8 +246,10 @@ function flatten(/** @type {any} */ node, depth, /** @type {any[]} */ out = []) 
       cur = cur.dirs.values().next().value;
       label += `/${cur.name}`;
     }
-    out.push({ kind: "dir", depth, label: `${label}/`, add: d.add, del: d.del });
-    flatten(cur, depth + 1, out);
+    const key = `${prefix}${label}/`;
+    const open = !closed || !closed.has(key);
+    out.push({ kind: "dir", depth, key, label: `${label}/`, add: d.add, del: d.del, count: d.count, open });
+    if (open) flatten(cur, depth + 1, out, key, closed);
   }
   const files = [...node.files].sort(byName);
   files.forEach((f, i) => out.push({ kind: "file", depth, file: f, last: i === files.length - 1 }));
@@ -257,12 +264,29 @@ function statusLetter(/** @type {string} */ code) {
   return [c, label];
 }
 
+/** 文件多时，一开始只展开最上一层目录。 */
+const TREE_OPEN_MAX = 15;
+
 function FileTree({ files, selected, onSelect }) {
-  const rows = flatten(buildTree(files), 0);
+  const tree = buildTree(files);
+  const dirKeys = flatten(tree, 0).filter((r) => r.kind === "dir");
+  const [closed, setClosed] = useState(() => new Set(files.length > TREE_OPEN_MAX ? dirKeys.filter((r) => r.depth > 0).map((r) => r.key) : []));
+  const rows = flatten(tree, 0, [], "", closed);
+  const toggle = (/** @type {string} */ key) => {
+    const next = new Set(closed);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setClosed(next);
+  };
+  const anyOpen = dirKeys.some((r) => !closed.has(r.key));
   return html`<ul class="itree">
-    ${rows.map((r, i) => {
+    ${dirKeys.length > 1 && html`<li class="ttools"><button type="button" class="link" onClick=${() => setClosed(new Set(anyOpen ? dirKeys.map((r) => r.key) : []))}>${anyOpen ? "全部折起" : "全部展开"}</button></li>`}
+    ${rows.map((r) => {
       if (r.kind === "dir") {
-        return html`<li key=${`d${i}${r.label}`} class="trow dir" style=${`padding-left:${18 + r.depth * 16}px`}><${Icon} name="folder" size=${14} sw=${2} /><span class="mono trow-n">${r.label}</span><${Delta} add=${r.add} del=${r.del} /></li>`;
+        return html`<li key=${`d${r.key}`}><button type="button" class=${`trow dir ${r.open ? "" : "shut"}`} aria-expanded=${r.open} onClick=${() => toggle(r.key)} style=${`padding-left:${12 + r.depth * 16}px`}>
+          <span class="tchev" aria-hidden="true"><${Icon} name="down" size=${12} sw=${3} /></span>
+          <${Icon} name="folder" size=${14} sw=${2} /><span class="mono trow-n">${r.label}${!r.open && html`<span class="tcount"> ${r.count} 个文件</span>`}</span><${Delta} add=${r.add} del=${r.del} />
+        </button></li>`;
       }
       const f = r.file;
       const [letter, label] = statusLetter(f.status);

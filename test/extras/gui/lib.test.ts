@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { activityAt, applyFilter, attention, buildEntries, buildProjects, classify, currentOf, filterCounts, indexPresets, projectView, railSections } from "../../../extras/gui/web/lib/derive.js";
-import { formatAgo, formatBytes, formatClock, formatContext, formatDuration } from "../../../extras/gui/web/lib/format.js";
+import { formatAgo, formatBytes, formatClock, formatContext, formatDuration, formatElapsed } from "../../../extras/gui/web/lib/format.js";
 import { applyEnd, applyMessage, emptyHistory, giveUp, known, lastTimestamp, noteSelf, plan, segmentMessages } from "../../../extras/gui/web/lib/history.js";
 import { CARRY_HEADER, describeNow, foldMiddle, forkPoints, HANDOFF_HEADER, INTERRUPTED, parseUser, phaseStartedAt, SKIPPED, splitLetters, summarizeCall, toItems, turnStart } from "../../../extras/gui/web/lib/messages.js";
 import { cleanPlan, stopOrder } from "../../../extras/gui/web/lib/order.js";
@@ -630,4 +630,12 @@ test("history: 断开期间段号跳了不止一段，中间的段也要读", ()
     if (!p.sealed) h = feed(h, p.segment, 0, 1);
   }
   assert.deepEqual(reads, [3, 4, 5]);
+});
+
+test("formatElapsed：跑了多久精确到秒", () => {
+  assert.equal(formatElapsed(-1), "0 秒");
+  assert.equal(formatElapsed(999), "0 秒");
+  assert.equal(formatElapsed(12_400), "12 秒");
+  assert.equal(formatElapsed(65_000), "1 分 05 秒");
+  assert.equal(formatElapsed(3_780_000), "1 小时 03 分");
 });

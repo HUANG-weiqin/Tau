@@ -1,7 +1,7 @@
 // 消息流里的条目：换段带、交接说明、来信、助手的话、工具调用。
 // 每个条目是网格里的两格：左边时间戳，右边内容；整行的带跨两列。
 import { html, Icon, Thumb, clockS, useState, Fragment } from "./common.js";
-import { formatClock, formatBytes } from "../lib/format.js";
+import { formatClock, formatBytes, formatElapsed } from "../lib/format.js";
 
 /** 左边的时间戳，窄屏隐藏。 */
 export function Ts({ ts, app, pad = 9, children }) {
@@ -71,8 +71,11 @@ export function HandoffRow({ app, item, segment }) {
     </article>`;
 }
 
-/** 一次工具调用：暗色条。 */
-function CallStrip({ call, running, app }) {
+/** 正在跑的东西底下的扫描线：一直在走，说明还在动。系统要求减少动画时停在原地。 */
+const Scan = () => html`<span class="scan" aria-hidden="true"></span>`;
+
+/** 一次工具调用：暗色条。`since` 是发出这批调用的助手消息的时间戳。 */
+function CallStrip({ call, running, app, since }) {
   const [open, setOpen] = useState(false);
   const r = call.result;
   const can = !!r && (r.text.trim() !== "" || r.images.length > 0);
@@ -83,16 +86,18 @@ function CallStrip({ call, running, app }) {
     st === "interrupted" ? html`<span class="tag warn">被中断，结果未知</span>`
     : st === "skipped" ? html`<span class="cr">未执行</span>`
     : st === "error" ? html`<span class="cr"><span class="tag warn" style="margin-right:6px">出错</span><span class="ell">${r?.summary}</span></span>`
-    : st === "pending" ? html`<span class="cr"><span class=${running ? "pulse" : ""} style="width:8px;height:8px;background:var(--acc);display:inline-block"></span>${running ? "运行中" : "没有结果"}</span>`
+    : st === "pending" ? html`<span class="cr"><span class=${running ? "pulse" : ""} style="width:8px;height:8px;background:var(--acc);display:inline-block"></span>${running ? html`运行中<span class="mono run-s">${formatElapsed(app.now - app.clock(since))}</span>` : "没有结果"}</span>`
     : html`<span class="cr"><${Icon} name="check" size=${12} sw=${3.4} color="#FFEF00" /><span class="ell">${r?.summary ?? ""}</span></span>`;
   const head = html`<span class="clabel">${label}</span><span class="cbody"><span class="csum">${call.summary || call.name}</span>${right}</span>`;
-  return html`<li class=${`call ${st}`}>
+  const live = st === "pending" && running;
+  return html`<li class=${`call ${st} ${live ? "run" : ""}`}>
     ${can ? html`<button type="button" class="chead" aria-expanded=${open} onClick=${() => setOpen(!open)}>${head}</button>` : html`<div class="chead">${head}</div>`}
     ${open && r && html`<div class="cout">
       ${call.name === "bash" && typeof call.args["command"] === "string" && call.summary !== call.args["command"] ? html`<pre class="ccmd">$ ${call.args["command"]}</pre>` : ""}
       ${r.images.length > 0 && html`<div class="thumbs" style="padding:8px 12px 0 72px">${r.images.map((im) => html`<${Thumb} hash=${im.hash} fetchBlob=${app.blob} />`)}</div>`}
       <pre>${r.text.length > 20000 ? r.text.slice(0, 20000) + `\n…（还有 ${formatBytes(r.text.length - 20000)}）` : r.text}</pre>
     </div>`}
+    ${live && html`<${Scan} />`}
   </li>`;
 }
 
@@ -105,7 +110,7 @@ export function AssistantRow({ app, item, running }) {
       ${item.thinking.trim() !== "" && html`<details class="think"><summary>思考 · ${Array.from(item.thinking).length} 字</summary><p>${item.thinking}</p></details>`}
       ${item.text.trim() !== "" && html`<p class="atext">${item.text}</p>`}
       ${item.errorMessage && html`<div class="aerr"><span class="tag warn">模型出错</span><span class="mono">${item.errorMessage}</span></div>`}
-      ${item.calls.length > 0 && html`<ul class="calls">${item.calls.map((c, i) => html`<${CallStrip} key=${c.id + ":" + i} call=${c} running=${running} app=${app} />`)}</ul>`}
+      ${item.calls.length > 0 && html`<ul class="calls">${item.calls.map((c, i) => html`<${CallStrip} key=${c.id + ":" + i} call=${c} running=${running} app=${app} since=${item.ts} />`)}</ul>`}
     </div>`;
 }
 
@@ -116,9 +121,19 @@ export function OrphanRow({ app, item }) {
 }
 
 /** 模型正在写的文字，末尾带闪烁的光标。 */
-export function LiveRow({ text }) {
+export function LiveRow({ app, text, purpose, since }) {
+  const doing = purpose === "handoff" ? "在写交接说明" : text === "" ? "在想" : "在写";
   return html`<div class="ts wide-only live"><span class="tag">现在</span><span class="tick" aria-hidden="true"></span></div>
-    <p class="atext">${text}<span class="cur" aria-hidden="true"></span></p>`;
+    <div class="abox">
+      <div class="working" role="status">
+        <span class="wk-l">MODEL</span>
+        <span class="wk-t">模型${doing}</span>
+        <span class="wk-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="wk-s mono">${since === null ? "" : formatElapsed(app.now - app.clock(since))}</span>
+        <${Scan} />
+      </div>
+      ${text !== "" && html`<p class="atext">${text}<span class="cur" aria-hidden="true"></span></p>`}
+    </div>`;
 }
 
 export { formatClock, Fragment };
