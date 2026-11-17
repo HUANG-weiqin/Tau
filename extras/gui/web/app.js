@@ -22,6 +22,7 @@ import { CleanDialog } from "./ui/clean.js";
 import { NewProcDialog } from "./ui/newproc.js";
 import { OpenProjDialog } from "./ui/openproj.js";
 import { NewPresetDialog } from "./ui/newpreset.js";
+import { ConfirmLayer, confirmOpen } from "./ui/remove.js";
 
 /**
  * 页面上所有模块拿到的唯一对象 `app`。每次渲染重新生成，只读；改东西调用下面的动作。
@@ -83,13 +84,14 @@ import { NewPresetDialog } from "./ui/newpreset.js";
  * @property {(id: string, before?: number) => Promise<string>} fork 分叉，回新进程 ID。`before` 是当前段里一条用户消息的段内序号；不给就复制整个当前段（源进程必须空闲）。
  * @property {(id: string) => Promise<void>} stop 停这一轮。
  * @property {(project: Project) => Promise<void>} stopAll 停项目里所有在跑的进程，子孙先停，反复做到都空闲为止。
- * @property {(id: string) => Promise<void>} remove 删一个空闲进程。被拒绝时抛错，原因是服务给的。
+ * @property {(id: string) => Promise<void>} remove 删一个空闲进程。被拒绝时抛错，原因是服务给的；不弹提示，由调用方写在确认框里。
  * @property {() => Promise<number>} sweep 清没人引用的图片，回删掉的个数。
  * @property {(patch: Record<string, unknown> | ((g: GuiState) => Record<string, unknown>)) => Promise<void>} setGui 改界面数据：顶层键整个覆盖。先改页面里的，再写文件。补丁用 `lib/state.js` 的函数算。传函数时，写之前先读文件里的最新状态再算，别的页面改过的不会被盖掉。
  * @property {(workdir: string, what: "status" | "diff" | "log" | "branches", file?: string) => Promise<any>} git 桥的 `/api/git`。
  * @property {(processes: string[]) => Promise<any[]>} bg 桥的 `/api/bg`。
  * @property {() => Promise<void>} reloadPresets 重读预设文件。
  * @property {(p: Record<string, unknown>) => Promise<void>} createPreset 建预设文件，成功后重读预设。
+ * @property {(id: string) => Promise<void>} deletePreset 删预设文件，成功后重读预设。失败抛错，不弹提示，由调用方写在确认框里。
  * @property {() => Promise<string | null>} pickFolder 系统选文件夹的对话框。
  * @property {(hash: string) => Promise<string | null>} blob 一张图片的 data URL。
  * @property {(name: string, anchor?: Element | null, props?: any) => void} openDialog 打开弹窗，贴着 `anchor`（不给就用约定的按钮）。
@@ -233,20 +235,6 @@ function refreshGui() {
   );
 }
 
-/** 已经不在的进程，从界面数据里清掉它们的键。 @param {import("./lib/types.js").GuiState} g @param {(id: string) => boolean} stale */
-function prunePatch(g, stale) {
-  /** @type {Record<string, unknown>} */
-  const patch = {};
-  /** @param {Record<string, any>} r @param {(k: string, v: any) => boolean} drop */
-  const filt = (r, drop) => Object.fromEntries(Object.entries(r).filter(([k, v]) => !drop(k, v)));
-  for (const key of /** @type {const} */ (["seen", "titles", "forkedFrom"])) {
-    if (Object.keys(g[key]).some(stale)) patch[key] = filt(g[key], (k) => stale(k));
-  }
-  if (g.mine.some(stale)) patch["mine"] = g.mine.filter((x) => !stale(x));
-  if (Object.values(g.current).some(stale)) patch["current"] = filt(g.current, (_k, v) => stale(v));
-  return patch;
-}
-
 /** 标题攒一下再写，一次写一批。 */
 /** @type {Record<string, string>} */
 let pendingTitles = {};
@@ -295,6 +283,8 @@ function follow(id) {
 /** @param {any} r */
 function onReply(r) {
   const now = Date.now();
+  // 删的是正在看的进程时，主区回到它的项目。先在进程还在表里时算出项目。
+  const home = r.type === "removed" && S.route.proc === r.process ? buildEntries(S.store.procs, S.gui, S.presets).entries.find((e) => e.id === r.process)?.workdir : undefined;
   if (r.type === "ps" && r.processes[0]) S.skew = r.processes[0].now - now;
   S.store = reduce(S.store, r, now);
   if (r.type === "ps") {
@@ -314,7 +304,7 @@ function onReply(r) {
     delete S.peek[r.process];
     peeker.forget(r.process);
     S.followed = S.followed.filter((x) => x !== r.process);
-    if (S.route.proc === r.process) setRoute({ proc: null });
+    if (S.route.proc === r.process) setRoute({ proc: null, proj: home ? gs.pathKey(home) : S.route.proj });
   }
   schedule();
 }
@@ -526,12 +516,9 @@ function compute() {
           }
         })(),
       ),
-    remove: (id) =>
-      loud(
-        (async () => {
-          await api.tauCommand({ op: "remove", process: id });
-        })(),
-      ),
+    remove: async (id) => {
+      await api.tauCommand({ op: "remove", process: id });
+    },
     sweep: () => loud(api.tauAll({ op: "sweep" }).then((rs) => rs.find((r) => r.type === "swept")?.blobs ?? 0)),
     setGui,
     git: (w, what, file) => loud(api.git(w, what, file)),
@@ -543,6 +530,10 @@ function compute() {
           await reloadPresets();
         }),
       ),
+    deletePreset: async (id) => {
+      await api.deletePreset(id);
+      await reloadPresets();
+    },
     pickFolder: () => loud(api.pickFolder()),
     blob: api.blobUrl,
     openDialog,
@@ -618,7 +609,7 @@ let pendingDlg = null;
 function onKey(e, app) {
   const t = /** @type {HTMLElement | null} */ (e.target);
   const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
-  if (app.dialog) return; // 弹窗自己处理 Esc 和 Tab。
+  if (app.dialog || confirmOpen()) return; // 弹窗自己处理 Esc 和 Tab。
   if (e.key === "Escape") {
     if (typing) /** @type {HTMLElement} */ (t).blur();
     return;
@@ -753,7 +744,7 @@ function Root() {
     const first = S.firstPrune;
     const stale = (/** @type {string} */ id) => !live[id] && (first || S.ever.has(id));
     S.firstPrune = false;
-    if (Object.keys(prunePatch(S.gui, stale)).length > 0) setGui((g) => prunePatch(g, stale));
+    if (Object.keys(gs.prunePatch(S.gui, stale)).length > 0) setGui((g) => gs.prunePatch(g, stale));
   });
   // 临时进程的标题：没缓存的去读第 1 段。
   useEffect(() => {
@@ -796,6 +787,7 @@ function Root() {
     ${d && d.name === "openproj" && html`<${OpenProjDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "projects" && html`<${ProjectsDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "clean" && html`<${CleanDialog} app=${app} onClose=${close} />`}
+    <${ConfirmLayer} app=${app} />
     <${TipLayer} />
     <${MenuLayer} />
     ${app.status !== "online" && html`<div class="conn" role="status">${app.status === "connecting" ? "正在连接 tau 服务…" : `和 tau 服务断开了：${S.statusMsg}。正在重连`}</div>`}

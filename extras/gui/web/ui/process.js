@@ -1,6 +1,7 @@
 // 聚焦的进程：铭牌、消息流、写信框。出错时铭牌变橙，流的末尾是结束带。
 import { html, Icon, Pill, Tex, Contour, pad2, useRef, useState, useLayoutEffect, Fragment } from "./common.js";
 import { toItems, foldMiddle, forkPoints, turnStart, clipText, phaseStartedAt } from "../lib/messages.js";
+import { askRemove } from "./remove.js";
 import { segmentMessages } from "../lib/history.js";
 import { contextPercent, formatClock } from "../lib/format.js";
 import { Band, FoldRow, Ts, UserRow, HandoffRow, AssistantRow, OrphanRow, LiveRow } from "./messages.js";
@@ -65,6 +66,7 @@ function Plate({ app, e }) {
       <div class="plate-act">
         <${Pill} label="分叉" icon="fork" disabled=${running} title=${running ? "进程在跑时不能复制整个段。可以在某条消息上分叉" : "复制整个当前段，开一个新进程"} onClick=${() => app.fork(e.id)} />
         <${Pill} label="停止" icon="stop" chip="red" disabled=${!running} title="Ctrl+. 按两次" onClick=${() => app.stop(e.id)} />
+        <${Pill} label="删除" icon="trash" chip="red" disabled=${running} title=${running ? "进程在跑时不能删除" : "删掉这个进程和它的全部段"} onClick=${(/** @type {Event} */ ev) => askRemove(e.id, /** @type {Element} */ (ev.currentTarget))} />
       </div>
     </div>
   </section>`;

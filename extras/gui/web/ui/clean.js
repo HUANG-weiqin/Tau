@@ -3,7 +3,7 @@ import { html, Popover, DlgHead, SecHead, Pill, Icon, useState, useEffect, useRe
 import { tauAll, tauCommand, tauStream } from "../api.js";
 import { activityAt } from "../lib/derive.js";
 import { cleanPlan } from "../lib/order.js";
-import { extractTitle } from "../lib/titles.js";
+import { cacheTitles } from "./titlecache.js";
 import { formatDuration } from "../lib/format.js";
 
 /** @typedef {import("../app.js").App} App */
@@ -30,28 +30,6 @@ async function readLastStamp(id, segment, messages) {
     return null;
   }
   return ts;
-}
-
-/**
- * 读第 1 段的第一封信，取标题。读不到是 null。
- * @param {string} id
- * @returns {Promise<string | null>}
- */
-async function readTitle(id) {
-  /** @type {any} */
-  let first = null;
-  try {
-    await tauStream({ op: "history", process: id, segment: 1, from: 0 }, (r) => {
-      if (r.type === "message" && r.message.role === "user") {
-        first = r.message;
-        return true;
-      }
-      return r.type === "end" || r.type === "error";
-    });
-  } catch {
-    return null;
-  }
-  return first ? extractTitle([first]) : null;
 }
 
 /** @param {{ n: number | string, label: string, tone?: "warn" | "acc" }} p */
@@ -151,20 +129,7 @@ export function CleanDialog({ app, onClose }) {
     setPhase("run");
 
     // 先把标题缓存下来：删了以后第 1 段就没了。
-    /** @type {Record<string, string>} */
-    const batch = {};
-    for (const id of ids) {
-      if (appRef.current.titleOf(id).known) continue;
-      const t = await readTitle(id);
-      if (t !== null) batch[id] = t;
-    }
-    if (Object.keys(batch).length > 0) {
-      try {
-        await appRef.current.setGui((g) => ({ titles: { ...g.titles, ...batch } }));
-      } catch {
-        // 提示已经弹了；标题缓存失败不拦着清理，只是以后这几个进程显示 ID。
-      }
-    }
+    await cacheTitles(appRef.current, ids);
 
     for (const id of ids) {
       if (stopped.current) break;

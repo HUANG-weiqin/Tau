@@ -440,6 +440,24 @@ test("新建预设：只写认识的字段；不覆盖已有的；ID 和工作�
   assert.equal(listDir(join(e.home, "presets")).length, 1, "出错的都没写文件");
 });
 
+test("删预设：只删对应的文件；ID 不合法 400；没有这个文件 404；只收 POST", async (t) => {
+  const e = await setupBridge(t);
+  const mk = (id: string) => post(e.port, "/api/presets/create", { id, workdir: e.work, model: "a/b", tools: ["read"], prompt: "p" });
+  assert.equal((await mk("keep")).status, 200);
+  assert.equal((await mk("gone")).status, 200);
+  const ok = await post(e.port, "/api/presets/delete", { id: "gone" });
+  assert.deepEqual(ok.json, { ok: true });
+  assert.deepEqual(listDir(join(e.home, "presets")), ["keep.md"]);
+
+  assert.equal((await post(e.port, "/api/presets/delete", { id: "gone" })).status, 404, "已经删了");
+  assert.equal((await post(e.port, "/api/presets/delete", { id: "never" })).status, 404);
+  for (const id of ["", "../keep", "a/b", "a\b", "..", ".", "a b", "x:y", "a.", "中文", 7, undefined]) {
+    assert.equal((await post(e.port, "/api/presets/delete", { id })).status, 400, JSON.stringify(id));
+  }
+  assert.deepEqual(listDir(join(e.home, "presets")), ["keep.md"], "出错的都没动文件");
+  assert.equal((await raw(e.port, "/api/presets/delete")).status, 405, "GET");
+});
+
 function listDir(d: string): string[] {
   return execFileSync("cmd", ["/c", "dir", "/b", d], { encoding: "utf8" }).split(/\r?\n/).filter((l) => l !== "");
 }

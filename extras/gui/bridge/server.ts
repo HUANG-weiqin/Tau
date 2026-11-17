@@ -11,7 +11,7 @@ import { createGit, runGit } from "./git.ts";
 import type { GitRunner } from "./git.ts";
 import { pickFolder as realPick } from "./pick.ts";
 import type { PickFolder } from "./pick.ts";
-import { createPreset, listPresets, presetWorkdirs } from "./presets.ts";
+import { createPreset, deletePreset, listPresets, presetWorkdirs } from "./presets.ts";
 import { contentType, readStatic, routeStatic } from "./static.ts";
 import { createStateStore } from "./state.ts";
 import { HttpError, isObject } from "./util.ts";
@@ -117,6 +117,9 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
         return json(res, 200, { presets: listPresets(home) });
       case "presets/create":
         createPreset(home, body);
+        return json(res, 200, { ok: true });
+      case "presets/delete":
+        deletePreset(home, body);
         return json(res, 200, { ok: true });
       case "git":
         return json(res, 200, await git(body));

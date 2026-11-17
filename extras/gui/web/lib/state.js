@@ -104,3 +104,25 @@ export function addFolder(s, path) {
   const k = pathKey(path);
   return s.folders.some((p) => pathKey(p) === k) ? { folders: s.folders } : { folders: [...s.folders, path] };
 }
+
+/**
+ * 已经不在的进程，从界面数据里清掉它们的键，回补丁（没有要清的就是空补丁）。
+ * 被还在的分叉指着的标题留着：删了源进程，分叉出来的进程还要用它。
+ * @param {GuiState} g
+ * @param {(id: string) => boolean} stale
+ * @returns {Record<string, unknown>}
+ */
+export function prunePatch(g, stale) {
+  /** @type {Record<string, unknown>} */
+  const patch = {};
+  /** @param {Record<string, any>} r @param {(k: string, v: any) => boolean} drop */
+  const filt = (r, drop) => Object.fromEntries(Object.entries(r).filter(([k, v]) => !drop(k, v)));
+  const used = new Set(Object.entries(g.forkedFrom).flatMap(([k, v]) => (stale(k) ? [] : [v])));
+  for (const key of /** @type {const} */ (["seen", "forkedFrom"])) {
+    if (Object.keys(g[key]).some(stale)) patch[key] = filt(g[key], (k) => stale(k));
+  }
+  if (Object.keys(g.titles).some((k) => stale(k) && !used.has(k))) patch["titles"] = filt(g.titles, (k) => stale(k) && !used.has(k));
+  if (g.mine.some(stale)) patch["mine"] = g.mine.filter((x) => !stale(x));
+  if (Object.values(g.current).some(stale)) patch["current"] = filt(g.current, (_k, v) => stale(v));
+  return patch;
+}

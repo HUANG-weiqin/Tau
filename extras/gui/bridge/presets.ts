@@ -1,5 +1,5 @@
 // 预设的读取和新建。自己写解析，不导入 src/；规则照内核（设计稿第 2 节），但不查模型目录和工具定义。
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { HttpError, isAbsoluteWinPath } from "./util.ts";
 
@@ -100,9 +100,13 @@ function line(name: string, v: unknown): string {
   return v.trim();
 }
 
+function presetId(raw: unknown): string {
+  if (typeof raw !== "string" || !/^[A-Za-z0-9._-]+$/.test(raw) || /^\.+$/.test(raw) || raw.endsWith(".")) throw new HttpError(400, "预设 ID 只许字母、数字、点、下划线和连字符");
+  return raw;
+}
+
 export function createPreset(home: string, body: Record<string, unknown>): void {
-  const id = body.id;
-  if (typeof id !== "string" || !/^[A-Za-z0-9._-]+$/.test(id) || /^\.+$/.test(id) || id.endsWith(".")) throw new HttpError(400, "预设 ID 只许字母、数字、点、下划线和连字符");
+  const id = presetId(body.id);
   const workdir = line("workdir", body.workdir);
   if (!isAbsoluteWinPath(workdir)) throw new HttpError(400, "工作目录必须是绝对路径");
   try {
@@ -126,6 +130,17 @@ export function createPreset(home: string, body: Record<string, unknown>): void 
     writeFileSync(path.join(dir, `${id}.md`), `---\n${head.join("\n")}\n---\n${body.prompt.trim()}\n`, { flag: "wx" });
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new HttpError(409, `预设已经存在：${id}`);
+    throw e;
+  }
+}
+
+/** 删 `presets/<ID>.md`。记忆库不动。 */
+export function deletePreset(home: string, body: Record<string, unknown>): void {
+  const id = presetId(body.id);
+  try {
+    unlinkSync(path.join(home, "presets", `${id}.md`));
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new HttpError(404, `没有这个预设：${id}`);
     throw e;
   }
 }

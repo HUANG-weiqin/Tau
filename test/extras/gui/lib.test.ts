@@ -5,7 +5,8 @@ import { formatAgo, formatBytes, formatClock, formatContext, formatDuration, for
 import { applyEnd, applyMessage, emptyHistory, giveUp, known, lastTimestamp, noteSelf, plan, segmentMessages } from "../../../extras/gui/web/lib/history.js";
 import { CARRY_HEADER, describeNow, foldMiddle, forkPoints, HANDOFF_HEADER, INTERRUPTED, parseUser, phaseStartedAt, SKIPPED, splitLetters, summarizeCall, toItems, turnStart } from "../../../extras/gui/web/lib/messages.js";
 import { cleanPlan, stopOrder } from "../../../extras/gui/web/lib/order.js";
-import { addFork, mergeSeen, movePinned, normalizeState, pathKey, pinFolder, setCurrent } from "../../../extras/gui/web/lib/state.js";
+import { removeBlock, removeBlockText } from "../../../extras/gui/web/lib/remove.js";
+import { addFork, mergeSeen, movePinned, normalizeState, pathKey, pinFolder, prunePatch, setCurrent } from "../../../extras/gui/web/lib/state.js";
 import { allProcs, childCounts, emptyStore, reduce, streamingText } from "../../../extras/gui/web/lib/store.js";
 import { extractTitle, processTitle } from "../../../extras/gui/web/lib/titles.js";
 
@@ -638,4 +639,35 @@ test("formatElapsed：跑了多久精确到秒", () => {
   assert.equal(formatElapsed(12_400), "12 秒");
   assert.equal(formatElapsed(65_000), "1 分 05 秒");
   assert.equal(formatElapsed(3_780_000), "1 小时 03 分");
+});
+
+test("remove: 在跑、有孩子才挡；空闲没孩子放行；原因写清楚", () => {
+  const all = [self("a"), self("b", { phase: running }), self("c", { parent: "a" }), self("d", { parent: "a" }), self("e", { parent: "b" })];
+  assert.equal(removeBlock("c", all), null);
+  assert.deepEqual(removeBlock("b", all), { running: true, children: ["e"] });
+  assert.deepEqual(removeBlock("a", all), { running: false, children: ["c", "d"] });
+  assert.equal(removeBlockText({ running: true, children: [] }), "进程在跑。先停止它。");
+  assert.equal(removeBlockText({ running: false, children: ["c", "d"] }), "它开的进程还在：c、d。要先删它们。");
+  assert.equal(removeBlockText({ running: true, children: ["x"] }), "进程在跑。先停止它。它开的进程还在：x。要先删它们。");
+});
+
+test("state: prunePatch 清掉没了的进程，被还在的分叉指着的标题留着，当前进程记录也清", () => {
+  const g = normalizeState({
+    titles: { src: "标题", old: "旧的", mid: "中间" },
+    forkedFrom: { fork: "src", gone: "old", f2: "mid" },
+    mine: ["fork", "gone"],
+    current: { team: "gone", other: "fork" },
+    seen: { gone: { preset: "p", workdir: "E:/x", tools: [] } },
+  });
+  const stale = (id: string) => ["src", "old", "mid", "gone"].includes(id);
+  const patch = prunePatch(g, stale) as any;
+  assert.deepEqual(patch.titles, { src: "标题", mid: "中间" }, "fork 和 f2 还在，src 和 mid 的标题留着；old 没人指着就清");
+  assert.deepEqual(patch.forkedFrom, { fork: "src", f2: "mid" });
+  assert.deepEqual(patch.mine, ["fork"]);
+  assert.deepEqual(patch.current, { other: "fork" });
+  assert.deepEqual(patch.seen, {});
+  assert.deepEqual(prunePatch(g, () => false), {});
+  // 分叉也没了：标题跟着清。
+  const g2 = { ...g, forkedFrom: {}, titles: { src: "标题" }, mine: [], current: {}, seen: {} };
+  assert.deepEqual(prunePatch(g2, stale), { titles: {} });
 });
