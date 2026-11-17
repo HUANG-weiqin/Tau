@@ -13,10 +13,15 @@ function Tile({ app, p, n }) {
   const label = `${p.name}：${p.entries.length === 0 ? "还没有进程" : counts}${pinned ? `，Alt+${n}` : "，没钉住"}`;
   const drag = useRef(/** @type {HTMLElement | null} */ (null));
   const tip = tipProps(() => html`<${Fragment}><b>${p.name}</b><div class="mono">${p.path}</div><div style="margin-top:6px">${p.entries.length === 0 ? "还没有进程" : counts}</div></${Fragment}>`);
+  // 浮牌的处理器先铺，后面的 onClick 才不会被它的 onClick（只收起浮牌）盖掉。
   return html`<button
+    ...${tip}
     type="button" ref=${drag} class=${`tile ${pinned ? "pinned" : "loose"}`} aria-current=${current ? "true" : undefined} aria-label=${label}
     draggable=${pinned ? "true" : undefined}
-    onClick=${() => app.focusProject(p.key)}
+    onClick=${() => {
+      tip.onClick();
+      app.focusProject(p.key);
+    }}
     onContextMenu=${(/** @type {MouseEvent} */ e) => {
       e.preventDefault();
       showMenu(e.clientX, e.clientY, [pinned ? { label: "拿下", run: () => app.unpin(p.path) } : { label: "钉住", run: () => app.pin(p.path) }]);
@@ -28,7 +33,6 @@ function Tile({ app, p, n }) {
       const from = e.dataTransfer?.getData("text/plain");
       if (from) app.reorderPinned(from, p.path);
     }}
-    ...${tip}
   >
     ${current && html`<span class="tile-bar" aria-hidden="true"></span>`}
     ${pinned && html`<span class="num tile-n">${pad2(n)}</span>`}
