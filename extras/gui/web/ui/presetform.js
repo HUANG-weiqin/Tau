@@ -1,4 +1,5 @@
 // 预设表：预设 ID、模型、思考强度、记忆和工具、上下文文件、换段阈值、提示词、折起的高级（options）。
+// 工具区里 MCP 生成的定义不逐个列：一个服务器一个开关（`服务器名 · n 个工具`）。
 // “新预设”“改预设”“改这个会话”共用；改预设和改这个会话时预设 ID 只读。新建时不常动的字段折在“更多设置”里（设计稿 7.6）。
 // 改这个会话（`session`）：`orig` 是 `inspect` 读到的会话快照，工作目录也能改，字段旁标生效的时间。
 import { html, Icon, Pill, useEffect, useState, Fragment } from "./common.js";
@@ -183,7 +184,7 @@ export function PresetFields({ form, app, placeholder = "my-project", promptHint
   const have = new Set(defs.map((d) => d.name));
   const orphans = tools.filter((t) => !TOOLS.includes(t) && !have.has(t));
   const { groups, others } = groupByServer(defs);
-  /** 一组工具的小组头：服务器名，带“全选”“全不选”。 @param {string} title @param {string[]} names */
+  /** 不是 MCP 的那组的小组头，带“全选”“全不选”。 @param {string} title @param {string[]} names */
   const groupHead = (title, names) => {
     const on = names.filter((n) => tools.includes(n)).length;
     return html`<div class="def-group" key=${title}>
@@ -191,6 +192,16 @@ export function PresetFields({ form, app, placeholder = "my-project", promptHint
       <button type="button" class="link" onClick=${() => form.setMany(names, true)}>全选</button>
       <button type="button" class="link" onClick=${() => form.setMany(names, false)}>全不选</button>
     </div>`;
+  };
+  /**
+   * 一个 MCP 服务器一个开关：开就是这 n 个定义名全写进 `tools`，关就是全去掉。
+   * 没全开时点一下补满，全开时点一下全去掉。 @param {{ server: string, defs: import("../lib/mcp.js").InstalledDef[] }} g
+   */
+  const serverToggle = (g) => {
+    const names = g.defs.map((d) => d.name);
+    const on = names.filter((n) => tools.includes(n)).length;
+    const full = on === names.length;
+    return html`<button type="button" key=${g.server} class="toggle" aria-pressed=${full} title=${names.join("、")} onClick=${() => form.setMany(names, !full)}>${`${g.server} · `}${full ? `${names.length} 个工具` : `${on}/${names.length}`}</button>`;
   };
   const toggleOf = (t) =>
     html`<button type="button" key=${t} class="toggle" aria-pressed=${tools.includes(t)} title=${have.has(t) ? undefined : "tools/ 下没有这个定义，原样保留"} onClick=${() => toggle(t)}>${t}</button>`;
@@ -233,12 +244,9 @@ export function PresetFields({ form, app, placeholder = "my-project", promptHint
         : defs.length === 0 && orphans.length === 0
           ? html`<span class="dnote">还没有装工具定义。在设置里打开“工具定义”装。</span>`
           : html`<${Fragment}>
-              ${groups.map(
-                (g) => html`<div class="def-mcp" key=${g.server}>
-                  ${groupHead(`MCP · ${g.server}`, g.defs.map((d) => d.name))}
-                  <div class="toggles" role="group" aria-label=${`MCP ${g.server} 的工具定义`}>${g.defs.map((d) => toggleOf(d.name))}</div>
-                </div>`,
-              )}
+              ${groups.length > 0 && html`<div class="def-mcp">
+                <div class="toggles" role="group" aria-label="MCP 服务器">${groups.map(serverToggle)}</div>
+              </div>`}
               ${(others.length > 0 || orphans.length > 0) &&
               html`<div class="def-mcp">
                 ${others.length > 0 && groupHead("工具库和手写的", others.map((d) => d.name))}

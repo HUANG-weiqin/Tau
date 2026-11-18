@@ -188,22 +188,25 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
 - `/api/mcp/install`：重新列一次、重新生成，只装 `tools` 里选中的（用原工具名），不信客户端送来的定义。先写临时文件再改名。同名文件已存在、又不是这个服务器生成的 MCP 定义：一个都不写，回 409 并列出名字。服务器上没有的工具、装不了的工具回 400。
 - `/api/mcp/status`：连 relay 的管道（`TAU_MCP_PIPE` 有值就用它，再默认 `\\.\pipe\tau-mcp`）发 `status`。连不上回 `{ running: false }`，不拉起 relay。
 - 删定义不另做接口，用 `/api/tools/remove`（被预设用到时会拒绝）。
-- `/api/tools` 的 `installed` 多一个可选字段 `mcp: { server, tool }`：命令指向 `extras/mcp/call.ts` 时才有（`bridge/tools.ts` 用 `gen.ts` 的 `parseCommand` 认）。库里的和手写的没有这个字段。预设表靠它把 MCP 的定义分小组。
+- `/api/tools` 的 `installed` 多一个可选字段 `mcp: { server, tool }`：命令指向 `extras/mcp/call.ts` 时才有（`bridge/tools.ts` 用 `gen.ts` 的 `parseCommand` 认）。库里的和手写的没有这个字段。预设表、工具定义弹窗和工具标签靠它把同一个服务器的定义合成一个。
 - 测试：`test/extras/gui/mcp.test.ts`。
 
-界面（`ui/mcp.js`，是工具定义弹窗的第三节“03 MCP”）：
+界面（`ui/mcp.js`，是工具定义弹窗的第三节“03 MCP”）。一个服务器是一个整体：要么装，要么不装，不挑单个工具：
 
 - 项目：一个 `<select>`，选项是 `app.projects`，默认聚焦的那个。换项目就重读 `/api/mcp/servers`。
-- 服务器：每个一张 `.td-row` 卡，写名字、命令、说明、超时；写错的项是 `bad` 卡，写错误原文，不给“列出工具”。
-- 列工具：卡上的按钮，等的时候写“正在列…”，期间别的按钮都不可用。结果一进来就按默认勾选重置（`lib/mcp.js` 的 `defaultPicked`）。
-- 工具清单：`.mcp-row`，`<input type="checkbox">`（跳过的不能勾）、定义名、原名（不同时才有）、状态 tag（未装、已装、和现在的不同）、字节数。跳过的写原因。
-- 大小条：`sizeOf` 的字节数对着 64 KiB；超了整条变警示橙，写“一个预设用不下这么多，少勾几个”，但不拦安装。
-- 安装：调 `/api/mcp/install`，成功后让上面“01 已装的定义”重读（`onChanged`），再重列一次把状态刷新成“已装”。409 的错误原文写在检查条里。
-- 服务器上已经没有的（`gone`）：单独一组，每个一个“删除”，走 `/api/tools/remove`。被预设用到的（父弹窗给的 `usedBy`）不显示删除，写是哪些预设。
+- 服务器：每个一张 `.td-row` 卡，写名字、命令、说明、超时；写错的项是 `bad` 卡，写错误原文，不给“列出工具”。已装过的卡多一个“已装 n 个”标签，n 是 `props.installed` 里 `mcp.server` 等于这个名字的定义个数，不用起服务器。
+- 列工具：卡上的按钮，等的时候写“正在列…”，期间别的按钮都不可用。
+- 工具清单：`.mcp-row`，只读，没有勾选框。定义名、原名（不同时才有）、状态 tag（未装、已装、和现在的不同）、字节数。跳过的写原因。
+- 大小条：能装的定义（`installable`，没有 `skip` 的）的字节数对着 64 KiB；超了整条变警示橙，写“这个服务器一个预设放不下”，但不拦安装。
+- 安装的永远是能装的全部：`installable(tools)` 的原工具名（`tool`）发给 `/api/mcp/install`。按钮写“安装”（这个服务器还没装）或“更新”（已装，且有 `differs` 或 `none` 的，或服务器上已经没有某些已装的定义）；全都已装、一样、也没有多余的旧定义时不给按钮，写“已是最新”。409 的错误原文写在检查条里。
+- 装成功后把 `gone` 里没被预设用到的定义逐个 `/api/tools/remove` 删掉；被 `usedBy` 用到的留着，note 里写明是哪些预设。没有单独的“服务器上已经没有的”一块了。
+- 卸载：卡上有已装的定义时给“卸载”，行里先确认，再逐个删这个服务器的定义。其中任何一个 `usedBy` 非空就不给卸载，写是哪些预设。
 - 服务器的说明（`instructions`）：折在工具清单上面，点开看全文（`.mcp-instr-t`），带“复制”（`navigator.clipboard`，不是安全上下文时没有）。写一句：工具描述里不带它，要模型知道就贴进预设的提示词。
-- 中转：`/api/mcp/status` 的一行。没在跑写“第一次调用时自动起来”；在跑写几个实例，每个的进程、服务器、`idleText(idleMs)`、在跑的调用数。打开弹窗读一次，每次列工具、装、删以后读一次，**不轮询**；旁边一个“刷新”。
-- 预设表（`ui/presetform.js`）：已装的定义按服务器分小组（`lib/mcp.js` 的 `groupByServer`），小组头写服务器名和 `已选/总数`，带“全选”“全不选”（`withGroup`）。不是 MCP 的和 `tools/` 下已经没有的原样留在后面一组。
-- 纯逻辑在 `extras/gui/web/lib/mcp.js`（`defaultPicked`、`sizeOf`、`groupByServer`、`withGroup`、`idleText`、`LIMIT`），测试 `test/extras/gui/mcp-lib.test.ts`。
+- 中转：`/api/mcp/status` 的一行。没在跑写“第一次调用时自动起来”；在跑写几个实例，每个的进程、服务器、`idleText(idleMs)`、在跑的调用数。打开弹窗读一次，每次列工具、装、卸载以后读一次，**不轮询**；旁边一个“刷新”。
+- 01 已装的定义（`ui/tools.js`）：MCP 生成的定义按服务器一行（`groupByServer`），写名字、`MCP` 标签、几个工具、几个预设在用（`usedBy` 取并集），点“工具名”展开看全部定义名，默认折着。删除是整个服务器一起删，行里先确认；任何一个定义 `usedBy` 非空就不给删。不是 MCP 的一行一个，照旧。
+- 预设表（`ui/presetform.js`）：MCP 生成的定义不逐个开关，也没有小组头。一个服务器一个开关按钮（`withGroup`）：文字 `服务器名 · n 个工具`，只写了一部分时写 `服务器名 · k/n`；`aria-pressed` 为真当且仅当 n 个全在；点一下没全开就补满，全开就全去掉。不是 MCP 的和 `tools/` 下已经没有的原样留在后面一组，那组还是小组头加“全选”“全不选”。
+- 工具标签（`ui/inspector.js` 的 `ToolTags`）：项目概况的预设行和聚焦进程的概况用 `foldTools(tools, app.defs)` 折，同一个服务器一个标签 `服务器名 · n`（只勾一部分写 `k/n`），`title` 是全部工具名。`app.defs` 是 `/api/tools` 的 `installed`，整页读一次（`app.reloadDefs`，挂载时读；工具定义弹窗装完、删完再读）；读不到就不折，原样一个一个写。
+- 纯逻辑在 `extras/gui/web/lib/mcp.js`（`installable`、`sizeOf`、`foldTools`、`groupByServer`、`withGroup`、`idleText`、`LIMIT`），测试 `test/extras/gui/mcp-lib.test.ts`。
 
 自动标题（`bridge/title.ts`）：
 

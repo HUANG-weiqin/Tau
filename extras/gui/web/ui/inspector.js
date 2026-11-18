@@ -9,6 +9,7 @@ import { known } from "../lib/history.js";
 import { formatAgo } from "../lib/format.js";
 import { mailOf, rulerOf } from "../lib/derive.js";
 import { convertGate, convertPatch } from "../lib/models.js";
+import { foldTools } from "../lib/mcp.js";
 import { useAgentsInfo } from "./presetform.js";
 import { canHandoff } from "../lib/messages.js";
 import { pendingOf, pendingText } from "../lib/session.js";
@@ -106,11 +107,20 @@ export function Delta({ add, del }) {
   return html`<span class="mono idelta"><b>+${add ?? 0}</b>${del ? html` <span class="dim">−${del}</span>` : ""}</span>`;
 }
 
-/** @param {{ tools: string[] | null }} p */
-function ToolTags({ tools }) {
+/**
+ * 工具一栏：同一个 MCP 服务器的定义合成一个标签 `服务器名 · n`（只勾一部分写 `k/n`），鼠标停上去看全部工具名。
+ * `defs` 是 `/api/tools` 的 installed（`app.defs`，整页读一次）。读不到就不折，原样一个一个写。
+ * @param {{ tools: string[] | null, defs: import("../lib/mcp.js").InstalledDef[] | null }} p
+ */
+function ToolTags({ tools, defs }) {
   if (tools === null) return html`<span class="dim">不知道</span>`;
   if (tools.length === 0) return html`<span class="dim">没有</span>`;
-  return html`<span class="itags">${tools.map((t) => html`<span class="mono itag">${t}</span>`)}</span>`;
+  const folded = defs === null ? null : foldTools(tools, defs);
+  if (folded === null) return html`<span class="itags">${tools.map((t) => html`<span class="mono itag">${t}</span>`)}</span>`;
+  return html`<span class="itags">${folded.map((f) =>
+    f.kind === "tool"
+      ? html`<span class="mono itag" key=${f.name}>${f.name}</span>`
+      : html`<span class="mono itag" key=${`mcp:${f.server}`} title=${f.names.join("、")}>${`${f.server} · `}${f.on < f.total ? `${f.on}/${f.total}` : String(f.on)}</span>`)}</span>`;
 }
 
 /** 读取状态：读到前、出错时的占位。有旧值时调用方自己决定还显不显示。 */
@@ -255,7 +265,7 @@ function ProcOverview({ app }) {
           ${frozen?.handoff !== undefined && html`<${Fragment}><dt>换段阈值</dt><dd><span class="mono">${frozen.handoff}</span> token</dd></${Fragment}>`}
           ${frozen?.options !== undefined && html`<${Fragment}><dt>options</dt><dd><span class="mono">${JSON.stringify(frozen.options)}</span></dd></${Fragment}>`}
           <dt>目录</dt><dd>${workdir !== null ? html`<span class="mono">${workdir}</span>` : html`<span class="dim">没有</span>`}</dd>
-          <dt>工具</dt><dd><${ToolTags} tools=${tools} /></dd>
+          <dt>工具</dt><dd><${ToolTags} tools=${tools} defs=${app.defs} /></dd>
           <dt>上下文文件</dt><dd>${frozen === null ? html`<span class="dim">不知道</span>` : frozen.context ? html`<span class="itags">${frozen.context.map((c) => html`<span class="mono itag">${c}</span>`)}</span>` : html`<span class="dim">没有</span>`}</dd>
           <dt>记忆</dt><dd>${memory === null ? html`<span class="dim">不知道</span>` : memory ? html`带，库名 <span class="mono">${self.preset}</span>` : "不带"}</dd>
         </dl>
@@ -325,7 +335,7 @@ function ProjOverview({ app, status, branches }) {
           ${p.presets.map(
             (pr) => html`<li>
               <div class="ipreset-h"><span class="mono ipreset-id">${pr.id}</span><span class=${`tag ${pr.memory ? "acc" : "line"}`}>${pr.memory ? "带记忆" : "不带记忆"}</span>${pr.memory && html`<button type="button" class="link ilink" onClick=${(/** @type {Event} */ ev) => app.openDialog("memory", /** @type {Element} */ (ev.currentTarget), { ns: pr.id })}>记忆</button>`}<button type="button" class="link ilink" onClick=${(/** @type {Event} */ ev) => app.openDialog("editpreset", /** @type {Element} */ (ev.currentTarget), { preset: pr.id })}>改预设</button><${LegacyMark} app=${app} pr=${pr} /></div>
-              <dl class="ikv small"><dt>模型</dt><dd><span class="mono">${pr.model}</span>${pr.thinking ? html` <span class="tag line">${pr.thinking}</span>` : ""}</dd><dt>工具</dt><dd><${ToolTags} tools=${pr.tools} /></dd></dl>
+              <dl class="ikv small"><dt>模型</dt><dd><span class="mono">${pr.model}</span>${pr.thinking ? html` <span class="tag line">${pr.thinking}</span>` : ""}</dd><dt>工具</dt><dd><${ToolTags} tools=${pr.tools} defs=${app.defs} /></dd></dl>
             </li>`,
           )}
         </ul>

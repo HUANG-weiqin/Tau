@@ -55,6 +55,7 @@ import { autoTitle } from "./ui/titlecache.js";
  * @property {import("./lib/store.js").Store} store `lib/store` 的状态：`store.procs[id].self` 是进程视图。
  * @property {Record<string, PresetInfo>} presets 预设文件，按预设 ID 查。读不懂的 `ok: false`。
  * @property {PresetInfo[]} presetList 预设文件，列表。
+ * @property {import("./lib/mcp.js").InstalledDef[] | null} defs 已装的工具定义（`/api/tools` 的 installed）。整页读一次：工具标签靠它把同一个 MCP 服务器的定义折成一个。还没读到、或读不到时是 null（标签原样逐个列）。
  * @property {GuiState} gui 界面数据（`~/.tau/extras/gui/state.json`）。改它用 `setGui` 和 `lib/state.js` 的补丁函数。
  * @property {{ providers: import("./lib/models.js").CatalogProvider[], auth: { ok: true } | { ok: false, error: string } } | null} models 模型目录（供应商、模型、key 状态）。没读到前是 null。key 状态在打开相关弹窗时重读。
  * @property {string | null} modelsError 模型目录读不到的原因。
@@ -108,6 +109,7 @@ import { autoTitle } from "./ui/titlecache.js";
  * @property {(patch: Record<string, unknown> | ((g: GuiState) => Record<string, unknown>)) => Promise<void>} setGui 改界面数据：顶层键整个覆盖。先改页面里的，再写文件。补丁用 `lib/state.js` 的函数算。传函数时，写之前先读文件里的最新状态再算，别的页面改过的不会被盖掉。
  * @property {(processes: string[]) => Promise<any[]>} bg 桥的 `/api/bg`。
  * @property {() => Promise<void>} reloadPresets 重读预设文件。
+ * @property {() => Promise<void>} reloadDefs 重读已装的工具定义（工具定义弹窗装完、删完以后调）。
  * @property {(p: Record<string, unknown>) => Promise<void>} createPreset 建预设文件，成功后重读预设。
  * @property {(p: Record<string, unknown>) => Promise<import("./lib/types.js").PresetInfo>} updatePreset 改预设文件（只发变了的字段，`id` 必带），成功后重读预设，回改完读到的样子。读不出时服务改回旧文件，抛错，原因是 `check` 的原文；不弹提示，由调用方写在弹窗里。
  * @property {() => Promise<void>} reloadModels 重读模型目录和 key 状态。
@@ -142,6 +144,8 @@ const S = {
   presets: {},
   /** @type {PresetInfo[]} */
   presetList: [],
+  /** 已装的工具定义（`/api/tools` 的 installed）。整页读一次，装完删完再读。 @type {import("./lib/mcp.js").InstalledDef[] | null} */
+  defs: null,
   /** 进程的会话快照（`inspect` 的 `preset`），进程 ID → 界面要的几项。`reconfigure` 能改它，所以每次读到 `inspect` 都换掉旧的。 @type {Record<string, import("./lib/types.js").Frozen>} */
   snaps: {},
   /** 这次连上以后读过全部快照。 */
@@ -518,6 +522,7 @@ function compute() {
     store: S.store,
     presets: S.presets,
     presetList: S.presetList,
+    defs: S.defs,
     gui: S.gui,
     models: S.models,
     modelsError: S.modelsError,
@@ -651,6 +656,7 @@ function compute() {
     setGui,
     bg: (ids) => loud(api.bg(ids)),
     reloadPresets,
+    reloadDefs,
     createPreset: (p) =>
       loud(
         api.createPreset(p).then(async () => {
@@ -749,6 +755,20 @@ async function reloadPresets() {
   } catch (e) {
     toast(`读不到预设：${e instanceof Error ? e.message : e}`);
   }
+}
+
+/**
+ * 读已装的工具定义。工具标签（项目概况的预设行、聚焦进程的概况）靠它把同一个 MCP 服务器的定义折成一个。
+ * 读不到就不折：`S.defs` 一直是 null，标签原样逐个列。
+ */
+async function reloadDefs() {
+  try {
+    const r = await api.tools();
+    S.defs = r.installed ?? [];
+  } catch {
+    // 读不到就不折，不弹提示：工具标签退回逐个列。
+  }
+  schedule();
 }
 
 /* ------------------------------------------------------------------ 键盘 */
@@ -853,6 +873,7 @@ function Root() {
     );
     reloadPresets();
     reloadModels();
+    reloadDefs();
     const conn = createConn({
       reply: onReply,
       status: (s, msg) => {

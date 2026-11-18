@@ -1,16 +1,16 @@
-// MCP 这一节（设计稿 7.12 的 MCP）：选项目、列配置里的服务器、列工具并生成定义、装选中的、
-// 删服务器上已经没有的定义、看中转的状态。起服务器要几秒，按钮上写“正在列”。
-// 纯逻辑在 lib/mcp.js，本文件只管画和发请求。
+// MCP 这一节（设计稿 7.12 的 MCP）：选项目、列配置里的服务器、列工具并生成定义、整个服务器装或更新或卸载、
+// 看中转的状态。一个服务器要么装，要么不装，不能挑几个；工具清单只读。
+// 起服务器要几秒，按钮上写“正在列”。纯逻辑在 lib/mcp.js，本文件只管画和发请求。
 import { html, Pill, SecHead, Fragment, useState, useEffect, useRef, Icon } from "./common.js";
 import { CheckStrip } from "./presetform.js";
 import { formatBytes } from "../lib/format.js";
-import { defaultPicked, idleText, sizeOf } from "../lib/mcp.js";
+import { idleText, installable, sizeOf } from "../lib/mcp.js";
 import * as api from "../api.js";
 
 /** @typedef {import("../lib/mcp.js").GenTool} GenTool */
 /** @typedef {{ name: string, command?: string, description?: string, timeout?: number, error?: string }} ServerEntry */
 /** @typedef {{ file: string | null, servers: ServerEntry[] }} ServerList */
-/** @typedef {{ instructions?: string, tools: GenTool[], gone: string[], totalBytes: number }} Listed */
+/** @typedef {{ instructions?: string, tools: GenTool[], gone: string[] }} Listed */
 
 const STATUS = { none: ["line", "未装"], installed: ["acc", "已装"], differs: ["warn", "和现在的不同"] };
 
@@ -20,8 +20,9 @@ const msg = (e) => (e instanceof Error ? e.message : String(e));
 /**
  * @param {object} p
  * @param {import("../app.js").App} p.app
- * @param {{ name: string, usedBy: string[] }[]} p.installed 「已装的定义」，用来拦被预设用到的删除
- * @param {() => Promise<void>} p.onChanged 装完、删完以后让上面那一节重读
+ * @param {{ name: string, usedBy: string[], mcp?: { server: string, tool: string } }[]} p.installed
+ *   「已装的定义」：服务器卡上写已装几个，装完以后删服务器上已经没有的，卸载时拦被预设用到的。
+ * @param {() => Promise<void>} p.onChanged 装完、删完以后让上面那一节和工具标签重读
  */
 export function McpSection({ app, installed, onChanged }) {
   const projects = app.projects;
@@ -30,9 +31,10 @@ export function McpSection({ app, installed, onChanged }) {
   const [servers, setServers] = useState(/** @type {ServerList | null} */ (null));
   const [err, setErr] = useState("");
   const [listed, setListed] = useState(/** @type {({ server: string } & Listed) | null} */ (null));
-  const [picked, setPicked] = useState(/** @type {string[]} */ ([]));
-  const [busy, setBusy] = useState(/** @type {string} */ ("")); // "" | "list:<服务器>" | "install" | "remove:<名字>"
-  const [note, setNote] = useState(""); // 装完、删完的一句话
+  const [busy, setBusy] = useState(/** @type {string} */ ("")); // "" | "list:<服务器>" | "install" | "unload:<服务器>"
+  const [note, setNote] = useState(""); // 装完、卸载完的一句话
+  /** 等着确认卸载的服务器。 */
+  const [askUnload, setAskUnload] = useState(/** @type {string} */ (""));
   const [status, setStatus] = useState(/** @type {any} */ (null));
   const [relayErr, setRelayErr] = useState("");
   const [openInstr, setOpenInstr] = useState(false);
@@ -70,8 +72,8 @@ export function McpSection({ app, installed, onChanged }) {
     let live = true;
     setServers(null);
     setListed(null);
-    setPicked([]);
     setNote("");
+    setAskUnload("");
     api.mcpServers(project).then(
       (r) => live && (setServers({ file: r.file ?? null, servers: r.servers ?? [] }), setErr("")),
       (e) => live && setErr(msg(e)),
@@ -92,8 +94,7 @@ export function McpSection({ app, installed, onChanged }) {
         if (alive.current) setBusy("");
         return;
       }
-      setListed({ server, instructions: r.instructions, tools: r.tools ?? [], gone: r.gone ?? [], totalBytes: r.totalBytes ?? 0 });
-      setPicked(defaultPicked(r.tools ?? []));
+      setListed({ server, instructions: r.instructions, tools: r.tools ?? [], gone: r.gone ?? [] });
       setErr("");
       setOpenInstr(false);
     } catch (e) {
@@ -106,21 +107,56 @@ export function McpSection({ app, installed, onChanged }) {
     if (alive.current) setBusy("");
   };
 
+  /** @param {string} name */
+  const usedBy = (name) => installed.find((d) => d.name === name)?.usedBy ?? [];
+
+  /** 这个服务器已装的定义。 */
+  const installedOf = (/** @type {string} */ server) => installed.filter((d) => d.mcp?.server === server);
+
+  /**
+   * 装这个服务器的全部能装的定义，装完把服务器上已经没有的定义一起删掉。
+   * 被预设用到的留着，note 里写明是哪些预设。
+   */
   const install = async () => {
     if (listed === null) return;
     const at = project;
+    const server = listed.server;
+    const gone = listed.gone;
     setBusy("install");
+    setNote("");
     try {
-      const r = await api.mcpInstall(at, listed.server, picked);
+      const r = await api.mcpInstall(at, server, installable(listed.tools).map((t) => t.tool));
       if (stale(at)) {
         if (alive.current) setBusy("");
         return;
       }
-      setNote(`已装 ${(r.installed ?? []).length} 个：${(r.installed ?? []).join("、") || "（没有选中的）"}`);
+      const keep = gone.filter((n) => usedBy(n).length > 0);
+      const drop = gone.filter((n) => usedBy(n).length === 0);
+      /** @type {string[]} */
+      const removed = [];
+      /** @type {string[]} */
+      const failed = [];
+      for (const n of drop) {
+        try {
+          await api.removeTool(n);
+          removed.push(n);
+        } catch (e) {
+          failed.push(`${n}：${msg(e)}`);
+        }
+      }
+      /** @type {string[]} */
+      const parts = [`装了 ${(r.installed ?? []).length} 个：${(r.installed ?? []).join("、") || "（没有可装的）"}`];
+      if (removed.length > 0) parts.push(`删了服务器上已经没有的 ${removed.length} 个：${removed.join("、")}`);
+      if (keep.length > 0) {
+        const users = [...new Set(keep.flatMap((n) => usedBy(n)))];
+        parts.push(`${keep.join("、")} 留着：预设 ${users.join("、")} 在用`);
+      }
+      if (failed.length > 0) parts.push(`没删掉 ${failed.join("；")}`);
+      setNote(`${parts.join("。")}。`);
       await onChanged();
       setBusy("");
       // 重列一次：状态变成“已装”。
-      await list(listed.server);
+      await list(server);
     } catch (e) {
       if (alive.current) {
         setErr(msg(e));
@@ -129,27 +165,27 @@ export function McpSection({ app, installed, onChanged }) {
     }
   };
 
-  /** @param {string} name */
-  const remove = async (name) => {
-    const at = project;
-    setBusy(`remove:${name}`);
+  /** 卸载一个服务器：行里确认过，逐个删它的定义。 @param {string} server @param {{ name: string }[]} mine */
+  const unload = async (server, mine) => {
+    setBusy(`unload:${server}`);
+    setAskUnload("");
+    setNote("");
     try {
-      await api.removeTool(name);
-      if (alive.current) setNote(`删了 ${name}。`);
+      for (const d of mine) await api.removeTool(d.name);
+      if (alive.current) setNote(`卸载了 ${server}：删了 ${mine.length} 个定义。`);
       await onChanged();
-      if (listed !== null && !stale(at)) await list(listed.server);
+      if (listed !== null && listed.server === server && alive.current) await list(server);
     } catch (e) {
       if (alive.current) setErr(msg(e));
     }
     if (alive.current) setBusy("");
   };
 
-  /** @param {string} tool @param {boolean} on */
-  const toggle = (tool, on) => setPicked((now) => (on ? [...now.filter((t) => t !== tool), tool] : now.filter((t) => t !== tool)));
-
-  const size = listed === null ? null : sizeOf(listed.tools, picked);
-  const usedBy = (name) => installed.find((d) => d.name === name)?.usedBy ?? [];
-  const listedNames = new Set(listed?.tools.map((t) => t.name) ?? []);
+  const size = listed === null ? null : sizeOf(listed.tools);
+  // 能装的都有、都和现在的一样、服务器上也没有多余的旧定义：不用装，也可以说“已是最新”。
+  const free = listed === null ? [] : installable(listed.tools);
+  const latest = free.length > 0 && free.every((t) => t.status === "installed") && listed !== null && listed.gone.length === 0;
+  const mine = listed === null ? [] : installedOf(listed.server);
 
   return html`<${Fragment}>
     <${SecHead} n="03" title="MCP" en="MCP SERVERS" right=${html`<span class="dnote" style="font-size:11px">${servers === null ? "" : `${servers.servers.length} 个服务器`}</span>`} />
@@ -172,9 +208,17 @@ export function McpSection({ app, installed, onChanged }) {
       ${servers.servers.map((s) => {
         const listing = busy === `list:${s.name}`;
         const active = listed?.server === s.name;
-        return html`<li class=${`td-row ${s.error !== undefined ? "bad" : active ? "installed" : ""}`} key=${s.name}>
+        const mine = installedOf(s.name);
+        const users = [...new Set(mine.flatMap((d) => d.usedBy))];
+        const asking = askUnload === s.name;
+        return html`<li class=${`td-row ${s.error !== undefined ? "bad" : active || mine.length > 0 ? "installed" : ""}`} key=${s.name}>
           <div class="td-main">
-            <div class="td-h"><b class="mono">${s.name}</b>${s.timeout !== undefined && html`<span class="tag line">${s.timeout} 秒</span>`}${s.error !== undefined && html`<span class="tag warn">配置读不出</span>`}</div>
+            <div class="td-h">
+              <b class="mono">${s.name}</b>
+              ${mine.length > 0 && html`<span class="tag acc">已装 ${mine.length} 个</span>`}
+              ${s.timeout !== undefined && html`<span class="tag line">${s.timeout} 秒</span>`}
+              ${s.error !== undefined && html`<span class="tag warn">配置读不出</span>`}
+            </div>
             ${s.command !== undefined && html`<div class="td-m mono" title=${s.command}>${s.command}</div>`}
             ${s.error !== undefined ? html`<p class="td-d bad">${s.error}</p>` : s.description !== undefined && html`<p class="td-d">${s.description}</p>`}
           </div>
@@ -182,6 +226,12 @@ export function McpSection({ app, installed, onChanged }) {
             ${s.error !== undefined
               ? html`<span class="dnote">改好配置再列</span>`
               : html`<${Pill} size="sm" kind=${active ? "" : "accent"} label=${listing ? "正在列…" : "列出工具"} disabled=${busy !== ""} onClick=${() => list(s.name)} />`}
+            ${mine.length > 0 &&
+            (asking
+              ? html`<div class="td-ask"><span>卸载：删掉这个服务器的 ${mine.length} 个定义，删了找不回。</span><span class="row2"><${Pill} size="sm" kind="warn" label="卸载" disabled=${busy !== ""} onClick=${() => unload(s.name, mine)} /><${Pill} size="sm" label="取消" onClick=${() => setAskUnload("")} /></span></div>`
+              : users.length > 0
+                ? html`<span class="dnote">预设 ${users.join("、")} 在用，不能卸载</span>`
+                : html`<button type="button" class="link" disabled=${busy !== ""} onClick=${() => setAskUnload(s.name)}>卸载</button>`)}
           </div>
         </li>`;
       })}
@@ -202,15 +252,12 @@ export function McpSection({ app, installed, onChanged }) {
         </div>
       </div>`}
 
-      <div class="td-h" style="margin:12px 0 6px"><b style="font-size:13px">${listed.server} 的工具</b><span class="tag line">${listed.tools.length} 个</span></div>
+      <div class="td-h" style="margin:12px 0 6px"><b style="font-size:13px">${listed.server} 的工具</b><span class="tag line">${listed.tools.length} 个</span><span class="dnote" style="font-size:11px">只读：这个服务器一起装、一起卸，不挑单个。</span></div>
       <ul class="mcp-list" aria-label="工具清单">
         ${listed.tools.map((t) => {
           const skipped = t.skip !== undefined;
           const [tone, label] = STATUS[t.status];
           return html`<li class=${`mcp-row ${skipped ? "bad" : t.status === "installed" ? "installed" : ""}`} key=${t.name}>
-            <label class="mcp-check">
-              <input type="checkbox" checked=${picked.includes(t.tool)} disabled=${skipped || busy !== ""} onChange=${(/** @type {any} */ e) => toggle(t.tool, e.currentTarget.checked)} />
-            </label>
             <div class="mcp-main">
               <div class="td-h">
                 <b class="mono" style="font-size:13px">${t.name}</b>
@@ -231,31 +278,20 @@ export function McpSection({ app, installed, onChanged }) {
         <div class="mcp-size-t">
           <span class="mono">${formatBytes(size.bytes)} / ${formatBytes(size.limit)}</span>
           ${size.over
-            ? html`<span class="mcp-warn">一个预设用不下这么多，少勾几个。</span>`
-            : html`<span class="dnote">一个预设的工具定义加起来不能超过 ${formatBytes(size.limit)}。不同预设可以各用一部分。</span>`}
+            ? html`<span class="mcp-warn">这个服务器一个预设放不下。</span>`
+            : html`<span class="dnote">一个预设的工具定义加起来不能超过 ${formatBytes(size.limit)}。只算能装的。</span>`}
         </div>
       </div>`}
 
       <div class="mcp-foot">
-        <${Pill} kind="accent" label=${busy === "install" ? "正在装…" : "装选中的"} disabled=${busy !== "" || picked.length === 0} onClick=${install} />
+        ${free.length === 0
+          ? html`<span class="dnote">这个服务器没有能装的工具。</span>`
+          : latest
+            ? html`<span class="dnote" style="color:var(--acc)">已是最新。</span>`
+            : html`<${Pill} kind="accent" label=${busy === "install" ? "正在装…" : mine.length > 0 ? "更新" : "安装"} disabled=${busy !== ""} onClick=${install} />`}
         <span class="dnote">写 <span class="mono">~/.tau/tools/${"<定义名>"}.json</span>。新出生的会话用新的，已有的会话在“改这个会话”里重读（换段时生效）。</span>
       </div>
     </${Fragment}>`}
-
-    ${listed !== null && listed.gone.length > 0 &&
-    html`<div class="mcp-gone">
-      <div class="td-h" style="margin:10px 0 6px"><b style="font-size:13px">服务器上已经没有的</b><span class="tag warn">${listed.gone.length} 个</span></div>
-      <ul class="td-list" aria-label="服务器上已经没有的定义">
-        ${listed.gone.map((name) => {
-          const users = usedBy(name);
-          return html`<li class="td-row" key=${name}>
-            <div class="td-main"><div class="td-h"><b class="mono">${name}</b>${users.length > 0 && html`<span class="tag acc">${users.length} 个预设在用</span>`}</div>
-              <p class="td-d">工具定义还在，服务器上已经没有这个工具了。</p></div>
-            <div class="td-act">${users.length > 0 ? html`<span class="dnote">预设 ${users.join("、")} 在用它，先去预设里取消</span>` : html`<${Pill} size="sm" label=${busy === `remove:${name}` ? "正在删…" : "删除"} disabled=${busy !== ""} onClick=${() => remove(name)} />`}</div>
-          </li>`;
-        })}
-      </ul>
-    </div>`}
 
     ${note !== "" && html`<p class="dnote" style="margin-top:8px;color:var(--acc)">${note}</p>`}
     ${err !== "" && html`<${CheckStrip} ok=${false} text=${err} label="mcp" />`}
