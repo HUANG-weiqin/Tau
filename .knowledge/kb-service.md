@@ -362,7 +362,7 @@ type Reply =
 - `blob` 的回复：类型用同一个 `imageType` 现算，不另存。库里的字节认不出类型（不会发生）也回 `error`。
 - `history` 里图片块的 `data` 是 `blob:<hash>`，不带字节。要看图，用 `blob`。
 - 为什么入口要查（[D41](kb-decisions.md#d41-第-6-步后一半的选择)）：不合格的图片进了段，每次调用模型都会失败，连交接调用也失败，进程就永远卡住。例如 Anthropic 拒绝边长超过 8000 像素的图。`IMAGE_MAX_EDGE` 的 2000 像素，和 pi-ai 模型目录给每个收图片的模型定的缩放尺寸一样。截图类的工具定义要自己先缩小（[kb-extras](kb-extras.md#pi-web-的功能在-v2-上的做法)）。
-- 图片只从两个入口进来：协议的 `start`、`send`，和工具定义的 `content` 输出。后一个入口的不合格是错误结果，检查和协议的完全一样，函数是同一个（`checkImages`，[kb-tools](kb-tools.md#运行工具定义)）。
+- 图片只从三个入口进来：协议的 `start`、`send`，工具定义的 `content` 输出，和 `read` 读到的图片文件（[D76](kb-decisions.md#d76-read-读图片)）。后两个入口的不合格是错误结果，检查和协议的完全一样，函数是同一个（`checkImages`，[kb-tools](kb-tools.md#运行工具定义)）。
 - 文件头完好、数据损坏的图片仍可能进段，模型接口会拒绝它（[风险表](kb-contract.md#风险表)）。
 - CLI 不带图片：CLI 的命令、输出和退出码冻结在 v1。上层的命令行直接用协议。
 

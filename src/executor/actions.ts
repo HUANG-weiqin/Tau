@@ -48,9 +48,11 @@ export function createActions(models: Models, onText: (id: ProcessId, n: number,
       } catch (e) {
         return { content: textContent(`参数错误：${e instanceof Error ? e.message : String(e)}`), isError: true };
       }
+      // 进程的模型收图片：read 和工具定义带图时才存图，不收时换成一行说明。
+      const accepts = job.process.preset.input.includes("image");
       switch (call.name) {
         case "read":
-          return read(args, workdir);
+          return read(args, workdir, accepts);
         case "write":
           return write(args, workdir);
         case "edit":
@@ -60,7 +62,7 @@ export function createActions(models: Models, onText: (id: ProcessId, n: number,
         default: {
           const def = job.process.preset.toolDefs.find((d) => d.name === call.name);
           if (!def) return { content: textContent(`工具 ${call.name} 不由执行器运行。`), isError: true };
-          return runToolDef(def, args, workdir, signal, { process: job.process.id, pipe }, job.process.preset.input.includes("image"));
+          return runToolDef(def, args, workdir, signal, { process: job.process.id, pipe }, accepts);
         }
       }
     },

@@ -64,9 +64,12 @@ async function fromContentOutput(stdout: { text: string; truncated: boolean }, a
   const declared = calls.length > 0 ? { calls } : {};
   if (!accepts) return { content: lines(items.flatMap((it) => (it.type === "text" ? [it.text] : it.type === "image" ? [IMAGE_UNSUPPORTED] : []))), isError: false, ...declared };
   const text = items.flatMap((it) => (it.type === "text" ? [it.text] : [])).join("\n");
-  const blocks = images.map((im): Content => ({ type: "image", data: BLOB_PREFIX + im.hash, mimeType: im.mimeType }));
+  const blocks = images.map(imageBlock);
   return { content: [...lines(text === "" ? [] : [text]), ...blocks], isError: false, ...(images.length > 0 ? { images } : {}), ...declared };
 }
+
+/** 图片内容块：`data` 是 `blob:<hash>` 引用，字节由执行器存进 `blobs`。 */
+export const imageBlock = (im: Image): Content => ({ type: "image", data: BLOB_PREFIX + im.hash, mimeType: im.mimeType });
 
 const lines = (parts: string[]): Content[] => (parts.join("\n") === "" ? [] : textContent(parts.join("\n")));
 

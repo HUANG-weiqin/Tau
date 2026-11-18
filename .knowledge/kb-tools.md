@@ -4,7 +4,7 @@
 
 ## 这个模块是干什么的
 
-本模块是库外工具的实现：`read`、`write`、`edit`（`src/tools/files.ts`）、`bash`（`src/tools/bash.ts`）和工具定义（`src/tools/tooldef.ts`）。每个工具是一个异步函数：收到参数和工作目录，返回 `{ content, isError }`，`content` 是内容块：文件工具和 bash 只有一个文本块，工具定义的 `content` 输出可以有图片块。
+本模块是库外工具的实现：`read`、`write`、`edit`（`src/tools/files.ts`）、`bash`（`src/tools/bash.ts`）和工具定义（`src/tools/tooldef.ts`）。每个工具是一个异步函数：收到参数和工作目录，返回 `{ content, isError }`，`content` 是内容块：`write`、`edit`、`bash` 只有一个文本块；`read` 读图片和工具定义的 `content` 输出可以有图片块。
 
 它还负责工具定义的格式和读取（`src/presets/tooldefs.ts`，见[工具定义](#工具定义)）。
 
@@ -103,12 +103,12 @@
 
 | 函数 | 参数（`?` 为可选） | 收中止信号 |
 |---|---|---|
-| `read(args, workdir)` | `path`、`offset?`、`limit?` | 否 |
+| `read(args, workdir, accepts)` | `path`、`offset?`、`limit?`；`accepts`：进程的模型收图片（执行器传，和 `runToolDef` 的同名参数一个意思） | 否 |
 | `write(args, workdir)` | `path`、`content` | 否 |
 | `edit(args, workdir)` | `path`、`old`、`new`、`replaceAll?` | 否 |
 | `bash(args, workdir, signal, ctx)` | `command`、`timeout?`；`ctx` 是 `{ process, pipe }`：进程 ID 和服务实际监听的管道名 | 是 |
 
-- 都返回 `Promise<ToolResultContent>`，失败写成结果。`runToolDef(def, args, workdir, signal, ctx, accepts)` 返回 `ToolOutput`：`ToolResultContent` 加可选的 `images`（[运行工具定义](#运行工具定义)）。
+- `write`、`edit`、`bash` 返回 `Promise<ToolResultContent>`，失败写成结果。`read` 和 `runToolDef(def, args, workdir, signal, ctx, accepts)` 返回 `ToolOutput`：`ToolResultContent` 加可选的 `images`（[运行工具定义](#运行工具定义)、[`read` 读图片](#read-读图片)）。
 - 一个例外：`bash` 的命令含 NUL 字符时，`spawn` 同步抛出，promise 被拒绝。执行器把它变成 `工具执行失败：<信息>`（[kb-executor](kb-executor.md#失败怎样变成结果)）。
 - `workdir` 是会话快照的工作目录，一定是绝对路径。
 - 工具不读库，不写库。`bash` 只从执行器拿到进程 ID 和管道名，交给命令的环境，不用它们做别的。唯一的模块状态是 `bash.ts` 缓存的 shell 路径。
@@ -149,6 +149,18 @@
 
 - 没有自己的大小上限（[D19](kb-decisions.md#d19-第四轮审查fable-52-复审-d18-之后的文档)）。整个文件读进内存。
 - 单行不截断。一行很长时，同样由 `clip` 保留整段输出的头尾。
+
+#### `read` 读图片
+
+第 2 步读完文件后，先按魔数判断是不是图片（`imageType`，和协议、工具定义是同一个函数）。不是图片，照上面的 1 到 7 步，一点不变。是图片，就不走第 3 步以后（[D76](kb-decisions.md#d76-read-读图片)）：
+
+1. 整个文件交给 `checkImages`（大小、类型、尺寸，和协议、工具定义同一个函数）。不合格是错误：`图片不合格：<路径>（<原因>）`。不缩放。
+2. 进程的模型不收图片（`accepts` 为 false）：检查照做，合格时不存，结果是一行 `[图片：模型不支持，已省略]`（`IMAGE_UNSUPPORTED`），不算错误，没有 `images`。
+3. 收图片：结果是一个图片块，`data` 是 `blob:<hash>`，`mimeType` 是魔数算出的类型；字节放在返回值的 `images`，由执行器存（和工具定义的 `content` 输出一样，[事务和崩溃](#运行工具定义)）。结果里没有文本块，路径模型自己知道。
+
+- 看扩展名没有用：叫 `x.txt` 的 png 当图片读，叫 `x.png` 的文本当文本读。
+- `offset`、`limit` 对图片不起作用，不检查。
+- 图片块的写法只有一份：`tooldef.ts` 导出的 `imageBlock`，`read` 和工具定义共用。
 
 ### `write`
 
@@ -264,6 +276,9 @@ WRAPPER = echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$
 | `read` | `offset` 超过行数 | `文件共 N 行，offset M 超出范围：<路径>` | 否 |
 | `read` | 是目录 | `是目录，不能读取：<路径>` | 是 |
 | `read` | 不是 UTF-8 | `不是 UTF-8 文本：<路径>` | 是 |
+| `read` | 图片，模型收图片 | 没有文本块，一个图片块（`blob:<hash>`），`images` 带字节 | 否 |
+| `read` | 图片，模型不收图片 | `[图片：模型不支持，已省略]` | 否 |
+| `read` | 图片不合格 | `图片不合格：<路径>（<原因>）` | 是 |
 | `read` | `offset` 或 `limit` 小于 1 | `offset 和 limit 必须从 1 开始：<路径>` | 是 |
 | `read` | 其它失败 | `读取失败：<路径>（<原因>）` | 是 |
 | `write` | 成功 | `已写入 N 字节：<路径>`，N 是 UTF-8 字节数 | 否 |
@@ -306,7 +321,7 @@ WRAPPER = echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$
 
 ## 认知模型
 
-- 一个工具 = 一个异步函数：参数加工作目录，变成内容块和一个错误标记。文件工具和 bash 的内容块只有一段文本；工具定义是 bash 加标准输入，`content` 输出还可以带图片。
+- 一个工具 = 一个异步函数：参数加工作目录，变成内容块和一个错误标记。`write`、`edit`、`bash` 的内容块只有一段文本；`read` 读到图片文件时返回图片块（[D76](kb-decisions.md#d76-read-读图片)）；工具定义是 bash 加标准输入，`content` 输出还可以带图片。
 - 文件工具和模型的约定：`read` 给出的行，去掉行号和 `\t`，可以原样作为 `edit` 的 `old`。BOM 和 CRLF 的处理都是为了守住这一条。
 - bash 的约定：
   - 调用返回时，bash 已经退出。
@@ -347,6 +362,7 @@ WRAPPER = echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$
 | 测试 | 证明 |
 |---|---|
 | `read` | 每行带行号；`offset`、`limit` 选范围；没有结尾换行时行数不变；CRLF 去掉 `\r`；空文件和 `offset` 越界不算错误；不存在、是目录算错误；相对路径按工作目录 |
+| `read` 读图片 | png 读成图片块且 `images` 带原字节；模型不收图片时只有占位行、不存；超大、超尺寸报错（收不收图片都报）；看魔数不看扩展名（`x.txt` 里的 png 是图片，`x.png` 里的文本是文本）；非图片的二进制仍报“不是 UTF-8 文本” |
 | `write` | 建好多层目录，原样写出（含 `\r\n`）；覆盖已有文件；按字节计数；相对路径 |
 | `edit` | 唯一时替换；找不到或多处时报错且文件不变；`replaceAll` 替换不重叠的出现；`$&`、`$1` 按字面；`old` 为空报错；文件不存在回错误不抛出；空白不归一；相对路径 |
 | 编码和换行 | GBK、UTF-16LE 被拒绝且字节不变；BOM 保留；CRLF 文件上多行原文能匹配，写回全是 CRLF；单行原文、`new` 带 `\n` 也写 CRLF；CRLF 下多行原文出现两次仍要求唯一；LF 文件不受影响；约 20 万行的文件截到上限并保留首尾行 |

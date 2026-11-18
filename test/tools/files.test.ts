@@ -6,8 +6,12 @@ import path from "node:path";
 import * as files from "../../src/tools/files.ts";
 import { plain } from "../plain.ts";
 import { MESSAGE_MAX_BYTES } from "../../src/kernel/derive.ts";
+import { checkImages, IMAGE_MAX_BYTES } from "../../src/images.ts";
+import { IMAGE_UNSUPPORTED } from "../../src/kernel/context.ts";
+import { BLOB_PREFIX } from "../../src/store/blobs.ts";
+import { gif, png } from "../images.ts";
 
-const read = async (...a: Parameters<typeof files.read>) => plain(await files.read(...a));
+const read = async (a: { path: string; offset?: number; limit?: number }, w: string, accepts = true) => plain(await files.read(a, w, accepts));
 const write = async (...a: Parameters<typeof files.write>) => plain(await files.write(...a));
 const edit = async (...a: Parameters<typeof files.edit>) => plain(await files.edit(...a));
 
@@ -81,6 +85,76 @@ describe("read", () => {
   test("relative path resolves against workdir", async () => {
     await file("rel-read.txt", "x\n");
     assert.equal((await read({ path: "rel-read.txt" }, dir)).text, "     1\tx");
+  });
+});
+
+describe("read 图片", () => {
+  const out = (a: { path: string }, accepts = true) => files.read(a, dir, accepts);
+
+  test("png 读成图片块，带要存的字节", async () => {
+    const bytes = png(10, 20, 7);
+    const p = await file("pic.png", bytes);
+    const [im] = checkImages([bytes.toString("base64")]);
+    const r = await out({ path: p });
+    assert.equal(r.isError, false);
+    assert.deepEqual(r.content, [{ type: "image", data: BLOB_PREFIX + im!.hash, mimeType: "image/png" }]);
+    assert.equal(r.images?.length, 1);
+    assert.deepEqual(r.images![0]!.bytes, bytes);
+  });
+
+  test("gif 的类型是 image/gif", async () => {
+    const p = await file("pic.gif", gif(3, 4, 2));
+    const r = await out({ path: p });
+    assert.deepEqual(
+      r.content.map((c) => c.type === "image" && c.mimeType),
+      ["image/gif"],
+    );
+  });
+
+  test("模型不收图片：结果是 IMAGE_UNSUPPORTED，不存图片", async () => {
+    const p = await file("pic-noimg.png", png(4, 4, 5));
+    const r = await out({ path: p }, false);
+    assert.deepEqual(r, { content: [{ type: "text", text: IMAGE_UNSUPPORTED }], isError: false });
+    assert.equal("images" in r, false);
+  });
+
+  test("超大图报错，不收图片时也是错误", async () => {
+    const bytes = Buffer.concat([png(10, 10), Buffer.alloc(IMAGE_MAX_BYTES)]);
+    const p = await file("pic-big.png", bytes);
+    for (const accepts of [true, false]) {
+      const r = await out({ path: p }, accepts);
+      assert.equal(r.isError, true);
+      assert.match(String((r.content[0] as { text: string }).text), /图片不合格/);
+      assert.match(String((r.content[0] as { text: string }).text), /字节/);
+      assert.equal("images" in r, false);
+    }
+  });
+
+  test("尺寸超限报错，报出宽高", async () => {
+    const p = await file("pic-wide.png", png(2001, 10));
+    const r = await out({ path: p });
+    assert.equal(r.isError, true);
+    assert.match((r.content[0] as { text: string }).text, /2001×10/);
+  });
+
+  test("扩展名骗人：x.txt 里是 png 字节照样当图片", async () => {
+    const p = await file("x.txt", png(2, 2, 1));
+    assert.deepEqual(
+      (await out({ path: p })).content.map((c) => c.type),
+      ["image"],
+    );
+  });
+
+  test("扩展名骗人：x.png 里是文本照样当文本，带行号", async () => {
+    const p = await file("x.png", "a\nb\n");
+    assert.equal((await read({ path: p }, dir)).text, "     1\ta\n     2\tb");
+  });
+
+  test("非图片二进制仍报不是 UTF-8 文本", async () => {
+    const p = await file("bin.dat", Buffer.from([0xff, 0xfe, 0x00]));
+    const r = await out({ path: p });
+    assert.equal(r.isError, true);
+    assert.match((r.content[0] as { text: string }).text, /不是 UTF-8 文本/);
   });
 });
 

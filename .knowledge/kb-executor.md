@@ -205,6 +205,7 @@ abort(id, n)
 | `test/store/model-call.test.ts` | 真目录里在用的六个模型：经 `createActions`、真的 pi-ai 适配器和假 fetch，用 `onPayload` 断言请求体的输出上限和思考预算；执行器传给 pi-ai 的参数；重试的种类和 60 秒上限 |
 | `test/store/crash.test.ts` | 真库上的随机序列和崩溃注入；每个 `read` 结果都带一张图片，崩溃前后 `blobs` 和信箱一致 |
 | `test/store/toolimages.test.ts` | 带图的工具结果的最小反例：上报前 `blobs` 没有图片、运行中被杀、上报后被杀、停止后结果丢弃时图片也不写 |
+| `test/store/readimage.test.ts` | `read` 经执行器读图片：`accepts` 取自会话快照的 `input`，收图片时带图和字节，不收时只有占位行（[D76](kb-decisions.md#d76-read-读图片)） |
 | `test/store/fixtures.ts` | `gated`（测试决定何时完成，中止时拒绝）、`scripted`、`settle` |
 | `test/store/invariants.ts` | 存储层不变量，每个事务之后都查 |
 | `test/server/e2e.test.ts` | 真的 `createActions` 加 faux 模型，走管道和库 |

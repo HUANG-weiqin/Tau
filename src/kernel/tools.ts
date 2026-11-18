@@ -19,7 +19,7 @@ const int = (description: string) => ({ type: "integer", description });
 
 const READ: ToolSpec = {
   name: "read",
-  description: "读取文本文件，每行带行号。相对路径按工作目录解析。用 offset 和 limit 控制读多少。",
+  description: "读取文件。文本每行带行号；图片（png、jpeg、gif、webp）直接给你看。相对路径按工作目录解析。用 offset 和 limit 控制读多少。",
   parameters: object({ path: str("文件路径"), offset: int("从第几行开始，从 1 计"), limit: int("最多读多少行") }, ["path"]),
   inStore: false,
 };

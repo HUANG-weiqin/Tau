@@ -1,8 +1,12 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { ToolOutput } from "../executor/executor.ts";
+import { checkImages, imageType } from "../images.ts";
+import { IMAGE_UNSUPPORTED } from "../kernel/context.ts";
 import { textContent } from "../kernel/types.ts";
 import type { ToolResultContent } from "../kernel/types.ts";
 import { clip } from "../kernel/derive.ts";
+import { imageBlock } from "./tooldef.ts";
 
 const ok = (text: string): ToolResultContent => ({ content: textContent(text), isError: false });
 const fail = (text: string): ToolResultContent => ({ content: textContent(text), isError: true });
@@ -20,11 +24,13 @@ function decode(buf: Buffer): string | undefined {
   return Buffer.from(text, "utf8").equals(buf) ? text : undefined;
 }
 
-export async function read(args: { path: string; offset?: number; limit?: number }, workdir: string): Promise<ToolResultContent> {
+export async function read(args: { path: string; offset?: number; limit?: number }, workdir: string, accepts: boolean): Promise<ToolOutput> {
   const file = path.resolve(workdir, args.path);
   try {
     if ((await stat(file)).isDirectory()) return fail(`是目录，不能读取：${file}`);
-    const text = decode(await readFile(file));
+    const buf = await readFile(file);
+    if (imageType(buf)) return image(buf, file, accepts);
+    const text = decode(buf);
     if (text === undefined) return fail(`不是 UTF-8 文本：${file}`);
     const lines = text === "" ? [] : text.split("\n");
     if (text.endsWith("\n")) lines.pop();
@@ -39,6 +45,16 @@ export async function read(args: { path: string; offset?: number; limit?: number
     return ok(clip(out.join("\n")));
   } catch (e) {
     return fail(`读取失败：${file}（${reason(e)}）`);
+  }
+}
+
+/** 图片文件：先做入口检查（大小、类型、尺寸），不缩放。模型不收图片时照旧检查，但不存，换成一行说明。 */
+function image(buf: Buffer, file: string, accepts: boolean): ToolOutput {
+  try {
+    const images = checkImages([buf.toString("base64")]);
+    return accepts ? { content: [imageBlock(images[0]!)], isError: false, images } : ok(IMAGE_UNSUPPORTED);
+  } catch (e) {
+    return fail(`图片不合格：${file}（${e instanceof Error ? e.message : String(e)}）`);
   }
 }
 
