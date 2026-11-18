@@ -1,4 +1,4 @@
-// 聚焦项目时的主区：铭牌、成员表、最近动态、写信框。
+// 聚焦项目时的主区：铭牌、成员表、最近动态、写信框。项目里一个预设都没有时，成员表换成空状态（设计稿 5.3）。
 import { html, projTitle, Pill, Lamp, Tex, Contour, pad2, clockS, useState, useEffect, Fragment } from "./common.js";
 import * as api from "../api.js";
 import { toItems, clipText } from "../lib/messages.js";
@@ -221,16 +221,23 @@ export function ProjectView({ app }) {
         <span class="cross wide-only" aria-hidden="true" style="left:16px;top:10px"></span>
         <span class="cross wide-only" aria-hidden="true" style="right:10px;bottom:10px"></span>
         <div class="pv-body">
-          <section aria-label="成员" class="pv-sec">
-            <h3 class="pv-h"><span>成员</span><span class="label">MEMBERS</span><span class="pv-line" aria-hidden="true"></span><span class="mono" style="font-size:11px;font-weight:400">${pad2(members.length)}</span></h3>
-            ${members.length === 0
-              ? html`<p class="hintp">这个项目还没有常驻进程。用“新进程”选一个常驻预设开一个。</p>`
-              : html`<div class="pv-table" role="table" aria-label="团队成员">
-                  <div role="row" class="pv-row pv-head"><span role="columnheader">编号</span><span role="columnheader">成员</span><span role="columnheader">状态</span><span role="columnheader">正在做</span><span role="columnheader" style="text-align:right">上下文</span></div>
-                  ${members.map((e, i) => html`<${MemberRow} key=${e.id} app=${app} e=${e} n=${i + 1} sel=${target?.id === e.id} onSel=${() => setPicked(e.id)} />`)}
-                </div>`}
-          </section>
-          <${Activity} app=${app} items=${items} />
+          ${p.presets.length === 0 && p.entries.length === 0
+            ? html`<section aria-label="还没有预设" class="pv-sec pv-empty">
+                <p class="hintp">这个项目还没有预设。开进程前要先建一个。</p>
+                <${Pill} kind="accent" icon="plus" label="新建预设" onClick=${(/** @type {Event} */ e) => app.openDialog("newpreset", /** @type {Element} */ (e.currentTarget))} />
+              </section>`
+            : html`<${Fragment}>
+              <section aria-label="成员" class="pv-sec">
+                <h3 class="pv-h"><span>成员</span><span class="label">MEMBERS</span><span class="pv-line" aria-hidden="true"></span><span class="mono" style="font-size:11px;font-weight:400">${pad2(members.length)}</span></h3>
+                ${members.length === 0
+                  ? html`<p class="hintp">这个项目还没有常驻进程。用“新进程”选一个常驻预设开一个。</p>`
+                  : html`<div class="pv-table" role="table" aria-label="团队成员">
+                      <div role="row" class="pv-row pv-head"><span role="columnheader">编号</span><span role="columnheader">成员</span><span role="columnheader">状态</span><span role="columnheader">正在做</span><span role="columnheader" style="text-align:right">上下文</span></div>
+                      ${members.map((e, i) => html`<${MemberRow} key=${e.id} app=${app} e=${e} n=${i + 1} sel=${target?.id === e.id} onSel=${() => setPicked(e.id)} />`)}
+                    </div>`}
+              </section>
+              <${Activity} app=${app} items=${items} />
+            </${Fragment}>`}
         </div>
       </div>
     </div>

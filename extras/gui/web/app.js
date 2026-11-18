@@ -722,7 +722,7 @@ function openDialog(name, anchor, props) {
   const r = el ? el.getBoundingClientRect() : null;
   if (name === "newproc" || name === "openproj" || name === "newpreset" || name === "editpreset") reloadPresets();
   // 这几个弹窗显示 key 状态：打开时重读，pi 里改了就是新的。
-  if (["openproj", "newpreset", "editpreset", "session", "switchmodel", "settings"].includes(name)) reloadModels();
+  if (["newpreset", "editpreset", "session", "switchmodel", "settings"].includes(name)) reloadModels();
   S.dialog = { name, rect: r ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom } : null, props: props ?? null };
   writeHash();
   schedule();

@@ -48,6 +48,7 @@
 .recent button:hover { background: var(--ink5); }
 .recent button.on { background: var(--sel); color: var(--ink); font-weight: 700; }
 .callout { padding: 11px 14px; background: var(--ink3); box-shadow: inset 3px 0 0 var(--acc); font-size: var(--fs-base); line-height: 1.6; }
+.usewho { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: var(--fs-sm); color: var(--fg2); }
 .fgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .toggles {
   display: inline-flex;

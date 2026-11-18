@@ -1,10 +1,10 @@
 // 预设表：预设 ID、模型、思考强度、记忆和工具、上下文文件、换段阈值、提示词、折起的高级（options）。
-// “打开项目”“新预设”“改预设”“改这个会话”共用；改预设和改这个会话时预设 ID 只读。
+// “新预设”“改预设”“改这个会话”共用；改预设和改这个会话时预设 ID 只读。新建时不常动的字段折在“更多设置”里（设计稿 7.6）。
 // 改这个会话（`session`）：`orig` 是 `inspect` 读到的会话快照，工作目录也能改，字段旁标生效的时间。
 import { html, Icon, Pill, useEffect, useState, Fragment } from "./common.js";
 import { tools as loadTools, agentsMd as loadAgentsMd } from "../api.js";
 import { ModelPicker, ThinkingBar, thinkingFor } from "./modelpicker.js";
-import { AGENTS_FILE, buildCreate, buildUpdate, contextText, CONTEXT_MAX, convertGate, defaultModelRef, findModel, hasAgents, nearestLevel, parseContext, withAgents } from "../lib/models.js";
+import { AGENTS_FILE, buildCreate, buildUpdate, contextText, CONTEXT_MAX, convertGate, defaultModelRef, findModel, hasAgents, moreSummary, nearestLevel, parseContext, withAgents } from "../lib/models.js";
 import { buildSession, EFFECT, EFFECT_TEXT } from "../lib/session.js";
 import { groupByServer, withGroup } from "../lib/mcp.js";
 import { formatBytes } from "../lib/format.js";
@@ -23,7 +23,7 @@ export function useAgentsInfo(workdir) {
   useEffect(() => {
     if (workdir === "") return;
     let alive = true;
-    // 打开项目时路径是一个字一个字敲的：等一下再查。
+    // 改这个会话时工作目录是一个字一个字敲的：等一下再查。
     const t = setTimeout(
       () =>
         loadAgentsMd(workdir).then(
@@ -165,12 +165,16 @@ export function Eff({ field }) {
 }
 
 /**
- * @param {{ form: ReturnType<typeof usePresetForm>, app: import("../app.js").App, placeholder?: string, promptHint?: string, toolsExtra?: any }} p
+ * @param {{ form: ReturnType<typeof usePresetForm>, app: import("../app.js").App, placeholder?: string, promptHint?: string, toolsExtra?: any, compact?: boolean, idExtra?: any }} p
  * `toolsExtra` 是工具区底下多放的一块（改这个会话时的“重读工具定义”）。
+ * `compact` 只在新建时用：ID、模型、提示词之外的字段折进“更多设置”。字段里有填错的，自动展开。`idExtra` 放在预设 ID 的下面。
  */
-export function PresetFields({ form, app, placeholder = "my-project", promptHint = "这个项目 Agent 是做什么的", toolsExtra = null }) {
+export function PresetFields({ form, app, placeholder = "my-project", promptHint = "这个项目 Agent 是做什么的", toolsExtra = null, compact = false, idExtra = null }) {
   const { memory, toggle, tools, orig, session } = form;
   const edit = !!orig;
+  const [more, setMore] = useState(false);
+  const folded = compact && !edit && !session;
+  const moreOpen = !folded || more || !form.create().ok;
   const info = findModel(app.models?.providers, form.model)?.model ?? null;
   /** @param {string} f */
   const eff = (f) => (session ? html`<${Eff} field=${f} />` : null);
@@ -208,17 +212,13 @@ export function PresetFields({ form, app, placeholder = "my-project", promptHint
       // 提示已经弹了，可以手写路径。
     }
   };
-  return html`<${Fragment}>
-    <label class="field">预设 ID，也是文件名
+  const idField = html`<label class="field">预设 ID，也是文件名
       ${edit
         ? html`<span class="input mono ro" role="textbox" aria-readonly="true" aria-label="预设 ID，不能改">${orig.id}</span>`
         : html`<input class="input mono" type="text" value=${form.id} placeholder=${form.suggest || placeholder} onInput=${(/** @type {any} */ e) => form.setId(e.currentTarget.value)} />`}
-    </label>
-    ${session && html`<div class="field"><span class="fl">工作目录${eff("workdir")}</span>
-      <div class="pathrow"><input class="input mono" type="text" value=${form.workdirText} aria-label="工作目录" onInput=${(/** @type {any} */ e) => form.setWorkdirText(e.currentTarget.value)} /><${Pill} label="选文件夹" onClick=${pickWorkdir} /></div>
-    </div>`}
-    <${ModelPicker} app=${app} value=${form.model} onPick=${form.pickModel} tag=${eff("model")} />
-    <${ThinkingBar} levels=${info === null ? null : info.thinking} value=${form.thinking} onChange=${form.setThinking} note=${form.note} tag=${eff("thinking")} />
+    </label>`;
+  const promptField = html`<label class="field"><span class="fl">提示词${edit ? "" : "（可以以后在编辑器里补）"}${eff("prompt")}</span><textarea class="input" rows=${edit ? 7 : 3} value=${form.prompt} onInput=${(/** @type {any} */ e) => form.setPrompt(e.currentTarget.value)} placeholder=${promptHint}></textarea></label>`;
+  const restFields = html`<${Fragment}>
     <div class="twocol">
       <div class="field">记忆
         <div class="toggles" role="group" aria-label="记忆"><button type="button" class="toggle" aria-pressed=${memory} onClick=${() => !memory && toggle("memory")}>带</button><button type="button" class="toggle" aria-pressed=${!memory} onClick=${() => memory && toggle("memory")}>不带</button></div>
@@ -252,7 +252,8 @@ export function PresetFields({ form, app, placeholder = "my-project", promptHint
       <input class="input mono" style="max-width:240px" type="text" inputmode="numeric" value=${form.handoff} placeholder="不填就按窗口自己定" onInput=${(/** @type {any} */ e) => form.setHandoff(e.currentTarget.value)} />
     </label>
     <${ContextField} form=${form} />
-    <label class="field"><span class="fl">提示词${edit ? "" : "（可以以后在编辑器里补）"}${eff("prompt")}</span><textarea class="input" rows=${edit ? 7 : 3} value=${form.prompt} onInput=${(/** @type {any} */ e) => form.setPrompt(e.currentTarget.value)} placeholder=${promptHint}></textarea></label>
+</${Fragment}>`;
+  const tailFields = html`<${Fragment}>
     <${LegacyRow} form=${form} />
     <div class="adv">
       <button type="button" class="adv-h" aria-expanded=${form.advanced} onClick=${() => form.setAdvanced(!form.advanced)}><span class="kicker">高级</span><span class="dim" style="font-size:12px">options</span><span class="sep"></span><${Icon} name=${form.advanced ? "up" : "down"} size=${13} sw=${2.8} /></button>
@@ -261,6 +262,24 @@ export function PresetFields({ form, app, placeholder = "my-project", promptHint
         ${optErr !== "" && html`<span class="dnote" style="color:var(--warn);font-size:11.5px">${optErr}</span>`}
       </label>`}
     </div>
+</${Fragment}>`;
+  return html`<${Fragment}>
+    ${idField}
+    ${folded && idExtra}
+    ${session && html`<div class="field"><span class="fl">工作目录${eff("workdir")}</span>
+      <div class="pathrow"><input class="input mono" type="text" value=${form.workdirText} aria-label="工作目录" onInput=${(/** @type {any} */ e) => form.setWorkdirText(e.currentTarget.value)} /><${Pill} label="选文件夹" onClick=${pickWorkdir} /></div>
+    </div>`}
+    <${ModelPicker} app=${app} value=${form.model} onPick=${form.pickModel} tag=${eff("model")} />
+    <${ThinkingBar} levels=${info === null ? null : info.thinking} value=${form.thinking} onChange=${form.setThinking} note=${form.note} tag=${eff("thinking")} />
+    ${folded
+      ? html`<${Fragment}>
+          ${promptField}
+          <div class="adv">
+            <button type="button" class="adv-h" aria-expanded=${moreOpen} onClick=${() => setMore(!more)}><span class="kicker">更多设置</span><span class="dim ell" style="font-size:12px">${moreOpen ? "" : moreSummary(tools, form.ctx)}</span><span class="sep"></span><${Icon} name=${moreOpen ? "up" : "down"} size=${13} sw=${2.8} /></button>
+          </div>
+          ${moreOpen && html`<${Fragment}>${restFields}${tailFields}</${Fragment}>`}
+        </${Fragment}>`
+      : html`<${Fragment}>${restFields}${promptField}${tailFields}</${Fragment}>`}
   </${Fragment}>`;
 }
 

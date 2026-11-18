@@ -170,6 +170,21 @@ export function activityAt(e, lastAt) {
 }
 
 /**
+ * 新进程弹窗默认选中的预设：调用方指定的（要在可选的里面）；否则这个项目里最近有动静的进程的预设（也要在可选的里面）；再没有取第一个。一个可选的都没有是 null。
+ * @param {readonly { id: string }[]} choices 这个项目里能选的预设
+ * @param {readonly Entry[]} entries 这个项目的进程
+ * @param {Record<string, number>} lastAt
+ * @param {string | undefined} asked
+ * @returns {string | null}
+ */
+export function defaultPreset(choices, entries, lastAt, asked) {
+  const has = (/** @type {string} */ id) => choices.some((p) => p.id === id);
+  if (asked !== undefined && has(asked)) return asked;
+  const recent = entries.filter((e) => has(e.preset)).sort((a, b) => activityAt(b, lastAt) - activityAt(a, lastAt))[0];
+  return recent?.preset ?? choices[0]?.id ?? null;
+}
+
+/**
  * 常驻预设的当前进程：界面数据记的（进程还在才算），否则取最近有动静的。没有进程是 null。
  * @param {string} presetId
  * @param {Entry[]} entries

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { activityAt, applyFilter, attention, buildEntries, buildProjects, classify, currentOf, filterCounts, indexPresets, projectView, railSections, seenFromInspect } from "../../../extras/gui/web/lib/derive.js";
+import { activityAt, applyFilter, attention, buildEntries, buildProjects, classify, currentOf, defaultPreset, filterCounts, indexPresets, projectView, railSections, seenFromInspect } from "../../../extras/gui/web/lib/derive.js";
 import { formatAgo, formatBytes, formatClock, formatContext, formatDuration, formatElapsed } from "../../../extras/gui/web/lib/format.js";
 import { applyEnd, applyMessage, applyPushed, emptyHistory, giveUp, known, lastTimestamp, noteSelf, plan, segmentMessages } from "../../../extras/gui/web/lib/history.js";
 import { canHandoff, CARRY_HEADER, describeNow, describeStart, foldMiddle, forkPoints, HANDOFF_HEADER, parseUser, phaseStartedAt, summarizeCall, toItems, turnStart } from "../../../extras/gui/web/lib/messages.js";
@@ -11,7 +11,7 @@ import { allProcs, childCounts, emptyStore, reduce, streamingLive, streamingText
 import { extractTitle, processTitle } from "../../../extras/gui/web/lib/titles.js";
 import { appendDelta, argsPreview, ARGS_KEEP, tailLines } from "../../../extras/gui/web/lib/stream.js";
 import { newPace, paceArrive, paceStep } from "../../../extras/gui/web/lib/pace.js";
-import { buildCreate, buildUpdate, contextText, CONTEXT_MAX, convertGate, convertPatch, defaultModelRef, filterCatalog, findModel, formatWindow, hasAgents, keyActions, keyHint, keyLabel, modelPatch, nearestLevel, parseContext, parseOptions, pushRecent, recentEntries, sortProviders, splitModel, withAgents } from "../../../extras/gui/web/lib/models.js";
+import { buildCreate, buildUpdate, contextText, CONTEXT_MAX, convertGate, convertPatch, defaultModelRef, filterCatalog, findModel, formatWindow, hasAgents, keyActions, keyHint, keyLabel, modelPatch, nearestLevel, parseContext, parseOptions, pushRecent, recentEntries, sortProviders, splitModel, suggestId, moreSummary, withAgents } from "../../../extras/gui/web/lib/models.js";
 import { markdownToHtml, safeHref } from "../../../extras/gui/web/lib/markdown.js";
 import { firstLine, lastReply, notifyText, shouldNotify, tabTitle, trackResults, unseenCount, watchAttention } from "../../../extras/gui/web/lib/notify.js";
 import { buildSession, EFFECT, EFFECT_TEXT, hasStructural, isStructural, needsInspect, pendingOf, pendingText, receiptNote, reloadFields, sessionInfo, shownErr } from "../../../extras/gui/web/lib/session.js";
@@ -1567,4 +1567,33 @@ test("api: inspect 读一个进程的记录，没有这个进程时抛服务的�
   await withFetch([{ type: "error", message: "没有这个进程：abc" }], async () => {
     await assert.rejects(apiInspect("abc"), /没有这个进程/);
   });
+});
+
+test("打开项目：文件夹名变成预设 ID 的默认值", () => {
+  assert.equal(suggestId("E:\\games\\cardGame"), "cardgame");
+  assert.equal(suggestId("E:/games/card game/"), "card-game");
+  assert.equal(suggestId("E:\\项目"), "");
+  assert.equal(suggestId("E:\\a..b_c-d"), "a..b_c-d");
+  assert.equal(suggestId("E:\\"), "e", "盘符根目录：冒号也算不合法的字");
+});
+
+test("新预设：更多设置收起时的一行摘要", () => {
+  assert.equal(moreSummary(["read", "write", "edit", "bash", "memory"], ""), "带记忆 · read write edit bash");
+  assert.equal(moreSummary(["read", "write", "edit", "bash", "memory"], "AGENTS.md"), "带记忆 · read write edit bash · 带 AGENTS.md");
+  assert.equal(moreSummary(["read"], "docs/a.md"), "不带记忆 · read");
+  assert.equal(moreSummary([], ""), "不带记忆 · 没有工具");
+  assert.equal(moreSummary(["memory"], ""), "带记忆 · 没有工具");
+  assert.equal(moreSummary(["read", "write", "edit", "bash", "agents", "shell", "wait"], ""), "不带记忆 · read write edit bash …共 7 个");
+});
+
+test("新进程：默认选中的预设，指定的 > 最近有动静的进程的预设 > 第一个", () => {
+  const choices = [{ id: "a" }, { id: "b" }, { id: "c" }];
+  const e = (id: string, preset: string, createdAt: number) => ({ id, preset, createdAt, segmentStartedAt: undefined }) as any;
+  const entries = [e("p1", "a", 100), e("p2", "b", 200), e("p3", "gone", 900)];
+  assert.equal(defaultPreset(choices, entries, {}, "c"), "c", "指定的优先");
+  assert.equal(defaultPreset(choices, entries, {}, "nope"), "b", "指定的不在可选里就当没指定");
+  assert.equal(defaultPreset(choices, entries, {}, undefined), "b", "取最近的进程；预设不在可选里的进程不算");
+  assert.equal(defaultPreset(choices, entries, { p1: 500 }, undefined), "a", "lastAt 说了算");
+  assert.equal(defaultPreset(choices, [], {}, undefined), "a", "没有进程，取第一个");
+  assert.equal(defaultPreset([], entries, {}, "a"), null, "一个可选的都没有");
 });

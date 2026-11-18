@@ -194,6 +194,22 @@ export function parseContext(text) {
 /** `AGENTS.md` 勾选管的那一项。界面只认这个文件名，不认 CLAUDE.md。 */
 export const AGENTS_FILE = "AGENTS.md";
 
+/** 文件夹名变成能当预设 ID 的字：只留字母、数字、点、下划线、连字符，其余连成一个“-”，小写。一个合法的字都没有就是空串。 @param {string} path */
+export function suggestId(path) {
+  const base = path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "";
+  return base.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase();
+}
+
+/**
+ * 新建预设时“更多设置”收起后的一行摘要：带不带记忆、有哪些工具（最多写 4 个）、带不带 AGENTS.md。
+ * @param {readonly string[]} tools @param {string} context 上下文文件框里的文字
+ */
+export function moreSummary(tools, context) {
+  const rest = tools.filter((t) => t !== "memory");
+  const names = rest.length === 0 ? "没有工具" : rest.length > 4 ? `${rest.slice(0, 4).join(" ")} …共 ${rest.length} 个` : rest.join(" ");
+  return [tools.includes("memory") ? "带记忆" : "不带记忆", names, hasAgents(context) ? "带 AGENTS.md" : ""].filter((x) => x !== "").join(" · ");
+}
+
 /** 上下文文字里有没有 `AGENTS.md` 这一行。 @param {string} text */
 export function hasAgents(text) {
   return text.split(/\r?\n/).some((l) => l.trim() === AGENTS_FILE);

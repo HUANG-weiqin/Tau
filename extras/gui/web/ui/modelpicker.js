@@ -1,4 +1,4 @@
-// 模型选择器和思考强度：新建预设、打开项目、改预设、改这个会话、换模型共用。
+// 模型选择器和思考强度：新建预设、改预设、改这个会话、换模型共用。
 // 选择器是一个字段加一块展开的面板：按供应商分组、可以搜索、顶上是最近用过的；每行写窗口、能不能收图、支持的思考级别。
 import { html, Icon, useState, useEffect, useRef, Fragment } from "./common.js";
 import { LEVELS, filterCatalog, findModel, formatWindow, keyHint, keyLabel, nearestLevel, recentEntries, sortProviders } from "../lib/models.js";
