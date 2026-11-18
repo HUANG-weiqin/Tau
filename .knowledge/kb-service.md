@@ -1,10 +1,10 @@
 # 服务与 CLI
 
-`updated: 2026-11-16`
+`updated: 2026-11-18`
 
 ## 这个模块是干什么的
 
-服务是 `tau serve` 这个常驻进程。它持有单实例锁，打开库，做启动恢复，再用一个同步的 `pump` 推进全部进程。CLI 是它自己的客户端；协议还有 `history`、`watch`、`fork`、`inspect`、`check`、`memory`、`memory_write` 和三个删除（`prune`、`remove`、`sweep`），给上层用。
+服务是 `tau serve` 这个常驻进程。它持有单实例锁，打开库，做启动恢复，再用一个同步的 `pump` 推进全部进程。CLI 是它自己的客户端；协议还有 `history`、`watch`、`fork`、`inspect`、`check`、`memory`、`memory_write`、三个删除（`prune`、`remove`、`sweep`）、`reconfigure` 和 `backup`，给上层用。
 
 它负责：
 
@@ -18,6 +18,8 @@
 - 图片：`start`、`send` 的入口检查，`blob` 请求。
 - `fork`：请求的参数、什么时候拒绝、回执和订阅的推送。复制什么在[纯函数层](kb-kernel.md#fork)。
 - 删除：`prune`、`remove`、`sweep` 的请求、拒绝、回执和 `removed` 推送。
+- `reconfigure`：请求的参数、校验、怎样造出新快照、回执的 `pending`。输入怎样处理在[纯函数层](kb-kernel.md#流程会话配置reconfigure)。
+- `backup`：请求、校验、回执，和同步执行的代价。
 - CLI 的命令、输出、退出码，以及“结果未知”。
 - `tau ps` 的文字格式。
 - 启动脚本 `tau.cmd`、入口 `src/main.ts`、正常退出。
@@ -69,10 +71,11 @@ pump()
 | 启动恢复 | `serve()` 末尾 |
 | `start`、`send` | `awaitFinal` 发完回执、登记观察者之后 |
 | `stop` | 发完回执之后 |
+| `reconfigure` | 提交之后、发回执之前：回执的 `pending` 要在 `pump` 处理完以后才读 |
 | 动作结束（`complete`） | `run.then(pump)` |
 | 库内工具的结果 | 同一个 `handleNext` 循环接着处理 |
 
-- `ps`、`inspect`、`check`、`memory`、`memory_write` 不调用 `pump`。`prune`、`remove`、`sweep` 也不调用：不放输入。
+- `ps`、`inspect`、`check`、`memory`、`memory_write` 不调用 `pump`。`prune`、`remove`、`sweep` 也不调用：不放输入。`backup` 也不调用：它不是输入，不改任何状态。
 - `fatal`：动作的 promise 被拒绝（例如 `complete` 写库失败）时，打印“tau 服务遇到无法继续的错误，退出。重启时会恢复。”，退出码 1。服务正在关闭时忽略。
 
 ### 观察者和最终回复
@@ -111,7 +114,7 @@ pump()
 
 - 订阅表 `Set<{ socket, process, messages, limit }>`，只在内存里，和观察者表分开。`settle` 不看它。
 - 订阅时先推快照：带 `process` 时推它的一条 `update`，不带时按进程 ID 推每个进程的 `update`。快照和登记在同一个同步调用里，所以先 `ps` 再 `watch` 不会漏。
-- `update` 只有 `self` 部分，不带兄弟和子进程。它由 `observe(新记录, 新段, [新记录], now)` 算出，用的是 `handleNext` 返回的 `process` 和 `segment`，不再读库。
+- `update` 只有 `self` 部分，不带兄弟和子进程。它由 `observe(新记录, 新段, [新记录], now)` 算出，用的是 `handleNext` 返回的 `process` 和 `segment`，不再读库。有待换配置时，`self.pending` 带着，所以界面不用反复 `inspect` 就知道有（D71，[kb-kernel 的投影](kb-kernel.md#投影与命令)）。
 - 每次 `handleNext` 处理了某个进程的输入，`pump` 给订阅它的连接（或订阅全部的连接）推这个进程的 `update`。没有订阅时不算。
 - 带 `messages: true`（D64 第 5 组）的订阅，每推一条 `update`，接着推这次追加进段的消息，每条一行 `message`，带 `process`、`segment`、`seq`（和 `history` 的行同形，多一个 `process`）。顺序固定：先 `update`，后它之前追加的消息，所以 `update.messages` 已经把这些消息数在内。
   - 数据来自 `handleNext` 返回的 `appended`，不读库。换段时 `segment` 是新段号、`seq` 从 0 推起；旧段在换段前已推完。
@@ -134,7 +137,7 @@ pump()
 
 `inspect`（可选的 `process`）：
 
-- 每个进程一行 `process`：`process` 是库里存的进程记录，原样、不经 `observe`，出错的原因不截短；`messages` 是当前段的条数；`limits` 是按这个进程冻结的快照算的 `Limits`。最后一行 `inspected`（进程个数、`now`），然后关闭。没收到 `inspected` 就断开，是没读完。
+- 每个进程一行 `process`：`process` 是库里存的进程记录，原样、不经 `observe`，出错的原因不截短；`messages` 是当前段的条数；`limits` 是按这个进程现在的会话快照（`preset`，不是待换的 `next`）算的 `Limits`，含 `contextMax`。有待换配置时，`process` 里带着 `next`，界面靠它显示待换的内容；`watch` 的 `update` 里只有 `self.pending`（差在哪些字段），没有 `next` 本身。最后一行 `inspected`（进程个数、`now`），然后关闭。没收到 `inspected` 就断开，是没读完。
 - 不带 `process` 时回全部进程，按 ID 升序。带 `process` 时一行加结束行；没有这个进程回 `error`，没有结束行。没有任何进程时只有结束行。
 - 记录和条数在同一个同步调用里读，中间不会处理别的输入，所以它们是同一刻的。条数只数当前段（`COUNT`），不读消息。记录加上 `history` 读这一段的前 `messages` 条，就是那一刻的状态。
 - 逐行写，不拼成一个大串。`watch` 不推原样记录：体积大、频率高。要详情就按需 `inspect`。
@@ -142,9 +145,9 @@ pump()
 `check`（`preset`）：
 
 - 用 `start`、`fork`、`spawn` 同一个读预设的函数（`loadPreset`，含工具定义）。读不出，回 `error`，文字和 `start` 一字不差。
-- 读得出，回一行 `check`：`snapshot` 是此刻文件读成的快照，`limits` 是它的限度，`error` 是 `startError` 的原文，`null` 表示此刻能启动。然后关闭。
+- 读得出，回一行 `check`：`snapshot` 是此刻文件读成的快照（含声明的 `context`，不查文件在不在），`limits` 是它的限度，`error` 是 `startError` 的原文，`null` 表示此刻能启动。然后关闭。
 - 不读库，不开事务。它只描述此刻的文件；已有进程的限度看 `inspect` 的 `limits`。
-- 契约：读预设时的任何拒绝，只许加在 `loadPreset`、`loadToolDefs`、`startError` 里。这样 `check` 和 `start` 永远一致。
+- 契约：读预设时的任何拒绝，只许加在 `loadPreset`（含它拆出的 `parsePresetFile`、`buildPreset`）、`loadToolDefs`、`startError` 里。这样 `check`、`start` 和 `reconfigure` 永远一致。
 
 ### 调用方定的 ID 和以谁的名义寄信
 
@@ -189,7 +192,20 @@ type Request =
   | { op: "memory_write"; ops: MemoryOp[] }            // 整批一个事务
   | { op: "prune"; process: string; before: number }   // 删段号小于 before 的旧段
   | { op: "remove"; process: string }                  // 删一个空闲、没人引用的进程
-  | { op: "sweep" };                                   // 清掉没人引用的图片
+  | { op: "sweep" }                                    // 清掉没人引用的图片
+  | { op: "reconfigure"; process: string; fields?: ReconfigureFields; revert?: true } // 改这个会话的快照；fields 和 revert 恰好给一个
+  | { op: "backup"; path: string };                    // 把整个库复制成一个文件
+
+interface ReconfigureFields {   // 至少一个键；值 null 表示删掉这个键
+  model?: string;               // <供应商>/<模型 ID>
+  tools?: string[];             // 名字和预设文件 tools: 一行里的一样
+  thinking?: ThinkingLevel | null;
+  handoff?: number | null;      // 正整数
+  options?: object | null;
+  prompt?: string;
+  workdir?: string;             // Windows 绝对路径
+  context?: string[] | null;
+}
 
 type Reply =
   | { type: "receipt"; process: string }                    // 命令的事务提交之后；fork 的回执带新进程的 ID
@@ -209,6 +225,8 @@ type Reply =
   | { type: "update"; self: Projection["self"] }            // watch 的快照和增量
   | { type: "removed"; process: string }                    // watch 推送：这个进程已删
   | { type: "swept"; blobs: number }                        // sweep 删掉的图片行数
+  | { type: "reconfigured"; process: string; pending: boolean } // reconfigure 的回执：处理完以后这个进程有没有待换配置
+  | { type: "backed_up"; path: string; bytes: number }      // backup 的回执：文件路径和字节数
   | { type: "error"; message: string };
 ```
 
@@ -229,6 +247,8 @@ type Reply =
 | `prune` | `pruneSegments`（见[删除](#删除)） | `receipt`，然后关闭；拒绝回 `error` |
 | `remove` | 查执行器 `busy`，再 `removeProcess`；提交之后推 `removed`，再回执 | `receipt`，然后关闭；拒绝回 `error` |
 | `sweep` | `sweepBlobs` | 一行 `swept`，然后关闭；拒绝回 `error` |
+| `reconfigure` | 读进程记录，造新快照，`startError`，放进信箱，`pump`（见[会话配置](#会话配置reconfigure)） | 一行 `reconfigured`，然后关闭；出错回 `error`，什么都不改 |
+| `backup` | `VACUUM INTO` 到 `path`（见[备份](#备份backup)）。同步，不开写事务，不调用 `pump` | 一行 `backed_up`，然后关闭；出错回 `error` |
 | 处理时抛出 | — | 一行 `error`，然后关闭 |
 
 - `start` 和 `send` 走同一条路径：提交，然后 `awaitFinal`（发回执、登记观察者、`pump`）。
@@ -246,7 +266,7 @@ type Reply =
 
 - 每个连接只读第一行。`\r\n` 算一个换行。
 - 不是合法 JSON：`error`，内容是 `JSON.parse` 的错误信息。
-- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`，可选的 `handoff` 要是布尔，可选的 `from` 要是字符串，可选的 `reply` 要是布尔、而且为真时必须有 `from`；`start`、`fork` 可选的 `id` 要是字符串，匹配 `[0-9a-z][0-9a-z_-]{0,31}`（ID 原样进信头和 `self` 的文字，上层还拿它拼路径）；`stop` 要字符串 `process`；`fork` 要字符串 `process`，可选的 `before` 要是非负整数，可选的 `preset` 要是字符串；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`blob` 要字符串 `hash`；`start`、`send` 的 `images` 可以没有，有就要是字符串数组；`watch`、`inspect` 的 `process` 可以没有，有就要是字符串；`check` 要字符串 `preset`；`memory` 的 `ns` 可以没有，有就要是字符串、过预设 ID 的检查（不合法回“预设 ID 不合法：<ns>”）；`memory_write` 要非空数组 `ops`，每项是上面的两种形状之一，每项的 `ns` 也过预设 ID 的检查；`prune` 要字符串 `process`、非负整数 `before`；`remove` 要字符串 `process`；`sweep` 不要字段。否则 `error`：“无法识别的请求：<原文>”。
+- 必须是带 `op` 的对象，字段类型要对：`start` 要字符串 `preset`、`text`；`send` 要字符串 `process`、`text`，可选的 `handoff` 要是布尔，可选的 `from` 要是字符串，可选的 `reply` 要是布尔、而且为真时必须有 `from`；`start`、`fork` 可选的 `id` 要是字符串，匹配 `[0-9a-z][0-9a-z_-]{0,31}`（ID 原样进信头和 `self` 的文字，上层还拿它拼路径）；`stop` 要字符串 `process`；`fork` 要字符串 `process`，可选的 `before` 要是非负整数，可选的 `preset` 要是字符串；`history` 要字符串 `process`，可选的 `segment`、`from` 要是非负整数；`blob` 要字符串 `hash`；`start`、`send` 的 `images` 可以没有，有就要是字符串数组；`watch`、`inspect` 的 `process` 可以没有，有就要是字符串；`check` 要字符串 `preset`；`memory` 的 `ns` 可以没有，有就要是字符串、过预设 ID 的检查（不合法回“预设 ID 不合法：<ns>”）；`memory_write` 要非空数组 `ops`，每项是上面的两种形状之一，每项的 `ns` 也过预设 ID 的检查；`prune` 要字符串 `process`、非负整数 `before`；`remove` 要字符串 `process`；`sweep` 不要字段；`reconfigure` 和 `backup` 的校验见下面各自一节。否则 `error`：“无法识别的请求：<原文>”。
 - 只查类型。空串能通过，多余的字段被忽略。空预设 ID 由 `loadPreset` 拒绝；空消息会成为一条用户消息。CLI 不发空消息。
 - 预设读不出、进程不存在、进程 ID 冲突，都回 `error`。这些情况下库里什么都没写。
 
@@ -262,6 +282,66 @@ type Reply =
   - 删的时候没有观察者在等它：它是 `idle`，信箱里没有它的输入，`settle` 已经发过最终回复。
 - `sweep`：提交之后回一行 `swept`（`blobs` 是删掉的行数），然后关闭。它扫全库，期间服务停着不处理别的事。上层批量清理完再调一次。
 - ID 复用：`remove` 以后，这个 ID 可能被新进程碰上。无害：删之前已经确认没有任何地方引用它，执行器也没有它的动作（D59）。
+
+### 会话配置（`reconfigure`）
+
+[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)。改一个进程的会话快照：只改这个会话，不碰预设文件，不碰别的会话。输入怎样被处理、哪些字段立即生效、哪些等换段，见[纯函数层](kb-kernel.md#流程会话配置reconfigure)。服务做的是校验、造出完整的新快照 S、放进信箱。
+
+请求 `{ op: "reconfigure", process, fields?, revert? }`：
+
+- `fields` 的键：`model`（`<供应商>/<模型 ID>`）、`tools`（字符串数组）、`thinking`（思考级别，或 `null` 删掉）、`handoff`（正整数，或 `null`）、`options`（对象，或 `null`）、`prompt`（字符串）、`workdir`（Windows 绝对路径）、`context`（字符串数组，或 `null`）。`null` 表示删掉这个键。
+- `fields` 和 `revert` 恰好给一个。`fields` 至少一个键。`revert: true` 表示放弃待换的配置，S 就是当前的快照；`revert` 给别的值也报错。
+- 请求本身的拒绝（`parseRequest` 里，在碰库之前），原文如下，都什么都不改：
+
+| 情形 | `error` 的原文 |
+|---|---|
+| `fields` 和 `revert` 都没给、都给了，或者 `revert` 不是 `true` | `reconfigure 要带 fields 或者 revert: true，恰好一个` |
+| `fields` 不是对象、是数组或 `null`、或者没有键 | `reconfigure 的 fields 必须是至少一个键的对象` |
+| 有 `id` | `id 不能改：它是记忆库的 ID，换角色用 fork 带 preset` |
+| 不认识的键 | `reconfigure 的 fields 里没有这个键：<键>` |
+| 值的形状不对：`model`、`prompt`、`workdir` 要字符串；`tools` 要字符串数组；`thinking` 要字符串或 `null`；`handoff` 要数字或 `null`；`options` 要对象（不是数组）或 `null`；`context` 要字符串数组或 `null` | `reconfigure 的 fields.<键> 类型不对` |
+| `tools` 超过 128 项（`TOOLS_FIELD_MAX`，按请求里的个数算，重复的也计） | `reconfigure 的 fields.tools 最多 128 项：现在有 <n> 项` |
+| `process` 不是字符串 | `无法识别的请求：<原文>` |
+
+- `tools` 的个数设了上限：每个名字都要读一个工具定义文件，请求里的个数不能不设限。上限在读文件之前查，所以几万个名字的请求立刻回 `error`。预设文件里 `tools:` 一行不受这个上限限制（那是用户自己写的文件），读它的函数去重用集合，名字多也不慢。
+- 形状对、值不合格的，由读预设的同一套函数拒绝（`presets/load.ts` 的 `buildPreset`、`callParams`、`parseContext`），文字和 `start`、`check` 读文件时一字不差。因为快照 S 是按预设字段造的，文字里写的是“预设 <预设 ID> 的……”，指的就是这个会话的快照。例如：`预设 <id> 的 thinking 只能是 minimal, low, medium, high, xhigh, max：<值>`、`预设 <id> 的 handoff 必须是正整数（token）：<值>`、`模型目录里没有 <模型>`、`预设 <id> 的工作目录不存在：<路径>`，`context` 的写法错误见[设计稿第 2 节](../docs/design/mvp.md#2-预设)。`options` 过白名单和大小上限（[kb-kernel](kb-kernel.md#预设选项)）。
+
+回执 `{ type: "reconfigured", process, pending }`：`pending` 是提交并 `pump` 之后，这个进程的记录里有没有 `next`。出错回 `{ type: "error", message }`，什么都不改，所以界面不需要回滚。
+
+流程，仿 `stop` 和 `fork`，同步做完，中间没有 `await`：
+
+1. 读进程记录。没有这个进程回 `error`。
+2. `target = record.next ?? record.preset`：以待换的为底，没有就以当前的为底。
+3. 造新快照 S：
+   - `revert`：S 是 `record.preset`（当前的）。
+   - `fields` 的键都在 `thinking`、`options`、`handoff` 里：S 是 `target` 的拷贝，只改这几个键（`null` 用解构去键，不置 `undefined`）。不重读文件，不查模型目录，也不查工作目录还在不在。
+   - 有结构性字段：先把 `target` 还原成预设字段（`presetFields(snapshot)`：`tools` 是内置工具名加 `toolDefs` 的名字，再加 `prompt`、`model`、`thinking`、`handoff`、`options`、`workdir`、`context`），套上 `fields`，调用 `buildPreset`（`loadPreset` 的后半：重新读工具定义文件、查模型目录、全部校验），得到 S。没改的字段也一起重新校验：工作目录要还存在，模型要还在目录里，工具定义要还读得出。这一步就是“工具定义的手动刷新”：想让进程用上重新保存过的工具定义，就把现在的 `tools` 原样发一次。
+   - `null` 删掉这个键。`options: {}` 和 `context: []` 等同 `null`：这两个键空的时候都不进快照。`thinking`、`handoff`、`options` 删了，就没有这个键，不是 `undefined`。
+4. 两份快照都要过 `startError`，任何一份不过就回 `error`：S，和立即生效的那份（当前快照带上 S 的三个调用参数，`withCallParams(record.preset, S)`）。S 先查，原文不变。立即生效的那份不过时，原文前面加 `当前配置带上新的调用参数就过不了启动检查：`。两份不同，是因为有待换配置（或者 S 的结构性字段要等换段才生效）时，调用参数立即套在当前快照上，而 S 是另一份结构；只查 S，当前快照可能被套上一个让它自己过不了启动检查的 `handoff`。没有结构性差别时两份相同，只是重复查一次。
+5. 一个事务把 `{ kind: "reconfigure", preset: S }` 放进这个进程的信箱（`send`，[kb-store](kb-store.md#会话配置的输入)），提交。然后 `pump()`，再同步读一次记录，回执。不用 `awaitFinal`：`reconfigure` 不开轮，没有最终回复可等。
+
+- 空闲的进程不会被唤醒：回执之后阶段还是 `idle`，段里没有新消息。
+- `pump` 处理它时，照常给订阅的连接推这个进程的 `update`。
+- `pending` 只说现在有没有待换配置，不说什么时候采用。`false` 有几种：只改了调用参数；满足直接采用的条件（空闲、段里没有助手消息，新模型收图或段里没有图，并且段放得下新快照），已经直接采用；`revert` 取消了；S 和当前的一样。要分清，读 `inspect`。段里有图而新模型不收图、或者段放不进新快照（比如窗口换小，几条很长的用户消息已经到了新阈值）时不直接采用，回 `true`，换段时才采用。
+- 信箱里还排着没处理的旧 `reconfigure` 时，新的以现在的记录为底造 S，不看排着的。两条都处理以后，后处理的赢，可以接受。
+- S 在服务里算，不在 `decide` 里：重读文件和查目录是 I/O，纯函数层不做。放弃的别的做法见 [D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)。
+- CLI 不加这个命令：CLI 冻结在 v1，上层（界面）直接发协议请求。
+
+### 备份（`backup`）
+
+[D73](kb-decisions.md#d73-backup-请求)。把整个库复制成一个文件，请求 `{ op: "backup", path }`，回执 `{ type: "backed_up", path, bytes }`。
+
+- `path` 的校验（`parseRequest` 里，在碰库之前）：字符串，1 到 1024 个字符，不含控制字符，是 Windows 绝对路径（盘符或 UNC，和 `workdir` 一样）。空串、`:memory:`、`file:` 开头的不许：它们在 SQLite 里不是普通的文件路径，也不是 Windows 绝对路径，所以一并被拒。以空格或点结尾的也不许（Windows 会悄悄去掉它们，文件名对不上）；第 2 个字符之后不许再有冒号（`C:\x.db:s` 是 NTFS 的备用数据流，`\\?\C:\x` 这样的设备路径也在这条里被拒）。拒绝的原文，按这个顺序查：`备份路径要 1 到 1024 个字符：现在是 <n> 个`、`备份路径不能含控制字符`、`备份路径必须是 Windows 绝对路径（盘符或 UNC）：<路径>`、`备份路径不能以空格或点结尾：<路径>`、`备份路径里盘符之后不能再有冒号（备用数据流）：<路径>`。`path` 不是字符串、没给，回 `无法识别的请求：<原文>`。
+- 做法：`VACUUM INTO ?` 到这个路径，同步；然后取目标文件的大小，作为 `bytes`。它不是输入，不改任何状态，不开写事务，不调用 `pump`，和 `sweep` 是同一类的请求分支。服务不先查目标存不存在，目标的情形全由 SQLite 判断。
+- 出错回 `error`，文字是 SQLite 的原文：目录不存在、写不了（例如 `unable to open database file`）；目标情形见下。
+- 目标已经存在时，行为取决于它是什么，这是 SQLite 的行为，不是服务定的：
+  - 目标是一个已有的库：SQLite 拒绝，原文 `output file already exists`，文件不动。
+  - 目标是别的、非空的文件：SQLite 先认出它不是库，原文 `file is not a database`，文件不动。
+  - 目标是一个已存在的 0 字节文件：SQLite 接受并覆盖它，回 `backed_up`。**这是已知的细节**：服务不拦。上层脚本用带时间的新文件名，不会撞上它。
+- `PRAGMA user_version` 保留在备份里（Node 24.22 上实测），所以备份文件能直接当库打开，版本检查照常。
+- 代价：同步执行，期间整个服务不处理别的输入，时间和库的大小成正比。要定在没人用的时候，例如每天夜里一次的计划任务（[kb-extras 的备份](kb-extras.md#备份)）。
+- 库外的东西不在备份里：预设、工具定义、`extras/` 的数据，要另外复制（[kb-store](kb-store.md#位置)）。
+- CLI 不加这个命令：CLI 冻结在 v1，上层脚本直接连管道发请求（[kb-extras 的备份](kb-extras.md#备份)）。
 
 ### 图片
 
@@ -394,12 +474,14 @@ tau stop <进程>
 | 进程 ID 是 8 个十六进制字符；撞上就回 `error`，不重试 | 短，好敲 |
 | CLI 打印流式文本；没收到流式文本时，才打印最终回复 | 同一段文字不打印两次。代价：屏幕上的字不一定是库里的最终回复（见[坑点](#坑点)） |
 | `main.ts` 走 CLI 时不加载服务的模块 | CLI 只依赖协议（[设计稿第 3 节](../docs/design/mvp.md#3-总体结构)） |
+| `reconfigure` 的新快照在服务里算好，`decide` 只比较和采用 | 重读工具定义文件、查模型目录是 I/O，纯函数层不做；和 `start`、`check` 共用 `buildPreset`，所以拒绝的理由一致（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)） |
+| `backup` 不是输入，同步执行 | 它不改任何状态，不需要事务和 `pump`；`VACUUM INTO` 一个调用就得到一致的副本（[D73](kb-decisions.md#d73-backup-请求)） |
 
 ## 认知模型
 
 - 服务 = 一把锁（管道）+ 一个库 + 一个执行器 + 一个同步的 `pump` + 一张观察者表和一张订阅表。
 - 状态全在库里。服务内存里只有执行器的中止开关、观察者表和订阅表，崩溃后都可以丢。
-- 一个命令 = 一个事务 + 一次 `pump`。回执是服务对客户端唯一的承诺：它说的是“已提交”，不是“已处理”。
+- 一个命令 = 一个事务 + 一次 `pump`。回执是服务对客户端唯一的承诺：它说的是“已提交”，不是“已处理”。读请求和 `prune`、`remove`、`sweep`、`backup` 没有 `pump`。`reconfigure` 的回执在 `pump` 之后才发，所以它说的是处理以后的事：有没有待换配置。
 - 从零重建：`listen`、`openDb`、`createExecutor`、`pump`、`settle`、`parseRequest`，加一个只懂协议的 CLI。
 - 一次修改越界的信号：
   - 在 `pump` 之外调用 `handleNext` 或 `startNext`，或者让 `pump` 变成异步。
@@ -421,12 +503,14 @@ tau stop <进程>
 
 | 路径 | 内容 |
 |---|---|
-| `src/server/serve.ts` | `serve`：启动顺序、`pump`、`settle`、`push`、`awaitFinal`、`handle`（含 `fork`）、`parseRequest`、`close`；`WATCH_BUFFER_MAX` |
+| `src/server/serve.ts` | `serve`：启动顺序、`pump`、`settle`、`push`、`awaitFinal`、`handle`（含 `fork`、`reconfigure`、`backup`）、`parseRequest`、`close`；`WATCH_BUFFER_MAX` |
 | `src/server/listen.ts` | `listen`：在命名管道上监听；`EADDRINUSE` 变成“已经有一个 tau 服务” |
 | `src/server/credentials.ts` | `piCredentials`：只读 pi 的凭据文件，只交出 `api_key` 条目 |
 | `src/protocol.ts` | `PIPE`、`Request`、`Reply` |
 | `src/images.ts` | `checkImages`、`imageType`、`imageSize`、`IMAGE_MAX_BYTES`、`IMAGE_MAX_EDGE` |
-| `test/server/protocol.test.ts` | `history`、`watch`、`text` 的进程和编号、图片和 `blob`、`fork`、`prune`、`remove`、`sweep`、`inspect`、`check`、`memory`、`memory_write` |
+| `test/server/protocol.test.ts` | `history`、`watch`、`text` 的进程和编号、图片和 `blob`、`fork`、`prune`、`remove`、`sweep`、`inspect`、`check`、`memory`、`memory_write`、`reconfigure` |
+| `test/server/backup.test.ts` | `backup`：回执、备份能当库打开、目标已存在、请求校验、不是输入、运行中也能备份 |
+| `test/presets/reconfigured.test.ts` | 新快照怎么造（`src/presets/load.ts`）：`context` 的写法的每条规则、`presetFields` 和 `buildPreset` 互逆、`buildPreset` 的拒绝和 `loadPreset` 一字不差、`reconfigured` 只改调用参数时不重读文件、有结构性字段时整个重建、以待换的为底 |
 | `test/images.test.ts` | 入口检查：常量、魔数、每种格式的尺寸、张数、大小、类型、尺寸、顺序、base64 |
 | `src/cli/main.ts` | `main`（命令和退出码）、`request`（连接、发一行、逐行交出回复）、`formatPs`、`ago` |
 | `src/main.ts` | 入口：`serve` 或 CLI；`~/.tau` 的位置；信号处理 |
@@ -472,6 +556,8 @@ tau stop <进程>
 | protocol：图片 | `start`、`send` 带图：段里是引用，`blob` 取回原字节和类型，`history` 不带字节；`images` 的校验；不合格回 `error`、什么都不建；不收图片的模型先检查、再换说明；执行器发给模型的是真数据；`blob` 不存在、带前缀回 `error`，读请求不写库 |
 | protocol：`fork` | 回执带新 ID 并关闭；带 `preset`：新进程用新预设，之后 `send` 模型收到新系统提示词和工具描述；读不出的预设、放不进的预设回 `error`；`history` 读新进程等于源进程的前缀；之后对新进程 `send`，模型收到复制的消息，系统提示词和源进程一样；各种 `error`（没有进程、越界、不是用户消息、运行中不带 `before`、启动检查、请求校验）；订阅在回执之前收到新进程的 `update`；带图片引用的段 |
 | protocol：删除 | `prune`：回执，旧段读不到，当前段在，`before` 越界回 `error`；`history` 读已删的段回 `error`，当前段 0 条回 `end`。`remove`：每条拒绝回 `error` 且库不变；执行器还有该进程的动作时回 `error`；成功时订阅这个进程的连接和订阅全部的连接都先收到 `removed`（断言两种都收到），订阅这个进程的随后关闭，订阅全部的照常订阅，回执在 `removed` 之后。`sweep`：回 `swept`，数目对。请求校验。三个请求不调用 `pump` |
+| protocol：`reconfigure`（在 `protocol.test.ts`） | 请求校验（`id`、不认识的键、`fields` 和 `revert` 的组合、值的类型）；`tools` 最多 128 项（129 项、3 万项都立刻回 `error`，去重照旧）；嵌套 2200 层的工具定义不卡住信箱，服务能重启；已有待换配置时只改调用参数，立即生效的那份也过启动检查；窗口换小、段放不进时存 `next`，`pending` 为 `true`；回执的 `pending`；`fields` 只有调用参数时不重读文件（换掉工具定义文件，`pending` 仍为 `false`）；有结构性字段时重读工具定义文件（手动刷新）；`startError` 不通过回 `error`，库不变；进程不存在回 `error`；`revert` 取消待换配置；回执之后空闲进程仍是 `idle`，段里没有新消息 |
+| backup（在 `backup.test.ts`） | 回执的 `path` 原样、`bytes` 等于文件大小；备份文件能当库打开，`user_version`、表和每张表的行都对；正斜杠的盘符路径也行；`path` 不合格（空串、`:memory:`、`file:` 开头、相对路径、控制字符、超长、以空格或点结尾、盘符之后还有冒号）回 `error`，不留文件；目标已存在（已有的备份、不是库的文件）回 `error` 且已有文件不动，目录不存在回 `error` 且不建目录；不调用 `pump`，信箱里的信不被处理，库前后一致；进程在运行时也能备份。已存在的 0 字节文件会被覆盖，是已知细节，没有测试 |
 | cli：模型不在目录里 | 本轮以“模型目录里没有”的错误结束，回复不入段；模型放回后进程照常可用 |
 
 ## 坑点
@@ -490,7 +576,10 @@ tau stop <进程>
 - **“结果未知”时 `tau ps` 只能间接判断。** `start` 看有没有多出一个进程；`send` 看不出消息进没进库，`ps` 不显示消息。
 - **屏幕上的文字不一定在库里。** CLI 收到过流式文本，就不打印 `final.reply`。流式文本包括交接说明和被丢弃的回复，多次模型调用的文字直接连在一起。
 - **Agent 对自己运行 `tau send`。** CLI 等这个进程回到 `idle`，进程在等这次 bash，只能等 bash 超时。消息已经提交，会作为排队的消息，在下一个安全点或本轮结束时处理。
-- **服务运行时别的程序写库。** `openDb` 没设忙等超时。另一个连接持有写锁时，服务的事务立刻报 `database is locked`：请求得到 `error`；动作结束时写库失败则 `fatal` 退出。备份要先停服务（[kb-store.md](kb-store.md#位置)）。
+- **服务运行时别的程序写库。** `openDb` 没设忙等超时。另一个连接持有写锁时，服务的事务立刻报 `database is locked`：请求得到 `error`；动作结束时写库失败则 `fatal` 退出。要备份，用 `backup` 请求（[备份](#备份backup)），不要在服务运行时复制库文件或另开连接。
+- **`backup` 是同步的，它跑的时候服务不处理别的输入。** 时间和库的大小成正比，库大了会停好几秒甚至更久：模型回复、请求、回执都得等。定在没人用的时候。
+- **`reconfigure` 的回执只说“现在有没有待换配置”。** `pending: false` 只说没有待换的配置，不说结构性字段有没有变：几种情形见[会话配置](#会话配置reconfigure)。要分清，读 `inspect`。
+- **`reconfigure` 不重读预设文件。** 预设文件之后改了，不影响已经出生的会话。会话要新的预设内容，用 `reconfigure` 带字段显式给。
 - **进程内的“崩溃”不是真崩溃。** pairing 测试关掉库句柄来模拟，运行中的 bash 不会跟着死。真崩溃只在 kill 测试里：子进程被 `taskkill /T /F`，不跑任何退出处理。
 - **`tau ps` 随进程数变慢。** 它为每个进程读一次当前段。进程要上层用 `remove` 删（[删除](#删除)，[设计稿的风险](../docs/design/mvp.md#风险)）。
 
@@ -500,5 +589,5 @@ tau stop <进程>
 - [kb-executor.md](kb-executor.md)：`pump` 调用的 `startNext`、`abort`，启动恢复，崩溃窗口。
 - [kb-store.md](kb-store.md)：`startProcess`、`send`、`handleNext`；落盘；`self` 的文字。
 - [kb-kernel.md](kb-kernel.md)：投影的字段；排队的消息和 `endTurn`。
-- [kb-decisions.md](kb-decisions.md)：D11、D16、D17、D18、D21。
+- [kb-decisions.md](kb-decisions.md)：D11、D16、D17、D18、D21、D71（`reconfigure`）、D73（`backup`）。
 - [kb-tools.md](kb-tools.md)：工具；bash 怎样结束进程；服务退出后 bash 继续运行。

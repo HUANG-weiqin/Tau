@@ -1,6 +1,6 @@
 # 总览
 
-`updated: 2026-11-16`
+`updated: 2026-11-18`
 
 ## 这个模块是干什么的
 
@@ -25,7 +25,7 @@ tau 不负责：
 ### 运行循环
 
 ```text
-输入（信件 / 副作用结果 / 停止）
+输入（信件 / 副作用结果 / 停止 / 换配置）
         ↓
    信箱（SQLite）
         ↓  按到达顺序一次取一条
@@ -69,25 +69,25 @@ tau 不负责：
 
 ### 一个循环
 
-只有上面那一个[运行循环](#运行循环)，没有旁路。外面的事（CLI 和上层程序的请求）只在边上变成一条输入。例外是建进程的请求（`start` 和 `fork`）：它们只建新进程，不改已有的进程，见 [D49](kb-decisions.md#d49-fork-进内核)。删除的请求（`prune`、`remove`、`sweep`）也是例外：它们不改任何进程的状态，只删不再被引用的东西，见 [D59](kb-decisions.md#d59-删除原语旧段和空闲进程)。写记忆的请求（`memory_write`）也是例外：记忆不是进程状态，协议写入的效果和同预设的兄弟进程写入一样，见 [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)。只读的请求不改任何东西。
+只有上面那一个[运行循环](#运行循环)，没有旁路。外面的事（CLI 和上层程序的请求）只在边上变成一条输入。例外是建进程的请求（`start` 和 `fork`）：它们只建新进程，不改已有的进程，见 [D49](kb-decisions.md#d49-fork-进内核)。删除的请求（`prune`、`remove`、`sweep`）也是例外：它们不改任何进程的状态，只删不再被引用的东西，见 [D59](kb-decisions.md#d59-删除原语旧段和空闲进程)。写记忆的请求（`memory_write`）也是例外：记忆不是进程状态，协议写入的效果和同预设的兄弟进程写入一样，见 [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)。只读的请求不改任何东西。`backup` 请求也不改库里的任何东西，只在库外写一个新文件，不算旁路，见 [D73](kb-decisions.md#d73-backup-请求)。`reconfigure` 不是例外：它在信箱里是一条输入，由 `decide` 处理，和信件一样，见 [D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)。
 
 ### 进程是一个小状态机
 
 类型见 [kb-kernel](kb-kernel.md#状态)。
 
 - 3 个阶段：`idle`、`awaitingModel`、`awaitingTool`。
-- 4 种输入：信件、模型结果、工具结果、停止。
+- 5 种输入：信件、模型结果、工具结果、停止、换配置（`reconfigure`）。换配置只改进程记录里的会话快照：不写进段，不唤醒进程（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。
 - 2 种副作用：调用模型、运行工具。
 - 工具分两种。库内工具只碰库，在处理输入的事务里同步执行。例外：`spawn` 还读预设文件和它用到的工具定义文件，查工作目录（[D36](kb-decisions.md#d36-第-4-步第二部分进程之间的工具的执行和两处例外)）。库外工具碰外面的世界，由执行器执行。
-- 进程的状态 = 进程记录 + 当前工作段。处理一条输入只读这两样。例外：`post`、`stop_process` 还读收件人的进程记录，`spawn` 还读预设文件和它用到的工具定义文件（[D36](kb-decisions.md#d36-第-4-步第二部分进程之间的工具的执行和两处例外)）；工具定义在结果里声明的同样动作，读的也一样（D64）。
+- 进程的状态 = 进程记录 + 当前工作段。处理一条输入只读这两样。例外：`post`、`stop_process` 还读收件人的进程记录，`spawn` 还读预设文件和它用到的工具定义文件（[D36](kb-decisions.md#d36-第-4-步第二部分进程之间的工具的执行和两处例外)）；工具定义在结果里声明的同样动作，读的也一样（D64）；开段（建进程、换段被接受、`reconfigure` 直接采用）还读会话快照声明的上下文文件（[D72](kb-decisions.md#d72-上下文文件开段重读)）。
 
 ### 模型知道事情的三个入口
 
-模型看到的只有 `buildContext(进程记录, 工作段)`：系统提示词、工具描述、工作段的消息。工具描述由预设决定，不随状态变。所以要让模型知道一件事，只有三个入口：
+模型看到的只有 `buildContext(进程记录, 工作段)`：系统提示词、工具描述、工作段的消息。工具描述来自会话快照，一段里不变。所以要让模型知道一件事，只有三个入口：
 
 | 入口 | 什么时候定 | 适合放 |
 |---|---|---|
-| 系统提示词 | 开段时定下，整段不变 | 整段都成立的背景：预设提示词、工作目录、开段时的记忆快照 |
+| 系统提示词 | 开段时定下，整段不变 | 整段都成立的背景：预设提示词、工作目录、上下文文件的视图（开段时重读）、开段时的记忆快照 |
 | `decide` 写进消息正文 | 处理某条输入时 | 发生过一次、要告诉模型一次的事，例如 D25 的“上一轮没有正常结束” |
 | 工具结果 | 模型自己调用工具时 | 需要时才看的信息，例如 `self` 返回的投影 |
 
@@ -123,13 +123,12 @@ tau 不负责：
 | `src/server/listen.ts` | 在命名管道上监听，监听成功就是单实例锁 | [kb-service.md](kb-service.md) |
 | `src/server/credentials.ts` | 只读 pi 的凭据文件，交给模型目录 | [kb-service.md](kb-service.md#启动脚本和入口) |
 | `src/cli/main.ts`、`src/protocol.ts` | 命令行和线协议；CLI 只依赖协议 | [kb-service.md](kb-service.md) |
-| `src/kernel/` | 纯函数：`decide`、`effectOf`、`observe`、`buildContext`、派生值、工具描述 | [kb-kernel.md](kb-kernel.md) |
-| `src/store/` | 表、处理输入的事务、库内工具 | [kb-store.md](kb-store.md) |
+| `src/kernel/` | 纯函数：`decide`、`effectOf`、`observe`、`buildContext`、派生值、工具描述、会话快照的比较（`snapshot.ts`） | [kb-kernel.md](kb-kernel.md) |
+| `src/store/` | 表、处理输入的事务、库内工具、读上下文文件拼开段视图（`context-files.ts`） | [kb-store.md](kb-store.md) |
 | `src/executor/` | 库外副作用的开始、中止、上报，启动恢复 | [kb-executor.md](kb-executor.md) |
 | `src/memory/kv.ts` | `Memory` 接口的 SQLite 实现 | [kb-memory.md](kb-memory.md) |
 | `src/tools/` | `read`、`write`、`edit`、`bash` | [kb-tools.md](kb-tools.md) |
-| `src/presets/load.ts` | 读预设文件，生成快照 | [设计稿第 2 节](../docs/design/mvp.md#2-预设) |
-
+| `src/presets/load.ts` | 读预设文件，生成快照；`reconfigure` 造新快照也走它（`buildPreset`、`presetFields`、`reconfigured`） | [设计稿第 2 节](../docs/design/mvp.md#2-预设)、[kb-service](kb-service.md#会话配置reconfigure) |
 测试在 `test/`，按模块分目录；执行器的测试在 `test/store/`。命令：`npm test`、`npm run typecheck`、`npm run loc`。完成门槛见 AGENTS.md，当前进度见[执行清单](../docs/plan/kernel-v2-checklist.md)。
 
 ## 坑点

@@ -1,6 +1,6 @@
 # tau MVP 设计稿
 
-`status: 草稿` · `updated: 2026-11-16`
+`status: 草稿` · `updated: 2026-11-18`
 
 本稿负责还没有模块页的模块细节：目标、预设、总体结构、自省，以及“MVP 不做”清单和风险。第 4 到 8 节、第 10 节和第 11 节的细节已经交给 [kb-kernel](../../.knowledge/kb-kernel.md)、[kb-store](../../.knowledge/kb-store.md)、[kb-executor](../../.knowledge/kb-executor.md)、[kb-memory](../../.knowledge/kb-memory.md)、[kb-tools](../../.knowledge/kb-tools.md) 和 [kb-service](../../.knowledge/kb-service.md)，这里只留链接。规则的摘要在 [AGENTS.md](../../AGENTS.md)，理由和核实证据在[决策记录](../../.knowledge/kb-decisions.md)，构建顺序在[执行清单](../plan/mvp-checklist.md)。
 
@@ -35,10 +35,11 @@ tools: read, write, edit, bash, memory
 - 前置信息有 `workdir`、`model`、`tools` 和可选的 `thinking`、`handoff`，每行一个 `key: value`。`thinking` 只收 `minimal`、`low`、`medium`、`high`、`xhigh`、`max`（pi-ai 的思考级别）；不写就不传给模型，值不对就报错。怎么用见 [kb-executor](../../.knowledge/kb-executor.md#调用模型actionsts)。
 - `handoff` 是正整数，单位 token：把换段阈值调低到它。写得比算出的阈值大就等于没写；不写就用算出的阈值；不是正整数就报错。怎么用见 [kb-kernel 的换段阈值](../../.knowledge/kb-kernel.md#换段阈值)。
 - `options` 是可选的一行 JSON 对象：调用模型的其它参数，原样交给 pi-ai。只收白名单里的键，键的类型不对、白名单外的键、超过 4096 字节都报错；`{}` 等于不写。白名单和理由见 [D64](../../.knowledge/kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作) 的第 11 组。
+- `context` 是可选的一行文件列表：每次开段（建进程和每次换段被接受）重读这些文件，拼进系统提示词的上下文一节，例如项目的 `AGENTS.md`。怎么读、怎么拼见 [kb-store 的上下文文件视图](../../.knowledge/kb-store.md#上下文文件视图)和 [kb-kernel 的上下文文件](../../.knowledge/kb-kernel.md#上下文文件开段重读)，理由见 [D72](../../.knowledge/kb-decisions.md#d72-上下文文件开段重读)。
 - `tools` 里除了内置工具和工具组，还能写工具定义的名字（`~/.tau/tools/<name>.json`，格式见 [kb-tools](../../.knowledge/kb-tools.md#工具定义)）。
 - `tools` 里的 `memory` 表示进程有记忆库。`agents` 表示模型能调用 `post`、`spawn`、`stop_process` 给别的进程寄信、建进程、停进程（[kb-store](../../.knowledge/kb-store.md#进程之间的工具)）。工具定义在结果里声明这些动作，不看 `agents`（[D64](../../.knowledge/kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)）。
-- 进程启动时，预设被冻结成快照存进进程记录，用到的工具定义也一起冻结（快照的 `toolDefs`）。之后修改预设文件或工具定义文件，只影响新启动的进程。
-- 快照里还有两项：从 pi-ai 模型目录查到的这个模型的 `contextWindow` 和 `input`（模型能收的输入）。查不到就启动失败。冻结它们，是为了让 `decide` 不做 I/O。预设写了的 `thinking`、`handoff`、`options` 也冻结进快照。调用模型时，执行器仍从模型目录取模型（第 6 节）。
+- 进程出生时，预设被读成会话快照，存进进程记录，用到的工具定义也一起读进去（快照的 `toolDefs`）。之后修改预设文件或工具定义文件，只影响新出生的会话。会话自己的快照只经 `reconfigure` 改，规则见 [kb-kernel 的流程：会话配置](../../.knowledge/kb-kernel.md#流程会话配置reconfigure)和 [D71](../../.knowledge/kb-decisions.md#d71-会话配置reconfigure会话快照可改)。
+- 快照里还有两项：从 pi-ai 模型目录查到的这个模型的 `contextWindow` 和 `input`（模型能收的输入）。查不到就启动失败。存进快照，是为了让 `decide` 不做 I/O。预设写了的 `thinking`、`handoff`、`options`、`context` 也进快照。调用模型时，执行器仍从模型目录取模型（第 6 节）。
 
 读取预设（`src/presets/load.ts`）的规则：
 
@@ -47,12 +48,14 @@ tools: read, write, edit, bash, memory
 - 文件开头的 UTF-8 BOM 被忽略。行尾可以是 LF，也可以是 CRLF。
 - 第一行必须是 `---`。前置信息到下一行 `---` 为止。
 - 每行在第一个 `:` 处拆成键和值，两边去掉空白。空行跳过。
-- 没有 `:` 的行、未知字段、重复字段、缺少的字段，都报错。`thinking`、`handoff`、`options` 可以不写，其余字段缺了报错。
+- 没有 `:` 的行、未知字段、重复字段、缺少的字段，都报错。`thinking`、`handoff`、`options`、`context` 可以不写，其余字段缺了报错。
 - 读预设时的一切拒绝，只在 `loadPreset`、`loadToolDefs` 和启动检查里做。协议的 `check` 走同一条路径，所以它和 `start` 的结论永远一致（D64）。
 - `workdir` 必须是绝对路径，而且是一个存在的目录。绝对路径只认两种：盘符开头（`E:/x`、`E:\x`）和 UNC（`\\server\share`）。不带盘符的 `/foo` 会落在服务当前目录所在的盘上，所以拒绝。
 - `model` 在第一个 `/` 处拆成 provider 和模型 ID，两边都不能为空。模型 ID 里可以再有 `/`。
 - `tools` 按逗号拆开，去掉空白，跳过空项。不是内置工具和工具组的名字，都按工具定义读，读不出就报错（找不到、格式不对、重名、超过大小上限）。重复的去掉，保留第一次出现的顺序。
 - `tools` 可以为空。这时进程只有 `self` 和 `handoff`。
+- `context` 的写法和 `tools` 一样：按逗号拆开，去掉空白，跳过空项，重复的去掉，保留第一次出现的顺序。最多 8 项，每项 1 到 260 个字符，不含控制字符。相对路径按 `workdir` 解析。绝对路径只认两种，和 `workdir` 一样：盘符开头和 UNC，`/e/x` 不认；`C:x`（只有盘符没有斜杠）也不认。读预设时只查写法，不查文件在不在：文件可以晚点才有。不写就没有这个键。
+  - 还有两条拒绝：一项里不能含逗号，首尾不能有空白。预设文件里一行用逗号分隔，空白会被去掉，所以带逗号或首尾有空白的路径写不进去；`reconfigure` 给的是数组，用同一个函数检查，拒绝同样的写法，这样数组形式的会话快照写回预设文件时能原样读回。数组里的空串报“每项 1 到 260 个字符”（预设文件里的空项直接跳过，不会出现这条）。整个上下文视图的大小上限见 [kb-kernel 的常量](../../.knowledge/kb-kernel.md#常量)。
 - 第二个 `---` 之后的正文去掉首尾空白，就是角色提示词。它可以为空。
 - 任何一条不满足，启动就失败，库里什么都不写。工具定义读不出和启动检查（[kb-kernel](../../.knowledge/kb-kernel.md#启动检查和交接以后的检查)）不通过也一样（[kb-service](../../.knowledge/kb-service.md#请求的校验parserequest)）。
 
@@ -80,7 +83,7 @@ src/
 ```
 
 - `kernel` 只导入 kernel 内部的文件，外部类型只能 `import type`（例如 pi-ai 的消息类型）。
-- 工具描述是 `kernel` 里的纯数据：名称、说明、参数，以及它是库内还是库外的副作用。库外工具的实现在 `tools/`。（工具定义的名称、说明和参数来自快照里冻结的文件，读文件在 `presets/tooldefs.ts`，不在 `kernel`。）
+- 工具描述是 `kernel` 里的纯数据：名称、说明、参数，以及它是库内还是库外的副作用。库外工具的实现在 `tools/`。（工具定义的名称、说明和参数来自会话快照里的 `toolDefs`，读文件在 `presets/tooldefs.ts`，不在 `kernel`。）
 - `memory` 只依赖 `kernel`。`store` 依赖 `kernel`，通过 `kernel` 里的 `Memory` 接口类型使用记忆，实现由 `server` 传入。`executor` 依赖 `kernel`、`store`（`tx` 和行的读写）、`tools` 和 `pi-ai`。`server` 把它们装配起来。`cli` 只依赖 `protocol.ts`。
 - SQL 不只在 `store/`：`memory/kv.ts` 读写 `memory` 表，`executor` 读写 `effects` 表、插入 `blobs` 表，`server` 查一次 `mailbox`。
 - 依赖和工具链见 AGENTS.md 的“小而硬规矩”。
@@ -182,7 +185,7 @@ v2 的设计（[kernel-v2](kernel-v2.md)，已冻结，细节在 kb 页）改了
 - 移出“不做”，v2 要做：派生和进程之间互发消息、Agent 的控制命令（立即换段）、运行中插话、图片输入、累计用量（取代花费统计）、自动重试（交给 pi-ai）。见 [kb-contract 的原语和它在内核的理由](../../.knowledge/kb-contract.md#原语和它在内核的理由)。
 - 改成“上层做”，不进内核：Web UI、HTTP、远程访问、grep 工具、扩展（不做宿主）、桌面截图、多设备、通知、MCP。做法见 [kb-extras](../../.knowledge/kb-extras.md)。
 - 仍然不做：定时器、审批、推送状态行、LSP。理由见 [D46](../../.knowledge/kb-decisions.md#d46-v2-也不做的)。
-- 冻结以后改契约移出“不做”的：删除旧工作段、删除进程（彻底删除）。见 [D59](../../.knowledge/kb-decisions.md#d59-删除原语旧段和空闲进程)。
+- 冻结以后改契约移出“不做”的：删除旧工作段、删除进程（彻底删除），见 [D59](../../.knowledge/kb-decisions.md#d59-删除原语旧段和空闲进程)；备份（`backup` 请求），见 [D73](../../.knowledge/kb-decisions.md#d73-backup-请求)。
 
 **自主和控制**
 
@@ -197,13 +200,14 @@ v2 的设计（[kernel-v2](kernel-v2.md)，已冻结，细节在 kb 页）改了
 
 **交互**
 
-- `tau chat`、`tau backup`。
+- `tau chat`。
+- `tau backup`：已做成 `backup` 请求，不是 CLI 命令，见 [D73](../../.knowledge/kb-decisions.md#d73-backup-请求)。
 
 **统计、上限和存储**
 
 - 花费上限、并发上限、全局停止、每个预设单独的步数上限。
 - `self` 里的记忆统计、“距你上次说话多久”。
-- 表结构迁移、项目表。
+- 表结构迁移的框架、项目表。以后改表结构要带迁移，规矩见 [D74](../../.knowledge/kb-decisions.md#d74-迁移的规矩)，不写框架。
 
 **其它**
 

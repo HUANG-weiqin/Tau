@@ -1,6 +1,6 @@
 # 工具
 
-`updated: 2026-11-16`
+`updated: 2026-11-18`
 
 ## 这个模块是干什么的
 
@@ -49,11 +49,11 @@
 
 - 别的字段、不是 JSON 对象、不是合法的 JSON，都报错。
 - 名字不能和内置工具、工具组重名。名字表由 `toolsFor` 算出，不另写一份：`read`、`write`、`edit`、`bash`、`self`、`handoff`、`post`、`spawn`、`stop_process`、`memory_get`、`memory_set`、`memory_delete`，加 `memory`、`agents`。
-- 大小上限，按 UTF-8 字节：一个定义的 `JSON.stringify({ description, parameters })` 不超过 `TOOL_DEF_MAX_BYTES`（16 KiB）；一个预设用到的全部定义，各自 `JSON.stringify(ToolDef)` 相加（含 `name`、`command` 和默认值）不超过 `TOOL_DEFS_MAX_BYTES`（64 KiB）。原因：定义冻结进 `state_json`，每条输入整行重写，`self` 和 `ps` 也要解析它；定义还占每次请求的上下文，启动检查要算上它（[kb-kernel](kb-kernel.md#启动检查和交接以后的检查)）。
+- 大小上限，按 UTF-8 字节：一个定义的 `JSON.stringify({ description, parameters })` 不超过 `TOOL_DEF_MAX_BYTES`（16 KiB）；一个预设用到的全部定义，各自 `JSON.stringify(ToolDef)` 相加（含 `name`、`command` 和默认值）不超过 `TOOL_DEFS_MAX_BYTES`（64 KiB）。原因：定义存在 `state_json` 里，每条输入整行重写，`self` 和 `ps` 也要解析它；定义还占每次请求的上下文，启动检查要算上它（[kb-kernel](kb-kernel.md#启动检查和交接以后的检查)）。
 - 函数：`loadToolDef(dir, name)` 读一个，`loadToolDefs(dir, names)` 按顺序读一组并查总大小，`toolsDir()` 是 `~/.tau/tools`。读不出一律抛错，错误信息是原因。
-- 读取在 `loadPreset` 里：预设 `tools` 里不是内置工具和工具组的名字，都按工具定义读，读出的 `ToolDef` 冻结进快照的 `toolDefs`（[D43](kb-decisions.md#d43-第-7-步前一半工具定义的格式读取和冻结)）。读不出：`start` 回 `error`，`spawn` 是错误结果 `预设 <preset> 读不出：<原因>`，都什么都不建。
+- 读取在 `loadPreset` 里：预设 `tools` 里不是内置工具和工具组的名字，都按工具定义读，读出的 `ToolDef` 存进会话快照的 `toolDefs`（[D43](kb-decisions.md#d43-第-7-步前一半工具定义的格式读取和冻结)）。之后不再读文件：改了定义文件，新出生的会话才用新的；已经在跑的会话要 `reconfigure` 带结构性字段（重新保存一次工具列表，手动刷新），在开段采用新快照时才变（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。读不出：`start` 回 `error`，`spawn` 是错误结果 `预设 <preset> 读不出：<原因>`，都什么都不建。
 - 工具定义目录由服务传进来（`ServeOptions.toolsDir`，`main.ts` 用 `~/.tau/tools/`，测试用临时目录），目录不存在不要紧，只有预设用到定义时才读。
-- 测试：运行见[工具定义测试](#工具定义测试testtoolstooldeftestts)。格式和读取：`test/presets/tooldefs.test.ts`（格式的每条规则、名字、重名、两个上限）、`test/presets/load.test.ts`（预设读定义）、`test/store/tooldefs.test.ts`（`start` 和 `spawn` 冻结、读不出）、`test/store/launch.test.ts`（启动检查算上定义）、`test/server/protocol.test.ts`（`start` 回 `error`）。
+- 测试：运行见[工具定义测试](#工具定义测试testtoolstooldeftestts)。格式和读取：`test/presets/tooldefs.test.ts`（格式的每条规则、名字、重名、两个上限）、`test/presets/load.test.ts`（预设读定义）、`test/store/tooldefs.test.ts`（`start` 和 `spawn` 读进快照、读不出）、`test/store/launch.test.ts`（启动检查算上定义）、`test/server/protocol.test.ts`（`start` 回 `error`）。
 
 ### 运行工具定义
 
@@ -110,7 +110,7 @@
 
 - 都返回 `Promise<ToolResultContent>`，失败写成结果。`runToolDef(def, args, workdir, signal, ctx, accepts)` 返回 `ToolOutput`：`ToolResultContent` 加可选的 `images`（[运行工具定义](#运行工具定义)）。
 - 一个例外：`bash` 的命令含 NUL 字符时，`spawn` 同步抛出，promise 被拒绝。执行器把它变成 `工具执行失败：<信息>`（[kb-executor](kb-executor.md#失败怎样变成结果)）。
-- `workdir` 是预设快照的工作目录，一定是绝对路径。
+- `workdir` 是会话快照的工作目录，一定是绝对路径。
 - 工具不读库，不写库。`bash` 只从执行器拿到进程 ID 和管道名，交给命令的环境，不用它们做别的。唯一的模块状态是 `bash.ts` 缓存的 shell 路径。
 
 ### 参数从哪来

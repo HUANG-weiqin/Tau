@@ -1,6 +1,6 @@
 # 存储
 
-`updated: 2026-11-16`
+`updated: 2026-11-18`
 
 ## 这个模块是干什么的
 
@@ -11,6 +11,7 @@
 - `~/.tau/tau.db` 的位置、表结构和 PRAGMA。
 - 八个存储事务：启动进程、分叉进程、收一条命令、处理一条输入、三个删除（删旧段、删进程、清图片），以及写记忆（协议的 `memory_write`）。图片和引用它的信在同一个事务里写入 `blobs`。
 - 处理输入时同步待办副作用表（`effects`）。
+- 开段时读上下文文件，拼成上下文视图（D72）。开段指建进程和每次换段被接受。
 - 在事务里执行库内工具：`self`、`handoff`、`memory_*`，以及预设含 `agents` 时的 `post`、`spawn`、`stop_process`；还有工具定义在结果里声明的库内动作，它们不看 `agents`（D64）。
 
 它不负责：
@@ -37,7 +38,7 @@
 
 - `tau serve` 先建出 `~/.tau/presets/`，再打开 `tau.db`（`src/main.ts`）。
 - 项目目录里不写任何东西。
-- 备份：停掉服务，复制整个 `~/.tau/`。
+- 备份：协议的 `backup` 请求把整个库一致地复制成一个文件（[kb-service 的备份](kb-service.md#备份backup)，[D73](kb-decisions.md#d73-backup-请求)）。库外的东西（预设、工具定义、`extras/` 的数据）不在里面，要另外复制。
 
 ### 表
 
@@ -98,6 +99,7 @@ CREATE TABLE blobs (
 |---|---|
 | 信件（CLI 寄来的是用户的信；`send` 的 `handoff` 为真时带换段信标记，原样存进信箱和 `turn.queued`） | `startProcess`、`send` |
 | `stop` | `send` |
+| `reconfigure`（新的会话快照，[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)） | `send`，和 `stop` 一样只放进信箱。快照在服务层算好（[kb-service](kb-service.md#会话配置reconfigure)） |
 | 回信 | `handleNext`：处理一条输入的 `decide` 给出 `out`，投进收件人的信箱 |
 | 库内工具的结果、工具不存在的错误结果 | `handleNext` 的同步步骤 |
 | `post` 的信、`spawn` 的第一封信、`stop_process` 的 `stop` | `handleNext` 的同步步骤：库内工具执行时，放进别的进程的信箱 |
@@ -117,7 +119,7 @@ CREATE TABLE blobs (
 3. 读 `PRAGMA user_version`：
    - 0 是新库：在一个事务里建 6 张表，并写入 `SCHEMA_VERSION`（现在是 5）。
    - 等于 `SCHEMA_VERSION`：直接用。
-   - 其它值：关库并抛出，提示停掉服务、移走旧库、重启后重建。MVP 不做迁移。
+   - 其它值：关库并抛出，提示停掉服务、移走旧库、重启后重建。现在没有迁移。以后改表结构，不许只加版本号：必须同时写迁移（用 `PRAGMA user_version`，启动时把版本 N 原地升到 N+1，数据不动），并且迁移要有测试（旧版本的库升上来，行数和内容不变）。`state_json` 只加可选键不用迁移：`next`、`contextView`、`context` 都是这样加的；`input_json` 没有种类约束，新的输入种类 `reconfigure` 也不用升版本（[D74](kb-decisions.md#d74-迁移的规矩)）。
 
 `tx(db, f)`：`BEGIN IMMEDIATE`，执行 `f`，`COMMIT`。`f` 抛出时，如果库还开着并且还在事务里，就 `ROLLBACK`，再把错误抛出去。
 
@@ -129,9 +131,9 @@ CREATE TABLE blobs (
 
 | 函数 | 做什么 | 失败时 |
 |---|---|---|
-| `startProcess(db, memory, id, preset, text, now, images?)` | 先查 `id` 没被占用，再用 `start` 建 `idle` 进程记录并插入；第一条消息作为用户的信进信箱。带图片时，信的内容块在同一个事务里生成，图片存进 `blobs`（见[图片](#图片)） | ID 已存在：抛“进程 ID 已存在：<id>”，什么都不写，`blobs` 也不留（调用方定 ID 时，重试因此是幂等的）。启动检查不通过（[kb-kernel](kb-kernel.md#启动检查和交接以后的检查)）：抛错，什么都不写 |
-| `forkProcess(db, memory, id, source, before, now, preset?)` | 先查 `id` 没被占用，读源进程记录和当前段，用 `fork` 算出新进程记录和要复制的消息（带 `preset`，是调用方在事务之外读好的新预设快照，记忆视图按它重取，见 [kb-kernel 的 fork](kb-kernel.md#fork)），过启动检查，插入新进程记录，写入复制的消息；返回新记录和复制的段。不寄信，不碰 `effects` 和 `blobs`（图片引用照用，`blobs` 不动） | 没有源进程、`fork` 的拒绝（[kb-kernel](kb-kernel.md#fork)）、启动检查不通过、新 ID 已存在（“进程 ID 已存在：<id>”）：抛错，整个事务回滚，什么都不留 |
-| `send(db, id, input, images?, from?)` | 把信件或 `stop` 放进已有进程的信箱。带图片时和 `startProcess` 一样，按目标进程的快照处理；图片只能跟着信。带 `from: { id: A, reply }`（只对信）：在同一个事务里读 A 的记录，发送者是 A 的 `{ kind: "process", id, preset }`（永远不带 `reply`，所以不能伪造回信），跳数是 A 不空闲时 `turn.hops + 1`、空闲时 1（`post` 只在等工具时执行，这里 A 可能在等模型，所以和 `post` 共用的 `nextHops` 不看 A 是不是在等工具，只看有没有 `turn`），`reply` 为真时 `replyTo` 是 A；调用方信里的 `replyTo` 丢掉，`handoff` 保留 | 进程不存在：抛出“没有这个进程”，什么都不写，`blobs` 也不留。带 `from` 时另有：A 不存在、A 等于目标、跳数超过 `HOPS_MAX`，都抛错、什么都不写 |
+| `startProcess(db, memory, id, preset, text, now, images?)` | 先查 `id` 没被占用，再用 `start` 建 `idle` 进程记录并插入：记忆视图取自 `envFor`，上下文视图在同一个事务里读（`readContextView`，见[上下文文件视图](#上下文文件视图)），作为 `start` 的第 4 个参数交给它，不放进 `Env`；视图为空时记录里没有 `segment.contextView`；第一条消息作为用户的信进信箱。带图片时，信的内容块在同一个事务里生成，图片存进 `blobs`（见[图片](#图片)） | ID 已存在：抛“进程 ID 已存在：<id>”，什么都不写，`blobs` 也不留（调用方定 ID 时，重试因此是幂等的）。启动检查不通过（[kb-kernel](kb-kernel.md#启动检查和交接以后的检查)）：抛错，什么都不写 |
+| `forkProcess(db, memory, id, source, before, now, preset?)` | 先查 `id` 没被占用，读源进程记录和当前段，用 `fork` 算出新进程记录和要复制的消息（带 `preset`，是调用方在事务之外读好的新预设快照，记忆视图和上下文视图按它重取（上下文文件在这个事务里读），不带 `preset` 时两个视图都复制源进程当前段的，见 [kb-kernel 的 fork](kb-kernel.md#fork)），过启动检查，插入新进程记录，写入复制的消息；返回新记录和复制的段。不寄信，不碰 `effects` 和 `blobs`（图片引用照用，`blobs` 不动） | 没有源进程、`fork` 的拒绝（[kb-kernel](kb-kernel.md#fork)）、启动检查不通过、新 ID 已存在（“进程 ID 已存在：<id>”）：抛错，整个事务回滚，什么都不留 |
+| `send(db, id, input, images?, from?)` | 把信件、`stop` 或 `reconfigure` 放进已有进程的信箱。带图片时和 `startProcess` 一样，按目标进程的快照处理；图片只能跟着信。带 `from: { id: A, reply }`（只对信）：在同一个事务里读 A 的记录，发送者是 A 的 `{ kind: "process", id, preset }`（永远不带 `reply`，所以不能伪造回信），跳数是 A 不空闲时 `turn.hops + 1`、空闲时 1（`post` 只在等工具时执行，这里 A 可能在等模型，所以和 `post` 共用的 `nextHops` 不看 A 是不是在等工具，只看有没有 `turn`），`reply` 为真时 `replyTo` 是 A；调用方信里的 `replyTo` 丢掉，`handoff` 保留 | 进程不存在：抛出“没有这个进程”，什么都不写，`blobs` 也不留。带 `from` 时另有：A 不存在、A 等于目标、跳数超过 `HOPS_MAX`，都抛错、什么都不写 |
 | `handleNext(db, memory, now, readPreset?)` | 处理信箱里最早的一条输入。`readPreset` 给 `spawn` 读预设用，服务传 `loadPreset` | 抛出时整个事务回滚，这条输入留在队头。返回 `{ process, segment, appended, abort }`：`appended` 是这次追加进段的消息和第一条的段内序号（`from`，换段时从 0 起；没追加时 `messages` 为空），服务靠它推 `watch` 的消息，不读库 |
 | `pruneSegments(db, id, before)` | 删这个进程段号小于 `before` 的全部旧段。`before` ≤ 1 什么都不删，照样成功 | 没有这个进程、`before` 大于当前段号：抛错，什么都不删 |
 | `removeProcess(db, id)` | 删一个空闲、没人引用的进程的记录和全部段。不碰记忆、`blobs`、`effects` | 没有这个进程、不是 `idle`、信箱里有它的输入、有进程的 `parent` 是它、它在任何 `turn.replyTo` 或排队的信的 `replyTo` 里：抛错，什么都不删 |
@@ -140,6 +142,17 @@ CREATE TABLE blobs (
 
 `Env` 怎样算：`now` 由调用方传入；预设 `tools` 含 `memory` 时，`memoryView` 是 `memory.view(preset.id)`，否则是空串，不碰记忆。
 
+`Env.fresh`（`instore.ts` 的 `freshFor(memory, old, input, now)`，`old` 是处理前的进程记录）是可能被采用的那份快照的开段视图：记忆视图（算法同上，按那份快照的 `tools` 判断有没有记忆）和上下文视图（读文件，见[上下文文件视图](#上下文文件视图)）。只在两种输入上算，别的输入不算，`env.fresh` 缺省：
+
+| 输入 | 给哪份快照算 |
+|---|---|
+| `reconfigure` | `input.preset` |
+| 模型结果，并且四条同时成立：`n` 等于旧记录的 `lastEffect`，`status` 是 `ok`，旧记录的阶段是 `awaitingModel`，`purpose` 是 `handoff` | 旧记录有 `next` 就给 `next` 算，没有就给 `preset` 算：上下文视图要在每次换段重读 |
+
+- 第二行的四条，是“这条模型结果正在被当作交接回复处理”。编号对不上的（被丢弃的）、被中断的、用途是 `turn` 的，不读文件。
+- 交接回复被处理了，不等于交接被接受：说明是空的、模型出错时交接照样失败，这时视图已经读了，`decide` 不用它。
+- `envFor` 每条输入都跑，所以读文件不放在 `envFor` 里。`handleNext` 把 `fresh` 并进 `Env`（[kb-kernel](kb-kernel.md#输入副作用环境)）。`env.fresh` 缺省时 `decide` 不抛错，用 `env.memoryView`，没有上下文视图。
+
 ### 处理一条输入
 
 `handleNext` 的步骤：
@@ -147,7 +160,7 @@ CREATE TABLE blobs (
 1. 取信箱里 `seq` 最小的一行。不分进程，取全局最早的。信箱空就返回 `null`。
 2. 读这一行所属进程的进程记录。不存在就抛出。
 3. 读当前段：`segment_seq` 等于记录里段号的全部消息，按 `seq` 排序。
-4. 算 `before = effectOf(旧记录, 当前段)`。输入是带 `calls` 的 ok 工具结果，并且 `before` 正是这次的 `runTool`（编号等于 `input.n`）时，先执行声明的库内动作（[声明的库内动作](#声明的库内动作)），得到去掉 `calls` 的结果。然后算 `Env`（声明的记忆写入已经在内，所以视图是新的），调用 `decide(旧记录, 当前段, 输入, env)`，得到新记录、要追加的消息和要寄的回信。
+4. 算 `before = effectOf(旧记录, 当前段)`。输入是带 `calls` 的 ok 工具结果，并且 `before` 正是这次的 `runTool`（编号等于 `input.n`）时，先执行声明的库内动作（[声明的库内动作](#声明的库内动作)），得到去掉 `calls` 的结果。然后算 `Env`（声明的记忆写入已经在内，所以视图是新的；输入是 `reconfigure`，或是等交接的模型结果时，再加 `fresh`，见上），调用 `decide(旧记录, 当前段, 输入, env)`，得到新记录、要追加的消息和要寄的回信。
 5. 写回进程记录。把追加的消息写进新记录的段：没换段时序号接着当前段，换段时从 0 开始。一次 `decide` 只写一段（[kb-kernel.md](kb-kernel.md)）。
 6. 投递回信：`decide` 给出的 `out` 里每封回信，放进收件人的信箱。收件人是别的进程，它的记录和段这里不读不写。
 7. 删除这条信箱行。
@@ -201,7 +214,7 @@ CREATE TABLE blobs (
 | `runTool`，库内工具 | 在这个事务里执行（`post`、`spawn`、`stop_process` 还写别的进程的信箱，`spawn` 还插进程行），结果作为 `toolResult` 放进信箱 |
 | `runTool`，不认识的工具或预设里没有的工具 | 把内容为这句文本的错误结果（`工具 <name> 不存在，或者预设里没有它。`）作为 `toolResult` 放进信箱 |
 
-- 库内还是库外，按进程快照里的预设判断：`findTool(p.preset, name)` 的 `inStore`。
+- 库内还是库外，按进程快照里的预设判断：`findTool(p.preset, name)` 的 `inStore`。快照的 `tools` 只在 `reconfigure` 直接采用（空闲、段里没有助手消息等条件，见 [kb-kernel](kb-kernel.md#流程会话配置reconfigure)），或者换段采用 `next` 时才换，所以正在等的工具调用，不会因为 `reconfigure` 变成“预设里没有它”。
 - 事务里放进信箱的 `toolResult`，`status` 总是 `ok`，失败写在 `isError` 里。
 - 库内副作用不进 `effects`，恰好执行一次。
 - 事务只通过 `Memory` 接口访问记忆。`self` 的兄弟进程从 `processes` 表读出。
@@ -213,7 +226,8 @@ CREATE TABLE blobs (
 | 信箱最早的一行 | 每次 |
 | 这个进程的进程记录 | 每次 |
 | 这个进程当前段的全部消息 | 每次 |
-| 记忆视图 `memory.view(preset.id)` | 预设含 `memory` 时，每次 |
+| 记忆视图 `memory.view(preset.id)` | 预设含 `memory` 时，每次；要算 `fresh` 时，按那份快照再读一次 |
+| 上下文文件：快照 `context` 声明的每个文件，每个只读“这一段还能放的字节 + 1”，读取量以 `CONTEXT_VIEW_MAX_BYTES` 为界 | 只在要算 `fresh` 时：输入是 `reconfigure`，或是编号对得上、`ok` 的模型结果且旧记录在等交接（`purpose` 是 `handoff`）。别的输入不读 |
 | 被删掉的 `effects` 行 | 在等的编号变了，并且 `before` 存在 |
 | 一个记忆键 | 库内工具是 `memory_*` 时（包括声明的） |
 | 全部进程记录 | 库内工具是 `self` 时 |
@@ -221,9 +235,51 @@ CREATE TABLE blobs (
 | 预设文件，和子进程的记忆视图 | 库内工具是 `spawn` 时（包括声明的；通过 `readPreset` 和 `Memory`） |
 | 已有的进程 ID | `spawn` 算新 ID 时，每次尝试一次 |
 
-`forkProcess` 不是处理一条输入，另有一张读取表：源进程的进程记录和当前段（和 `history` 读当前段一样），不读旧段。带 `preset` 时还读新预设的记忆视图（和 `spawn` 一样）；预设文件和工具定义文件由服务在事务之外读。
+`forkProcess` 不是处理一条输入，另有一张读取表：源进程的进程记录和当前段（和 `history` 读当前段一样），不读旧段。带 `preset` 时还读新预设的记忆视图和上下文文件（和 `spawn` 一样）；预设文件和工具定义文件由服务在事务之外读。`startProcess` 和 `spawn` 建进程时，读新快照的记忆视图和上下文文件。
 
 处理一条输入和 `forkProcess` 不读旧段，也不读别的进程的工作段。
+
+### 会话配置的输入
+
+[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)。`reconfigure` 是信箱里的一种输入，由 `send` 放进去，和 `stop` 一样一个事务、不读也不写别的。服务先同步读进程记录、算好并检查新快照，再放信（[kb-service](kb-service.md#会话配置reconfigure)）。
+
+`handleNext` 处理它和处理别的输入一样：读这个进程的记录和当前段，算 `Env`，调用 `decide`。区别只在 `Env`：
+
+- 要给 `input.preset` 算 `fresh`：记忆视图，加读上下文文件（[上下文文件视图](#上下文文件视图)）。这里算的是新快照的视图，旧快照的 `envFor` 照旧。
+- `decide` 不写消息，不发回信，不改阶段，所以 `before` 和 `after` 的 `effectOf` 编号相同，[同步副作用](#同步副作用)什么都不做。
+- 提交之后，进程记录里的调用参数和 `next` 变了；直接采用时，`preset` 和 `segment` 的两个视图也变了。已经发出的请求和 `effects` 行不变；执行器每次开始动作都重读进程记录，所以下一次调用用新的调用参数（[kb-executor](kb-executor.md#调用模型actionsts)）。
+- 崩溃：输入在信箱里，事务要么提交了，要么没有。重启后信箱里的 `reconfigure` 照常处理。
+
+### 上下文文件视图
+
+[D72](kb-decisions.md#d72-上下文文件开段重读)。`src/store/context-files.ts` 把快照声明的上下文文件读成一个字符串，就是 `contextView`。在存储层的事务里调用：建进程（`startProcess`、`spawn`、带 `preset` 的 `forkProcess`）和 `fresh`。纯函数层不读文件，只把视图当字符串存、拼进系统提示词（[kb-kernel](kb-kernel.md#上下文文件开段重读)）。
+
+输入是快照的 `context` 和 `workdir`。没有 `context`，或者它是空数组，视图是 `""`。
+
+按声明的顺序，一个文件一段。每个文件这样读：
+
+1. 解析路径：相对路径按 `workdir` 解析；绝对路径只认 Windows 的（盘符或 UNC，和 `workdir` 一样）。写法在读预设时已经查过，文件在不在没有查过，可以晚点才有。
+2. 算这一段还能放内容的字节数（额度）：整个视图的上界 `CONTEXT_VIEW_MAX_BYTES`，减去已经写好的部分，减去这一段的标题行和段前的空行，再减去给后面每个文件预留的一行（见下）。
+3. 只读最多“额度 + 1”字节，不整读大文件。多出的 1 字节用来判断文件放不放得下。
+4. 按 UTF-8 解码，不合法的字节换成替换符。替换符是 3 个字节，比它换掉的字节长，所以解码之后再量一次字节数，才判断放不放得下。开头的 BOM 解码时去掉，所以只有一个 BOM 的文件算空文件。
+
+每一段是 `### <声明的原文>` 一行，换行，后面接下面的一种：
+
+| 情形 | 接的内容 |
+|---|---|
+| 读到了，放得下 | 文件内容 |
+| 内容被截（文件比额度大，或者解码后超过额度） | 按字符截到放得下的内容，结尾接 `…（已截，文件共 N 字节）`，N 是文件的字节数。截断说明本身也占额度，所以内容再少放几十个字节。不会劈开多字节字符 |
+| 读不到（不存在、不是普通文件、没权限等） | `（读不到：<原因>）`，原因是错误信息，空白压成一个空格，一行，最多 200 字节 |
+| 空文件 | `（空文件）` |
+| 额度已经用完，轮到的文件 | `（没有额度了，没读）` |
+
+- 段之间空一行。
+- 标题行、段间空行、截断说明、读不到和没额度的说明，都计入额度。`contextView` 的总字节数不超过 `CONTEXT_VIEW_MAX_BYTES`，所以[启动检查](kb-kernel.md#启动检查和交接以后的检查)里 `contextMax` 的上界成立。标题行和说明本身放不下时，宁可少放一段，也不超额。
+- **给后面的每个文件预留一行。** 每个文件读之前，先把后面每个文件的 `### <原文>` 加 `（没有额度了，没读）` 那一行算进已用的额度。不然前面的文件占满以后，后面的文件整个消失，模型不知道它们存在。代价是每有一个后面的文件，前面的文件就少放几十个字节。
+- **一个文件被截（或者连一行说明都放不下），额度就算用完。** 它后面的文件整个不读，各写一行“没有额度了，没读”。放得下、读不到、空文件，不算用完。
+- **绝不抛错。** 解析路径、读文件的任何异常，都变成上表里一行说明。事务里抛错会让整个信箱卡住（[坑点](#坑点)），建进程和换段也不能因此失败。
+- 读文件是同步的，在事务里，和 `spawn` 读预设文件是同一类，算[声明的库内动作](#声明的库内动作)末尾那份例外清单里的又一条。工作目录要在本机的路径上：同步读卡在慢的路径上，服务就一直停着。
+- 视图是开段那一刻的快照：文件之后改了，在跑的工作段看不到，下一次换段才重读。要马上看到，让进程用 `read`。
 
 三个删除事务也不是处理一条输入，读什么见[删除](#删除)。`writeMemory` 只经 `Memory` 接口读写记忆，不读进程记录和段。
 
@@ -233,6 +289,7 @@ CREATE TABLE blobs (
 - 当前段的大小被换段阈值限制住（[kb-kernel.md](kb-kernel.md)）。
 - 信箱的行处理完就删。`effects` 每个进程最多一行，只在等库外副作用时存在。
 - 记忆视图每条输入都读。它有上界：`set` 拒绝会让渲染后的视图超过上限的写入（[kb-memory.md](kb-memory.md#上限)）。
+- 上下文文件只在 `reconfigure` 和等交接的模型结果上读，不是每条输入都读。读取量以 `CONTEXT_VIEW_MAX_BYTES` 为界（每个文件多读 1 字节，用来判断有没有被截），文件再大也不整读，所以读取量有上界，不随时间增长。
 - 例外：`self` 读全部进程记录。进程不删就一直留着，`self` 和 `tau ps` 随进程数变慢；上层用 `remove` 删不用的进程（D59，[设计稿的风险表](../docs/design/mvp.md#风险)）。
 
 ## 决策
@@ -282,10 +339,10 @@ CREATE TABLE blobs (
 
 ### 存储层不变量
 
-`test/store/invariants.ts` 的 `assertStoreInvariants(db)`。它们在任何一个事务提交后都必须成立。存储层测试在事务之后调用它，崩溃测试每一步之后都调用：
+`test/store/invariants.ts` 的 `assertStoreInvariants(db, relaxed = new Set())`。它们在任何一个事务提交后都必须成立。存储层测试在事务之后调用它，崩溃测试每一步之后都调用。`relaxed` 是放宽阈值相关检查的进程 ID 的集合，只有崩溃测试传：
 
 1. `effects` 的每一行都属于一个存在的进程。
-2. 每个进程的记录和当前段满足纯函数层不变量（[kb-kernel.md](kb-kernel.md)）。
+2. 每个进程的记录和当前段满足纯函数层不变量（[kb-kernel.md](kb-kernel.md#不变量)）。`reconfigure` 在运行中改了 `handoff` 之后，`purpose` 和现算阈值允许不一致，到发出下一个副作用或回到 `idle` 为止不检查：这样的进程在 `relaxed` 里（放宽的是哪几处见那里，其余不放松）。
 3. 每个进程在 `effects` 里最多一行。
 4. `effectOf` 为空的进程一定是 `idle`。`idle` 的进程在 `effects` 里没有行。
 5. 运行中的进程有 `effects` 行时，行的编号就是 `effectOf` 的编号。
@@ -350,6 +407,7 @@ CREATE TABLE blobs (
 工作段：第 <n> 段，开始于 <时长>前，共 <m> 条消息
 上下文：已用约 <used> token，窗口 <window> token
 换段阈值：<threshold> token
+待换配置：<字段，顿号连接>（换段时生效）
 累计用量：输入 <a>，输出 <b>，缓存读 <c>，缓存写 <d>（token）
 同一个预设下运行中的其他进程：
 - <id>：<阶段>，已运行 <时长>
@@ -360,6 +418,7 @@ CREATE TABLE blobs (
 
 - `父进程` 一行只在有父进程时出现。`运行中的子进程` 和它的各行只在有运行中的子进程时出现；`空闲的子进程` 一行只在个数大于 0 时出现。
 - 换段阈值一行是 `context.threshold`：`handoffThreshold`，含预设的 `handoff`。
+- `待换配置` 一行只在有待换配置时出现：`pending.fields` 的键名用顿号连接。进程自己由此知道，模型、提示词、工具这些要等下一次换段才换（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。
 - 工作段一行：段里还没有消息时没有“开始于”。消息条数是当前段的。累计用量跨段。
 - 空闲子进程的 ID 不在文字里，要找就用协议 `ps` 的投影按 `parent` 挑。
 
@@ -415,7 +474,7 @@ CREATE TABLE blobs (
 `spawn`：
 
 - 不调用 `startProcess`，因为事务不能嵌套。它用 `start` 建记录，加上 `parent`，插入 `processes`，再把第一封信放进新进程的信箱。
-- `start` 的 `Env` 按子进程的预设算：记忆视图是子进程的，不是父进程的（`envFor`）。
+- `start` 的 `Env` 按子进程的预设算：记忆视图是子进程的，不是父进程的（`envFor`）。上下文视图也按子进程的快照读（[上下文文件视图](#上下文文件视图)）。
 - 预设用 `handleNext` 收到的 `readPreset` 读（服务传的是 `loadPreset`，测试传假的）。读出的是快照，读不出（抛出）就是错误结果，什么都不建。不传时，任何预设都读不出。
 - 新 ID：`spawnId(父进程 ID, 这次调用的副作用编号, 尝试次数)`，取 sha256 的前 8 个十六进制字符，尝试次数从 0 开始。已有这个 ID 的进程，就把尝试次数加一再算。副作用编号是 `p.lastEffect`：进程在等的就是这次调用。所以崩溃后重放得到同一个 ID。
 - 第一封信带 `replyTo` = 自己：子进程这一轮结束时回信一次，之后的几轮不回。
@@ -451,10 +510,11 @@ CREATE TABLE blobs (
 - 结果提交之后、`handleNext` 之前被杀：信箱里的结果还在，重启后处理它时执行，处理的事务提交才删掉这一行，所以恰好执行一次。
 - 声明的 `post` 的目标在这之前被删：这一项失败（`没有进程 <id>。`）。目标已收到声明的信时，信箱里有它的输入，`removeProcess` 拒绝删它。
 
-两处规则的例外（理由和别的做法见 [D36](kb-decisions.md#d36-第-4-步第二部分进程之间的工具的执行和两处例外)）：
+规则的例外（前两条的理由和别的做法见 [D36](kb-decisions.md#d36-第-4-步第二部分进程之间的工具的执行和两处例外)）：
 
 - “库内工具只碰库”：`spawn` 还读预设文件和它用到的工具定义文件，查工作目录。
 - “处理一条输入只读进程记录和当前工作段”：`post`、`stop_process` 读收件人的进程记录，`spawn` 读文件。声明的动作触发同样的读取（[D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)）。
+- 同一条规则，又一处：开段读上下文文件。建进程（`startProcess`、`spawn`、带 `preset` 的 `forkProcess`）读新快照的上下文文件；处理 `reconfigure` 和等交接的模型结果时，给 `fresh` 读（[D72](kb-decisions.md#d72-上下文文件开段重读)，[上下文文件视图](#上下文文件视图)）。
 
 ## 入口
 
@@ -462,18 +522,21 @@ CREATE TABLE blobs (
 |---|---|
 | `src/store/db.ts` | `SCHEMA`、`SCHEMA_VERSION`、`openDb`、`tx`、行的读写 |
 | `src/store/inputs.ts` | `startProcess`、`forkProcess`、`send`、`handleNext`、`pruneSegments`、`removeProcess`、`sweepBlobs`、同步副作用 |
-| `src/store/instore.ts` | `runInStore`：`self`、`handoff`、`memory_*`、`post`、`spawn`、`stop_process`；`spawnId`、`envFor`、`ReadPreset` |
+| `src/store/instore.ts` | `runInStore`：`self`、`handoff`、`memory_*`、`post`、`spawn`、`stop_process`；`spawnId`、`envFor`、`freshFor`（开段视图，只在该算的输入上算）、`ReadPreset` |
+| `src/store/context-files.ts` | 把快照声明的上下文文件读成上下文视图，从不抛错（[上下文文件视图](#上下文文件视图)） |
 | `src/store/blobs.ts` | `letterContent`（信的内容块，存图片或换成说明）、`readBlob`、`resolveImages`（请求里的引用换成 base64） |
 | `src/memory/kv.ts` | `Memory` 的 SQLite 实现，服务用它；规则见 [kb-memory.md](kb-memory.md) |
 | `test/store/db.test.ts` | 表、PRAGMA、表结构版本、主键和 `CHECK`、编号不复用、回滚 |
 | `test/store/inputs.test.ts` | `startProcess`、`send`、`handleNext` 三个事务、同步规则、库内工具、只读当前段（读取行数和查询计划） |
 | `test/store/blobs.test.ts` | 图片：存字节和引用、同一事务（反例：进程不存在、启动检查不过、ID 重复时不留 `blobs`）、不收图片的模型换说明、`resolveImages`、执行器调用模型前换成真数据、不变量能抓到缺行 |
-| `test/store/invariants.ts` | 存储层不变量（含 blob 引用完整性） |
+| `test/store/invariants.ts` | 存储层不变量（含 blob 引用完整性）；`assertStoreInvariants(db, relaxed)` 的 `relaxed` 给崩溃测试放宽阈值相关的检查 |
+| `test/store/reconfigure.test.ts` | 会话配置（D71）：`reconfigure` 事务（`send` 只放信箱，进程不存在时报错，什么都不写）；处理它不写消息、不动 `effects`；进程在跑时改调用参数，已发出的请求和编号不变，下一次调用用新值；空闲且段里没有助手消息时直接采用，两个视图在这个事务里读；`freshFor` 和 `fresh` 只在该算的时候算，不是每条输入都读文件，用计数器断言；换段采用 `next`、采用的检查不通过时丢掉它、不卡住信箱；崩溃后信箱里的 `reconfigure` 照常处理，事务中途失败整个回滚；`self` 的待换配置一行 |
+| `test/store/context-files.test.ts` | 上下文视图（D72）：每一段的格式、额度和截断（正好放得下、多 1 字节）、读不到、空文件和只有 BOM、不合法字节、多字节不劈开、额度用完、给后面的文件留位置、名字放不下、随机的文件组合；绝不抛错，总字节数不超过上界；`startProcess`、`spawn`、`forkProcess` 建进程时读，`fork` 不带 `preset` 复制源进程的视图 |
 | `test/store/sendfrom.test.ts` | `send` 带 `from`（D64 第 8 组）：发送者和跳数从 A 的记录构造，A 空闲、等模型、等工具三种跳数；`reply` 的 `replyTo`、回信在 B 的结束事务里进 A 的信箱；与 `handoff` 同带；A 不存在、A 等于目标、跳数到 `HOPS_MAX` 的拒绝，库一字不差；`start`、`forkProcess` 遇到已存在的 ID（第 9 组）；不变量第 10 条能抓到三种违反。`crash.test.ts` 的随机序列里，进程之间的信用 `send` 带 `from`（`reply` 随机）寄出，和 `removeProcess` 交错，每步之后查不变量 |
 | `test/store/fork.test.ts` | `forkProcess`：新进程和复制的消息、源进程和库里别的东西不变；运行中带 `before` 可以、不带被拒；各种拒绝和启动检查不通过什么都不建；新 ID 被占用或写到一半失败时回滚；带图片引用的段不变量成立、`blobs` 不增；带 `preset`：快照和记忆视图来自新预设，图片按新模型处理，放不进什么都不建 |
 | `test/store/delete.test.ts` | 三个删除事务（D59）：`pruneSegments`（当前段不删、`before` 越界被拒、`before` ≤ 1 什么都不删、运行中也能删、没有进程被拒）；`removeProcess` 的每条拒绝（没有进程、不是 `idle`、信箱里有它的输入、有子进程、在 `turn.replyTo` 里、在排队的信和信箱里的信的 `replyTo` 里）各一个最小反例，拒绝后库不变，成功时记忆和 `blobs` 不动；`sweepBlobs`（只在 `turn.queued` 里引用的图片留下，到安全点调用模型拿得到真字节；`fork` 共用的图片、旧段的图片）；不变量第 8、9 条能抓到违反 |
 | `test/store/regressions.test.ts` | 审查发现的缺陷的最小反例 |
-| `test/store/crash.test.ts` | 真库上的随机序列（含要回信的信和回信、带图片的信、三个删除事务，`removeProcess` 被拒绝也是正常结果）；在每个事务之后崩溃 |
+| `test/store/crash.test.ts` | 真库上的随机序列（含要回信的信和回信、带图片的信、三个删除事务，`removeProcess` 被拒绝也是正常结果、`reconfigure`，统计存 `next`、直接采用、换段采用各发生过几次）；在每个事务之后崩溃 |
 | `test/store/longrun.test.ts` | 多次换段后，处理一条输入读取的行数不增长 |
 | `test/store/replies.test.ts` | 回信在处理那条输入的事务里投递（回滚时一起撤销）；同一轮合并的几封信只回一封 |
 | `test/store/agents.test.ts` | `post`、`spawn`、`stop_process` 的结果和失败；A 问 B、B 被停止；互相寄信停在 `HOPS_MAX`；顺序委派 512 次；`spawn` 的 ID 和记忆视图；回滚；在每一步之后崩溃，结果和不崩溃时一样 |
@@ -500,7 +563,10 @@ CREATE TABLE blobs (
 - **同步要比较编号，不能只看新阶段在等什么。** 结果还在信箱里排队时，先处理一条用户消息，编号不变，副作用不能再插入或再执行一次。验证：`executor.test.ts` 的两个“结果还在信箱里排队”竞态。
 - **库内工具执行了，结果却写成“被中断，结果未知”。** 结果还在信箱里时先处理了停止，`endTurn` 给这个调用补 `INTERRUPTED`。记忆其实已经写入。这符合“结果未知”的说法，不要重做，也不要补写。
 - **`synchronous` 是连接级设置。** 崩溃和长跑测试在自己的句柄上设成 `OFF` 来提速：模拟的崩溃是关掉句柄，不是断电。`openDb` 每次都设 `FULL`，`db.test.ts` 断言它。不要把 `OFF` 带进 `src/`。
-- **改表结构必须提高 `SCHEMA_VERSION`。** `openDb` 只在版本为 0 时建表。版本没变时，旧库带着旧表照常打开。
+- **改表结构必须提高 `SCHEMA_VERSION`，并且带迁移和测试。** `openDb` 只在版本为 0 时建表。版本没变时，旧库带着旧表照常打开。只加版本号不写迁移，用户的库一打开就报错：开发期可以把旧库移走，有了常驻多年的真数据就不行（[D74](kb-decisions.md#d74-迁移的规矩)）。
+- **`envFor` 每条输入都跑，不能在里面读文件。** 上下文文件只在 `freshFor` 里读，而 `freshFor` 只在 `reconfigure` 和等交接的模型结果上算。
+- **读上下文文件不能抛错。** 它在事务里，抛错会让这条输入留在信箱队头，整个信箱卡住（同第一条坑点）。读不到、不是文件、没权限，都变成视图里的一行说明。
+- **旧版本读不了新信箱。** 信箱里有 `reconfigure` 输入时，退回没有这个种类的旧版本，`decide` 的穷尽 `switch` 遇到它会抛错，整个信箱卡住。所以不降级（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。
 - **新的读取要看会不会随时间增长。** 处理一条输入只该读上面“读什么”表里的东西。验证：`inputs.test.ts` 数读取行数并检查查询计划；`longrun.test.ts` 比较不同段的读取行数。
 
 ## 关联模块

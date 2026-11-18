@@ -1,6 +1,6 @@
 # 内核契约
 
-`updated: 2026-11-17`
+`updated: 2026-11-18`
 
 ## 这个模块是干什么的
 
@@ -37,10 +37,10 @@
 3. `effects` 表和信箱的结构。
 4. 一条输入一个事务。`decide`、`effectOf`、`observe` 是纯函数。
 5. 崩溃后，库外动作报“被中断”，不自动重做。
-6. 快照冻结：进程是一份启动时冻结的预设快照。
+6. 会话快照：进程出生时，预设读成一份快照。之后它是这个会话自己的配置，不随预设文件变，只经 `reconfigure` 改（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。调用参数（`thinking`、`options`、`handoff`）立即生效；结构性字段（其余所有键，如 `prompt`、`tools`、`model`、`workdir`、`context`）在换段时生效，待换的配置存在 `Process.next`。`id` 不能改。
 7. 回信只在一轮结束时寄出，每个进程一封（[kb-kernel 的回信](kb-kernel.md#回信)）。信的 `replyTo` 并进哪一轮（并进 `turn` 的规则也在那里），就由那一轮结束时回，之后的几轮不回。信还在排队时这一轮异常结束，也在这一轮结束时回。
 8. 换段是唯一缩短上下文的办法。图片有一个例外（[D40](kb-decisions.md#d40-第-6-步前一半的选择)）。
-9. 处理一条输入不读旧段，也不读别的进程的工作段。`fork` 不是处理一条输入：它是协议请求，读源进程的当前段，和 `history` 一样（[D49](kb-decisions.md#d49-fork-进内核)）。
+9. 处理一条输入不读旧段，也不读别的进程的工作段。`fork` 不是处理一条输入：它是协议请求，读源进程的当前段，和 `history` 一样（[D49](kb-decisions.md#d49-fork-进内核)）。读别的东西的例外有三处，都是同步的，在事务里：`post`、`stop_process` 还读收件人的进程记录，`spawn` 还读预设文件和它用到的工具定义文件（[D36](kb-decisions.md#d36-第-4-步第二部分进程之间的工具的执行和两处例外)）；开段读上下文文件，开段是建进程、换段被接受、`reconfigure` 直接采用（[D72](kb-decisions.md#d72-上下文文件开段重读)）。
 10. 内核不自己删数据。旧段、进程、图片只经三个删除原语删，由上层调用（[D59](kb-decisions.md#d59-删除原语旧段和空闲进程)）。删除原语不碰记忆：记忆的键只经 `Memory` 接口的 `delete` 删，入口是库内工具 `memory_delete`（模型调用或工具定义声明）和协议的 `memory_write`（[D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)）。
 11. 服务只在命名管道上监听。
 
@@ -64,6 +64,9 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | fork（含换角色） | [kb-kernel 的 fork](kb-kernel.md#fork)、[kb-service 的线协议](kb-service.md#线协议srcprotocolts)、[D49](kb-decisions.md#d49-fork-进内核)、[D52](kb-decisions.md#d52-fork-带-preset给进程换角色) | 做不到。上层只能 `history` 读出再 `start`，第一封信最多 `MESSAGE_MAX_BYTES`（32 KiB），带不过去完整的段。本机的 Pi Web 用过 4 次（[D49](kb-decisions.md#d49-fork-进内核)）。带 `preset` 的换角色：上层只能让新进程按需 `history` 读回旧段，慢而且失真，见 [D52](kb-decisions.md#d52-fork-带-preset给进程换角色) |
 | 协议：`history`、`blob`、`watch` | [kb-service 的线协议](kb-service.md#线协议srcprotocolts)、[历史和订阅](kb-service.md#历史和订阅) | 做不到：上层只能通过协议看内核，读不了历史，就做不了历史检索；拿不到流式文本，页面就看不到实时输出。慢：没有 `watch`，上层只能反复 `ps`，`ps` 读全部进程，随年头变慢 |
 | 删除：`prune`、`remove`、`sweep` | [kb-store 的删除](kb-store.md#删除)、[kb-service 的删除](kb-service.md#删除)、[D59](kb-decisions.md#d59-删除原语旧段和空闲进程) | 做不到。库里的东西只有内核能删；上层停服务直接改库，就绕开了事务和存储层不变量 |
+| 会话配置：`reconfigure`、待换配置 `next` | [kb-kernel 的流程：会话配置](kb-kernel.md#流程会话配置reconfigure)、[换段时采用待换配置](kb-kernel.md#换段时采用待换配置)、[kb-service 的会话配置](kb-service.md#会话配置reconfigure)、[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改) | 做不到。进程记录里的快照只有内核能写，模型和上层都改不了。绕开的办法都有代价：`fork` 带 `preset` 要换 ID，旧段、累计用量、`parent` 全断；上层自己记“逻辑 Agent = 一串进程 ID”，上层没在运行时映射就丢，回信和用量仍指着旧 ID |
+| 上下文文件 | [kb-kernel 的上下文文件](kb-kernel.md#上下文文件开段重读)、[kb-store 的上下文文件视图](kb-store.md#上下文文件视图)、[D72](kb-decisions.md#d72-上下文文件开段重读) | 丢数据：上层只能在文件变了时，给每个用它的会话推一次 `reconfigure`，上层没在运行时就漏了，会话从此是旧的。拼进预设提示词的内容出生时就定了 |
+| `backup` | [kb-service 的备份](kb-service.md#备份backup)、[D73](kb-decisions.md#d73-backup-请求) | 做不到：上层不读库，不停服务拿不到一致的备份。停服务复制会打断在跑的动作，它们变成“被中断” |
 | 事实可读：`inspect`、限度和 `check`、段里消息的 `tau`、`since`、`watch` 推追加的消息、流式预览的种类 | [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作) | 做不到：快照、排队的信、`replyTo`、跳数只在记录里，上层不读库；阈值要内部常量，抄一份就漂移。丢数据：信并进段以后只剩文字。慢：每走一步都要再读一次段 |
 | 控制对称：`memory`、`memory_write`、换段信、`send` 带 `from` 和 `reply`、调用方定的进程 ID | [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作) | 做不到：记忆只能让模型读写；换段只能请模型调 `handoff`，它可以不照做。丢数据、不原子：一轮的结果要上层盯着转寄；回执丢了再重试，会多建一个进程 |
 | 动作可组合：工具定义在结果里声明库内动作 | [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作) | 不原子：工具里用 `tau send/start/stop`，崩溃后模型重做，信就重复，子进程就多一个（同“进程之间”一行） |
@@ -76,36 +79,41 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | 冻结什么 | 定义在 |
 |---|---|
 | 上面的不变量 | 本页 |
-| 类型：`Input`、`Letter`、`Sender`、`Phase`、`Turn`、`Effect`、`ToolResultContent`、`Limits`，`Process`、`PresetSnapshot`、`Projection` 的字段，段里消息的 `tau` 结构。内容块用 pi-ai 1.0.0 的类型。D64 加的字段见 [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作) | [kb-kernel 的状态](kb-kernel.md#状态)、[输入、副作用、环境](kb-kernel.md#输入副作用环境)、[投影与命令](kb-kernel.md#投影与命令) |
+| 类型：`Input`、`Letter`、`Sender`、`Phase`、`Turn`、`Effect`、`ToolResultContent`、`Limits`，`Process`、`PresetSnapshot`、`Projection` 的字段，段里消息的 `tau` 结构。内容块用 pi-ai 1.0.0 的类型。D64 加的字段见 [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)。D71、D72 加的：`Input` 的 `reconfigure`、`Process.next`、`Env.fresh`、`segment.contextView`、快照的 `context`、`Projection` 的 `self.pending`，见 [D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)、[D72](kb-decisions.md#d72-上下文文件开段重读) | [kb-kernel 的状态](kb-kernel.md#状态)、[输入、副作用、环境](kb-kernel.md#输入副作用环境)、[投影与命令](kb-kernel.md#投影与命令) |
 | `decide` 的输出：新记录、追加的消息、回信 | [kb-kernel 的函数](kb-kernel.md#函数) |
 | 行为：回信的时机和正文的算法，`replyTo` 和 `hops` 并进 `turn` 的规则，`endTurn` 的顺序，排队的信的处理（`done` 时合并并开新一轮，只取这批信的 `replyTo` 和 `hops`；不是 `done` 时合并写进段、停在 `idle`） | [kb-kernel 的回信](kb-kernel.md#回信)、[流程：两个辅助步骤](kb-kernel.md#流程两个辅助步骤) |
 | 行为：安全点投递 | [kb-kernel 的安全点投递](kb-kernel.md#安全点投递) |
-| 行为：`fork` 复制什么（预设快照、当前段的前缀或全部、记忆视图；不复制 `parent`、用量、旧段），新进程的阶段，什么时候拒绝（没有进程、`before` 越界或不是用户消息、不带 `before` 而源进程不是 `idle`、启动检查不通过）。带 `preset` 是换角色：快照和记忆视图用新预设的；新模型不收图片时图片换成 `IMAGE_UNSUPPORTED`；不带锚点的估算要低于新预设的换段阈值，否则拒绝（[D52](kb-decisions.md#d52-fork-带-preset给进程换角色)）。事务：读源进程和当前段、建新进程、写消息，一个事务，抛错回滚 | [kb-kernel 的 fork](kb-kernel.md#fork)、[kb-store 的存储事务](kb-store.md#存储事务) |
+| 行为：`fork` 复制什么（当前的预设快照，不含待换配置 `next`；当前段的前缀或全部；记忆视图和上下文视图；不复制 `parent`、用量、旧段），新进程的阶段，什么时候拒绝（没有进程、`before` 越界或不是用户消息、不带 `before` 而源进程不是 `idle`、启动检查不通过）。带 `preset` 是换角色：快照、记忆视图和上下文视图用新预设的；新模型不收图片时图片换成 `IMAGE_UNSUPPORTED`；不带锚点的估算要低于新预设的换段阈值，否则拒绝（[D52](kb-decisions.md#d52-fork-带-preset给进程换角色)）。事务：读源进程和当前段、建新进程、写消息，一个事务，抛错回滚 | [kb-kernel 的 fork](kb-kernel.md#fork)、[kb-store 的存储事务](kb-store.md#存储事务) |
 | 行为：删除原语。`prune` 删段号小于 `before` 的旧段，当前段永不删，`before` 大于当前段号拒绝。`remove` 在进程不是 `idle`、信箱里有它的输入、有进程的 `parent` 是它、它在 `turn.replyTo` 或排队的信的 `replyTo` 里、执行器还有它的动作没收尾时拒绝，拒绝时什么都不删。`sweep` 的引用收自三处：全部进程的全部段、信箱、进程记录里的 `turn.queued`。`history` 读已删的段回 `error`。`remove` 先推 `removed` 再回执 | [kb-store 的删除](kb-store.md#删除)、[kb-service 的删除](kb-service.md#删除) |
 | 行为：停止的语义、跳数怎样增加 | [kb-kernel 的流程](kb-kernel.md#流程每种输入)、[kb-store 的进程之间的工具](kb-store.md#进程之间的工具) |
 | 行为：bash 工具正常结束时，不结束命令留在后台的进程。上层的配方靠它 | [kb-tools 的退出之后](kb-tools.md#退出之后排空和后台进程) |
 | 行为：换段信什么时候生效、什么时候作废；工具定义声明的库内动作在哪个事务里、按什么条件和顺序执行、能声明哪些；`send` 带 `from` 的信怎样构造、什么时候拒绝；调用方定的进程 ID 的字符集和“已存在”的拒绝；`check` 和 `start` 走同一条读预设的路径（读预设时的拒绝只加在 `loadPreset`、`loadToolDefs`、`startError` 里） | [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作) |
+| 行为：`reconfigure`。调用参数（`thinking`、`options`、`handoff`）立即生效，任何阶段都一样。结构性字段（其余所有键）：和当前的相同就取消待换配置；空闲、当前段里没有助手消息，新模型收图或段里没有图，并且段放得下新快照（不带锚点的估算低于新快照的换段阈值，`>=` 算放不下，和 `fork` 带 `preset` 一样）时直接采用，重取开段视图；否则存进 `next`，换段被接受时采用（段里有图而新模型不收图时，换段时带过去的图换成 `IMAGE_UNSUPPORTED`）。采用 `next` 的交接，在新段一开头到阈值时丢弃 `next`、沿用旧快照。不写消息，不发回信，不改阶段，不开轮。`fork` 不复制 `next`。`id` 不能改。服务先算新快照 S，S 和立即生效的那份（当前快照带上 S 的调用参数）都过启动检查，出错回 `error`、什么都不改；只改调用参数时不重读文件、不查模型目录 | [kb-kernel 的流程：会话配置](kb-kernel.md#流程会话配置reconfigure)、[换段时采用待换配置](kb-kernel.md#换段时采用待换配置)、[kb-service 的会话配置](kb-service.md#会话配置reconfigure) |
+| 行为：开段读上下文文件。视图在建进程、换段被接受、`reconfigure` 直接采用时读，存进 `segment.contextView`，这一段里不变。每个文件一节，整个视图（标题行、段间空行、说明都计入）不超过 `CONTEXT_VIEW_MAX_BYTES`，读不到、被截、额度用完都写一行说明，绝不抛错。系统提示词是固定部分、上下文一节、记忆一节。声明了 `context` 才多一项启动检查；没声明时，所有现有的数字和报错文字一字不变 | [kb-store 的上下文文件视图](kb-store.md#上下文文件视图)、[kb-kernel 的上下文文件](kb-kernel.md#上下文文件开段重读) |
+| 行为：`backup`。不是输入，不改任何状态，不开写事务，不调 `pump`。同步执行 `VACUUM INTO`，`user_version` 保留到备份里。服务不先查目标存不存在：目标是已有的库或别的非空文件时 SQLite 拒绝，已存在的 0 字节文件会被覆盖（已知细节）。`path` 的检查：1 到 1024 个字符，无控制字符，Windows 绝对路径，不以空格或点结尾，第 2 个字符之后没有冒号 | [kb-service 的备份](kb-service.md#备份backup) |
 | 演进：`Process`、`PresetSnapshot`、`Letter`、`Turn`、`Request`、`Reply` 和段里消息的 JSON 只加可选键，客户端忽略不认识的键 | [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作) |
 | 事务清单，以及每个事务做什么（D64 加第 8 个 `writeMemory`；`handleNext` 先执行工具结果里声明的库内动作） | [kb-store 的存储事务](kb-store.md#存储事务)、[处理一条输入](kb-store.md#处理一条输入)、[kb-executor 的一行的一生](kb-executor.md#一行的一生) |
 | `effects` 和 `mailbox` 的规则 | [kb-store 的同步副作用](kb-store.md#同步副作用)、[存储层不变量](kb-store.md#存储层不变量)、[kb-executor 的一行的一生](kb-executor.md#一行的一生) |
-| 线协议：管道名和分帧，包括“客户端不能半关闭”；`Request`（含 `fork`、`prune`、`remove`、`sweep`，D64 的 `inspect`、`check`、`memory`、`memory_write` 和各请求新加的可选字段）、`Reply`（含 `removed`、`swept`，D64 的 `process`、`inspected`、`check`、`memory`、`namespaces`、`memory_written`、`memory_rejected`）；`fork` 的回执在提交之后、订阅的 `update` 之后；`history` 每行的消息格式和结束行；`watch` 的推送规则（先快照后增量；`update` 只带 `self`；流式文本带进程和编号；不推最终回复；写缓冲超限就断开） | [kb-service 的线协议](kb-service.md#线协议srcprotocolts)、[历史和订阅](kb-service.md#历史和订阅)、[坑点](kb-service.md#坑点) |
+| 线协议：管道名和分帧，包括“客户端不能半关闭”；`Request`（含 `fork`、`prune`、`remove`、`sweep`，D64 的 `inspect`、`check`、`memory`、`memory_write` 和各请求新加的可选字段，D71 的 `reconfigure`，D73 的 `backup`）、`Reply`（含 `removed`、`swept`，D64 的 `process`、`inspected`、`check`、`memory`、`namespaces`、`memory_written`、`memory_rejected`，D71 的 `reconfigured`，D73 的 `backed_up`）；`fork` 的回执在提交之后、订阅的 `update` 之后；`history` 每行的消息格式和结束行；`watch` 的推送规则（先快照后增量；`update` 只带 `self`；流式文本带进程和编号；不推最终回复；写缓冲超限就断开） | [kb-service 的线协议](kb-service.md#线协议srcprotocolts)、[历史和订阅](kb-service.md#历史和订阅)、[坑点](kb-service.md#坑点) |
 | 表结构。索引不算（见[不算改契约](#不算改契约)） | [kb-store 的表](kb-store.md#表) |
-| 文件格式：预设（含 D64 的 `options`） | [设计稿第 2 节](../docs/design/mvp.md#2-预设) |
+| 文件格式：预设（含 D64 的 `options`，D72 的 `context` 及它的写法条件，见下面的入口条件） | [设计稿第 2 节](../docs/design/mvp.md#2-预设) |
 | 文件格式：工具定义 | [kb-tools 的工具定义](kb-tools.md#工具定义) |
 | 工具定义的运行（原文在这一节），含 D64 的 `call` 项 | [kb-tools 的运行工具定义](kb-tools.md#运行工具定义) |
 | 环境变量：`TAU_PROCESS`、`TAU_PIPE` | [kb-tools 的包装脚本](kb-tools.md#包装脚本)、[kb-service 的启动脚本和入口](kb-service.md#启动脚本和入口) |
 | CLI：v1 的命令、输出和退出码，加上 `TAU_PIPE`。入口是仓库里的 `tau`、`tau.cmd` 和 `node src/main.ts` | [kb-service 的 CLI](kb-service.md#clisrcclimaints)、[启动脚本和入口](kb-service.md#启动脚本和入口) |
-| `decide` 写进段的固定文字：信的头、结束原因的文字、D25 的说明、`HANDOFF_HEADER`、`CARRY_HEADER`、`INTERRUPTED`、`SKIPPED`、图片的占位行。还有段里消息的 `tau` 结构：上层显示“谁说的”，读它，不解析文字（[D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)） | [kb-kernel 的信的头和合并](kb-kernel.md#信的头和合并)、[结束原因的文字](kb-kernel.md#结束原因的文字)、[常量](kb-kernel.md#常量)、[请求里的图片](kb-kernel.md#请求里的图片)、[kb-store 的图片](kb-store.md#图片) |
+| `decide` 写进段的固定文字：信的头、结束原因的文字、D25 的说明、`HANDOFF_HEADER`、`CARRY_HEADER`、`INTERRUPTED`、`SKIPPED`、图片的占位行。还有系统提示词里上下文一节的标题（和记忆一节的标题并排，[D72](kb-decisions.md#d72-上下文文件开段重读)）。还有段里消息的 `tau` 结构：上层显示“谁说的”，读它，不解析文字（[D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)） | [kb-kernel 的信的头和合并](kb-kernel.md#信的头和合并)、[结束原因的文字](kb-kernel.md#结束原因的文字)、[常量](kb-kernel.md#常量)、[请求里的图片](kb-kernel.md#请求里的图片)、[kb-store 的图片](kb-store.md#图片) |
 | 内置工具和工具组的名字。工具定义不能和它们重名，所以加一个内置工具，会让用户已有的同名定义启动失败 | [kb-kernel 的工具描述](kb-kernel.md#工具描述) |
 | 入口条件：图片检查的全部条件（张数、大小、类型按魔数收 png、jpeg、gif、webp、尺寸） | [kb-service 的图片](kb-service.md#图片) |
 | 入口条件：`MESSAGE_MAX_BYTES`、`HOPS_MAX` | [kb-kernel 的常量](kb-kernel.md#常量) |
 | 入口条件：`TOOL_DEF_MAX_BYTES`、`TOOL_DEFS_MAX_BYTES`、工具定义 `timeout` 的范围 | [kb-tools 的工具定义](kb-tools.md#工具定义) |
 | 入口条件：`CALLS_PER_RESULT`、`OPTIONS_MAX_BYTES`、`options` 的白名单和各键的类型、进程 ID 的字符集 | [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作) |
+| 入口条件：`reconfigure` 的 `fields.tools` 最多 128 项（`TOOLS_FIELD_MAX`，按请求里的个数算）。每个名字都要读一个工具定义文件，所以个数要设限 | [kb-service 的会话配置](kb-service.md#会话配置reconfigure) |
+| 入口条件：`context` 的写法：最多 8 项，每项 1 到 260 个字符，不含控制字符，不含逗号，首尾没有空白，是相对路径或 Windows 绝对路径（预设文件和 `reconfigure` 走同一个函数，所以数组形式写进预设文件以后能原样读回）；整个视图的上界 `CONTEXT_VIEW_MAX_BYTES` 见下面“参与启动检查的量” | [设计稿第 2 节](../docs/design/mvp.md#2-预设)、[D72](kb-decisions.md#d72-上下文文件开段重读) |
 
 入口条件的松紧：
 
 - 收紧算改契约，包括删类型、加新的拒绝条件。
-- 放宽 `HOPS_MAX`、`TOOL_DEF_MAX_BYTES`、`TOOL_DEFS_MAX_BYTES`、工具定义 `timeout` 的范围、`CALLS_PER_RESULT`、`OPTIONS_MAX_BYTES`，以及跟着 pi-ai 给 `options` 的白名单加键，不算改契约，先在决策记录写理由。
+- 放宽 `HOPS_MAX`、`TOOL_DEF_MAX_BYTES`、`TOOL_DEFS_MAX_BYTES`、工具定义 `timeout` 的范围、`CALLS_PER_RESULT`、`OPTIONS_MAX_BYTES`、`TOOLS_FIELD_MAX`，以及跟着 pi-ai 给 `options` 的白名单加键，不算改契约，先在决策记录写理由。
 - 放宽 `MESSAGE_MAX_BYTES` 和图片的条件（含加图片类型），先做下面“参与启动检查的量”里写的检查。
 
 ### 参与启动检查的量
@@ -113,9 +121,10 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 启动检查和阈值除了快照，还用到下面这些。它们从代码现取，不在快照里：
 
 - `MESSAGE_MAX_BYTES`、`IMAGES_PER_MESSAGE`、`IMAGE_TOKENS`、`MARGIN_TOKENS`、`BYTES_PER_TOKEN`、`outputMax` 占窗口的比例（1/8）：决定 R 和阈值（[kb-kernel 的换段阈值](kb-kernel.md#换段阈值)）。
-- 预设的 `handoff` 不在这一类：它冻结在快照里，不是从代码现取，改预设文件只影响新启动的进程（[D51](kb-decisions.md#d51-预设加-handoff换段阈值只能调低)）。
+- 预设的 `handoff` 不在这一类：它在会话快照里，不是从代码现取。改预设文件只影响新出生的会话，改一个会话自己的 `handoff` 用 `reconfigure`（[D51](kb-decisions.md#d51-预设加-handoff换段阈值只能调低)、[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。
 - `MEMORY_VIEW_MAX_BYTES`：决定启动检查里记忆的上界（[kb-memory](kb-memory.md#上限)）。
-- 系统提示词的拼法（工作目录那一行、记忆的标题），内置工具的描述和参数：算进固定部分（[kb-kernel 的启动检查](kb-kernel.md#启动检查和交接以后的检查)）。
+- `CONTEXT_VIEW_MAX_BYTES`：整个上下文视图的字节上界（标题行、段间空行、各种说明都计入），决定启动检查里上下文的上界 `contextMax = tokens(CONTEXT_VIEW_MAX_BYTES + 一节标题的字节)`。只有快照声明了非空的 `context` 才算（[D72](kb-decisions.md#d72-上下文文件开段重读)）。放宽或收紧都要先重算启动检查。
+- 系统提示词的拼法（工作目录那一行、记忆的标题），内置工具的描述和参数：算进固定部分（[kb-kernel 的启动检查](kb-kernel.md#启动检查和交接以后的检查)）。上下文一节不并进固定部分，单独按上面的 `CONTEXT_VIEW_MAX_BYTES` 算。
 
 改这些量时：
 
@@ -182,7 +191,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 - v2 的来由、六个缺口：[D47](kb-decisions.md#d47-v2-的来由六个缺口和-v1v2-的对照)；文档估算和需求来源：[D48](kb-decisions.md#d48-量-image_tokens-的文档估算和思考级别重试的需求来源)。
 - 为什么冻结，以及冻结的判据是推导测试：[D26](kb-decisions.md#d26-内核-v2-的方向和准入原则)、[D28](kb-decisions.md#d28-v2-的原语)。
 - 推导测试的记录：[D55](kb-decisions.md#d55-推导测试第一次)、[D56](kb-decisions.md#d56-推导测试第二次)没通过，[D57](kb-decisions.md#d57-推导测试第三次)通过，契约从那里起冻结。为 D59 改契约做的：[D60](kb-decisions.md#d60-推导测试第四次)、[D61](kb-decisions.md#d61-推导测试第五次)、[D62](kb-decisions.md#d62-推导测试第六次)没通过，用户决定不等通过就合并（D59 的破例）。为 D64 改契约做的：[D65](kb-decisions.md#d65-推导测试第七次)、[D66](kb-decisions.md#d66-推导测试第八次)没通过，[D67](kb-decisions.md#d67-推导测试第九次)通过。
-- 删除原语是冻结以后第一次改契约，见 [D59](kb-decisions.md#d59-删除原语旧段和空闲进程)。第二次是内核的四类自由度，见 [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)，它也改了目标 4。
+- 删除原语是冻结以后第一次改契约，见 [D59](kb-decisions.md#d59-删除原语旧段和空闲进程)。第二次是内核的四类自由度，见 [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)，它也改了目标 4。第三次是会话配置、上下文文件和 `backup`，见 [D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)、[D72](kb-decisions.md#d72-上下文文件开段重读)、[D73](kb-decisions.md#d73-backup-请求)，它改了不变量 6，给不变量 9 加了一个例外；推导测试见 D75。迁移的规矩是 [D74](kb-decisions.md#d74-迁移的规矩)，不改契约。
 - 常量的状态（已定、暂定）只写在 [kb-kernel 的常量](kb-kernel.md#常量)的表里，这里不重复。
 - 常量的出处：`IMAGE_TOKENS` 见 [D42](kb-decisions.md#d42-第-6-步量-image_tokens核实收图片)；图片的其余常量和 `HOPS_MAX` 见 [kb-kernel 的常量](kb-kernel.md#常量)和 [kb-service 的图片](kb-service.md#图片)；`MESSAGE_MAX_BYTES` 见 [D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)；工具定义的两个上限见 [kb-tools 的工具定义](kb-tools.md#工具定义)。
 - `WATCH_BUFFER_MAX`、`MODEL_RETRIES` 和 OAuth 订阅：[未确认的默认值](kb-decisions.md#未确认的默认值)。
@@ -212,7 +221,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 
 ## 坑点
 
-- **契约清单里的常量和快照里的量，不是一回事。** 快照冻结的是预设；启动检查用到的常量从代码现取（见[参与启动检查的量](#参与启动检查的量)）。改常量会让已经启动的进程跟着变。
+- **契约清单里的常量和快照里的量，不是一回事。** 会话快照是进程出生时由预设读成的，之后只经 `reconfigure` 改；启动检查用到的常量从代码现取（见[参与启动检查的量](#参与启动检查的量)）。改常量会让已经启动的进程跟着变。
 - **“放宽不算改契约”有边界。** 只有上面逐条写明的量可以放宽。没写明的入口条件，收紧和放宽都算改契约。
 - **推导测试的题目不能留在仓库里。** 受试者能读到，下次就不准了。
 
@@ -231,12 +240,13 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | `IMAGE_TOKENS` 低于真实值，阈值证明不成立 | 在在用的模型上量（[D42](kb-decisions.md#d42-第-6-步量-image_tokens核实收图片)）；换成没量过的模型先量（用户没许真调用的模型的例外，见 [kb-executor 的坑点](kb-executor.md#坑点)） |
 | 目录写着收图片，接口却拒绝 | 第 6 步核实过（[D42](kb-decisions.md#d42-第-6-步量-image_tokens核实收图片)、[D45](kb-decisions.md#d45-第-7-步带图的工具结果的真模型核实)）：在用的模型都没有被拒。换到没核实过的模型或类型，按 [kb-executor 的坑点](kb-executor.md#坑点)核实 |
 | 64K 窗口的预设收图片，带图的信赶上换段时图会丢 | [kb-kernel 的坑点](kb-kernel.md#坑点) |
-| 固定部分离阈值不到一份交接说明 | 交接以后的检查：每封信只交接一次就出错，报出各部分的数字。快照冻结，卡住的进程改不了：用缩小了提示词或工具定义的预设、或者大窗口的模型，新启动一个进程。记忆占得多时，也可以先用同一预设的另一个进程删掉一些记忆，下一次交接用新的记忆视图 |
+| 固定部分离阈值不到一份交接说明 | 交接以后的检查：每封信只交接一次就出错，报出各部分的数字。卡住的进程用 `reconfigure` 换成缩小了提示词或工具定义的配置、或者大窗口的模型：下一次交接按待换配置检查，通过就换过去（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。也可以新启动一个进程。记忆占得多时，可以先用同一预设的另一个进程删掉一些记忆，下一次交接用新的记忆视图 |
+| 旧版本不能读新信箱：库里有 `reconfigure` 输入时，换回没有它的旧版本，旧版本不认这种输入，信箱会卡住 | 不降级。真要降级，先停服务，确认 `mailbox` 的 `input_json` 里没有 `reconfigure`（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。D71 到 D73 只加可选键，没升 `SCHEMA_VERSION`，所以旧版本不会因为版本号拒绝打开：库能打开，不代表旧版本认得里面的新输入（[D74](kb-decisions.md#d74-迁移的规矩)） |
 | 重试只覆盖拿到成功的响应之前的错误 | 流式输出中途的错误，本轮出错结束。这比 Pi SDK 弱：它按最终消息判断要不要重试 |
 | 预算路径上回答只剩 1,024 | 算法见 [kb-executor 的调用模型](kb-executor.md#调用模型actionsts)；换模型时先算 |
 | 不发输出上限的 API（openai-codex-responses），总输出可能超过 `outputMax` | 不支持。tau 本来也调不了它 |
 | 工具定义的 schema 内层不合法，进程第一次调用模型就失败 | 改文件，`start` 新进程。上层的中转生成定义时负责规整 schema |
-| 工具定义冻结进每个 `state_json`，`self` 和 `ps` 变慢 | 定义有大小上限；真的变慢时加表达式索引 |
+| 工具定义存在每个 `state_json` 里，`self` 和 `ps` 变慢 | 定义有大小上限；真的变慢时加表达式索引 |
 | `tau.cmd` 把正文里的 `&` 当成命令 | 外部程序直接连管道；bash 里用 `tau` 脚本；计划任务直接运行 node |
 | 代码量超出预期 | 每步完成时校准；超出 3600 行（D64）先停下来复查设计 |
 

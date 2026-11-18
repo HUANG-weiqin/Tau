@@ -1,6 +1,6 @@
 # 记忆
 
-`updated: 2026-11-16`
+`updated: 2026-11-18`
 
 ## 这个模块是干什么的
 
@@ -20,7 +20,7 @@
 - `memory` 表的结构和 `AUTOINCREMENT`：[kb-store.md](kb-store.md#表)。
 - `memory_get`、`memory_set`、`memory_delete` 的参数、结果和文字，包括超出上限时的文字：[kb-store.md](kb-store.md#记忆工具)。
 - 什么时候读视图、在哪个事务里执行：[kb-store.md](kb-store.md#处理一条输入读什么)。
-- 视图怎样进系统提示词、开段时的快照 `segment.memoryView`：[kb-kernel.md](kb-kernel.md#函数)。
+- 视图怎样进系统提示词、开段时的快照 `segment.memoryView`：[kb-kernel.md](kb-kernel.md#函数)。预设文件声明的上下文文件，也在开段时读成快照 `segment.contextView`，放在记忆前面，不属于记忆库：[kb-store.md](kb-store.md#上下文文件视图)。
 - 视图在换段阈值里占多少：[kb-kernel.md](kb-kernel.md#换段阈值)。
 - 服务启动时建 `sqliteMemory`：[kb-service.md](kb-service.md#启动顺序)。
 
@@ -74,7 +74,7 @@ interface Memory {
 - 视图是开段时的快照。要拿到现在的值和版本号，用 `memory_get`。
 - 记忆变化不通知兄弟进程。
 - 协议也能读写任何 `ns` 的记忆（D64 第 6 组），不要求预设存在、也不要求有 `memory`：`memory`、`memory_write`（[kb-service](kb-service.md#读写记忆memorymemory_write)）。`ns` 过预设 ID 的检查（`checkPresetId`，和 `loadPreset` 同一个函数）。管道不认调用方是谁：有 bash 或能连管道的工具定义的进程，都能写任何预设的库。
-- 协议写入和兄弟进程的 `memory_set` 效果一样：改库，不写任何进程记录、段和信箱。已有进程当前段的 `memoryView` 不变；同预设之后开的新段（`start`、换段、`spawn`、带 `preset` 的 `fork`）看得到，前提是预设含 `memory`；不带 `preset` 的 `fork` 复制源进程段里的视图，看不到。记忆不是进程状态，它像 `now` 一样经 `Env` 进 `decide`。
+- 协议写入和兄弟进程的 `memory_set` 效果一样：改库，不写任何进程记录、段和信箱。已有进程当前段的 `memoryView` 不变；同预设之后开的新段（`start`、换段、`spawn`、带 `preset` 的 `fork`，以及 `reconfigure` 直接采用新快照时，条件见 [kb-kernel](kb-kernel.md#流程会话配置reconfigure)）看得到，前提是快照含 `memory`；不带 `preset` 的 `fork` 复制源进程段里的视图，看不到。记忆不是进程状态，它像 `now` 一样经 `Env` 进 `decide`。
 - 没有不带版本号的强写，没有 `memory_view`（视图是渲染的结论，进程的在 `segment.memoryView`，`inspect` 能给），没有单键的读（`entries` 一次全给，带版本）。
 
 ### 上限

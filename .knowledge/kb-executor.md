@@ -1,6 +1,6 @@
 # 执行器
 
-`updated: 2026-11-16`
+`updated: 2026-11-18`
 
 ## 这个模块是干什么的
 
@@ -94,17 +94,17 @@ abort(id, n)
 - `sessionId` 用进程 ID，换段后不变。支持会话缓存的 provider 会用它。
 - 凭据由服务在创建模型目录时传入，执行器不管。凭据从哪来见 [kb-service.md](kb-service.md#启动脚本和入口)。
 - `resolveImages`（`src/store/blobs.ts`）：请求里图片块的 `blob:<hash>` 换成从 `blobs` 读出的 base64 真数据。`buildContext` 已经成批省略了旧图，所以只读真正要发的图片。段和库不变。引用在 `blobs` 里没有行（存储层不变量保证不会）时抛出，变成 `error` 回复，不发请求。`readBlob` 由服务传给 `createActions`。
-- 请求用 `claim` 时读出的进程记录和工作段。运行中排队的用户消息在 `turn.queued` 里，不进这次请求。
+- 请求用 `claim` 时读出的进程记录和工作段。运行中排队的用户消息在 `turn.queued` 里，不进这次请求。`thinking`、`options` 取自这时读出的记录，所以 `reconfigure` 之后，下一次调用起用新值；已经发出的请求和副作用编号不变，执行器不用为它改（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。
 
 输出上限 `maxTokens`：
 
 - 为什么是窗口的 1/8：换段阈值只给一次回复留 `outputMax` 的空间（[kb-kernel](kb-kernel.md#换段阈值)）。请求得更多，交接请求就可能放不进窗口。
-- 为什么取较小的：不向模型要它给不了的输出。快照只冻结窗口和 `input`，`model.maxTokens` 调用时现查（[D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)）。
+- 为什么取较小的：不向模型要它给不了的输出。快照只存窗口和 `input`，`model.maxTokens` 调用时现查（[D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)）。
 - pi-ai 1.0.0 的 `buildBaseOptions` 取 `options.maxTokens ?? model.maxTokens`，再截到 `max(1, 窗口 − 它的估算 − 4096)`。这一步只会调低。
 - pi-ai 的估算是锚点用量加上之后的字符数 / 4，不超过纯函数层的估算（字节数 / 2）。所以轮次调用时这一截不起作用。交接调用时，它最多把交接说明的上限压低“补的结果 + 交接指令”那么多。
 思考级别：
 
-- 预设的 `thinking` 是 pi-ai 的 `ThinkingLevel`：`minimal`、`low`、`medium`、`high`、`xhigh`、`max`。快照冻结它，执行器照传 `reasoning`。
+- 预设的 `thinking` 是 pi-ai 的 `ThinkingLevel`：`minimal`、`low`、`medium`、`high`、`xhigh`、`max`。来自会话快照，`reconfigure` 可以改，下一次调用起用新值（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。执行器照传 `reasoning`。
 - 不写就不传，由 pi-ai 按模型的默认处理。不同模型的默认不一样：有的不思考，有的按 provider 的默认思考。
 - 思考块照 v1 写进段，按字节算进用量。
 
@@ -172,8 +172,8 @@ abort(id, n)
 | 恢复写在 `createExecutor` 里 | 不能被跳过；运行时中止开关表一定是空的 |
 | `Actions` 是两个有类型的函数，执行器自己构造 `Input` | 动作写不错结果的种类和编号；测试换一组假动作就能测执行器 |
 | 动作抛出也变成结果 | 模型失败和 pi-ai 一样写在助手消息里（D18 第 3 条）；工具失败是结果内容（[kb-kernel.md](kb-kernel.md)） |
-| 调用时才从模型目录取模型 | 快照只冻结 `contextWindow` 和 `input`（D19、D40） |
-| 请求的输出上限取 `min(model.maxTokens, 窗口的 1/8)`，不冻结进快照；模型的 `maxTokens` 也换成它 | 换段阈值按窗口的 1/8 留输出的空间；正确性不需要模型自己的上限（[D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)） |
+| 调用时才从模型目录取模型 | 快照只存 `contextWindow` 和 `input`（D19、D40） |
+| 请求的输出上限取 `min(model.maxTokens, 窗口的 1/8)`，不存进快照；模型的 `maxTokens` 也换成它 | 换段阈值按窗口的 1/8 留输出的空间；正确性不需要模型自己的上限（[D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)） |
 
 ## 认知模型
 
