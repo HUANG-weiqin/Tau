@@ -13,6 +13,7 @@
 - 上层的命令行 `tx` 的约定。
 - 多 Agent 等待的两条出路。
 - 后台命令和完成通知的配方。
+- 派工隔离的配方：多个队友改同一个仓库时，各用一个 git worktree。
 - 工具库：六个现成的工具定义。
 - 换段以后查旧段：提示放在哪里，建议写进预设的话。
 - 备份：定期调 `backup` 请求的脚本和计划任务。
@@ -165,6 +166,62 @@ mkdir -p "$HOME/.tau/extras/bg"
 - 退出码 0、1 表示信已经寄出。收件人是自己，一定存在，所以这里的 1 只会是那一轮没有正常结束。退出码 3 表示连接中途断了；没收到回执时，寄没寄出不知道。都不重试。
 - 退出码 1，或者收到回执以后的 3（服务在这一轮中途退出）：信在库里，但那一轮没有正常结束。通知要是还排在队里，就按[结束一轮的第 6 步](kb-kernel.md#流程两个辅助步骤)写进段，进程停在空闲，下一封信来时模型才看到。被停止时，[D25](kb-decisions.md#d25-上一轮没有正常结束时下一条消息加说明) 的说明还让模型不回应它。这条规则对所有信都一样，不算放上层的代价。log 里有 `[本轮结束：…]` 或者断开的提示。
 - 通知的正文以 `[后台任务 <名字>] ` 开头，界面靠它把这封信标成“后台任务”，不标成“你”（[kb-gui](kb-gui.md#页面)）。改了写法，界面就认不出。
+
+### 派工隔离的配方（git worktree）
+
+多个进程同时改同一个仓库时，各用一个 git worktree，不共用主工作树。
+
+这是配方，不是工具。`git worktree add` 本来就是一条命令，缺的只是让队友的 `workdir` 指向它。预设的 `workdir` 在进程出生时读成会话快照，所以做法是写一个 `workdir` 不同的临时预设（[D57 题 3](kb-decisions.md#d57-推导测试第三次)）。不给 `spawn` 加 `workdir` 参数。契约冻结的是内置工具的名字，不是参数（[kb-contract](kb-contract.md#契约清单)），所以不是契约挡着，是取舍：临时预设只多两行命令，加参数却让出生配置有两个来源，预设和调用参数。
+
+`<名字>` 是这一单活的名字，`<基础>` 是队友平时用的预设：
+
+```sh
+REPO=E:/tau
+WT="$(cygpath -m ~)/.tau/extras/worktrees/tau-<名字>"
+git -C $REPO worktree add -b wt/<名字> "$WT" HEAD
+for d in node_modules extras/node_modules; do
+  cmd //c "mklink /J $(cygpath -w "$WT/$d") $(cygpath -w "$REPO/$d")"
+done
+sed "s|^workdir:.*|workdir: $WT|" ~/.tau/presets/<基础>.md > ~/.tau/presets/wt-<名字>.md
+```
+
+然后 `spawn` 预设 `wt-<名字>`。成功后立刻删掉 `~/.tau/presets/wt-<名字>.md`。
+
+- worktree 放在 `~/.tau/extras/worktrees/`，是上层的数据，不放进项目目录。分支叫 `wt/<名字>`，从当前提交起。
+- `node_modules` 用 junction 链到主树，免得再装一遍。它在 `.gitignore` 里，不进 `git status`。
+- 临时预设用完即删：预设文件只管出生，会话快照已经存进进程记录（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。之后要 `fork` 带 `preset` 才需要重写它。
+- 预设里 `context` 的相对路径按 `workdir` 解析，所以队友读到的是 worktree 里的 `AGENTS.md`（[kb-store](kb-store.md#上下文文件视图)）。
+- 队友的基础预设一般写着“不提交”。派工的人审完 diff，在 worktree 里提交：`git -C "$WT" add … && git -C "$WT" commit`。
+
+队友做完、审过以后，合并并清理：
+
+```sh
+git -C $REPO merge-tree --write-tree --name-only main wt/<名字>   # 退出码 0 才是无冲突
+git -C $REPO merge wt/<名字>
+for d in node_modules extras/node_modules; do cmd //c "rmdir $(cygpath -w "$WT/$d")"; done
+git -C $REPO worktree remove "$WT"
+git -C $REPO branch -d wt/<名字>
+```
+
+- `main` 是 tau 仓库的主分支名，别的仓库换成它自己的。
+- 先删 junction，再删 worktree，顺序不能换。`rmdir` 对 junction 只删链接。没试过先 `worktree remove`：它可能顺着链接进主树的 `node_modules`。
+- 主树里有别人未提交的改动时，`git merge` 只要不碰这些文件就能合。碰到了，git 会拒绝，等对方提交完再合。
+
+解决什么，没解决什么：
+
+- 解决：文件互踩；暂存区和提交互踩，比如一个人的 `git add -A` 带走另一个人的改动。
+- 没解决：两个队友改同一个文件。冲突在合并时才出现。
+- 没解决：并发跑全量 `npm test` 的计时类假红。那是 CPU 争用，不是文件互踩，全量测试照旧一次一个。
+- 运行中的服务用的是主树的 `src`。队友在 worktree 里改 `src`，不影响它。要看效果，在 worktree 里跑测试，测试自带服务。
+
+实测过（2026-11-18，`tau-temp` 派生的临时预设，模型 `deepseek-v4.1-flash`）：
+
+- 队友的 `pwd`、`git rev-parse --show-toplevel`、当前分支都在 worktree；`import('@earendil-works/pi-ai')` 经 junction 成功。
+- 它写的文件只在 worktree，主树 `git status` 为空。
+- `spawn` 之后删掉预设，队友照常完成这一轮。
+- `merge-tree` 退出码 0；清理后 `git worktree list` 只剩主树，主树的 `node_modules` 条目数不变。
+
+没试过：真的 `merge`，主树脏时的 `merge`，先 `worktree remove` 再删 junction，预设写了 `context` 时队友读到 worktree 里的 `AGENTS.md`（测试用的预设没写 `context`）。
 
 ### 工具库
 
