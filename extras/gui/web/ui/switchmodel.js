@@ -116,7 +116,7 @@ export function SwitchModelDialog({ app, onClose }) {
           </${Fragment}>`}
       </div>
       <div class="dlg-foot">
-        <span class="cmdline">${e ? `fork ${e.id}，preset ${mode === "model" ? e.preset : (other ?? "<预设>")}` : ""}</span>
+        <span class="cmdline"></span>
         <${Pill} label="取消" onClick=${close} />
         <${Pill} kind="accent" icon="fork" label=${busy ? "分叉中" : "换模型并分叉"} disabled=${!can} onClick=${() => go(close)} />
       </div>

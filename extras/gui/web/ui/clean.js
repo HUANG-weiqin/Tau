@@ -201,7 +201,7 @@ export function CleanDialog({ app, onClose }) {
         </div>
       </div>
       <div class="dlg-foot">
-        <span class="cmdline">${plan.remove.length > 0 ? `remove × ${plan.remove.length}，按这个顺序一个一个删` : ""}</span>
+        <span class="cmdline"></span>
         <${Pill} label="取消" onClick=${close} />
         <${Pill} kind="warn" icon="trash" label=${`删掉 ${plan.remove.length} 个`} disabled=${plan.remove.length === 0 || reading > 0 || !daysOk} onClick=${go} />
       </div>`}

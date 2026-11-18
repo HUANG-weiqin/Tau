@@ -332,7 +332,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
   - 写冲突时服务回的 `current`（别处现在的值和版本号，或键已被删的 `null`）就是新的 `base`：用户写的字留着，别处的值列在文本框下，再按保存才覆盖。删除冲突不重试，只重读。
   - 一次只开一个编辑；编辑开着时其它行的“改”“删”不可用。
   - 页面不显示给模型看的视图，只显示库里的键值。
-- 设置：`ui/settings.js`。默认模型、默认思考强度、清理天数改一项记一项。供应商一行（`ProviderRow`）右边是填、换、清的动作，哪些可用由 `lib/models.js` 的 `keyActions` 定（OAuth 和 `auth.json` 读不出时都没有）；填 key 的密码框（`KeyEdit`）输入只留在组件里，收起就丢，保存成功后 `app.reloadModels()`；清掉点两次，失焦还原。接口 `api.js` 的 `setKey`、`clearKey`。
+- 设置：`ui/settings.js`。外观、默认模型、默认思考强度、完成通知、标题用的模型改一项记一项。清理的天数不在这里，只在清理弹窗里改（`cleanDays` 还是同一个键）。供应商一行（`ProviderRow`）右边是填、换、清的动作，哪些可用由 `lib/models.js` 的 `keyActions` 定（OAuth 和 `auth.json` 读不出时都没有）；填 key 的密码框（`KeyEdit`）输入只留在组件里，收起就丢，保存成功后 `app.reloadModels()`；清掉点两次，失焦还原。接口 `api.js` 的 `setKey`、`clearKey`。
 - 界面数据写失败以后 30 秒内不再自动写（清理旧键），不会反复重试。
 - 信的来历读段里消息的 `tau`（`lib/messages.js` 的 `parseUser`），不解析文字：
   - 一封信的发送者、跳数、`replyTo`（写信时它在等回信）、回信的结束原因来自 `tau.letters`；正文是消息文本里 `at` 指的那段。

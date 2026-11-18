@@ -1,12 +1,10 @@
-// 设置：默认模型和思考强度、供应商的 key（填、换、清）、清理的天数。
+// 设置：外观、默认模型和思考强度、供应商的 key（填、换、清）、完成通知、标题用的模型。
 // 除了填 key 要点“保存”，改一项就记一项。界面不放 token 和费用，也不显示 key。
 import { html, Popover, DlgHead, SecHead, Pill, useState, useRef, useEffect, Fragment } from "./common.js";
 import { CheckStrip } from "./presetform.js";
 import { ModelPicker, ThinkingBar, thinkingFor } from "./modelpicker.js";
 import { findModel, keyActions, keyLabel, sortProviders } from "../lib/models.js";
 import { setKey, clearKey } from "../api.js";
-
-const MAX_DAYS = 3650;
 
 /** @param {unknown} e */
 const reason = (e) => (e instanceof Error ? e.message : String(e));
@@ -117,9 +115,6 @@ export function SettingsDialog({ app, onClose }) {
   const info = findModel(providers, model)?.model ?? null;
   const [note, setNote] = useState("");
   const [notifyNote, setNotifyNote] = useState("");
-  const [daysText, setDaysText] = useState(String(app.gui.cleanDays));
-  const days = Number(daysText);
-  const daysOk = Number.isInteger(days) && days >= 1 && days <= MAX_DAYS;
 
   const quiet = (/** @type {Promise<void>} */ p) => p.catch(() => {});
   const pickModel = (/** @type {string} */ ref) => {
@@ -133,11 +128,6 @@ export function SettingsDialog({ app, onClose }) {
   };
   const titleModel = app.gui.titleModel ?? "";
   const pickTitleModel = (/** @type {string} */ ref) => quiet(app.setGui({ titleModel: ref }));
-  const changeDays = (/** @type {string} */ v) => {
-    setDaysText(v);
-    const n = Number(v);
-    if (Number.isInteger(n) && n >= 1 && n <= MAX_DAYS && n !== app.gui.cleanDays) quiet(app.setGui({ cleanDays: n }));
-  };
 
   const night = app.gui.theme === "night";
 
@@ -193,29 +183,21 @@ export function SettingsDialog({ app, onClose }) {
         ${auth && !auth.ok && html`<${CheckStrip} ok=${false} text=${auth.error} label="auth.json" />`}
         <p class="dnote">key 写在 pi 的 <span class="mono">~/.pi/agent/auth.json</span> 里。tau 只动 api_key 条目，OAuth 的不碰。改完不用重启。界面不显示 key。</p>
 
-        <${SecHead} n="04" title="清理旧进程" en="CLEAN UP" />
-        <div class="cl-days">
-          <label for="st-days-in">空闲超过</label>
-          <input id="st-days-in" class="input mono" type="number" min="1" max=${MAX_DAYS} step="1" value=${daysText} aria-invalid=${!daysOk} onInput=${(/** @type {any} */ e) => changeDays(e.currentTarget.value)} />
-          <span>天的临时进程算旧的。</span>
-          ${!daysOk && html`<span class="dnote" style="color:var(--warn)">天数要写 1 到 ${MAX_DAYS} 的整数。</span>`}
-        </div>
-
-        <${SecHead} n="05" title="完成通知" en="NOTIFY" />
+        <${SecHead} n="04" title="完成通知" en="NOTIFY" />
         <div class="cl-days soft">
           <div class="toggles" role="group" aria-label="完成通知"><button type="button" class="toggle" aria-pressed=${notifyOn} onClick=${() => (!notifyOn || perm !== "granted") && setNotify(true)}>开</button><button type="button" class="toggle" aria-pressed=${!notifyOn} onClick=${() => notifyOn && setNotify(false)}>关</button></div>
           <span>人建的进程跑完一轮、或者任何进程出错，而页面不在前台时，弹一条系统通知。</span>
           ${notifyWhy !== "" && html`<span class="dnote" style="color:var(--warn)">${notifyWhy}</span>`}
         </div>
 
-        <${SecHead} n="06" title="标题用的模型" en="TITLE MODEL" right=${html`<span class="dnote" style="font-size:11px">需要桥在运行</span>`} />
+        <${SecHead} n="05" title="标题用的模型" en="TITLE MODEL" right=${html`<span class="dnote" style="font-size:11px">需要桥在运行</span>`} />
         <${ModelPicker} app=${app} value=${titleModel !== "" ? titleModel : model} onPick=${pickTitleModel} label="标题用的模型" />
         <div class="ep-keep">
           ${titleModel === "" ? html`<span>没单独设：跟默认模型一样；默认模型也没设，就用进程自己的模型。</span>` : html`<button type="button" class="link" onClick=${() => quiet(app.setGui({ titleModel: "" }))}>跟默认模型一样</button><span>已记住。</span>`}
         </div>
         <p class="dnote">人建的进程收到第一封信后，用这个模型调一次，把信概括成不超过 16 个字的标题。每个进程只调一次，失败就照旧显示第一行。</p>
 
-        <${SecHead} n="07" title="工具定义" en="TOOLS" />
+        <${SecHead} n="06" title="工具定义" en="TOOLS" />
         <div class="cl-days soft">
           <${Pill} label="打开工具定义" onClick=${(/** @type {Event} */ e) => app.openDialog("tools", /** @type {Element} */ (e.currentTarget))} />
           <span>~/.tau/tools 里已装的定义，和能一键装的工具库。</span>

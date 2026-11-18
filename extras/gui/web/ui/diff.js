@@ -71,11 +71,6 @@ function DiffText({ text, truncated }) {
     ${(all.length > MAX_DIFF_LINES || truncated) && html`<p class="inote diff-note">${truncated ? "diff 太长，只显示了前 256 KB。" : `diff 太长，只显示前 ${MAX_DIFF_LINES} 行。`}</p>`}`;
 }
 
-/** 这个文件的 diff 是用哪条 git 命令得到的。没跟踪的新文件和 /dev/null 比。 */
-function commandOf(/** @type {string} */ path, /** @type {string | undefined} */ code) {
-  return code === "??" ? `git diff --no-index /dev/null ${path}` : `git diff HEAD -- ${path}`;
-}
-
 /** @param {{ app: import("../app.js").App, onClose: () => void }} p */
 export function DiffDialog({ app, onClose }) {
   const workdir = /** @type {string} */ (app.dialog?.props?.workdir ?? "");
@@ -137,7 +132,7 @@ export function DiffDialog({ app, onClose }) {
         </div>
       </div>
       <div class="dlg-foot">
-        <span class="cmdline">${commandOf(cur, info?.status)}</span>
+        <span class="cmdline"></span>
         <span class="mono dim diff-count">${idx >= 0 ? `${idx + 1} / ${order.length}` : "—"}</span>
         <${Pill} icon="up" label="上一个" disabled=${idx <= 0} onClick=${() => step(-1)} />
         <${Pill} icon="down" label="下一个" disabled=${idx < 0 || idx >= order.length - 1} onClick=${() => step(1)} />

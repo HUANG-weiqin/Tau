@@ -123,8 +123,8 @@ function SessionBody({ app, pid, info, close }) {
 
   return html`<${Fragment}>
     <div class="dlg-body">
-      <div class="callout"><b>只改这个会话，不改预设文件。</b>预设文件之后改了，这个会话不跟着变。进程在跑也能改。</div>
-      <p class="dnote">思考强度、options、换段阈值下一次调用生效；模型、提示词、工具、工作目录、上下文文件换段时生效。${running ? "进程在跑，现在不能换段，改动先存成待换配置。" : ""}</p>
+      <div class="callout"><b>只改这个会话，不改预设文件。</b></div>
+      ${running && html`<p class="dnote">进程在跑，现在不能换段，改动先存成待换配置。</p>`}
       <${SecHead} n="01" title="会话快照" en="SESSION" right=${html`<span class="dnote" style="font-size:11px">${info.pending ? "表里是待换的那一份" : "表里是现在的快照"}</span>`} />
       <${PresetFields} form=${form} app=${app} promptHint="这个会话的提示词"
         toolsExtra=${html`<div class="td-reload">
@@ -134,7 +134,7 @@ function SessionBody({ app, pid, info, close }) {
       <${CheckStrip} ok=${strip.ok} text=${strip.text} label="reconfigure" />
     </div>
     <div class="dlg-foot">
-      <span class="cmdline">reconfigure ${pid}，只发变了的字段</span>
+      <span class="cmdline"></span>
       ${structural &&
       html`<span class="toggles"><button type="button" class="toggle" aria-pressed=${handoffNow} disabled=${!canNow} title=${running ? "进程在跑，不能马上换段，改动先存成待换配置" : !hasReply ? "这一段里还没有助手的回复，改动会直接生效，不用换段" : "保存以后寄一封换段信，新配置马上生效"} onClick=${() => setNow(!now)}>保存后马上换段</button></span>`}
       <${Pill} label="取消" onClick=${close} />

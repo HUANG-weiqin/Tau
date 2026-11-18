@@ -197,7 +197,7 @@ export function MemoryDialog({ app, onClose }) {
         </ul>
       </div>
       <div class="dlg-foot">
-        <span class="cmdline">${`memory_write，带读到的版本号；别处改过就不覆盖`}</span>
+        <span class="cmdline"></span>
         <${Pill} label="关闭" onClick=${close} />
       </div>
     </${Fragment}>`}
