@@ -192,6 +192,7 @@ sed "s|^workdir:.*|workdir: $WT|" ~/.tau/presets/<基础>.md > ~/.tau/presets/wt
 - 临时预设用完即删：预设文件只管出生，会话快照已经存进进程记录（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。之后要 `fork` 带 `preset` 才需要重写它。
 - 预设里 `context` 的相对路径按 `workdir` 解析，所以队友读到的是 worktree 里的 `AGENTS.md`（[kb-store](kb-store.md#上下文文件视图)）。
 - 队友的基础预设一般写着“不提交”。派工的人审完 diff，在 worktree 里提交：`git -C "$WT" add … && git -C "$WT" commit`。
+- `workdir` 只管相对路径和 bash 的起始目录。文件工具认绝对路径（[D57 题 3](kb-decisions.md#d57-推导测试第三次)），所以信里写 `E:/tau/src/x.ts`，队友就改主树。派工的信里用相对路径，别写主树的绝对路径。基础预设的提示词里写了主树绝对路径的，也要换掉。
 
 队友做完、审过以后，合并并清理：
 
