@@ -7,8 +7,9 @@ import type { DatabaseSync } from "node:sqlite";
 import type { Effect, Input, Instant, Memory, MemoryFailure, MemoryOp, Message, PresetSnapshot, Process, ProcessId, ToolResultContent } from "../kernel/types.ts";
 import type { Image } from "../images.ts";
 import { letterContent } from "./blobs.ts";
+import { readContextView } from "./context-files.ts";
 import { appendMessages, loadProcess, loadProcesses, loadSegment, putMail, saveProcess, tx } from "./db.ts";
-import { envFor, nextHops, runDeclared, runInStore, sender } from "./instore.ts";
+import { envFor, freshFor, nextHops, runDeclared, runInStore, sender } from "./instore.ts";
 import type { ReadPreset } from "./instore.ts";
 
 /**
@@ -20,7 +21,7 @@ export function startProcess(db: DatabaseSync, memory: Memory, id: ProcessId, pr
   if (tooBig !== null) throw new Error(tooBig);
   tx(db, () => {
     checkFreeId(db, id);
-    const p = start(id, preset, envFor(memory, preset, now));
+    const p = start(id, preset, envFor(memory, preset, now), readContextView(preset));
     db.prepare("INSERT INTO processes (id, state_json) VALUES (?, ?)").run(id, JSON.stringify(p));
     putMail(db, id, { kind: "letter", letter: { from: { kind: "user" }, content: letterContent(db, text, images, preset.input.includes("image")), hops: 0 } });
   });
@@ -36,7 +37,7 @@ export function forkProcess(db: DatabaseSync, memory: Memory, id: ProcessId, sou
     checkFreeId(db, id);
     const old = loadProcess(db, source);
     if (!old) throw new Error(`没有这个进程：${source}`);
-    const { process, messages } = fork(id, old, loadSegment(db, old), before, now, preset && { preset, memoryView: envFor(memory, preset, now).memoryView });
+    const { process, messages } = fork(id, old, loadSegment(db, old), before, now, preset && { preset, memoryView: envFor(memory, preset, now).memoryView, contextView: readContextView(preset) });
     const tooBig = startError(process.preset);
     if (tooBig !== null) throw new Error(tooBig);
     db.prepare("INSERT INTO processes (id, state_json) VALUES (?, ?)").run(id, JSON.stringify(process));
@@ -57,11 +58,11 @@ export interface SendFrom {
 }
 
 /**
- * 把信或停止放进一个已有进程的信箱。提交之后才能发回执。`images` 只能跟着信：按目标进程的模型收不收图片，存进 `blobs` 或换成说明。
+ * 把信、停止或新的会话快照（`reconfigure`，D71）放进一个已有进程的信箱。提交之后才能发回执。`images` 只能跟着信：按目标进程的模型收不收图片，存进 `blobs` 或换成说明。
  * 带 `from`（只对信）：发送者、跳数、`replyTo` 都从 `from.id` 的记录构造，和它调用 `post` 寄出的信同形，永远不带 `reply`，所以不能伪造回信。
  * 拒绝（什么都不写）：`from.id` 不存在、等于目标、跳数超过 `HOPS_MAX`。
  */
-export function send(db: DatabaseSync, id: ProcessId, input: Extract<Input, { kind: "letter" | "stop" }>, images: readonly Image[] = [], from?: SendFrom): void {
+export function send(db: DatabaseSync, id: ProcessId, input: Extract<Input, { kind: "letter" | "stop" | "reconfigure" }>, images: readonly Image[] = [], from?: SendFrom): void {
   tx(db, () => {
     const p = loadProcess(db, id);
     if (!p) throw new Error(`没有这个进程：${id}`);
@@ -186,7 +187,8 @@ export function handleNext(db: DatabaseSync, memory: Memory, now: Instant, readP
     const seg = loadSegment(db, old);
     const before = effectOf(old, seg);
     const input = declaredFirst(db, memory, old, seg, before, JSON.parse(row.input_json as string) as Input, now, readPreset);
-    const { process: p, append, out } = decide(old, seg, input, envFor(memory, old.preset, now));
+    const fresh = freshFor(memory, old, input, now);
+    const { process: p, append, out } = decide(old, seg, input, { ...envFor(memory, old.preset, now), ...(fresh === undefined ? {} : { fresh }) });
     const sameSegment = p.segment.seq === old.segment.seq;
     saveProcess(db, p);
     appendMessages(db, p, sameSegment ? seg.length : 0, append);

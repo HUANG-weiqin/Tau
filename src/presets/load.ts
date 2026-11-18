@@ -2,16 +2,21 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Models, ThinkingLevel } from "@earendil-works/pi-ai";
+import { withCallParams } from "../kernel/snapshot.ts";
 import type { PresetOptions, PresetSnapshot, PresetTool } from "../kernel/types.ts";
+import type { ReconfigureFields } from "../protocol.ts";
 import { loadToolDefs } from "./tooldefs.ts";
 
 const TOOLS: readonly PresetTool[] = ["read", "write", "edit", "bash", "memory", "agents"];
 const REQUIRED = ["workdir", "model", "tools"];
-const KEYS = [...REQUIRED, "thinking", "handoff", "options"];
+const KEYS = [...REQUIRED, "thinking", "handoff", "options", "context"];
 const THINKING: readonly ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
 /** 预设 `options` 的字节上限。 */
 export const OPTIONS_MAX_BYTES = 4096;
+/** 预设 `context` 最多几项，每项最多几个字符（D72）。 */
+export const CONTEXT_ITEMS_MAX = 8;
+export const CONTEXT_ITEM_MAX_CHARS = 260;
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isInt = (v: unknown, min: number): boolean => typeof v === "number" && Number.isInteger(v) && v >= min;
@@ -77,9 +82,26 @@ export function checkPresetId(id: string): void {
   if (id === "" || /[/\\:]|\.\./.test(id)) throw new Error(`预设 ID 不合法：${id}`);
 }
 
-/** `dir` 是预设目录，`toolsDir` 是工具定义目录；预设的 tools 里不是内置工具的名字，都按工具定义读，一起冻结进快照。 */
-export function loadPreset(dir: string, id: string, models: Models, toolsDir: string): PresetSnapshot {
-  checkPresetId(id);
+/** Windows 的绝对路径：盘符路径和 UNC 路径。`path.isAbsolute("/foo")` 在 Windows 上为真，但它会落在服务当前盘符下，所以不认。 */
+const isWindowsAbsolute = (s: string): boolean => /^[A-Za-z]:[\\/]/.test(s) || /^[\\/]{2}[^\\/]/.test(s);
+
+/** 预设文件头和正文读出的字段，值是文件里写的原样（`tools`、`context` 已按逗号拆开，`handoff`、`options` 还是文本），还没有校验。`reconfigure` 的字段也先变成它，所以两条路用同一套校验。 */
+export interface PresetFields {
+  workdir: string;
+  model: string;
+  tools: string[];
+  prompt: string;
+  thinking?: string;
+  handoff?: string;
+  options?: string;
+  context?: string[];
+}
+
+/** 逗号分隔的一行：去空白，跳过空项。 */
+const items = (line: string): string[] => line.split(",").map((s) => s.trim()).filter((s) => s !== "");
+
+/** `dir` 是预设目录。读文件、拆文件头，查未知、重复和缺少的字段；字段的值在 `buildPreset` 里校验。 */
+function parsePresetFile(dir: string, id: string): PresetFields {
   const file = `${id}.md`;
   let text: string;
   try {
@@ -89,7 +111,7 @@ export function loadPreset(dir: string, id: string, models: Models, toolsDir: st
   } catch {
     throw new Error(`找不到预设：${id}`);
   }
-  if (text.startsWith("\uFEFF")) text = text.slice(1);
+  if (text.startsWith("﻿")) text = text.slice(1);
   const lines = text.split(/\r?\n/);
   if (lines[0] !== "---") throw new Error(`预设 ${id} 缺少开头的 ---`);
   const end = lines.indexOf("---", 1);
@@ -108,12 +130,49 @@ export function loadPreset(dir: string, id: string, models: Models, toolsDir: st
   for (const key of REQUIRED) {
     if (!fields.has(key)) throw new Error(`预设 ${id} 缺少字段：${key}`);
   }
+  const thinking = fields.get("thinking");
+  const handoff = fields.get("handoff");
+  const options = fields.get("options");
+  const context = fields.get("context");
+  return {
+    workdir: fields.get("workdir") ?? "",
+    model: fields.get("model") ?? "",
+    tools: items(fields.get("tools") ?? ""),
+    prompt: lines.slice(end + 1).join("\n").trim(),
+    ...(thinking === undefined ? {} : { thinking }),
+    ...(handoff === undefined ? {} : { handoff }),
+    ...(options === undefined ? {} : { options }),
+    ...(context === undefined ? {} : { context: items(context) }),
+  };
+}
 
-  const raw = fields.get("workdir") ?? "";
-  // Windows 上 path.isAbsolute("/foo") 为真，但它会落在服务当前盘符下，所以只认盘符路径和 UNC 路径。
-  if (!/^[A-Za-z]:[\\/]/.test(raw) && !/^[\\/]{2}[^\\/]/.test(raw)) {
-    throw new Error(`预设 ${id} 的工作目录必须是绝对路径：${raw}`);
+/** 三个调用参数的校验：预设和 `reconfigure` 共用。`thinking`、`handoff`、`options` 没有就没有这个键，`options` 是 `{}` 也没有。 */
+function callParams(id: string, f: Pick<PresetFields, "thinking" | "handoff" | "options">): Pick<PresetSnapshot, "thinking" | "handoff" | "options"> {
+  const { thinking, handoff, options: optionsText } = f;
+  if (thinking !== undefined && !isThinking(thinking)) throw new Error(`预设 ${id} 的 thinking 只能是 ${THINKING.join(", ")}：${thinking}`);
+  if (handoff !== undefined && !/^[1-9][0-9]{0,14}$/.test(handoff)) throw new Error(`预设 ${id} 的 handoff 必须是正整数（token）：${handoff}`);
+  const options = optionsText === undefined ? undefined : parseOptions(id, optionsText);
+  return { ...(thinking === undefined ? {} : { thinking }), ...(handoff === undefined ? {} : { handoff: Number(handoff) }), ...(options === undefined ? {} : { options }) };
+}
+
+/** `context` 的校验（D72）：去重保序，最多 8 项，每项 1 到 260 个字符、没有控制字符、不含逗号、首尾没有空白，是相对路径或 Windows 绝对路径。只查写法，不查文件在不在。没有项就没有这个键。 */
+function parseContext(id: string, list: readonly string[]): string[] | undefined {
+  const paths = [...new Set(list)];
+  if (paths.length > CONTEXT_ITEMS_MAX) throw new Error(`预设 ${id} 的 context 最多 ${CONTEXT_ITEMS_MAX} 项：现在有 ${paths.length} 项`);
+  for (const p of paths) {
+    if (p.length < 1 || p.length > CONTEXT_ITEM_MAX_CHARS) throw new Error(`预设 ${id} 的 context 每项 1 到 ${CONTEXT_ITEM_MAX_CHARS} 个字符：有一项是 ${p.length} 个字符`);
+    if (/[\x00-\x1f\x7f]/.test(p)) throw new Error(`预设 ${id} 的 context 不能含控制字符：${JSON.stringify(p)}`);
+    if (p.includes(",") || p !== p.trim()) throw new Error(`预设 ${id} 的 context 的路径不能含逗号，首尾不能有空白：${p}`);
+    // 相对路径按 workdir 解析；以斜杠开头（UNC 除外）和只有盘符没有斜杠的，都不是相对路径，也不是 Windows 绝对路径。
+    if (!isWindowsAbsolute(p) && (/^[\\/]/.test(p) || /^[A-Za-z]:/.test(p))) throw new Error(`预设 ${id} 的 context 必须是相对路径或 Windows 绝对路径：${p}`);
   }
+  return paths.length === 0 ? undefined : paths;
+}
+
+/** 字段变成快照：工作目录要存在，模型要在目录里，工具定义要读得出，调用参数和上下文要合格。`loadPreset` 和 `reconfigure` 都走它，所以两处的拒绝永远一致。 */
+export function buildPreset(id: string, f: PresetFields, models: Models, toolsDir: string): PresetSnapshot {
+  const raw = f.workdir;
+  if (!isWindowsAbsolute(raw)) throw new Error(`预设 ${id} 的工作目录必须是绝对路径：${raw}`);
   const workdir = path.resolve(raw);
   try {
     if (!statSync(workdir).isDirectory()) throw new Error();
@@ -121,7 +180,7 @@ export function loadPreset(dir: string, id: string, models: Models, toolsDir: st
     throw new Error(`预设 ${id} 的工作目录不存在：${workdir}`);
   }
 
-  const model = fields.get("model") ?? "";
+  const { model } = f;
   const slash = model.indexOf("/");
   const provider = model.slice(0, slash);
   const modelId = model.slice(slash + 1);
@@ -130,23 +189,16 @@ export function loadPreset(dir: string, id: string, models: Models, toolsDir: st
   if (!found) throw new Error(`模型目录里没有 ${model}`);
 
   const tools: PresetTool[] = [];
-  const defNames: string[] = [];
-  for (const item of (fields.get("tools") ?? "").split(",").map((s) => s.trim())) {
-    if (item === "") continue;
+  // 去重保序。用 Set：名字很多时数组的 includes 是平方级。
+  const defNames = new Set<string>();
+  for (const item of f.tools) {
     if (isTool(item)) {
       if (!tools.includes(item)) tools.push(item);
-    } else if (!defNames.includes(item)) defNames.push(item);
+    } else defNames.add(item);
   }
-  const toolDefs = loadToolDefs(toolsDir, defNames);
-
-  const thinking = fields.get("thinking");
-  if (thinking !== undefined && !isThinking(thinking)) throw new Error(`预设 ${id} 的 thinking 只能是 ${THINKING.join(", ")}：${thinking}`);
-
-  const handoffText = fields.get("handoff");
-  if (handoffText !== undefined && !/^[1-9][0-9]{0,14}$/.test(handoffText)) throw new Error(`预设 ${id} 的 handoff 必须是正整数（token）：${handoffText}`);
-
-  const optionsText = fields.get("options");
-  const options = optionsText === undefined ? undefined : parseOptions(id, optionsText);
+  const toolDefs = loadToolDefs(toolsDir, [...defNames]);
+  const call = callParams(id, f);
+  const context = f.context === undefined ? undefined : parseContext(id, f.context);
 
   return {
     id,
@@ -154,11 +206,45 @@ export function loadPreset(dir: string, id: string, models: Models, toolsDir: st
     model,
     tools,
     toolDefs,
-    prompt: lines.slice(end + 1).join("\n").trim(),
+    prompt: f.prompt,
     contextWindow: found.contextWindow,
     input: [...found.input],
-    ...(thinking === undefined ? {} : { thinking }),
-    ...(handoffText === undefined ? {} : { handoff: Number(handoffText) }),
-    ...(options === undefined ? {} : { options }),
+    ...call,
+    ...(context === undefined ? {} : { context }),
   };
+}
+
+/** `dir` 是预设目录，`toolsDir` 是工具定义目录；预设的 tools 里不是内置工具的名字，都按工具定义读，一起冻结进快照。 */
+export function loadPreset(dir: string, id: string, models: Models, toolsDir: string): PresetSnapshot {
+  checkPresetId(id);
+  return buildPreset(id, parsePresetFile(dir, id), models, toolsDir);
+}
+
+/** 快照还原成预设字段：`tools` 是内置工具名加工具定义的名字。`buildPreset(id, presetFields(s))` 重读文件和目录以后，得到和 `s` 同样的快照。 */
+export function presetFields(s: PresetSnapshot): PresetFields {
+  return {
+    workdir: s.workdir,
+    model: s.model,
+    tools: [...s.tools, ...s.toolDefs.map((d) => d.name)],
+    prompt: s.prompt,
+    ...(s.thinking === undefined ? {} : { thinking: s.thinking }),
+    ...(s.handoff === undefined ? {} : { handoff: String(s.handoff) }),
+    ...(s.options === undefined ? {} : { options: JSON.stringify(s.options) }),
+    ...(s.context === undefined ? {} : { context: [...s.context] }),
+  };
+}
+
+/**
+ * `reconfigure` 的新快照 S（D71）：以 `target`（待换的，没有就是当前的）为底，套上 `fields`，值 `null` 表示删掉这个键。
+ * `fields` 的键都是调用参数时，只用同一套校验，不重读文件、不查模型目录；有结构性字段时整个重建（`buildPreset`），这就是“工具定义的手动刷新”。
+ */
+export function reconfigured(target: PresetSnapshot, fields: ReconfigureFields, models: Models, toolsDir: string): PresetSnapshot {
+  const merged: Record<string, unknown> = { ...presetFields(target) };
+  for (const [key, v] of Object.entries(fields)) {
+    if (v === null) delete merged[key];
+    else merged[key] = typeof v === "number" ? String(v) : key === "options" ? JSON.stringify(v) : v;
+  }
+  const f = merged as unknown as PresetFields;
+  if (Object.keys(fields).every((k) => k === "thinking" || k === "handoff" || k === "options")) return withCallParams(target, callParams(target.id, f));
+  return buildPreset(target.id, f, models, toolsDir);
 }

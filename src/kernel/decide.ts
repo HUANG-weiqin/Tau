@@ -1,22 +1,24 @@
 // start、decide、effectOf：纯函数（见 .knowledge/kb-kernel.md）。
 import { CARRY_HEADER, HANDOFF_HEADER, HANDOFF_INSTRUCTION, IMAGE_UNSUPPORTED, tailStart } from "./context.ts";
 import { clip, contextUsed, endedReason, endedText, estimatedUsed, finalReply, handoffRequested, handoffThreshold, IMAGES_PER_MESSAGE, MARGIN_TOKENS, MESSAGE_MAX_BYTES, newSegmentUsed, pendingCalls, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
+import { sameStructure, withCallParams } from "./snapshot.ts";
 import { textContent, unreachable } from "./types.ts";
 import type { AssistantMessage, Content, Effect, Ended, Env, ImageContent, Input, Instant, Letter, LetterMeta, Message, Phase, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Turn, Usage, UserTau } from "./types.ts";
 
 export const INTERRUPTED = "被中断，结果未知";
 export const SKIPPED = "未执行";
 
-export function start(id: ProcessId, preset: PresetSnapshot, env: Env): Process {
-  return { id, preset, createdAt: env.now, segment: { seq: 1, memoryView: env.memoryView }, lastEffect: 0, phase: { tag: "idle" }, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, since: env.now };
+/** 建一个 idle 进程。`contextView` 是调用方读好的上下文视图（D72），空串就不写这个键。 */
+export function start(id: ProcessId, preset: PresetSnapshot, env: Env, contextView = ""): Process {
+  return { id, preset, createdAt: env.now, segment: { seq: 1, memoryView: env.memoryView, ...(contextView === "" ? {} : { contextView }) }, lastEffect: 0, phase: { tag: "idle" }, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, since: env.now };
 }
 
 /**
  * 从源进程的当前段分叉出一个新进程（见 .knowledge/kb-kernel.md 的 fork）。`before` 是当前段里一条用户消息的段内序号：新进程的第 1 段是它前面的全部消息，阶段是没有结束原因的 idle。
  * 不带 `before` 时复制整个当前段和 idle 阶段，源进程必须是 idle。不合格就抛错。
- * 带 `to` 是换角色：新进程的快照和记忆视图用 `to` 的，不用源进程的。新模型不收图片就把复制的图片换成说明；不用用量锚点估算，复制来的段要低于新预设的换段阈值，否则抛错。
+ * 带 `to` 是换角色：新进程的快照、记忆视图和上下文视图用 `to` 的，不用源进程的。新模型不收图片就把复制的图片换成说明；不用用量锚点估算，复制来的段要低于新预设的换段阈值，否则抛错。
  */
-export function fork(id: ProcessId, source: Process, segment: readonly Message[], before: number | undefined, now: Instant, to?: { preset: PresetSnapshot; memoryView: string }): { process: Process; messages: Message[] } {
+export function fork(id: ProcessId, source: Process, segment: readonly Message[], before: number | undefined, now: Instant, to?: { preset: PresetSnapshot; memoryView: string; contextView?: string }): { process: Process; messages: Message[] } {
   let phase: Phase;
   let messages: Message[];
   if (before === undefined) {
@@ -32,7 +34,8 @@ export function fork(id: ProcessId, source: Process, segment: readonly Message[]
   }
   const preset = to?.preset ?? source.preset;
   if (to && !preset.input.includes("image")) messages = messages.map(withoutImages);
-  const process: Process = { id, preset, createdAt: now, segment: { seq: 1, memoryView: to?.memoryView ?? source.segment.memoryView }, lastEffect: 0, phase, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, since: now };
+  const contextView = to ? to.contextView : source.segment.contextView;
+  const process: Process = { id, preset, createdAt: now, segment: { seq: 1, memoryView: to?.memoryView ?? source.segment.memoryView, ...(contextView ? { contextView } : {}) }, lastEffect: 0, phase, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, since: now };
   if (to) {
     // 超过阈值时第一次调用就是交接调用，带着整段，换到小窗口会失败。
     const used = estimatedUsed(process, messages);
@@ -116,9 +119,43 @@ function step(d: Draft, input: Input): void {
       if (phase.tag !== "awaitingTool" || input.n !== d.p.lastEffect) return;
       if (input.outcome.status === "interrupted") return endTurn(d, phase.turn, { error: "服务重启，工具被中断" });
       return onToolResult(d, phase.turn, input.outcome.content);
+    case "reconfigure":
+      return reconfigure(d, input.preset);
     default:
       return unreachable(input);
   }
+}
+
+/**
+ * 会话配置（D71，见 .knowledge/kb-kernel.md 的“流程：会话配置”）。`s` 是服务算好的完整新快照。任何阶段都处理，不写消息，不发回信，不改阶段，不开轮。
+ * 1. 三个调用参数立即换成 `s` 的。2. 结构性字段和当前的相等：取消待换配置。
+ * 3. 空闲、段里没有助手消息、新模型收图或段里没有图、段放得下新快照：直接采用，视图用 `env.fresh` 的。4. 否则存进 `next`，换段时生效。
+ */
+function reconfigure(d: Draft, s: PresetSnapshot): void {
+  const { next: _, ...p } = d.p;
+  const preset = withCallParams(p.preset, s);
+  if (sameStructure(s, preset)) {
+    d.p = { ...p, preset };
+    return;
+  }
+  // 在途的调用拿着旧的提示词和工具清单，所以只有空闲、没有助手回复过旧提示词时才直接换。段里有图而新模型不收图时也不直接换：已有的消息不改写，下一次调用会带着图失败。
+  const hasImage = d.seg.some((m) => m.role !== "assistant" && typeof m.content !== "string" && m.content.some((c) => c.type === "image"));
+  if (p.phase.tag === "idle" && !d.seg.some((m) => m.role === "assistant") && (s.input.includes("image") || !hasImage)) {
+    const view = openingViews(d);
+    const adopted: Process = { ...p, preset: s, segment: { seq: p.segment.seq, memoryView: view.memoryView, ...(view.contextView === "" ? {} : { contextView: view.contextView }) } };
+    // 窗口变小时，已有的段可能放不进新快照：下一次调用就是带着整段的交接调用，会超窗口。口径和 `fork` 带 preset 一样：不用锚点的估算，`>=` 算放不下。放不下就存 `next`，走换段采用的路。
+    if (estimatedUsed(adopted, d.seg) < handoffThreshold(s)) {
+      d.p = adopted;
+      return;
+    }
+  }
+  d.p = { ...d.p, preset, next: s };
+}
+
+/** 开段视图：存储层给 `fresh` 的；缺省时记忆视图用 `env.memoryView`，没有上下文视图。 */
+function openingViews(d: Draft): { memoryView: string; contextView: string } {
+  const f = d.env.fresh;
+  return { memoryView: f?.memoryView ?? d.env.memoryView, contextView: f?.contextView ?? "" };
 }
 
 /** 第 5.3 节。 */
@@ -155,18 +192,31 @@ function tooManyCalls(m: AssistantMessage): boolean {
   return tokens(bytes) + tokens(utf8Bytes(HANDOFF_INSTRUCTION)) > MARGIN_TOKENS;
 }
 
-/** 第 5.4 节。 */
+/**
+ * 第 5.4 节。有待换配置（`p.next`，D71）时，新段按它开：快照、阈值、两个开段视图都用 `next` 和 `env.fresh` 的，检查通过才采用。
+ * 没有 `next` 时，快照不变，记忆视图用 `env.memoryView`，上下文视图每次换段重取（`env.fresh`）。
+ */
 function onHandoff(d: Draft, turn: Turn, m: AssistantMessage): void {
   const note = m.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n").trim();
   if ((m.stopReason === "stop" || m.stopReason === "length") && note !== "") {
     if (d.append.length > 0) throw new Error("换段前不能有要追加的消息");
+    const { next, ...kept } = d.p;
+    const to = next ?? d.p.preset;
+    const views = openingViews(d);
+    const { contextView } = views;
+    const memoryView = next === undefined ? d.env.memoryView : views.memoryView;
     // 第 5.6 节：先查假想的新段，不带要带过去的信。到阈值就按交接失败结束本轮，不写交接回复。
     const first = userMessage(HANDOFF_HEADER + note, [], true, d.env.now);
-    const { used, fixed, memory } = newSegmentUsed(d.p, d.env.memoryView, first);
-    const threshold = handoffThreshold(d.p.preset);
-    if (used >= threshold) return endTurn(d, turn, { error: `交接失败：新段一开头就到阈值（固定部分 ${fixed}、记忆 ${memory}、交接说明 ${used - fixed - memory}，共 ${used} / ${threshold} token）` });
-    // 交接请求没带段末的用户消息（见 buildContext），把它们原样附在交接说明后面：文本接在说明后，图片块原样带过去。
-    const users = d.seg.slice(tailStart(d.seg)).flatMap((u) => (u.role === "user" ? [u] : []));
+    const { used, fixed, memory, context } = newSegmentUsed({ ...d.p, preset: to }, memoryView, first, contextView);
+    const threshold = handoffThreshold(to);
+    if (used >= threshold) {
+      // 待换的配置让新段一开头就到阈值：丢掉它，进程用旧快照继续，不会陷进每封信都交接失败的循环。
+      if (next !== undefined) d.p = kept;
+      return endTurn(d, turn, { error: `交接失败：新段一开头就到阈值（固定部分 ${fixed}、记忆 ${memory}${context > 0 ? `、上下文 ${context}` : ""}、交接说明 ${used - fixed - memory - context}，共 ${used} / ${threshold} token）${next === undefined ? "" : "；待换的配置已丢弃"}` });
+    }
+    // 交接请求没带段末的用户消息（见 buildContext），把它们原样附在交接说明后面：文本接在说明后，图片块原样带过去。采用的待换配置的模型不收图片时，图换成说明，和 fork 带 preset 同一段代码。
+    const carriedMessages = d.seg.slice(tailStart(d.seg)).map((u) => (next === undefined || next.input.includes("image") ? u : withoutImages(u)));
+    const users = carriedMessages.flatMap((u) => (u.role === "user" ? [u] : []));
     const tail = users.map((u) => (typeof u.content === "string" ? textContent(u.content) : u.content));
     const carriedText = tail.map(textOf).filter((t) => t !== "").join("\n\n");
     const carried = tail.length === 0 ? "" : `\n\n${CARRY_HEADER}${carriedText === "" ? "" : `\n\n${carriedText}`}`;
@@ -180,7 +230,7 @@ function onHandoff(d: Draft, turn: Turn, m: AssistantMessage): void {
       offset += text.length + 2;
       return moved;
     });
-    d.p = { ...d.p, segment: { seq: d.p.segment.seq + 1, memoryView: d.env.memoryView } };
+    d.p = { ...kept, preset: to, segment: { seq: d.p.segment.seq + 1, memoryView, ...(contextView === "" ? {} : { contextView }) } };
     d.seg = [];
     push(d, userMessage(HANDOFF_HEADER + note + carried, tail.flatMap(imagesOf), true, d.env.now, { letters, handoff: true }));
     // 交接已经做了：交接调用进行中到的信，标记用掉了，合并它们时不再换段。

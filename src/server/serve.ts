@@ -1,5 +1,6 @@
 // 服务：把库、执行器和管道装配起来（见 .knowledge/kb-service.md）。只有一个同步的 pump 推进状态，所以没有并发。
 import { randomBytes } from "node:crypto";
+import { statSync } from "node:fs";
 import type { Server, Socket } from "node:net";
 import { createInterface } from "node:readline";
 import type { DatabaseSync } from "node:sqlite";
@@ -8,10 +9,11 @@ import { createActions } from "../executor/actions.ts";
 import { createExecutor } from "../executor/executor.ts";
 import { finalReply, limits, startError } from "../kernel/derive.ts";
 import { observe } from "../kernel/observe.ts";
+import { withCallParams } from "../kernel/snapshot.ts";
 import { unreachable, userLetter } from "../kernel/types.ts";
 import type { Instant, Memory, MemoryOp, Process, ProcessId } from "../kernel/types.ts";
 import { checkImages, imageType } from "../images.ts";
-import { checkPresetId, loadPreset } from "../presets/load.ts";
+import { checkPresetId, loadPreset, reconfigured } from "../presets/load.ts";
 import type { Reply, Request } from "../protocol.ts";
 import { countMessages, loadProcess, loadProcesses, loadSegment, openDb, readSegment } from "../store/db.ts";
 import { readBlob } from "../store/blobs.ts";
@@ -151,6 +153,21 @@ export async function serve(opts: ServeOptions): Promise<Service> {
         reply(s, { type: "receipt", process: id }).end();
         return;
       }
+      case "reconfigure": {
+        // 同步做完（D71）：读记录、造新快照、过启动检查、放进信箱、处理，再读一次记录发回执。不用 awaitFinal：不开轮，没有最终回复可等；空闲的进程不会被唤醒。
+        const record = loadProcess(db, req.process);
+        if (!record) throw new Error(`没有这个进程：${req.process}`);
+        const snapshot = req.fields === undefined ? record.preset : reconfigured(record.next ?? record.preset, req.fields, opts.models, opts.toolsDir);
+        // 两份都要过启动检查：新快照 S，和立即生效的那份（当前快照带上 S 的调用参数；S 要等换段才生效时，它和 S 不同）。
+        const tooBig = startError(snapshot);
+        if (tooBig !== null) throw new Error(tooBig);
+        const immediate = startError(withCallParams(record.preset, snapshot));
+        if (immediate !== null) throw new Error(`当前配置带上新的调用参数就过不了启动检查：${immediate}`);
+        send(db, req.process, { kind: "reconfigure", preset: snapshot });
+        pump();
+        reply(s, { type: "reconfigured", process: req.process, pending: loadProcess(db, req.process)?.next !== undefined }).end();
+        return;
+      }
       case "ps": {
         const all = loadProcesses(db);
         reply(s, { type: "ps", processes: all.map((p) => observe(p, loadSegment(db, p), all, now)) }).end();
@@ -213,6 +230,12 @@ export async function serve(opts: ServeOptions): Promise<Service> {
       case "sweep":
         reply(s, { type: "swept", blobs: sweepBlobs(db) }).end();
         return;
+      case "backup": {
+        // 同步：期间服务不处理别的输入（D73 的代价）。不是输入，不开写事务，不调 pump。
+        db.prepare("VACUUM INTO ?").run(req.path);
+        reply(s, { type: "backed_up", path: req.path, bytes: statSync(req.path).size }).end();
+        return;
+      }
       case "blob": {
         const data = readBlob(db, req.hash);
         const mimeType = data && imageType(data);
@@ -295,6 +318,50 @@ function withHandoff(i: ReturnType<typeof userLetter>): ReturnType<typeof userLe
 /** 调用方定的进程 ID（D64 第 9 组）：ID 原样进信头和 `self` 的文字，上层还拿它拼路径，所以字符集收得很窄。没有就是合格。 */
 const idOk = (v: unknown): boolean => v === undefined || (typeof v === "string" && /^[0-9a-z][0-9a-z_-]{0,31}$/.test(v));
 
+const isString = (v: unknown): boolean => typeof v === "string";
+const isStrings = (v: unknown): boolean => Array.isArray(v) && v.every(isString);
+/** `reconfigure` 的 `fields.tools` 最多几项（D71）：每个名字都要读一个工具定义文件，请求里的个数不能不设限。 */
+export const TOOLS_FIELD_MAX = 128;
+/** `reconfigure` 的 `fields` 里每个键的值的形状；值是否合格由读预设的同一套校验管（`presets/load.ts`）。 */
+const FIELD_SHAPES: Record<string, (v: unknown) => boolean> = {
+  model: isString,
+  tools: isStrings,
+  thinking: (v) => v === null || isString(v),
+  handoff: (v) => v === null || typeof v === "number",
+  options: (v) => v === null || (typeof v === "object" && !Array.isArray(v)),
+  prompt: isString,
+  workdir: isString,
+  context: (v) => v === null || isStrings(v),
+};
+
+/** `reconfigure` 的请求（D71）：`fields` 和 `revert` 恰好给一个；`fields` 至少一个键，不许 `id`，不认识的键、类型不对都报错。 */
+function checkReconfigure(r: Record<string, unknown>): Record<string, unknown> {
+  const { fields, revert } = r;
+  if ((fields === undefined) === (revert === undefined) || (revert !== undefined && revert !== true)) throw new Error("reconfigure 要带 fields 或者 revert: true，恰好一个");
+  if (fields === undefined) return r;
+  if (typeof fields !== "object" || fields === null || Array.isArray(fields) || Object.keys(fields).length === 0) throw new Error("reconfigure 的 fields 必须是至少一个键的对象");
+  for (const [key, v] of Object.entries(fields)) {
+    if (key === "id") throw new Error("id 不能改：它是记忆库的 ID，换角色用 fork 带 preset");
+    if (!Object.hasOwn(FIELD_SHAPES, key)) throw new Error(`reconfigure 的 fields 里没有这个键：${key}`);
+    if (!FIELD_SHAPES[key]!(v)) throw new Error(`reconfigure 的 fields.${key} 类型不对`);
+    if (key === "tools" && (v as string[]).length > TOOLS_FIELD_MAX) throw new Error(`reconfigure 的 fields.tools 最多 ${TOOLS_FIELD_MAX} 项：现在有 ${(v as string[]).length} 项`);
+  }
+  return r;
+}
+
+/**
+ * backup 的目标路径（D73）：1 到 1024 个字符，无控制字符，Windows 绝对路径（盘符或 UNC，和预设的 workdir 一样；`/e/x` 不认）。
+ * 空串、`:memory:`、`file:` 开头的都不是这种路径：SQLite 对它们另有解释，所以一律拒绝。
+ * 以空格或点结尾的也拒绝（Windows 会悄悄去掉它们，文件名对不上）；盘符之后不许再有冒号（NTFS 的备用数据流）。
+ */
+function checkBackupPath(p: string): void {
+  if (p.length < 1 || p.length > 1024) throw new Error(`备份路径要 1 到 1024 个字符：现在是 ${p.length} 个`);
+  if (/\p{Cc}/u.test(p)) throw new Error("备份路径不能含控制字符");
+  if (!/^[A-Za-z]:[\\/]/.test(p) && !/^[\\/]{2}[^\\/]/.test(p)) throw new Error(`备份路径必须是 Windows 绝对路径（盘符或 UNC）：${p}`);
+  if (/[ .]$/.test(p)) throw new Error(`备份路径不能以空格或点结尾：${p}`);
+  if (p.indexOf(":", 2) >= 0) throw new Error(`备份路径里盘符之后不能再有冒号（备用数据流）：${p}`);
+}
+
 function parseRequest(line: string): Request {
   const r: unknown = JSON.parse(line);
   const str = (o: object, k: string): boolean => typeof (o as Record<string, unknown>)[k] === "string";
@@ -313,6 +380,11 @@ function parseRequest(line: string): Request {
     }
     if (r.op === "ps") return { op: "ps" };
     if (r.op === "sweep") return { op: "sweep" };
+    if (r.op === "backup" && "path" in r && str(r, "path")) {
+      const path = (r as { path: string }).path;
+      checkBackupPath(path);
+      return { op: "backup", path };
+    }
     if (r.op === "inspect" && (!("process" in r) || str(r, "process"))) return r as Request;
     if (r.op === "check" && str(r, "preset")) return r as Request;
     if (r.op === "remove" && str(r, "process")) return r as Request;
@@ -320,6 +392,7 @@ function parseRequest(line: string): Request {
     if (r.op === "history" && str(r, "process") && num("segment") && num("from")) return r as Request;
     if (r.op === "watch" && (!("process" in r) || str(r, "process")) && ((r as Record<string, unknown>).messages === undefined || typeof (r as Record<string, unknown>).messages === "boolean")) return r as Request;
     if (r.op === "stop" && str(r, "process")) return r as Request;
+    if (r.op === "reconfigure" && str(r, "process")) return checkReconfigure(r as Record<string, unknown>) as Request;
     if (r.op === "fork" && str(r, "process") && num("before") && ((r as Record<string, unknown>).preset === undefined || str(r, "preset")) && idOk((r as Record<string, unknown>).id)) return r as Request;
     const images = "images" in r ? r.images : [];
     const imagesOk = Array.isArray(images) && images.every((x) => typeof x === "string");

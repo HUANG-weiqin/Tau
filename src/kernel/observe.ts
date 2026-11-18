@@ -1,5 +1,6 @@
 // 投影：CLI 的 `tau ps` 和 Agent 的 `self` 看同一份（设计稿第 9 节）。只给时刻和时长，本地时间在内核外格式化。
 import { contextUsed, endedReason, handoffThreshold, segmentStartedAt } from "./derive.ts";
+import { pendingFields } from "./snapshot.ts";
 import { unreachable } from "./types.ts";
 import type { Ended, Instant, Message, Process, ProcessId, Purpose, Usage } from "./types.ts";
 
@@ -33,6 +34,8 @@ export interface Projection {
     messages: number;
     /** 累计用量，跨段。 */
     usage: Usage;
+    /** 有待换配置（`next`）时：它和当前快照结构性字段里不一样的键名（D71）。没有 `next` 就没有这个键。放在 `self` 里，因为 `watch` 的 `update` 只带 `self`。 */
+    pending?: { fields: string[] };
   };
   /** 同一个预设下不处于 idle 的其他进程。 */
   siblings: ProcessView[];
@@ -54,6 +57,7 @@ export function observe(p: Process, segment: readonly Message[], siblings: reado
       context: { used: contextUsed(p, segment), window: p.preset.contextWindow, threshold: handoffThreshold(p.preset) },
       messages: segment.length,
       usage: { ...p.usage },
+      ...(p.next === undefined ? {} : { pending: { fields: pendingFields(p.preset, p.next) } }),
     },
     siblings: siblings.filter((s) => s.id !== p.id && s.preset.id === p.preset.id && s.phase.tag !== "idle").map((s) => view(s, now)),
     children: kids.filter((s) => s.phase.tag !== "idle").map((s) => view(s, now)),

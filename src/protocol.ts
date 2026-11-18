@@ -1,9 +1,25 @@
 // CLI 和服务之间唯一的线协议（见 .knowledge/kb-service.md）。每个连接：客户端发一行 JSON 请求，服务回若干行 JSON，然后关闭。
+import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import type { Limits } from "./kernel/derive.ts";
 import type { Projection } from "./kernel/observe.ts";
 import type { Ended, Instant, MemoryFailure, MemoryOp, Message, PresetSnapshot, Process } from "./kernel/types.ts";
 
 export const PIPE = "\\\\.\\pipe\\tau";
+
+/** `reconfigure` 要改的键，至少一个；值 `null` 表示删掉这个键。写法和预设文件里的一样（`tools`、`context` 是拆开的数组）。调用参数（`thinking`、`options`、`handoff`）立即生效，其余的换段时生效。不许 `id`。 */
+export interface ReconfigureFields {
+  /** `<供应商>/<模型 ID>` */
+  model?: string;
+  tools?: string[];
+  thinking?: ThinkingLevel | null;
+  /** 正整数。 */
+  handoff?: number | null;
+  options?: Record<string, unknown> | null;
+  prompt?: string;
+  /** Windows 绝对路径。 */
+  workdir?: string;
+  context?: string[] | null;
+}
 
 export type Request =
   /** `images` 是 base64 字符串，按入口检查（设计稿 5.6）。`id` 是调用方定的进程 ID（D64 第 9 组），只许 `[0-9a-z][0-9a-z_-]{0,31}`；已存在回 `error`，什么都不写。 */
@@ -32,8 +48,12 @@ export type Request =
   | { op: "prune"; process: string; before: number }
   /** 删一个空闲、没人引用的进程的记录和全部段。拒绝回 `error`。成功时先给订阅推 `removed`，再回执。 */
   | { op: "remove"; process: string }
+  /** 改这个会话的快照（D71）：`fields` 和 `revert` 恰好给一个。只改这个进程，不碰预设文件。回 `reconfigured`；出错回 `error`，什么都不改。 */
+  | { op: "reconfigure"; process: string; fields?: ReconfigureFields; revert?: true }
   /** 清掉没人引用的图片，回 `swept`。 */
-  | { op: "sweep" };
+  | { op: "sweep" }
+  /** 把整个库一致地复制成 `path` 这个文件（D73）。`path` 是 Windows 绝对路径，目标已存在回 `error`。同步，不是输入，不开写事务，不调 `pump`。回 `backed_up`。 */
+  | { op: "backup"; path: string };
 
 export type Reply =
   /** 命令写进库的事务提交之后才发。 */
@@ -69,4 +89,8 @@ export type Reply =
   | { type: "removed"; process: string }
   /** sweep 的回复：删掉的图片行数。 */
   | { type: "swept"; blobs: number }
+  /** reconfigure 的回执：提交并处理以后，这个进程的记录里有没有待换配置（`next`）。 */
+  | { type: "reconfigured"; process: string; pending: boolean }
+  /** backup 的回复：备份文件的路径（原样）和字节数。 */
+  | { type: "backed_up"; path: string; bytes: number }
   | { type: "error"; message: string };

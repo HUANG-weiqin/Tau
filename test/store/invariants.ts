@@ -56,7 +56,8 @@ function assertReferences(db: DatabaseSync, processes: readonly Process[]): void
   }
 }
 
-export function assertStoreInvariants(db: DatabaseSync): void {
+/** `relaxed`：运行中被 `reconfigure` 改过 `handoff`、下一个副作用还没发出的进程，和阈值有关的不变量不检查（`assertInvariants` 的 `relaxed`，D71）。 */
+export function assertStoreInvariants(db: DatabaseSync, relaxed: ReadonlySet<string> = new Set()): void {
   const processes = loadProcesses(db);
   assertBlobRefs(db, processes);
   assertSegmentRows(db, processes);
@@ -66,7 +67,7 @@ export function assertStoreInvariants(db: DatabaseSync): void {
   for (const r of rows) assert.ok(processes.some((p) => p.id === r.id), `副作用表里的行属于不存在的进程 ${r.id}`);
   for (const p of processes) {
     const seg = loadSegment(db, p);
-    assertInvariants(p, seg);
+    assertInvariants(p, seg, relaxed.has(p.id));
     const mine = rows.filter((r) => r.id === p.id);
     assert.ok(mine.length <= 1, `进程 ${p.id} 在副作用表里有 ${mine.length} 行`);
     const e = effectOf(p, seg);

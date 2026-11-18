@@ -38,8 +38,17 @@ export function memorySection(view: string): string {
   return view === "" ? "" : MEMORY_HEADING + view;
 }
 
+/** 上下文视图前面的标题，连同它前面的空行（D72）。 */
+export const CONTEXT_HEADING = "\n\n## 上下文文件（开段时的快照）\n\n";
+
+/** 系统提示词里上下文文件的那一段，视图为空时没有。 */
+export function contextSection(view: string): string {
+  return view === "" ? "" : CONTEXT_HEADING + view;
+}
+
+/** 固定部分、上下文一节、记忆一节。视图都取自开段时存下的 `segment`。 */
 export function systemPrompt(p: Process): string {
-  return fixedPrompt(p.preset) + memorySection(p.segment.memoryView);
+  return fixedPrompt(p.preset) + contextSection(p.segment.contextView ?? "") + memorySection(p.segment.memoryView);
 }
 
 export function toolDescriptions(preset: PresetSnapshot): Tool[] {

@@ -1,6 +1,6 @@
 // 能从工作段算出来的值都在这里算，不存（见 .knowledge/kb-kernel.md）。
-import { fixedPrompt, MEMORY_HEADING, memorySection, systemPrompt, toolDescriptions } from "./context.ts";
-import { MEMORY_VIEW_MAX_BYTES } from "./tools.ts";
+import { CONTEXT_HEADING, contextSection, fixedPrompt, MEMORY_HEADING, memorySection, systemPrompt, toolDescriptions } from "./context.ts";
+import { CONTEXT_VIEW_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "./tools.ts";
 import { unreachable } from "./types.ts";
 import type { AssistantMessage, Ended, Instant, Message, PresetSnapshot, Process, ToolCall } from "./types.ts";
 
@@ -46,10 +46,11 @@ export function fixedTokens(p: PresetSnapshot): number {
   return tokens(utf8Bytes(fixedPrompt(p)) + utf8Bytes(JSON.stringify(toolDescriptions(p))));
 }
 
-/** 一份快照的限度，单位 token：固定部分、记忆视图的上界（没有 memory 工具时是 0）、换段阈值。只看快照。 */
+/** 一份快照的限度，单位 token：固定部分、记忆视图的上界（没有 memory 工具时是 0）、上下文视图的上界（没有声明 `context` 时是 0）、换段阈值。只看快照。 */
 export interface Limits {
   fixed: number;
   memoryMax: number;
+  contextMax: number;
   threshold: number;
 }
 
@@ -57,21 +58,23 @@ export function limits(p: PresetSnapshot): Limits {
   return {
     fixed: fixedTokens(p),
     memoryMax: p.tools.includes("memory") ? tokens(utf8Bytes(MEMORY_HEADING) + MEMORY_VIEW_MAX_BYTES) : 0,
+    contextMax: p.context !== undefined && p.context.length > 0 ? tokens(utf8Bytes(CONTEXT_HEADING) + CONTEXT_VIEW_MAX_BYTES) : 0,
     threshold: handoffThreshold(p),
   };
 }
 
-/** 启动检查（设计稿 5.6）：固定部分加记忆的上界要低于阈值。通过时返回 null，否则返回失败的原因。 */
+/** 启动检查（设计稿 5.6）：固定部分加记忆和上下文的上界要低于阈值。通过时返回 null，否则返回失败的原因。声明了 `context` 才多一项上下文的上界。 */
 export function startError(p: PresetSnapshot): string | null {
-  const { fixed, memoryMax, threshold } = limits(p);
-  if (fixed + memoryMax < threshold) return null;
-  return `预设 ${p.id} 的窗口太小，装不下：固定部分 ${fixed} token，记忆的上界 ${memoryMax} token，换段阈值 ${threshold} token`;
+  const { fixed, memoryMax, contextMax, threshold } = limits(p);
+  if (fixed + memoryMax + contextMax < threshold) return null;
+  const context = contextMax > 0 ? `，上下文的上界 ${contextMax} token` : "";
+  return `预设 ${p.id} 的窗口太小，装不下：固定部分 ${fixed} token，记忆的上界 ${memoryMax} token${context}，换段阈值 ${threshold} token`;
 }
 
-/** 假想的新段开头：只有一条消息 `first`，记忆视图是 `view`。返回它的用量和各部分的 token。 */
-export function newSegmentUsed(p: Process, view: string, first: Message): { used: number; fixed: number; memory: number } {
-  const probe: Process = { ...p, segment: { seq: p.segment.seq + 1, memoryView: view } };
-  return { used: contextUsed(probe, [first]), fixed: fixedTokens(p.preset), memory: tokens(utf8Bytes(memorySection(view))) };
+/** 假想的新段开头：只有一条消息 `first`，记忆视图是 `view`，上下文视图是 `contextView`（缺省没有）。返回它的用量和各部分的 token。 */
+export function newSegmentUsed(p: Process, view: string, first: Message, contextView = ""): { used: number; fixed: number; memory: number; context: number } {
+  const probe: Process = { ...p, segment: { seq: p.segment.seq + 1, memoryView: view, ...(contextView === "" ? {} : { contextView }) } };
+  return { used: contextUsed(probe, [first]), fixed: fixedTokens(p.preset), memory: tokens(utf8Bytes(memorySection(view))), context: tokens(utf8Bytes(contextSection(contextView))) };
 }
 
 /** 一条消息实际发出的原始 UTF-8 字节数，不算 JSON 外壳和转义。工具调用的参数本来就按 JSON 发，所以按 JSON 算。 */

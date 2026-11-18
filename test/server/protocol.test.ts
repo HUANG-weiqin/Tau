@@ -10,13 +10,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxThinking, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
-import type { FauxProviderHandle, RegisterFauxProviderOptions } from "@earendil-works/pi-ai";
+import type { FauxProviderHandle, Models, RegisterFauxProviderOptions } from "@earendil-works/pi-ai";
 import { request } from "../../src/cli/main.ts";
 import { limits } from "../../src/kernel/derive.ts";
 import type { Message } from "../../src/kernel/types.ts";
 import { sqliteMemory } from "../../src/memory/kv.ts";
 import type { Reply, Request } from "../../src/protocol.ts";
-import { WATCH_BUFFER_MAX, serve } from "../../src/server/serve.ts";
+import { TOOLS_FIELD_MAX, WATCH_BUFFER_MAX, serve } from "../../src/server/serve.ts";
 import type { Service } from "../../src/server/serve.ts";
 import { gif, jpeg, png } from "../images.ts";
 import { appendMessages, loadProcess, loadSegment, putMail, saveProcess } from "../../src/store/db.ts";
@@ -31,6 +31,8 @@ interface Env {
   presetsDir: string;
   toolsDir: string;
   work: string;
+  dbPath: string;
+  models: Models;
   /** 关服务。可以多次调用；测试结束时也会调。 */
   close(): Promise<void>;
 }
@@ -48,7 +50,8 @@ async function setup(t: TestContext, fauxOptions: RegisterFauxProviderOptions = 
   models.setProvider(faux.provider);
   writeFileSync(join(presetsDir, "p.md"), `---\nworkdir: ${work}\nmodel: ${faux.getModel().provider}/m\ntools: read\n---\n你是测试助手。\n`);
   const pipe = `\\\\.\\pipe\\tau-test-proto-${process.pid}-${Math.random().toString(16).slice(2)}`;
-  const svc = await serve({ pipe, dbPath: join(dir, "tau.db"), presetsDir, toolsDir, models, memory: sqliteMemory });
+  const dbPath = join(dir, "tau.db");
+  const svc = await serve({ pipe, dbPath, presetsDir, toolsDir, models, memory: sqliteMemory });
   const sockets = new Set<Socket>();
   svc.server.on("connection", (s: Socket) => {
     sockets.add(s);
@@ -61,7 +64,7 @@ async function setup(t: TestContext, fauxOptions: RegisterFauxProviderOptions = 
     await close();
     rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
-  return { pipe, faux, svc, presetsDir, toolsDir, work, close };
+  return { pipe, faux, svc, presetsDir, toolsDir, work, dbPath, models, close };
 }
 
 async function collect(pipe: string, req: Request): Promise<Reply[]> {
@@ -1522,4 +1525,330 @@ test("text 的 kind：思考和工具调用的流只推给带 messages 的订阅
   assert.equal(plainTexts.map((r) => r.delta).join(""), "好了。");
   plain.socket.destroy();
   sub.socket.destroy();
+});
+
+// reconfigure（D71）：改这个会话的快照。校验、回执的 pending、调用参数不重读文件、结构性字段重读（手动刷新）、startError、revert、不唤醒空闲进程。
+
+const reconfigureErrors = async (e: Env, req: unknown): Promise<string> => {
+  const before = dumpDb(e);
+  const message = errorOf(await collect(e.pipe, req as Request));
+  assert.equal(dumpDb(e), before, `${JSON.stringify(req)} 回了 error，库必须不变`);
+  return message;
+};
+const reconfigure = async (e: Env, process: string, body: { fields?: unknown; revert?: true }): Promise<boolean> => {
+  const r = await collect(e.pipe, { op: "reconfigure", process, ...body } as Request);
+  assert.equal(r.length, 1, JSON.stringify(r));
+  assert.equal(r[0]?.type, "reconfigured", JSON.stringify(r));
+  assert.ok(r[0]?.type === "reconfigured" && r[0].process === process);
+  return r[0]?.type === "reconfigured" && r[0].pending;
+};
+const preset = (e: Env, id: string, tools: string): void => writeFileSync(join(e.presetsDir, `${id}.md`), `---\nworkdir: ${e.work}\nmodel: ${e.faux.getModel().provider}/m\ntools: ${tools}\n---\n你是测试助手。\n`);
+const toolFile = (e: Env, name: string, description: string): void => writeFileSync(join(e.toolsDir, `${name}.json`), JSON.stringify({ description, parameters: { type: "object" }, command: "echo hi" }));
+
+test("reconfigure 的请求校验：fields 和 revert 恰好一个；id、不认识的键、类型不对，都回 error，库不变", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  const errors = (req: unknown) => reconfigureErrors(e, req);
+  const base = { op: "reconfigure", process: a };
+  assert.match(await errors(base), /要带 fields 或者 revert: true，恰好一个/);
+  assert.match(await errors({ ...base, fields: { thinking: "low" }, revert: true }), /要带 fields 或者 revert: true，恰好一个/);
+  for (const revert of [false, null, 1, "true"]) assert.match(await errors({ ...base, revert }), /要带 fields 或者 revert: true，恰好一个/, JSON.stringify(revert));
+  for (const fields of [{}, [], null, "x", 1]) assert.match(await errors({ ...base, fields }), /fields 必须是至少一个键的对象|要带 fields 或者 revert: true，恰好一个/, JSON.stringify(fields));
+  assert.equal(await errors({ ...base, fields: { id: "other" } }), "id 不能改：它是记忆库的 ID，换角色用 fork 带 preset");
+  assert.equal(await errors({ ...base, fields: { thinking: "low", id: "p" } }), "id 不能改：它是记忆库的 ID，换角色用 fork 带 preset");
+  for (const key of ["color", "toolDefs", "contextWindow", "input", "next", "constructor", "__proto__", "toString"]) assert.match(await errors({ ...base, fields: JSON.parse(`{"${key}": 1}`) }), new RegExp(`fields 里没有这个键：${key}$`), key);
+  const bad: [string, unknown][] = [["model", 1], ["tools", "read"], ["tools", [1]], ["tools", null], ["thinking", 5], ["handoff", "1000"], ["handoff", true], ["options", []], ["options", "{}"], ["prompt", null], ["prompt", 3], ["workdir", 3], ["workdir", null], ["context", "a.md"], ["context", [1]]];
+  for (const [key, value] of bad) assert.equal(await errors({ ...base, fields: { [key]: value } }), `reconfigure 的 fields.${key} 类型不对`, `${key}: ${JSON.stringify(value)}`);
+  // process 不是字符串、缺失：无法识别的请求。
+  for (const req of [{ op: "reconfigure", fields: { thinking: "low" } }, { op: "reconfigure", process: 1, fields: { thinking: "low" } }, { op: "reconfigure", revert: true }]) assert.match(await errors(req), /^无法识别的请求/);
+  // 值的内容由读预设的同一套校验管，文字一样。
+  assert.match(await errors({ ...base, fields: { thinking: "wild" } }), /^预设 p 的 thinking 只能是/);
+  assert.match(await errors({ ...base, fields: { handoff: 0 } }), /^预设 p 的 handoff 必须是正整数（token）：0$/);
+  assert.match(await errors({ ...base, fields: { handoff: 1.5 } }), /^预设 p 的 handoff 必须是正整数/);
+  assert.match(await errors({ ...base, fields: { options: { apiKey: "x" } } }), /^预设 p 的 options 里的 apiKey 不能用/);
+  assert.match(await errors({ ...base, fields: { model: "faux/nope" } }), /^模型目录里没有 faux\/nope$/);
+  assert.match(await errors({ ...base, fields: { workdir: "rel" } }), /^预设 p 的工作目录必须是绝对路径：rel$/);
+  assert.match(await errors({ ...base, fields: { tools: ["read", "ghost"] } }), /^找不到工具定义：ghost$/);
+  assert.match(await errors({ ...base, fields: { context: ["/e/x"] } }), /^预设 p 的 context 必须是相对路径或 Windows 绝对路径/);
+});
+
+test("reconfigure：进程不存在回 error，库不变", async (t) => {
+  const e = await setup(t);
+  await startIdle(e);
+  assert.equal(await reconfigureErrors(e, { op: "reconfigure", process: "nope", fields: { thinking: "low" } }), "没有这个进程：nope");
+  assert.equal(await reconfigureErrors(e, { op: "reconfigure", process: "nope", revert: true }), "没有这个进程：nope");
+});
+
+test("reconfigure：只改调用参数立即生效，pending 为 false；改结构性字段存 next，pending 为 true；空闲的进程不被唤醒", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  const old = loadProcess(e.svc.db, a)!;
+  const seg = segmentOf(e, a);
+  assert.equal(await reconfigure(e, a, { fields: { thinking: "high", handoff: 50_000, options: { temperature: 0.3 } } }), false);
+  const p = loadProcess(e.svc.db, a)!;
+  assert.deepEqual([p.preset.thinking, p.preset.handoff, p.preset.options], ["high", 50_000, { temperature: 0.3 }]);
+  assert.equal("next" in p, false);
+  assert.deepEqual({ ...p, preset: old.preset }, old, "别的一点没动：阶段、段、副作用编号");
+
+  assert.equal(await reconfigure(e, a, { fields: { prompt: "新的提示词。", tools: ["read", "write"] } }), true);
+  const q = loadProcess(e.svc.db, a)!;
+  assert.deepEqual([q.next?.prompt, q.next?.tools, q.next?.thinking], ["新的提示词。", ["read", "write"], "high"]);
+  assert.equal(q.preset.prompt, old.preset.prompt, "结构性字段换段时才生效");
+  assert.deepEqual(q.phase, { tag: "idle", ended: "done" }, "回执之后仍是 idle");
+  assert.deepEqual(segmentOf(e, a), seg, "没有新消息");
+  assert.deepEqual(e.svc.db.prepare("SELECT * FROM mailbox").all(), []);
+  assert.deepEqual(e.svc.db.prepare("SELECT * FROM effects").all(), []);
+  // inspect 原样带 next，limits 是当前快照的。
+  const inspected = await collect(e.pipe, { op: "inspect", process: a });
+  const row = inspected[0];
+  assert.ok(row?.type === "process");
+  assert.equal(row.process.next?.prompt, "新的提示词。");
+  assert.deepEqual(row.limits, limits(q.preset));
+});
+
+test("reconfigure：watch 的 update 带 self.pending；改回来以后没有这个键", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  const sub = open(e.pipe, { op: "watch", process: a });
+  await until(() => updates(sub).length === 1, "快照");
+  assert.equal("pending" in updates(sub)[0]!.self, false);
+  assert.equal(await reconfigure(e, a, { fields: { prompt: "新的。", tools: ["read", "write"], context: ["AGENTS.md"] } }), true);
+  await until(() => updates(sub).length === 2, "reconfigure 之后的 update");
+  assert.deepEqual(updates(sub)[1]!.self.pending, { fields: ["prompt", "tools", "context"] });
+  assert.equal(await reconfigure(e, a, { revert: true }), false);
+  await until(() => updates(sub).length === 3, "revert 之后的 update");
+  assert.equal("pending" in updates(sub)[2]!.self, false);
+  sub.socket.destroy();
+});
+
+test("reconfigure：fields 只有调用参数时不重读文件；有结构性字段时重读工具定义文件（手动刷新）", async (t) => {
+  const e = await setup(t);
+  preset(e, "withdef", "read, notes");
+  toolFile(e, "notes", "写笔记 v1");
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("好"))]);
+  const a = receiptOf((await collect(e.pipe, { op: "start", preset: "withdef", text: "你好" }).then((r) => r.slice(0, 1))));
+  await until(() => loadProcess(e.svc.db, a)?.phase.tag === "idle", "空闲");
+  // 换掉、甚至删掉工具定义文件：调用参数的 reconfigure 不看它，也不受它影响。
+  toolFile(e, "notes", "写笔记 v2");
+  assert.equal(await reconfigure(e, a, { fields: { thinking: "low" } }), false);
+  rmSync(join(e.toolsDir, "notes.json"));
+  assert.equal(await reconfigure(e, a, { fields: { handoff: 60_000 } }), false);
+  const p = loadProcess(e.svc.db, a)!;
+  assert.deepEqual(p.preset.toolDefs.map((d) => d.description), ["写笔记 v1"]);
+  assert.equal("next" in p, false);
+  // 结构性字段：重读文件。文件没了就报错；文件回来、把 tools 原样发一次，就是手动刷新。
+  assert.match(await reconfigureErrors(e, { op: "reconfigure", process: a, fields: { tools: ["read", "notes"] } }), /^找不到工具定义：notes$/);
+  toolFile(e, "notes", "写笔记 v3");
+  assert.equal(await reconfigure(e, a, { fields: { tools: ["read", "notes"] } }), true);
+  const q = loadProcess(e.svc.db, a)!;
+  assert.deepEqual(q.preset.toolDefs.map((d) => d.description), ["写笔记 v1"]);
+  assert.deepEqual(q.next?.toolDefs.map((d) => d.description), ["写笔记 v3"]);
+  assert.deepEqual(q.next?.thinking, "low", "调用参数跟着");
+});
+
+test("reconfigure：startError 不通过回 error，原文，库不变（调用参数和结构性字段两条路都查）", async (t) => {
+  const e = await setup(t, { models: [{ id: "m", contextWindow: 200_000 }, { id: "small", contextWindow: 28_000 }] });
+  const a = await startIdle(e);
+  const provider = e.faux.getModel().provider;
+  const low = await reconfigureErrors(e, { op: "reconfigure", process: a, fields: { handoff: 5 } });
+  assert.match(low, /^预设 p 的窗口太小，装不下：固定部分 \d+ token，记忆的上界 0 token，换段阈值 5 token$/);
+  const small = await reconfigureErrors(e, { op: "reconfigure", process: a, fields: { model: `${provider}/small`, tools: ["read", "memory"] } });
+  assert.match(small, /^预设 p 的窗口太小，装不下：固定部分 \d+ token，记忆的上界 \d+ token，换段阈值 -?\d+ token$/);
+  // 声明了 context 才多一项上下文的上界。
+  const ctx = await reconfigureErrors(e, { op: "reconfigure", process: a, fields: { handoff: 9_000, context: ["AGENTS.md"] } });
+  assert.match(ctx, /记忆的上界 0 token，上下文的上界 \d+ token，换段阈值 9000 token$/);
+});
+
+test("reconfigure：revert 放弃待换配置，调用参数保留；没有待换配置时什么都不改", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  assert.equal(await reconfigure(e, a, { fields: { thinking: "high", prompt: "待换的。" } }), true);
+  assert.equal(await reconfigure(e, a, { revert: true }), false);
+  const p = loadProcess(e.svc.db, a)!;
+  assert.equal("next" in p, false);
+  assert.equal(p.preset.thinking, "high");
+  assert.notEqual(p.preset.prompt, "待换的。");
+  // 没有待换配置：revert 是空操作，库里只有那一条信箱输入被处理掉。
+  const before = dumpDb(e);
+  assert.equal(await reconfigure(e, a, { revert: true }), false);
+  assert.equal(dumpDb(e), before);
+});
+
+test("reconfigure：待换配置存在时，新的以待换的为底；换回当前结构就取消", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  assert.equal(await reconfigure(e, a, { fields: { prompt: "第一版。" } }), true);
+  assert.equal(await reconfigure(e, a, { fields: { tools: ["read", "write"] } }), true);
+  const p = loadProcess(e.svc.db, a)!;
+  assert.deepEqual([p.next?.prompt, p.next?.tools], ["第一版。", ["read", "write"]], "第二次以第一次的结果为底");
+  const old = p.preset;
+  assert.equal(await reconfigure(e, a, { fields: { prompt: old.prompt, tools: old.tools } }), false, "换回和当前一样：取消");
+  assert.equal("next" in loadProcess(e.svc.db, a)!, false);
+});
+
+test("reconfigure：空闲、段里没有助手消息：直接采用，pending 为 false", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  const b = receiptOf(await collect(e.pipe, { op: "fork", process: a, before: 0 }));
+  assert.deepEqual(segmentOf(e, b), []);
+  assert.equal(await reconfigure(e, b, { fields: { prompt: "新角色。", tools: ["read", "write"] } }), false);
+  const p = loadProcess(e.svc.db, b)!;
+  assert.deepEqual([p.preset.prompt, p.preset.tools], ["新角色。", ["read", "write"]]);
+  assert.equal("next" in p, false);
+  assert.equal(p.segment.seq, 1);
+});
+
+test("reconfigure：进程在跑时，调用参数立即换，结构性字段存 next；已发出的副作用编号不变", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  withTurn(e, a, {});
+  const running = loadProcess(e.svc.db, a)!;
+  assert.equal(running.phase.tag, "awaitingModel");
+  assert.equal(await reconfigure(e, a, { fields: { thinking: "high", prompt: "待换的。" } }), true);
+  const p = loadProcess(e.svc.db, a)!;
+  assert.deepEqual(p.phase, running.phase);
+  assert.equal(p.lastEffect, running.lastEffect);
+  assert.equal(p.preset.thinking, "high");
+  assert.equal(p.preset.prompt, running.preset.prompt);
+  assert.equal(p.next?.prompt, "待换的。");
+});
+
+test("reconfigure 之后换段：采用待换配置，新段的请求带新的系统提示词和工具", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  assert.equal(await reconfigure(e, a, { fields: { prompt: "你是新角色。", tools: ["read", "write"] } }), true);
+  const seen: { system: string; tools: string[] }[] = [];
+  const spy = (answer: string) => (context: { systemPrompt?: string; messages: { role: string; content?: unknown }[] }) => {
+    const [head] = context.messages;
+    seen.push({ system: context.systemPrompt ?? (head?.role === "system" ? JSON.stringify(head.content) : ""), tools: getCurrentTools(context.messages as never).map((x) => x.name) });
+    return fauxAssistantMessage(fauxText(answer));
+  };
+  e.faux.appendResponses([spy("交接说明：继续。"), spy("新段里的回复。")]);
+  const r = await collect(e.pipe, { op: "send", process: a, text: "换段后处理", handoff: true });
+  assert.equal(r.at(-1)?.type, "final");
+  assert.equal(seen.length, 2);
+  assert.match(seen[0]!.system, /你是测试助手/, "交接请求仍用旧快照");
+  assert.deepEqual(seen[0]!.tools, ["read", "self", "handoff"]);
+  assert.match(seen[1]!.system, /你是新角色/);
+  assert.doesNotMatch(seen[1]!.system, /你是测试助手/);
+  assert.deepEqual(seen[1]!.tools, ["read", "write", "self", "handoff"]);
+  const p = loadProcess(e.svc.db, a)!;
+  assert.equal(p.segment.seq, 2);
+  assert.equal(p.preset.prompt, "你是新角色。");
+  assert.equal("next" in p, false);
+  assert.equal(await reconfigure(e, a, { revert: true }), false);
+});
+
+// reconfigure 的边界（D71）：嵌套很深的工具定义、fields.tools 的个数、立即生效的那份也过启动检查、段放不进新窗口。
+
+test("reconfigure：嵌套 2200 层的工具定义不会卡住信箱：只改 thinking 成功，信箱里没有残留，进程照常收信，服务能重启", async (t) => {
+  const e = await setup(t);
+  let nested: unknown = { type: "object" };
+  for (let i = 0; i < 2200; i++) nested = { a: nested };
+  writeFileSync(join(e.toolsDir, "deep.json"), JSON.stringify({ description: "d", parameters: { type: "object", properties: nested }, command: "echo hi" }));
+  preset(e, "deepy", "read, deep");
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("好"))]);
+  const started = await collect(e.pipe, { op: "start", preset: "deepy", text: "你好" });
+  const a = receiptOf(started);
+  assert.equal(started.at(-1)?.type, "final");
+  const mailbox = () => e.svc.db.prepare("SELECT COUNT(*) AS n FROM mailbox").get()?.n;
+
+  assert.equal(await reconfigure(e, a, { fields: { thinking: "low" } }), false);
+  assert.equal(mailbox(), 0, "信箱里没有残留");
+  assert.equal(loadProcess(e.svc.db, a)?.preset.thinking, "low");
+  // 结构性字段：重读工具定义、重建快照，和当前的比较，同样不抛。
+  assert.equal(await reconfigure(e, a, { fields: { prompt: "新的。" } }), true);
+  assert.equal(mailbox(), 0);
+  assert.equal(loadProcess(e.svc.db, a)?.next?.prompt, "新的。");
+  assert.equal(await reconfigure(e, a, { fields: { prompt: loadProcess(e.svc.db, a)!.preset.prompt } }), false, "换回去：取消");
+  // 进程照常收信。
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("再好"))]);
+  const sent = await collect(e.pipe, { op: "send", process: a, text: "再来" });
+  assert.equal(sent.at(-1)?.type, "final");
+  assert.equal(mailbox(), 0);
+
+  // 服务重启：库里没有卡住的输入，进程还在。
+  await e.close();
+  const again = await serve({ pipe: `${e.pipe}-again`, dbPath: e.dbPath, presetsDir: e.presetsDir, toolsDir: e.toolsDir, models: e.models, memory: sqliteMemory });
+  try {
+    assert.equal(loadProcess(again.db, a)?.preset.thinking, "low");
+    assert.equal(again.db.prepare("SELECT COUNT(*) AS n FROM mailbox").get()?.n, 0);
+  } finally {
+    await again.close();
+  }
+});
+
+test("reconfigure：fields.tools 最多 128 项，超了回清楚的 error 且库不变；3 万个名字的请求也立刻回；128 项能过校验；去重照旧", async (t) => {
+  const e = await setup(t);
+  const a = await startIdle(e);
+  const names = (n: number): string[] => Array.from({ length: n }, (_, i) => `t${i}`);
+  assert.equal(TOOLS_FIELD_MAX, 128);
+  assert.equal(await reconfigureErrors(e, { op: "reconfigure", process: a, fields: { tools: names(129) } }), "reconfigure 的 fields.tools 最多 128 项：现在有 129 项");
+  const t0 = Date.now();
+  assert.equal(await reconfigureErrors(e, { op: "reconfigure", process: a, fields: { tools: names(30_000) } }), "reconfigure 的 fields.tools 最多 128 项：现在有 30000 项");
+  assert.ok(Date.now() - t0 < 5_000, `3 万个名字用了 ${Date.now() - t0} 毫秒`);
+  // 个数按请求里的算，重复的也计：129 个同名的也拒绝。
+  assert.match(await reconfigureErrors(e, { op: "reconfigure", process: a, fields: { tools: Array.from({ length: 129 }, () => "read") } }), /最多 128 项：现在有 129 项$/);
+  // 128 项能过个数的检查：名字都没有对应的工具定义，错在读文件，不在个数。
+  assert.equal(await reconfigureErrors(e, { op: "reconfigure", process: a, fields: { tools: names(128) } }), "找不到工具定义：t0");
+  // 去重照旧：重复的名字只算一个，保留第一次出现的位置。
+  toolFile(e, "n1", "一");
+  toolFile(e, "n2", "二");
+  assert.equal(await reconfigure(e, a, { fields: { tools: ["n2", "read", "n1", "n2", "read", "n1"] } }), true);
+  const next = loadProcess(e.svc.db, a)?.next;
+  assert.deepEqual(next?.tools, ["read"]);
+  assert.deepEqual(next?.toolDefs.map((d) => d.name), ["n2", "n1"]);
+});
+
+test("reconfigure：已有待换配置时只改调用参数，立即生效的那份（当前快照带新参数）也过启动检查，两份任何一份不过就回 error，库不变", async (t) => {
+  const e = await setup(t);
+  preset(e, "mem", "read, memory");
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("好"))]);
+  const started = await collect(e.pipe, { op: "start", preset: "mem", text: "你好" });
+  const a = receiptOf(started);
+  // 待换配置去掉了 memory：固定部分加记忆的上界小得多。
+  assert.equal(await reconfigure(e, a, { fields: { tools: ["read"] } }), true);
+  const p = loadProcess(e.svc.db, a)!;
+  assert.deepEqual([p.preset.tools, p.next?.tools], [["read", "memory"], ["read"]]);
+  const threshold = 5_000;
+  assert.ok(limits(p.next!).fixed + limits(p.next!).memoryMax < threshold, "待换的那份放得下");
+  assert.ok(limits(p.preset).fixed + limits(p.preset).memoryMax >= threshold, "当前的那份放不下");
+  // 以待换的为底，handoff 5000：S 过启动检查，立即生效的那份（当前快照带 handoff 5000）过不了。
+  const error = await reconfigureErrors(e, { op: "reconfigure", process: a, fields: { handoff: threshold } });
+  assert.match(error, /^当前配置带上新的调用参数就过不了启动检查：预设 mem 的窗口太小，装不下：固定部分 \d+ token，记忆的上界 \d+ token，换段阈值 5000 token$/);
+  assert.equal(loadProcess(e.svc.db, a)?.preset.handoff, undefined, "当前快照没被套上");
+  // 对照：没有待换配置时，同样的 handoff 由 S（就是当前快照）的检查拦下，文字和从前一样。
+  assert.equal(await reconfigure(e, a, { revert: true }), false);
+  assert.match(await reconfigureErrors(e, { op: "reconfigure", process: a, fields: { handoff: threshold } }), /^预设 mem 的窗口太小，装不下：固定部分/);
+  // 两份都过时照常成功：调用参数立即换，next 带着同样的调用参数。
+  assert.equal(await reconfigure(e, a, { fields: { tools: ["read"] } }), true);
+  assert.equal(await reconfigure(e, a, { fields: { handoff: 100_000 } }), true);
+  const q = loadProcess(e.svc.db, a)!;
+  assert.deepEqual([q.preset.handoff, q.next?.handoff, q.next?.tools], [100_000, 100_000, ["read"]]);
+});
+
+test("reconfigure：空闲、段里没有助手消息、但段放不进新窗口：存 next，pending 为 true，当前快照照用；放得下时直接采用，pending 为 false", async (t) => {
+  const e = await setup(t, { models: [{ id: "m", contextWindow: 200_000 }, { id: "mid", contextWindow: 100_000 }] });
+  const a = await startIdle(e);
+  const provider = e.faux.getModel().provider;
+  // 复制出一个没有助手消息的进程（上一轮被停止的样子），段里放四条各约 32 KB 的用户消息。
+  const fillTo = async (messages: number): Promise<string> => {
+    const id = receiptOf(await collect(e.pipe, { op: "fork", process: a, before: 0 }));
+    const p = loadProcess(e.svc.db, id)!;
+    appendMessages(e.svc.db, p, 0, Array.from({ length: messages }, (): Message => ({ role: "user", content: "字".repeat(10_900), timestamp: 1 })));
+    return id;
+  };
+  const big = await fillTo(4);
+  assert.equal(segmentOf(e, big).length, 4);
+  assert.equal(await reconfigure(e, big, { fields: { model: `${provider}/mid` } }), true);
+  const p = loadProcess(e.svc.db, big)!;
+  assert.equal(p.preset.contextWindow, 200_000, "当前快照没换");
+  assert.equal(p.next?.contextWindow, 100_000);
+  assert.deepEqual(segmentOf(e, big).length, 4, "段没动");
+  // 同样的窗口，段里只有一条消息：放得下，直接采用。
+  const small = await fillTo(1);
+  assert.equal(await reconfigure(e, small, { fields: { model: `${provider}/mid` } }), false);
+  const q = loadProcess(e.svc.db, small)!;
+  assert.equal(q.preset.contextWindow, 100_000);
+  assert.equal("next" in q, false);
 });

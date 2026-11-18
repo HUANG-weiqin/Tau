@@ -66,6 +66,8 @@ export interface PresetSnapshot {
   handoff?: number;
   /** 预设里一行 JSON 写的调用参数，白名单见 `presets/load.ts`。执行器先铺它，再铺内核自己的键。预设没写（或写 `{}`）就没有这个键。 */
   options?: PresetOptions;
+  /** 上下文文件（D72）：每次开段重读进系统提示词的文件，相对 `workdir` 或 Windows 绝对路径，写的原样。没写就没有这个键。 */
+  context?: string[];
 }
 
 /** 预设能带的 `streamSimple` 参数：pi-ai 转发、能用 JSON 写、又不归内核管的键。 */
@@ -83,7 +85,10 @@ export interface Process {
   id: ProcessId;
   preset: PresetSnapshot;
   createdAt: Instant;
-  segment: { seq: number; memoryView: string };
+  /** `memoryView`、`contextView` 都是开段时的快照（D72）。`contextView` 旧记录没有，缺省当空。 */
+  segment: { seq: number; memoryView: string; contextView?: string };
+  /** 待换配置（D71）：结构性字段的改动，下一次换段被接受时才采用。没有就没有这个键。 */
+  next?: PresetSnapshot;
   /** 最后发出的副作用编号，从 0 开始。进程在等的副作用就是这个编号。 */
   lastEffect: number;
   phase: Phase;
@@ -141,12 +146,16 @@ export type Input =
   | { kind: "letter"; letter: Letter }
   | { kind: "modelResult"; n: number; outcome: { status: "ok"; message: AssistantMessage } | { status: "interrupted" } }
   | { kind: "toolResult"; n: number; outcome: { status: "ok"; content: ToolResultContent; calls?: DeclaredCall[] } | { status: "interrupted" } }
-  | { kind: "stop" };
+  | { kind: "stop" }
+  /** 新的会话快照（D71），由服务算好、已过启动检查。字段名不能叫 `process`：`test/kernel-imports.test.ts` 的扫描把 `.process.` 当成被禁用的全局。 */
+  | { kind: "reconfigure"; preset: PresetSnapshot };
 
 export interface Env {
   now: Instant;
   /** 这个进程的记忆库现在的视图；没有记忆库时为空。 */
   memoryView: string;
+  /** “可能被采用的那份快照”的开段视图（D71、D72）。只在需要时由存储层算：处理换配置的输入，和接受交接的那一条模型结果。别的输入没有。 */
+  fresh?: { memoryView: string; contextView?: string };
 }
 
 export type Effect =

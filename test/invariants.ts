@@ -14,8 +14,13 @@ interface Missing {
   from: number;
 }
 
-/** 不变量不成立时抛错，错误信息说明是哪一条。 */
-export function assertInvariants(p: Process, segment: readonly Message[]): void {
+/**
+ * 不变量不成立时抛错，错误信息说明是哪一条。
+ * `relaxed`：`reconfigure` 改了 `handoff` 以后，存下的 `purpose` 是进入时的判断，可能和现算的阈值不一致，两个方向都允许（D71）。为真时，和阈值有关的三处不检查：
+ * `awaitingModel` 里“用量到阈值，用途就是 handoff”和“用途是 handoff 而用量没到阈值，只能是换段信”，`awaitingTool` 的“已写过结果时用量没到阈值”。
+ * 与阈值无关的“有成功的 handoff 调用，用途就是 handoff”照查，其余不变量也不放松。
+ */
+export function assertInvariants(p: Process, segment: readonly Message[], relaxed = false): void {
   const bad: Bad = (what) => new Error(`不变量不成立（进程 ${p.id}，阶段 ${p.phase.tag}，第 ${p.segment.seq} 段，${segment.length} 条消息）：${what}`);
 
   if (!Number.isInteger(p.lastEffect) || p.lastEffect < 0) throw bad(`lastEffect 是 ${p.lastEffect}，应为非负整数`);
@@ -50,8 +55,11 @@ export function assertInvariants(p: Process, segment: readonly Message[]): void 
       const expected = { kind: "callModel", n: p.lastEffect, purpose: phase.purpose };
       if (!isDeepStrictEqual(effect, expected)) throw bad(`effectOf 是 ${JSON.stringify(effect)}，应为 ${JSON.stringify(expected)}`);
       // 等模型时工作段不变，所以存下的用途和现在重算的一致。
-      const used = contextUsed(p, segment);
       const requested = handoffCalled(segment);
+      // 成功的 handoff 调用和阈值无关：reconfigure 改了 handoff 也不会让它不要求换段，所以 relaxed 也要查。
+      if (requested && phase.purpose !== "handoff") throw bad(`用途是 ${phase.purpose}，但最后一条助手消息里有成功的 handoff 调用`);
+      if (relaxed) return;
+      const used = contextUsed(p, segment);
       // D64 第 7 组：两条蕴含。(a) 用量到阈值或有成功的 handoff 调用，用途就是 handoff；(b) 用途是 handoff、两者又都不成立，只能是换段信：段末是用户消息，段里有助手消息。
       const trigger = used >= threshold || requested;
       if (trigger && phase.purpose !== "handoff") {
@@ -68,6 +76,7 @@ export function assertInvariants(p: Process, segment: readonly Message[]): void 
       const call = missing.calls[missing.from];
       const expected = { kind: "runTool", n: p.lastEffect, call };
       if (!isDeepStrictEqual(effect, expected)) throw bad(`effectOf 是 ${JSON.stringify(effect)}，应指向第一个缺结果的调用 ${call?.id}`);
+      if (relaxed) return;
       // 第一个之后的工具，只在上一个结果写入后用量没到阈值时才会开始。
       const used = contextUsed(p, segment);
       if (missing.from > 0 && used >= threshold) throw bad(`已有 ${missing.from} 个结果，上下文用量 ${used} 达到阈值 ${threshold}，却还在等下一个工具`);

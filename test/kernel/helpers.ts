@@ -95,6 +95,8 @@ export const toolInterrupted = (n: number): Input => ({ kind: "toolResult", n, o
 export interface World {
   p: Process;
   segments: Map<number, readonly Message[]>;
+  /** 运行中收到的 `reconfigure` 改了 `handoff`：下一个副作用发出以前，和阈值有关的不变量不检查（`assertInvariants` 的 `relaxed`，D71）。`feed` 维护它。 */
+  relaxed?: boolean;
 }
 
 export function world(pr: PresetSnapshot = preset(), e: Env = env(0), id = "p1"): World {
@@ -132,7 +134,10 @@ export function feed(w: World, input: Input, e: Env = env(0)): Step {
   const next = Object.freeze([...(w.segments.get(seq) ?? []), ...r.append.map(deepFreeze)]);
   w.segments.set(seq, next);
   w.p = r.process;
-  assertInvariants(w.p, next);
+  // purpose 是进入等待时的判断：运行中改了 handoff，存下的 purpose 和现算的阈值可以不一致，直到进入新的等待（或回到 idle）。
+  const entered = w.p.phase.tag === "idle" || w.p.lastEffect !== prev.lastEffect;
+  w.relaxed = (w.relaxed === true || (input.kind === "reconfigure" && prev.phase.tag !== "idle" && prev.preset.handoff !== w.p.preset.handoff)) && !entered;
+  assertInvariants(w.p, next, w.relaxed);
   return { prev, before, after: effectOf(w.p, next), append: r.append, out: r.out };
 }
 

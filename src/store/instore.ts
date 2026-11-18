@@ -8,7 +8,8 @@ import { MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } f
 import { textContent, unreachable } from "../kernel/types.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { PhaseView, Projection } from "../kernel/observe.ts";
-import type { DeclaredCall, Env, Instant, Memory, Message, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Versioned } from "../kernel/types.ts";
+import type { DeclaredCall, Env, Input, Instant, Memory, Message, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Versioned } from "../kernel/types.ts";
+import { readContextView } from "./context-files.ts";
 import { loadProcess, loadProcesses, putMail } from "./db.ts";
 
 /** 读预设的函数，由服务传进来；测试传假的。读不出时抛出，原因是错误信息。 */
@@ -21,6 +22,15 @@ const noPresets: ReadPreset = (id) => {
 /** 一个进程的 `Env`：记忆视图按它自己的预设算。 */
 export function envFor(memory: Memory, preset: PresetSnapshot, now: Instant): Env {
   return { now, memoryView: preset.tools.includes("memory") ? memory.view(preset.id) : "" };
+}
+
+/**
+ * 可能被采用的那份快照的开段视图（`Env.fresh`，D71、D72）：记忆视图，加读上下文文件。只在两种输入上算，别的输入返回 undefined：`reconfigure`（给它带的新快照算），
+ * 和接受交接的那条模型结果（旧记录有 `next` 就给 `next` 算，没有就给 `preset` 算：上下文视图每次换段重读）。`envFor` 每条输入都跑，读文件不能放在里面。
+ */
+export function freshFor(memory: Memory, old: Process, input: Input, now: Instant): Env["fresh"] {
+  const preset = input.kind === "reconfigure" ? input.preset : input.kind === "modelResult" && input.n === old.lastEffect && input.outcome.status === "ok" && old.phase.tag === "awaitingModel" && old.phase.purpose === "handoff" ? (old.next ?? old.preset) : undefined;
+  return preset && { memoryView: envFor(memory, preset, now).memoryView, contextView: readContextView(preset) };
 }
 
 /** `spawn` 的新进程 ID：父进程 ID、这次调用的副作用编号、尝试次数的 sha256 的前 8 个十六进制字符。 */
@@ -67,7 +77,7 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
       let id = spawnId(p.id, p.lastEffect, attempt);
       while (loadProcess(db, id)) id = spawnId(p.id, p.lastEffect, ++attempt);
       // 不调用 startProcess：事务不能嵌套。
-      const child: Process = { ...start(id, snapshot, envFor(memory, snapshot, now)), parent: p.id };
+      const child: Process = { ...start(id, snapshot, envFor(memory, snapshot, now), readContextView(snapshot)), parent: p.id };
       db.prepare("INSERT INTO processes (id, state_json) VALUES (?, ?)").run(id, JSON.stringify(child));
       putMail(db, id, { kind: "letter", letter: { from: sender(p), content: textContent(text), hops, replyTo: p.id } });
       return ok(`已建进程 ${id}，预设 ${preset}。${SPAWN_REPLY}`);
@@ -203,6 +213,7 @@ function formatSelf(v: Projection): string {
     `工作段：第 ${s.segment} 段${s.segmentAge === null ? "" : `，开始于 ${duration(s.segmentAge)}前`}，共 ${s.messages} 条消息`,
     `上下文：已用约 ${s.context.used} token，窗口 ${s.context.window} token`,
     `换段阈值：${s.context.threshold} token`,
+    ...(s.pending === undefined ? [] : [`待换配置：${s.pending.fields.join("、")}（换段时生效）`]),
     `累计用量：输入 ${s.usage.input}，输出 ${s.usage.output}，缓存读 ${s.usage.cacheRead}，缓存写 ${s.usage.cacheWrite}（token）`,
     v.siblings.length === 0 ? "同一个预设下没有其他运行中的进程。" : "同一个预设下运行中的其他进程：",
     ...v.siblings.map((x) => `- ${x.id}：${phaseText(x.phase)}，已运行 ${duration(x.age)}`),

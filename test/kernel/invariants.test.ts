@@ -79,6 +79,30 @@ test("awaitingModel：最后一条不能是助手消息，用途要和阈值一�
   broken(model("turn"), [user("u"), assistant({ usage: full, text: "好" }), user("再来")], /用途是 turn，但上下文用量 \d+ 已经达到阈值/);
 });
 
+test("relaxed 只放宽和阈值有关的几处；成功的 handoff 调用要求用途是 handoff，与阈值无关，照查", () => {
+  const { p } = midTools();
+  const model = (purpose: "turn" | "handoff") => running(p, { tag: "awaitingModel", turn: { steps: 1, queued: [], hops: 0, replyTo: [] }, purpose });
+  const full = handoffThreshold(p.preset);
+  // 用量到了现在的阈值而用途是 turn：reconfigure 调低 handoff 以前进入的，允许。
+  const over = [user("u"), assistant({ usage: full, text: "好" }), user("再来")];
+  broken(model("turn"), over, /用途是 turn，但上下文用量/);
+  assertInvariants(model("turn"), over, true);
+  // 用途是 handoff 而用量没到阈值、也不是换段信：调高 handoff 以前进入的，允许。
+  broken(model("handoff"), [user("u")], /用途是 handoff，但用量没到阈值/);
+  assertInvariants(model("handoff"), [user("u")], true);
+  // 有成功的 handoff 调用：不管阈值，用途都要是 handoff。
+  const asked = [user("u"), assistant({ usage: 100, calls: [call("h1", "handoff")] }), result("h1", "handoff")];
+  assertInvariants(model("handoff"), asked, true);
+  broken(model("turn"), asked, /用途是 turn，但/);
+  assert.throws(() => assertInvariants(model("turn"), asked, true), /用途是 turn，但最后一条助手消息里有成功的 handoff 调用/);
+  // 其余不变量也不放松：结果不齐、最后一条是助手消息。
+  assert.throws(() => assertInvariants(model("turn"), [user("u"), assistant({ usage: 100, text: "好" })], true), /最后一条是助手消息/);
+  // awaitingTool：已有结果后用量到阈值，relaxed 时不检查。
+  const tools = [user("u"), assistant({ usage: full, calls: [call("c1"), call("c2")] }), result("c1")];
+  broken(p, tools, /达到阈值.*却还在等下一个工具/);
+  assertInvariants(p, tools, true);
+});
+
 test("awaitingTool：已有结果后用量到阈值，就不该再等下一个工具", () => {
   const { p } = midTools();
   const full = handoffThreshold(p.preset);

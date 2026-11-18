@@ -4,9 +4,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { HANDOFF_INSTRUCTION } from "../../src/kernel/context.ts";
 import { decide, effectOf } from "../../src/kernel/decide.ts";
-import { contextUsed, endedReason, finalReply, handoffRequested, handoffThreshold, MESSAGE_MAX_BYTES, tokens, utf8Bytes } from "../../src/kernel/derive.ts";
+import { contextUsed, endedReason, estimatedUsed, finalReply, handoffRequested, handoffThreshold, MESSAGE_MAX_BYTES, tokens, utf8Bytes } from "../../src/kernel/derive.ts";
 import { unreachable } from "../../src/kernel/types.ts";
-import type { AssistantMessage, Effect, Ended, Env, ImageContent, Input, Letter, Message, PresetTool, Process } from "../../src/kernel/types.ts";
+import type { AssistantMessage, Effect, Ended, Env, ImageContent, Input, Letter, Message, PresetSnapshot, PresetTool, Process } from "../../src/kernel/types.ts";
 import { res } from "../plain.ts";
 import { assistant, call, current, feed, image, letterInput, preset, processLetter, textOf, usage, userLetterWith, world } from "./helpers.ts";
 import type { ReplySpec, Step } from "./helpers.ts";
@@ -63,7 +63,7 @@ function text(r: Rng, chars: number): string {
   return POOL.slice(at, at + chars);
 }
 
-type Action = "user" | "stop" | "complete" | "deliver" | "duplicate" | "drop" | "forge" | "crash";
+type Action = "user" | "stop" | "complete" | "deliver" | "duplicate" | "drop" | "forge" | "crash" | "reconfigure";
 type ReplyKind = "toolUse" | "noCalls" | "stop" | "stopWithCalls" | "length" | "error" | "aborted" | "pending" | "deferred";
 type HandoffKind = "note" | "lengthNote" | "empty" | "toolUse" | "error" | "aborted";
 
@@ -85,7 +85,7 @@ const PROFILES: Profile[] = [
     seeds: [1, 2, 3, 4, 5, 6, 7, 8],
     steps: 2_500,
     windows: [28_000, 36_000, 80_000, 200_000],
-    actions: { user: 10, stop: 3, complete: 45, deliver: 25, duplicate: 5, drop: 2, forge: 5, crash: 2 },
+    actions: { user: 10, stop: 3, complete: 45, deliver: 25, duplicate: 5, drop: 2, forge: 5, crash: 2, reconfigure: 4 },
     replies: { toolUse: 45, noCalls: 4, stop: 25, stopWithCalls: 3, length: 5, error: 5, aborted: 5, pending: 4, deferred: 4 },
     handoffs: { note: 70, lengthNote: 10, empty: 5, toolUse: 5, error: 5, aborted: 5 },
     toolInterrupted: 0.03,
@@ -97,7 +97,7 @@ const PROFILES: Profile[] = [
     seeds: [101, 102, 103],
     steps: 4_000,
     windows: [28_500, 48_000],
-    actions: { user: 2, stop: 0, complete: 60, deliver: 35, duplicate: 1, drop: 0, forge: 1, crash: 0 },
+    actions: { user: 2, stop: 0, complete: 60, deliver: 35, duplicate: 1, drop: 0, forge: 1, crash: 0, reconfigure: 2 },
     replies: { toolUse: 99, noCalls: 0, stop: 1, stopWithCalls: 0, length: 0, error: 0, aborted: 0, pending: 0, deferred: 0 },
     handoffs: { note: 97, lengthNote: 0, empty: 3, toolUse: 0, error: 0, aborted: 0 },
     toolInterrupted: 0,
@@ -109,7 +109,7 @@ const PROFILES: Profile[] = [
     seeds: [301],
     steps: 30_000,
     windows: [400_000],
-    actions: { user: 2, stop: 0, complete: 60, deliver: 35, duplicate: 1, drop: 0, forge: 1, crash: 0 },
+    actions: { user: 2, stop: 0, complete: 60, deliver: 35, duplicate: 1, drop: 0, forge: 1, crash: 0, reconfigure: 1 },
     replies: { toolUse: 100, noCalls: 0, stop: 0, stopWithCalls: 0, length: 0, error: 0, aborted: 0, pending: 0, deferred: 0 },
     handoffs: { note: 100, lengthNote: 0, empty: 0, toolUse: 0, error: 0, aborted: 0 },
     toolInterrupted: 0,
@@ -121,7 +121,7 @@ const PROFILES: Profile[] = [
     seeds: [201, 202, 203],
     steps: 2_500,
     windows: [32_000, 100_000],
-    actions: { user: 15, stop: 8, complete: 30, deliver: 20, duplicate: 12, drop: 5, forge: 12, crash: 8 },
+    actions: { user: 15, stop: 8, complete: 30, deliver: 20, duplicate: 12, drop: 5, forge: 12, crash: 8, reconfigure: 8 },
     replies: { toolUse: 45, noCalls: 4, stop: 25, stopWithCalls: 3, length: 5, error: 5, aborted: 5, pending: 4, deferred: 4 },
     handoffs: { note: 40, lengthNote: 10, empty: 15, toolUse: 15, error: 10, aborted: 10 },
     toolInterrupted: 0.1,
@@ -151,10 +151,18 @@ interface Stats {
   handoffByLetter: number;
   replies: number;
   emptyReplies: number;
+  /** reconfigure 的几种结果：只改了调用参数或结构相同（含取消待换）、直接采用、条件都满足但段放不进新快照所以存 next、其余存 next，以及换段时采用或丢弃 next。 */
+  reconfigured: number;
+  cancelled: number;
+  adopted: number;
+  tooBig: number;
+  pending: number;
+  nextAdopted: number;
+  nextDiscarded: number;
 }
 
 function newStats(): Stats {
-  return { handoffOk: 0, handoffFailed: 0, done: 0, stopped: 0, stepLimit: 0, errors: 0, skipped: 0, interrupted: 0, queuedMerged: 0, dropped: 0, duplicates: 0, usageAdded: 0, processLetters: 0, images: 0, safePoints: 0, handoffByCall: 0, handoffByLetter: 0, replies: 0, emptyReplies: 0 };
+  return { handoffOk: 0, handoffFailed: 0, done: 0, stopped: 0, stepLimit: 0, errors: 0, skipped: 0, interrupted: 0, queuedMerged: 0, dropped: 0, duplicates: 0, usageAdded: 0, processLetters: 0, images: 0, safePoints: 0, handoffByCall: 0, handoffByLetter: 0, replies: 0, emptyReplies: 0, reconfigured: 0, cancelled: 0, adopted: 0, tooBig: 0, pending: 0, nextAdopted: 0, nextDiscarded: 0 };
 }
 
 /**
@@ -197,6 +205,81 @@ function checkReplies(prev: Process, seg: readonly Message[], input: Input, next
   }
 }
 
+/** 结构性字段（D71）的一份摘要：位置固定，所以键的顺序不影响比较。 */
+const structure = (p: PresetSnapshot): string => JSON.stringify([p.id, p.workdir, p.model, p.tools, p.toolDefs, p.prompt, p.contextWindow, p.input, p.context ?? null]);
+const hasAssistant = (seg: readonly Message[]): boolean => seg.some((m) => m.role === "assistant");
+const hasImageBlock = (seg: readonly Message[]): boolean => seg.some((m) => m.role !== "assistant" && typeof m.content !== "string" && m.content.some((c) => c.type === "image"));
+/** 开段视图：`fresh` 的两个视图，上下文视图为空串时没有这个键。 */
+const viewsOf = (seq: number, fresh: NonNullable<Env["fresh"]>, memoryView = fresh.memoryView) => ({ seq, memoryView, ...(fresh.contextView === undefined || fresh.contextView === "" ? {} : { contextView: fresh.contextView }) });
+
+/**
+ * 会话配置（D71，设计稿对应 kb-kernel 的“流程：会话配置”）：不写消息、不发回信、不改阶段和副作用；调用参数立即换；
+ * 结构性字段相等就取消 next；否则空闲、没有助手消息、新模型收图或段里没有图、段放得下新快照（估算用量低于新阈值）时直接采用；其余存 next。
+ */
+function checkReconfigure(prev: Process, seg: readonly Message[], s: PresetSnapshot, e: Env, next: Process, step: Step, stats: Stats): void {
+  assert.deepEqual(step.append, []);
+  assert.deepEqual(step.out, []);
+  assert.deepEqual(next.phase, prev.phase);
+  assert.equal(next.lastEffect, prev.lastEffect);
+  assert.equal(next.since, prev.since);
+  assert.deepEqual(next.usage, prev.usage);
+  assert.deepEqual(step.after, step.before);
+  assert.deepEqual([next.preset.thinking, next.preset.handoff, next.preset.options], [s.thinking, s.handoff, s.options], "调用参数立即生效");
+  const fresh = e.fresh;
+  assert.ok(fresh, "reconfigure 要带 fresh");
+  stats.reconfigured++;
+  if (structure(s) === structure(prev.preset)) {
+    assert.ok(!("next" in next), "结构一样：取消待换配置");
+    assert.equal(structure(next.preset), structure(prev.preset));
+    assert.deepEqual(next.segment, prev.segment);
+    stats.cancelled++;
+  } else if (prev.phase.tag === "idle" && !hasAssistant(seg) && (s.input.includes("image") || !hasImageBlock(seg)) && fits(prev, seg, s, viewsOf(prev.segment.seq, fresh))) {
+    assert.deepEqual(next.preset, s);
+    assert.ok(!("next" in next));
+    assert.deepEqual(next.segment, viewsOf(prev.segment.seq, fresh));
+    stats.adopted++;
+  } else {
+    assert.deepEqual(next.next, s);
+    assert.equal(structure(next.preset), structure(prev.preset), "结构性字段换段时才生效");
+    assert.deepEqual(next.segment, prev.segment);
+    stats.pending++;
+    if (prev.phase.tag === "idle" && !hasAssistant(seg) && (s.input.includes("image") || !hasImageBlock(seg))) stats.tooBig++;
+  }
+}
+
+/** 段放得下新快照：不用锚点的估算用量低于新快照的阈值（`>=` 算放不下），和 fork 带 preset 一致。 */
+const fits = (prev: Process, seg: readonly Message[], s: PresetSnapshot, segment: Process["segment"]): boolean => estimatedUsed({ ...prev, preset: s, segment }, seg) < handoffThreshold(s);
+
+/** 接受交接（或交接失败）时对 next 的处理，和别的输入都不动快照和 next。 */
+function checkNext(prev: Process, input: Input, e: Env, next: Process, stats: Stats): void {
+  const handoff = prev.phase.tag === "awaitingModel" && prev.phase.purpose === "handoff" && input.kind === "modelResult";
+  if (input.kind === "reconfigure") return;
+  if (!handoff || next.segment.seq === prev.segment.seq) {
+    const discarded = handoff && next.phase.tag === "idle" && typeof next.phase.ended === "object" && next.phase.ended.error.endsWith("；待换的配置已丢弃");
+    if (discarded) {
+      assert.ok(prev.next, "没有待换配置，不该写丢弃");
+      assert.deepEqual(next.preset, prev.preset, "丢弃以后用旧快照");
+      assert.ok(!("next" in next));
+      stats.nextDiscarded++;
+    } else {
+      assert.deepEqual(next.preset, prev.preset);
+      assert.deepEqual(next.next, prev.next);
+    }
+    return;
+  }
+  assert.equal(next.segment.seq, prev.segment.seq + 1);
+  assert.ok(e.fresh, "接受交接要带 fresh");
+  if (prev.next === undefined) {
+    assert.deepEqual(next.preset, prev.preset);
+    assert.deepEqual(next.segment, viewsOf(next.segment.seq, e.fresh, e.memoryView), "没有待换配置：记忆视图用 env 的，上下文视图每次换段重取");
+  } else {
+    assert.deepEqual(next.preset, prev.next, "换段采用待换配置");
+    assert.ok(!("next" in next));
+    assert.deepEqual(next.segment, viewsOf(next.segment.seq, e.fresh));
+    stats.nextAdopted++;
+  }
+}
+
 /** 一次模拟：一个进程、一个忠实的环境。 */
 function simulate(profile: Profile, seed: number, stats: Stats): void {
   const r = rng(seed);
@@ -204,6 +287,7 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
   const tools = (["read", "write", "edit", "bash", "memory"] as PresetTool[]).filter(() => r.chance(0.7));
   let now = 1_000_000;
   let memoryView = "";
+  let contextView = "";
   const w = world(preset({ id: "rand", contextWindow: window, tools }), { now, memoryView });
   /** 执行器做完、还没进信箱的结果。 */
   let outbox: { n: number; input: Input }[] = [];
@@ -324,15 +408,50 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
     }
   };
 
+  /** 服务造的新快照（kb-service 的“会话配置”）：以 next 或当前快照为底，随机改一些键，偶尔是 revert（当前快照）。启动检查不查：小窗口也要走交接后的检查。 */
+  const randomSnapshot = (): PresetSnapshot => {
+    if (r.chance(0.1)) return w.p.preset;
+    const s: PresetSnapshot = { ...(w.p.next ?? w.p.preset) };
+    if (r.chance(0.4)) {
+      if (r.chance(0.3)) delete s.thinking;
+      else s.thinking = r.pick(["low", "high"] as const);
+    }
+    if (r.chance(0.4)) {
+      if (r.chance(0.3)) delete s.handoff;
+      else s.handoff = r.int(2_000, 60_000);
+    }
+    if (r.chance(0.2)) {
+      if (r.chance(0.5)) delete s.options;
+      else s.options = { temperature: r.int(0, 10) / 10 };
+    }
+    if (r.chance(0.3)) s.prompt = text(r, r.int(0, 600));
+    if (r.chance(0.25)) s.tools = (["read", "write", "edit", "bash", "memory"] as PresetTool[]).filter(() => r.chance(0.6));
+    if (r.chance(0.25)) {
+      s.model = `faux/m${r.int(1, 3)}`;
+      s.contextWindow = r.pick(profile.windows);
+      s.input = r.chance(0.5) ? ["text"] : ["text", "image"];
+    }
+    if (r.chance(0.15)) s.workdir = `E:/work${r.int(1, 3)}`;
+    if (r.chance(0.2)) {
+      if (r.chance(0.5)) delete s.context;
+      else s.context = ["AGENTS.md"];
+    }
+    return s;
+  };
+
   const isResult = (i: Input): i is Extract<Input, { n: number }> => i.kind === "modelResult" || i.kind === "toolResult";
 
   /** `origin`：执行器正常送回、重放一条已送过的、或者伪造一个编号不对的结果。 */
   const run = (input: Input, origin: "normal" | "duplicate" | "forged" = "normal"): void => {
     now += r.int(1, 60_000);
     if (r.chance(0.05)) memoryView = r.chance(0.3) ? "" : `k${r.int(0, 9)}: ${text(r, r.int(1, 200))}`;
-    const e: Env = { now, memoryView };
+    if (r.chance(0.05)) contextView = r.chance(0.3) ? "" : `### AGENTS.md
+${text(r, r.int(1, 300))}`;
     const prev: Process = w.p;
     const seg: readonly Message[] = current(w);
+    // 存储层只在两种输入上算 fresh（instore.ts 的 freshFor）：reconfigure，和接受交接的那条模型结果。
+    const target = input.kind === "reconfigure" ? input.preset : input.kind === "modelResult" && prev.phase.tag === "awaitingModel" && prev.phase.purpose === "handoff" && input.n === prev.lastEffect && input.outcome.status === "ok" ? (prev.next ?? prev.preset) : undefined;
+    const e: Env = { now, memoryView, ...(target === undefined ? {} : { fresh: { memoryView: target.tools.includes("memory") ? memoryView : "", contextView: target.context === undefined ? "" : contextView } }) };
     const s = feed(w, input, e); // 包括 assertInvariants
 
     // decide 是纯函数：同样的输入给同样的结果。
@@ -350,6 +469,8 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
     }
 
     checkReplies(prev, seg, input, w.p, s, stats);
+    if (input.kind === "reconfigure") checkReconfigure(prev, seg, input.preset, e, w.p, s, stats);
+    checkNext(prev, input, e, w.p, stats);
 
     // 累计用量：只有不丢弃的、正常的模型结果才加。
     const counted = input.kind === "modelResult" && input.outcome.status === "ok" && prev.phase.tag === "awaitingModel" && input.n === prev.lastEffect;
@@ -449,6 +570,9 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
         run(r.chance(0.5) ? { kind: "modelResult", n, outcome: { status: "ok", message } } : { kind: "toolResult", n, outcome: { status: "ok", content: res("伪造的") } }, "forged");
         return true;
       }
+      case "reconfigure":
+        run({ kind: "reconfigure", preset: randomSnapshot() });
+        return true;
       case "crash": {
         // 重启：执行器里正在跑的结果丢失，副作用作为“被中断”送回。
         if (eff === null) return false;
@@ -480,12 +604,13 @@ for (const profile of PROFILES) {
     // 确认生成器真的走到了这些流程。
     assert.ok(stats.handoffOk > 0, "没有成功换段");
     assert.ok(stats.dropped > 0, "没有丢弃过输入");
+    assert.ok(stats.reconfigured > 0, "没有 reconfigure");
     if (profile.name === "失控") {
       assert.ok(stats.handoffFailed > 0, "没有换段失败");
     } else if (profile.name === "长轮") {
       assert.ok(stats.stepLimit > 0, "没有用完步数");
     } else {
-      for (const k of ["handoffFailed", "done", "stopped", "errors", "skipped", "interrupted", "queuedMerged", "duplicates", "usageAdded", "processLetters", "images", "safePoints", "handoffByCall", "handoffByLetter", "replies", "emptyReplies"] as const) {
+      for (const k of ["handoffFailed", "done", "stopped", "errors", "skipped", "interrupted", "queuedMerged", "duplicates", "usageAdded", "processLetters", "images", "safePoints", "handoffByCall", "handoffByLetter", "replies", "emptyReplies", "cancelled", "adopted", "tooBig", "pending", "nextAdopted", "nextDiscarded"] as const) {
         assert.ok(stats[k] > 0, `没有覆盖到 ${k}`);
       }
     }
