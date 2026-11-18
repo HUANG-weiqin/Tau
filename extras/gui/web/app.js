@@ -8,6 +8,7 @@ import { emptyHistory, segmentMessages, lastTimestamp, applyPushed } from "./lib
 import { buildEntries, buildProjects, railSections, projectView, currentOf, attention, seenFromInspect } from "./lib/derive.js";
 import { describeNow, phaseStartedAt, HANDOFF_LETTER } from "./lib/messages.js";
 import { processTitle, wantsAutoTitle } from "./lib/titles.js";
+import { needsInspect } from "./lib/session.js";
 import { stopOrder } from "./lib/order.js";
 import { formatDuration } from "./lib/format.js";
 import * as gs from "./lib/state.js";
@@ -23,6 +24,7 @@ import { NewProcDialog } from "./ui/newproc.js";
 import { OpenProjDialog } from "./ui/openproj.js";
 import { NewPresetDialog } from "./ui/newpreset.js";
 import { EditPresetDialog } from "./ui/editpreset.js";
+import { SessionDialog } from "./ui/session.js";
 import { SwitchModelDialog } from "./ui/switchmodel.js";
 import { MemoryDialog } from "./ui/memory.js";
 import { DiffDialog } from "./ui/diff.js";
@@ -74,7 +76,7 @@ import { autoTitle } from "./ui/titlecache.js";
  * @property {"all" | "running" | "error"} filter 进程栏的筛选。
  * @property {string} query 进程栏的搜索词。
  * @property {number} tab 详情栏现在的选项卡，0 到 2。聚焦进程时 0 概况、1 改动、2 后台；聚焦项目时 0 概况、1 分支、2 后台。
- * @property {{ name: string, rect: { left: number, top: number, right: number, bottom: number } | null, props: any } | null} dialog 打开着的弹窗：`chief | newproc | newpreset | openproj | projects | clean | settings | editpreset | switchmodel | memory | tools`。`props` 是打开时传的。
+ * @property {{ name: string, rect: { left: number, top: number, right: number, bottom: number } | null, props: any } | null} dialog 打开着的弹窗：`chief | newproc | newpreset | openproj | projects | clean | settings | editpreset | session | switchmodel | memory | tools`。`props` 是打开时传的。
  *
  * 读取（函数）
  * @typedef {object} AppReaders
@@ -95,6 +97,8 @@ import { autoTitle } from "./ui/titlecache.js";
  * @property {(id: string) => void} follow 让这个进程的完整历史被读到并保持更新。聚焦的进程自动 follow。
  * @property {(id: string, text: string, images?: string[]) => Promise<void>} send 寄信。界面寄过信的常驻进程成为当前进程。
  * @property {(id: string) => Promise<void>} handoff 换段：寄一封换段信（`send` 带 `handoff`）。段里已有助手消息才生效，见 `canHandoff`。
+ * @property {(id: string, body: { fields: Record<string, unknown> } | { revert: true }) => Promise<{ pending: boolean }>} reconfigure 改这个进程的会话快照（`reconfigure`，D71）：`fields` 只带变了的，去掉的发 `null`；`revert` 放弃待换配置。成功后重读它的快照。服务回错误时抛错，什么都没改；不弹提示，由调用方写在弹窗里。
+ * @property {(lines: any[]) => void} noteInspect 把读到的 `inspect` 结果并进会话快照（段尺的刻线、归类、工具、模型都跟着更新）。
  * @property {(preset: string, text: string, images?: string[]) => Promise<string>} start 建进程，回进程 ID。记进 `mine`，常驻预设成为当前进程，并聚焦它。
  * @property {(id: string, before?: number, preset?: string) => Promise<string>} fork 分叉，回新进程 ID。`before` 是当前段里一条用户消息的段内序号；不给就复制整个当前段（源进程必须空闲）。`preset` 是换角色：新进程用这个预设（读文件现在的样子），记忆库也跟着它走。
  * @property {(id: string) => Promise<void>} stop 停这一轮。
@@ -102,7 +106,6 @@ import { autoTitle } from "./ui/titlecache.js";
  * @property {(id: string) => Promise<void>} remove 删一个空闲进程。被拒绝时抛错，原因是服务给的；不弹提示，由调用方写在确认框里。
  * @property {() => Promise<number>} sweep 清没人引用的图片，回删掉的个数。
  * @property {(patch: Record<string, unknown> | ((g: GuiState) => Record<string, unknown>)) => Promise<void>} setGui 改界面数据：顶层键整个覆盖。先改页面里的，再写文件。补丁用 `lib/state.js` 的函数算。传函数时，写之前先读文件里的最新状态再算，别的页面改过的不会被盖掉。
- * @property {(workdir: string, what: "status" | "diff" | "log" | "branches", file?: string) => Promise<any>} git 桥的 `/api/git`。
  * @property {(processes: string[]) => Promise<any[]>} bg 桥的 `/api/bg`。
  * @property {() => Promise<void>} reloadPresets 重读预设文件。
  * @property {(p: Record<string, unknown>) => Promise<void>} createPreset 建预设文件，成功后重读预设。
@@ -139,7 +142,7 @@ const S = {
   presets: {},
   /** @type {PresetInfo[]} */
   presetList: [],
-  /** 进程冻结的预设快照（`inspect`），进程 ID → 三项。 @type {Record<string, import("./lib/types.js").Frozen>} */
+  /** 进程的会话快照（`inspect` 的 `preset`），进程 ID → 界面要的几项。`reconfigure` 能改它，所以每次读到 `inspect` 都换掉旧的。 @type {Record<string, import("./lib/types.js").Frozen>} */
   snaps: {},
   /** 这次连上以后读过全部快照。 */
   snapsReady: false,
@@ -330,6 +333,7 @@ function onReply(r) {
   // 删的是正在看的进程时，主区回到它的项目。先在进程还在表里时算出项目。
   const home = r.type === "removed" && S.route.proc === r.process ? buildEntries(S.store.procs, S.gui, S.snaps).entries.find((e) => e.id === r.process)?.workdir : undefined;
   if (r.type === "ps" && r.processes[0]) S.skew = r.processes[0].now - now;
+  const before = r.type === "update" ? S.store.procs[r.self.id]?.self : undefined;
   S.store = reduce(S.store, r, now);
   if (r.type === "ps") {
     if (!S.gotPs) S.firstPrune = true;
@@ -345,7 +349,8 @@ function onReply(r) {
     S.ever.add(r.self.id);
     // 同一次推送里紧跟着有这次追加的消息：等一等，推来的接得上就不读 history。
     onSelf(r.self, PUSH_GRACE);
-    if (S.snapsReady && !S.snaps[r.self.id]) loadSnaps(r.self.id);
+    // 第一次见，或者模型、段号、待换配置变了（`reconfigure` 或换段采用了待换的快照）：重读快照。
+    if (S.snapsReady && (!S.snaps[r.self.id] || needsInspect(before, r.self))) loadSnaps(r.self.id, true);
   }
   else if (r.type === "removed") {
     delete S.snaps[r.process];
@@ -360,15 +365,21 @@ function onReply(r) {
 
 /** 正在单独读快照的进程 ID。 @type {Set<string>} */
 const snapAsked = new Set();
+/** 读的时候又有人要求重读的进程 ID：这一次读完再读一次。 @type {Set<string>} */
+const snapDirty = new Set();
 
 /**
- * 读进程记录里冻结的预设快照（`inspect`）。`id` 为 null 读全部，并把不在表里的丢掉；否则只读这一个。
- * 一个进程的快照建好以后不变，所以收到 `update` 时只补没读过的。
+ * 读进程记录里的会话快照（`inspect`）。`id` 为 null 读全部，并把不在表里的丢掉；否则只读这一个。
+ * `reconfigure` 能改快照，所以不是读一次就算：`force` 为真时，正在读的这一次读完以后再读一遍。
  * @param {string | null} id
+ * @param {boolean} [force]
  */
-async function loadSnaps(id) {
+async function loadSnaps(id, force = false) {
   if (id !== null) {
-    if (snapAsked.has(id)) return;
+    if (snapAsked.has(id)) {
+      if (force) snapDirty.add(id);
+      return;
+    }
     snapAsked.add(id);
   }
   try {
@@ -382,11 +393,27 @@ async function loadSnaps(id) {
     S.snaps = id === null ? Object.fromEntries(Object.entries({ ...S.snaps, ...got }).filter(([k]) => S.store.procs[k])) : { ...S.snaps, ...got };
     if (id === null) S.snapsReady = true;
   } catch (e) {
-    if (id === null) toast(`读不到进程的预设快照：${e instanceof Error ? e.message : e}`);
+    if (id === null) toast(`读不到进程的会话快照：${e instanceof Error ? e.message : e}`);
   }
-  if (id !== null) snapAsked.delete(id);
+  if (id !== null) {
+    snapAsked.delete(id);
+    if (snapDirty.delete(id)) loadSnaps(id, true);
+  }
   // 读全部的时候新建的进程可能没在里面：补上。
   else for (const k of Object.keys(S.store.procs)) if (!S.snaps[k]) loadSnaps(k);
+  schedule();
+}
+
+/** 别处读到的 `inspect`（概况页的轮询）并进会话快照：变了才换，没变不触发渲染。 @param {any[]} lines */
+function noteInspect(lines) {
+  let next = S.snaps;
+  for (const x of lines) {
+    const id = x?.type === "process" ? x.process?.id : undefined;
+    const f = typeof id === "string" && S.store.procs[id] ? seenFromInspect(x) : null;
+    if (f && typeof id === "string" && JSON.stringify(next[id]) !== JSON.stringify(f)) next = { ...next, [id]: f };
+  }
+  if (next === S.snaps) return;
+  S.snaps = next;
   schedule();
 }
 
@@ -564,6 +591,13 @@ function compute() {
         })(),
       ),
     handoff: (id) => loud(api.tauCommand({ op: "send", process: id, text: HANDOFF_LETTER, handoff: true }).then(() => {})),
+    reconfigure: async (id, body) => {
+      const r = await api.reconfigure(id, body);
+      // 不等推送：自己改完马上读一遍，界面（归类、段尺的刻线、模型）跟着变。
+      loadSnaps(id, true);
+      return r;
+    },
+    noteInspect,
     start: (preset, text, images) =>
       loud(
         (async () => {
@@ -615,7 +649,6 @@ function compute() {
     },
     sweep: () => loud(api.tauAll({ op: "sweep" }).then((rs) => rs.find((r) => r.type === "swept")?.blobs ?? 0)),
     setGui,
-    git: (w, what, file) => loud(api.git(w, what, file)),
     bg: (ids) => loud(api.bg(ids)),
     reloadPresets,
     createPreset: (p) =>
@@ -689,7 +722,7 @@ function openDialog(name, anchor, props) {
   const r = el ? el.getBoundingClientRect() : null;
   if (name === "newproc" || name === "openproj" || name === "newpreset" || name === "editpreset") reloadPresets();
   // 这几个弹窗显示 key 状态：打开时重读，pi 里改了就是新的。
-  if (["openproj", "newpreset", "editpreset", "switchmodel", "settings"].includes(name)) reloadModels();
+  if (["openproj", "newpreset", "editpreset", "session", "switchmodel", "settings"].includes(name)) reloadModels();
   S.dialog = { name, rect: r ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom } : null, props: props ?? null };
   writeHash();
   schedule();
@@ -840,6 +873,8 @@ function Root() {
     const onFocus = () => {
       reloadPresets();
       refreshGui();
+      // 别的客户端（命令行、另一个页面）可能改过会话快照。
+      if (S.status === "online") loadSnaps(null);
     };
     const onVis = () => {
       if (!document.hidden) refreshGui();
@@ -926,6 +961,7 @@ function Root() {
     ${d && d.name === "settings" && html`<${SettingsDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "tools" && html`<${ToolsDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "editpreset" && html`<${EditPresetDialog} app=${app} onClose=${close} />`}
+    ${d && d.name === "session" && html`<${SessionDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "switchmodel" && html`<${SwitchModelDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "memory" && html`<${MemoryDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "diff" && html`<${DiffDialog} app=${app} onClose=${close} />`}

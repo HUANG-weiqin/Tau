@@ -39,7 +39,8 @@ export function displayName(state, presetId) {
 }
 
 /**
- * `inspect` 的一行 `process`：进程记录里冻结的预设快照，取界面要的几项。工具是内置的加工具定义的名字。
+ * `inspect` 的一行 `process`：进程记录里的会话快照（`preset`，不是待换的 `next`），取界面要的几项。工具是内置的加工具定义的名字。
+ * 会话快照能被 `reconfigure` 改，所以每次读到 `inspect` 都用它换掉旧的（`Frozen` 这个名字是历史遗留）。
  * 不是 `process` 行，或者没有快照，是 null。
  * @param {any} line
  * @returns {Frozen | null}
@@ -60,10 +61,11 @@ export function seenFromInspect(line) {
     ...(typeof snap.thinking === "string" ? { thinking: snap.thinking } : {}),
     ...(typeof snap.handoff === "number" ? { handoff: snap.handoff } : {}),
     ...(snap.options !== null && typeof snap.options === "object" && !Array.isArray(snap.options) ? { options: snap.options } : {}),
+    ...(Array.isArray(snap.context) && snap.context.length > 0 ? { context: snap.context.filter((/** @type {unknown} */ x) => typeof x === "string") } : {}),
   };
 }
 
-/** 冻结的模型不收图片：快照里读到了输入类型、并且没有 `image`。读不到就当收（不乱说）。 @param {Frozen | null | undefined} f */
+/** 会话的模型不收图片：快照里读到了输入类型、并且没有 `image`。读不到就当收（不乱说）。 @param {Frozen | null | undefined} f */
 export function refusesImages(f) {
   return !!f && Array.isArray(f.input) && !f.input.includes("image");
 }
@@ -123,7 +125,7 @@ export function mailOf(records, id) {
 }
 
 /**
- * 每个进程的分类。进程归到哪个项目、常驻还是临时：看它冻结的快照（`snaps`，来自 `inspect`），不看预设文件现在写什么。
+ * 每个进程的分类。进程归到哪个项目、常驻还是临时：看它的会话快照（`snaps`，来自 `inspect`），不看预设文件现在写什么。
  * 还没读到快照的进程是 `unknown`，不归进任何项目。
  * @param {Record<string, ProcRecord>} procs
  * @param {GuiState} state

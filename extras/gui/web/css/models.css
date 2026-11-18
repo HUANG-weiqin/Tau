@@ -112,7 +112,7 @@
 .dlg.editpreset::before { height: 8px; background: repeating-linear-gradient(-45deg, var(--acc) 0 10px, var(--ink0) 10px 20px); }
 .ep-keep { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: var(--fs-sm); color: var(--fg2); }
 
-/* 换模型：当前冻结的模型是一块暗牌，两种选法做在联排机械底座上 */
+/* 换模型：当前的模型是一块暗牌，两种选法做在联排机械底座上 */
 .sw-now { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: stretch; background: var(--ink0); box-shadow: inset 0 0 0 1px var(--ink4); }
 .sw-now > .kicker { align-self: center; padding: 0 14px; color: var(--fg2); }
 .sw-now-m { min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 10px 0; }

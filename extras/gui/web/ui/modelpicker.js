@@ -1,4 +1,4 @@
-// 模型选择器和思考强度：新建预设、打开项目、改预设、换模型共用。
+// 模型选择器和思考强度：新建预设、打开项目、改预设、改这个会话、换模型共用。
 // 选择器是一个字段加一块展开的面板：按供应商分组、可以搜索、顶上是最近用过的；每行写窗口、能不能收图、支持的思考级别。
 import { html, Icon, useState, useEffect, useRef, Fragment } from "./common.js";
 import { LEVELS, filterCatalog, findModel, formatWindow, keyHint, keyLabel, nearestLevel, recentEntries, sortProviders } from "../lib/models.js";
@@ -20,9 +20,10 @@ function Facts({ m }) {
 
 /**
  * 模型字段。`value` 是 `<供应商>/<模型 ID>`；目录读不到时退回一个文本框，目录里没有的值照样显示、不改它。
- * @param {{ app: import("../app.js").App, value: string, onPick: (ref: string) => void, label?: string }} p
+ * `tag` 是标题旁的小件（改这个会话时写“换段时生效”）。
+ * @param {{ app: import("../app.js").App, value: string, onPick: (ref: string) => void, label?: string, tag?: any }} p
  */
-export function ModelPicker({ app, value, onPick, label = "模型" }) {
+export function ModelPicker({ app, value, onPick, label = "模型", tag = null }) {
   const providers = app.models?.providers ?? null;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -45,7 +46,7 @@ export function ModelPicker({ app, value, onPick, label = "模型" }) {
   }, [open]);
 
   if (providers === null) {
-    return html`<label class="field">${label}
+    return html`<label class="field"><span class="fl">${label}${tag}</span>
       <input class="input mono" type="text" value=${value} onInput=${(/** @type {any} */ e) => onPick(e.currentTarget.value)} />
       <span class="dnote" style="font-size:11.5px">${app.modelsError !== null ? `模型目录读不到（${app.modelsError}），先手写 <供应商>/<模型 ID>。` : "正在读模型目录…"}</span>
     </label>`;
@@ -61,7 +62,7 @@ export function ModelPicker({ app, value, onPick, label = "模型" }) {
   const hint = found ? keyHint(found.provider.key) : null;
 
   return html`<div class="field mp" ref=${root}>
-    <span id="mp-label">${label}</span>
+    <span id="mp-label" class="fl">${label}${tag}</span>
     <button type="button" autofocus class=${`mp-cur ${(found && found.provider.key !== "key") || value === "" ? "off" : ""}`} aria-expanded=${open} aria-labelledby="mp-label" onClick=${() => setOpen(!open)}>
       <span class="mp-prov label">${found ? found.provider.name : value === "" ? "NONE" : "CUSTOM"}</span>
       <span class="mp-main">
@@ -105,12 +106,12 @@ export function ModelPicker({ app, value, onPick, label = "模型" }) {
 
 /**
  * 思考强度：一排分段按钮。“不思考”就是预设里不写 `thinking`；选中的是黄块。
- * `levels` 是这个模型支持的级别；目录里没有这个模型时传 null，六档都给。
- * @param {{ levels: string[] | null, value: string | undefined, onChange: (v: string | undefined) => void, note?: string }} p
+ * `levels` 是这个模型支持的级别；目录里没有这个模型时传 null，六档都给。`tag` 是标题旁的小件。
+ * @param {{ levels: string[] | null, value: string | undefined, onChange: (v: string | undefined) => void, note?: string, tag?: any }} p
  */
-export function ThinkingBar({ levels, value, onChange, note = "" }) {
+export function ThinkingBar({ levels, value, onChange, note = "", tag = null }) {
   const shown = levels ?? LEVELS;
-  return html`<div class="field">思考强度
+  return html`<div class="field"><span class="fl">思考强度${tag}</span>
     <div class="seg3" role="group" aria-label="思考强度">
       <button type="button" aria-pressed=${value === undefined} onClick=${() => onChange(undefined)}>不思考</button>
       ${shown.map((l) => html`<button type="button" key=${l} aria-pressed=${value === l} onClick=${() => onChange(l)}>${l}</button>`)}

@@ -11,9 +11,11 @@ import { allProcs, childCounts, emptyStore, reduce, streamingLive, streamingText
 import { extractTitle, processTitle } from "../../../extras/gui/web/lib/titles.js";
 import { appendDelta, argsPreview, ARGS_KEEP, tailLines } from "../../../extras/gui/web/lib/stream.js";
 import { newPace, paceArrive, paceStep } from "../../../extras/gui/web/lib/pace.js";
-import { buildCreate, buildUpdate, defaultModelRef, filterCatalog, findModel, formatWindow, keyActions, keyHint, keyLabel, modelPatch, nearestLevel, parseOptions, pushRecent, recentEntries, sortProviders, splitModel } from "../../../extras/gui/web/lib/models.js";
+import { buildCreate, buildUpdate, contextText, CONTEXT_MAX, convertGate, convertPatch, defaultModelRef, filterCatalog, findModel, formatWindow, hasAgents, keyActions, keyHint, keyLabel, modelPatch, nearestLevel, parseContext, parseOptions, pushRecent, recentEntries, sortProviders, splitModel, withAgents } from "../../../extras/gui/web/lib/models.js";
 import { markdownToHtml, safeHref } from "../../../extras/gui/web/lib/markdown.js";
 import { firstLine, lastReply, notifyText, shouldNotify, tabTitle, trackResults, unseenCount, watchAttention } from "../../../extras/gui/web/lib/notify.js";
+import { buildSession, EFFECT, EFFECT_TEXT, hasStructural, isStructural, needsInspect, pendingOf, pendingText, receiptNote, reloadFields, sessionInfo, shownErr } from "../../../extras/gui/web/lib/session.js";
+import { reconfigure as apiReconfigure, inspect as apiInspect, tauCommand } from "../../../extras/gui/web/api.js";
 
 type Self = import("../../../extras/gui/web/lib/types.js").Self;
 type Msg = import("../../../extras/gui/web/lib/types.js").Message;
@@ -1017,7 +1019,7 @@ test("models: options 一行 JSON：空是没有，只收对象，错了给原�
 });
 
 const ORIG = { id: "a", ok: true, workdir: "E:\\w", model: "x/m", tools: ["read", "bash", "mytool"], memory: false, thinking: "low", handoff: 150000, options: { temperature: 0.2 } } as any;
-const DRAFT = { model: "x/m", thinking: "low", tools: ["read", "bash", "mytool"], handoff: "150000", options: '{"temperature":0.2}', prompt: "p" };
+const DRAFT = { model: "x/m", thinking: "low", tools: ["read", "bash", "mytool"], handoff: "150000", options: '{"temperature":0.2}', prompt: "p", context: "" };
 
 test("预设表: 改预设只发变了的字段；没变就是空补丁；提示词没动不发", () => {
   assert.deepEqual(buildUpdate(ORIG, "p", DRAFT), { ok: true, patch: {} });
@@ -1030,9 +1032,73 @@ test("预设表: 改预设只发变了的字段；没变就是空补丁；提示
   assert.deepEqual(buildUpdate(ORIG, "p", { ...DRAFT, options: '{"temperature":0.5}' }), { ok: true, patch: { options: { temperature: 0.5 } } });
   assert.deepEqual(buildUpdate(ORIG, "p", { ...DRAFT, prompt: "新" }), { ok: true, patch: { prompt: "新" } });
   assert.deepEqual(buildUpdate({ id: "b", ok: true, workdir: "w", model: "x/m", tools: [], memory: false } as any, "", { ...DRAFT, tools: [], thinking: undefined, handoff: "", options: "", prompt: "" }), { ok: true, patch: {} });
-  for (const bad of [{ handoff: "0" }, { handoff: "1.5" }, { handoff: "abc" }, { options: "[" }, { model: " " }]) {
+  for (const bad of [{ handoff: "0" }, { handoff: "1.5" }, { handoff: "abc" }, { options: "[" }, { model: " " }, { context: "a,b" }, { context: "1\n2\n3\n4\n5\n6\n7\n8\n9" }]) {
     assert.equal(buildUpdate(ORIG, "p", { ...DRAFT, ...bad }).ok, false, JSON.stringify(bad));
   }
+});
+
+test("预设表: 上下文文件一行一个路径，去空白、跳空行、去重；最多 8 行；逗号和过长的不行；空是没有", () => {
+  assert.deepEqual(parseContext(""), { ok: true, value: undefined });
+  assert.deepEqual(parseContext(" \n \r\n"), { ok: true, value: undefined });
+  assert.deepEqual(parseContext(" AGENTS.md \r\n\ndocs/a.md\nAGENTS.md\nE:\\x\\b.md"), { ok: true, value: ["AGENTS.md", "docs/a.md", "E:\\x\\b.md"] });
+  assert.equal(parseContext(Array.from({ length: CONTEXT_MAX }, (_, i) => `f${i}`).join("\n")).ok, true);
+  assert.equal(parseContext(Array.from({ length: CONTEXT_MAX + 1 }, (_, i) => `f${i}`).join("\n")).ok, false);
+  assert.equal(parseContext([...Array.from({ length: CONTEXT_MAX }, (_, i) => `f${i}`), "f0"].join("\n")).ok, true, "重复的先去掉再数");
+  assert.equal(parseContext("a,b.md").ok, false);
+  assert.equal(parseContext("x".repeat(261)).ok, false);
+  assert.equal(parseContext("x".repeat(260)).ok, true);
+  assert.equal(parseContext("a\u0001b").ok, false);
+  assert.equal(CONTEXT_MAX, 8);
+});
+
+test("预设表: AGENTS.md 勾选是上下文文件字段的快捷：勾上加一行（已有不重复），取消去掉这一行，别的行原样", () => {
+  assert.equal(hasAgents(""), false);
+  assert.equal(hasAgents("docs/AGENTS.md"), false, "整行才算");
+  assert.equal(hasAgents("a.md\n AGENTS.md \nb.md"), true);
+  assert.equal(withAgents("", true), "AGENTS.md");
+  assert.equal(withAgents("a.md\n", true), "a.md\nAGENTS.md");
+  assert.equal(withAgents("a.md\nAGENTS.md", true), "a.md\nAGENTS.md");
+  assert.equal(withAgents("a.md\nAGENTS.md\nb.md", false), "a.md\nb.md");
+  assert.equal(withAgents("a.md", false), "a.md");
+  assert.equal(withAgents("AGENTS.md", false), "");
+  assert.equal(contextText(["a.md", "b.md"]), "a.md\nb.md");
+  assert.equal(contextText(undefined), "");
+});
+
+test("预设表: 改预设的上下文文件——加、换、去掉（发 null）；没变不发；空数组和没有一样", () => {
+  assert.deepEqual(buildUpdate(ORIG, "p", { ...DRAFT, context: "AGENTS.md" }), { ok: true, patch: { context: ["AGENTS.md"] } });
+  const withCtx = { ...ORIG, context: ["AGENTS.md", "docs/a.md"] };
+  assert.deepEqual(buildUpdate(withCtx, "p", { ...DRAFT, context: "AGENTS.md\ndocs/a.md" }), { ok: true, patch: {} });
+  assert.deepEqual(buildUpdate(withCtx, "p", { ...DRAFT, context: "docs/a.md" }), { ok: true, patch: { context: ["docs/a.md"] } });
+  assert.deepEqual(buildUpdate(withCtx, "p", { ...DRAFT, context: "" }), { ok: true, patch: { context: null } });
+  assert.deepEqual(buildUpdate({ ...ORIG, context: [] }, "p", DRAFT), { ok: true, patch: {} });
+});
+
+test("预设表: 转成上下文文件——保存时发 agentsMd: false，context 里加 AGENTS.md；只在有旧块时；项目概况里一键转的补丁", () => {
+  const legacy = { ...ORIG, agentsMd: "legacy" };
+  assert.deepEqual(buildUpdate(legacy, "p", { ...DRAFT, context: "AGENTS.md", convert: true }), { ok: true, patch: { context: ["AGENTS.md"], agentsMd: false } });
+  assert.deepEqual(buildUpdate(legacy, "p", DRAFT), { ok: true, patch: {} }, "没点就不动旧块");
+  assert.deepEqual(buildUpdate({ ...ORIG, agentsMd: "none" }, "p", { ...DRAFT, convert: true }), { ok: true, patch: {} }, "没有旧块就没有可转的");
+  const here = { exists: true };
+  assert.deepEqual(convertPatch({}, here), { ok: true, patch: { agentsMd: false, context: ["AGENTS.md"] } });
+  assert.deepEqual(convertPatch({ context: ["docs/a.md"] }, here), { ok: true, patch: { agentsMd: false, context: ["docs/a.md", "AGENTS.md"] } });
+  assert.deepEqual(convertPatch({ context: ["AGENTS.md", "docs/a.md"] }, here), { ok: true, patch: { agentsMd: false, context: ["AGENTS.md", "docs/a.md"] } }, "已有不重复");
+});
+
+test("预设表: 转成上下文文件要项目里有 AGENTS.md——没有时旧块可能是最后一份内容，不让转；没查到、查不了也不让转", () => {
+  assert.deepEqual(convertGate({ exists: true }), { ok: true });
+  const none = convertGate({ exists: false });
+  assert.equal(none.ok, false);
+  assert.match(!none.ok ? none.note : "", /项目里没有 AGENTS\.md，旧块是最后一份内容，转了就读不到/);
+  const loading = convertGate(null);
+  assert.equal(loading.ok, false, "还没查到：不能确认文件在");
+  const bad = convertGate({ exists: false, bad: true });
+  assert.equal(bad.ok, false);
+  assert.notEqual(!bad.ok ? bad.note : "", !none.ok ? none.note : "", "查不了的目录，原因不一样");
+  // 项目概况里一键转也一样：没有 AGENTS.md 不给补丁，只给原因。
+  assert.deepEqual(convertPatch({ context: ["docs/a.md"] }, { exists: false }), { ok: false, note: !none.ok ? none.note : "" });
+  assert.equal(convertPatch({}, null).ok, false);
+  assert.equal(convertPatch({}, { exists: false, bad: true }).ok, false);
 });
 
 test("换模型: 改预设的补丁只带和文件不同的模型和思考强度", () => {
@@ -1045,9 +1111,11 @@ test("换模型: 改预设的补丁只带和文件不同的模型和思考强度
   assert.deepEqual(modelPatch({ model: "x/m" }, " y/n ", "max"), { model: "y/n", thinking: "max" });
 });
 
-test("预设表: 新建只带填了的 thinking、handoff、options", () => {
+test("预设表: 新建只带填了的 thinking、handoff、options、context", () => {
   assert.deepEqual(buildCreate({ ...DRAFT, thinking: undefined, handoff: "", options: "" }), { ok: true, fields: {} });
   assert.deepEqual(buildCreate(DRAFT), { ok: true, fields: { thinking: "low", handoff: 150000, options: { temperature: 0.2 } } });
+  assert.deepEqual(buildCreate({ ...DRAFT, context: "AGENTS.md\ndocs/a.md" }), { ok: true, fields: { thinking: "low", handoff: 150000, options: { temperature: 0.2 }, context: ["AGENTS.md", "docs/a.md"] } });
+  assert.equal(buildCreate({ ...DRAFT, context: "a,b" }).ok, false);
   assert.equal(buildCreate({ ...DRAFT, handoff: "-3" }).ok, false);
   assert.equal(buildCreate({ ...DRAFT, options: "{" }).ok, false);
 });
@@ -1072,6 +1140,9 @@ test("inspect: 快照里还带模型、思考强度、换段阈值和 options", 
   assert.deepEqual(f, { workdir: "E:\\w", tools: ["read", "memory", "t"], memory: true, model: "x/m", thinking: "high", handoff: 90000, options: { temperature: 0.1 } });
   const g = seenFromInspect({ type: "process", process: { preset: { workdir: "E:\\w", tools: ["read"], model: "x/m" } } });
   assert.deepEqual(g, { workdir: "E:\\w", tools: ["read"], memory: false, model: "x/m" });
+  const c = seenFromInspect({ type: "process", process: { preset: { workdir: "E:\\w", tools: ["read"], model: "x/m", context: ["AGENTS.md", 3, "a.md"] } } });
+  assert.deepEqual(c?.context, ["AGENTS.md", "a.md"]);
+  assert.equal(seenFromInspect({ type: "process", process: { preset: { workdir: "E:\\w", tools: ["read"], model: "x/m", context: [] } } })?.context, undefined, "空的当没有");
 });
 
 // ---------- Markdown ----------
@@ -1283,4 +1354,217 @@ test("peeker: watch 推来的消息接在末尾后面，不再读 history；跳�
   p.push("a", { segment: 2, seq: 0, message: user("新段", 9) });
   assert.deepEqual(got.at(-1), { segment: 2, total: 1, n: 1 });
   p.forget("a");
+});
+
+// ---------- 改这个会话（reconfigure，D71）----------
+
+const BEGIN_MARK = "<!-- tau-gui:agents-md begin | 说明 | E:\\w\\AGENTS.md -->";
+const END_MARK = "<!-- tau-gui:agents-md end -->";
+const LEGACY = [BEGIN_MARK, "# 规则", "一条", END_MARK];
+
+/** `inspect` 的一行 `process`：会话快照 `preset`，可选的待换配置 `next`。 */
+function procLine(preset: Record<string, unknown>, next?: Record<string, unknown>) {
+  const base = { id: "p", workdir: "E:\\w", model: "x/m", tools: ["read", "memory"], toolDefs: [{ name: "mytool" }], prompt: "提示词", contextWindow: 200_000, input: ["text"], ...preset };
+  return { type: "process", process: { id: "abc", preset: base, ...(next ? { next: { ...base, ...next } } : {}) }, messages: 3, limits: { threshold: 100_000 } };
+}
+
+test("会话表: 初值取 inspect 的会话快照；有 next 取 next；工具是内置加工具定义的名字；旧拼接块拆出来", () => {
+  const a = sessionInfo(procLine({ thinking: "low", handoff: 90000, options: { temperature: 0.1 }, context: ["AGENTS.md", "docs/a.md"] }))!;
+  assert.deepEqual(a, {
+    id: "p", ok: true, workdir: "E:\\w", model: "x/m", tools: ["read", "memory", "mytool"], memory: true, prompt: "提示词", agentsMd: "none", block: null, pending: false,
+    thinking: "low", handoff: 90000, options: { temperature: 0.1 }, context: ["AGENTS.md", "docs/a.md"],
+  });
+  const n = sessionInfo(procLine({}, { model: "y/n", prompt: `新的\n\n${LEGACY.join("\n")}`, context: ["AGENTS.md"] }))!;
+  assert.deepEqual([n.model, n.pending, n.prompt, n.agentsMd, n.block, n.context], ["y/n", true, "新的", "legacy", LEGACY, ["AGENTS.md"]]);
+  const bare = sessionInfo(procLine({ toolDefs: undefined, context: [] }))!;
+  assert.deepEqual([bare.tools, bare.context, "thinking" in bare], [["read", "memory"], undefined, false]);
+  assert.equal(sessionInfo({ type: "inspected" }), null);
+  assert.equal(sessionInfo({ type: "process", process: { preset: { model: "x/m" } } }), null);
+});
+
+const SESSION = () => sessionInfo(procLine({ thinking: "low", handoff: 90000, options: { temperature: 0.1 }, context: ["AGENTS.md"], prompt: `手写\n\n${LEGACY.join("\n")}` }))!;
+const SDRAFT = { model: "x/m", thinking: "low", tools: ["read", "memory", "mytool"], handoff: "90000", options: '{"temperature":0.1}', prompt: "手写", context: "AGENTS.md", workdir: "E:\\w" };
+
+test("会话表: 变成 reconfigure 的 fields——只发变了的，去掉的发 null；没变是空", () => {
+  const o = SESSION();
+  assert.deepEqual(buildSession(o, SDRAFT), { ok: true, fields: {} });
+  assert.deepEqual(buildSession(o, { ...SDRAFT, model: " y/n " }), { ok: true, fields: { model: "y/n" } });
+  assert.deepEqual(buildSession(o, { ...SDRAFT, thinking: "high" }), { ok: true, fields: { thinking: "high" } });
+  assert.deepEqual(buildSession(o, { ...SDRAFT, thinking: undefined }), { ok: true, fields: { thinking: null } });
+  assert.deepEqual(buildSession(o, { ...SDRAFT, handoff: "" }), { ok: true, fields: { handoff: null } });
+  assert.deepEqual(buildSession(o, { ...SDRAFT, handoff: "50000" }), { ok: true, fields: { handoff: 50000 } });
+  assert.deepEqual(buildSession(o, { ...SDRAFT, options: "" }), { ok: true, fields: { options: null } });
+  assert.deepEqual(buildSession(o, { ...SDRAFT, options: '{"temperature":0.5}' }), { ok: true, fields: { options: { temperature: 0.5 } } });
+  assert.deepEqual(buildSession(o, { ...SDRAFT, context: "" }), { ok: true, fields: { context: null } });
+  assert.deepEqual(buildSession(o, { ...SDRAFT, context: "AGENTS.md\ndocs/a.md" }), { ok: true, fields: { context: ["AGENTS.md", "docs/a.md"] } });
+  assert.deepEqual(buildSession(o, { ...SDRAFT, tools: ["read", "bash", "mytool"] }), { ok: true, fields: { tools: ["read", "bash", "mytool"] } });
+  assert.deepEqual(buildSession(o, { ...SDRAFT, model: "y/n", thinking: "high", context: "" }), { ok: true, fields: { model: "y/n", thinking: "high", context: null } });
+  // 没有这些键的快照：填上就是加，空着就是没变。
+  const bare = sessionInfo(procLine({}))!;
+  assert.deepEqual(buildSession(bare, { ...SDRAFT, thinking: undefined, handoff: "", options: "", context: "", prompt: "提示词", tools: ["read", "memory", "mytool"] }), { ok: true, fields: {} });
+  assert.deepEqual(buildSession(bare, { ...SDRAFT, thinking: "low", handoff: "9", options: '{"temperature":1}', context: "a.md", prompt: "提示词" }), { ok: true, fields: { thinking: "low", handoff: 9, options: { temperature: 1 }, context: ["a.md"] } });
+});
+
+test("会话表: 工具只看集合，顺序变了不算改；工作目录不分大小写和斜杠方向，真的变了才发", () => {
+  const o = SESSION();
+  assert.deepEqual(buildSession(o, { ...SDRAFT, tools: ["mytool", "read", "memory"] }), { ok: true, fields: {} });
+  assert.deepEqual(buildSession(o, { ...SDRAFT, tools: ["read", "memory"] }), { ok: true, fields: { tools: ["read", "memory"] } });
+  assert.deepEqual(buildSession(o, { ...SDRAFT, workdir: "e:/w/" }), { ok: true, fields: {} });
+  assert.deepEqual(buildSession(o, { ...SDRAFT, workdir: " E:\\other " }), { ok: true, fields: { workdir: "E:\\other" } });
+  const { workdir: _w, ...noDir } = SDRAFT;
+  assert.deepEqual(buildSession(o, noDir), { ok: true, fields: {} }, "表里没有工作目录（预设表）就是没变");
+});
+
+test("会话表: 提示词只编辑用户写的部分，旧拼接块接回去；点了转成上下文文件才去掉", () => {
+  const o = SESSION();
+  assert.deepEqual([o.prompt, o.agentsMd], ["手写", "legacy"]);
+  assert.deepEqual(buildSession(o, { ...SDRAFT, prompt: "手写 " }), { ok: true, fields: {} }, "没动不发");
+  assert.deepEqual(buildSession(o, { ...SDRAFT, prompt: "新写的" }), { ok: true, fields: { prompt: `新写的\n\n${LEGACY.join("\n")}` } });
+  assert.deepEqual(buildSession(o, { ...SDRAFT, prompt: "" }), { ok: true, fields: { prompt: LEGACY.join("\n") } });
+  assert.deepEqual(buildSession(o, { ...SDRAFT, convert: true, context: "AGENTS.md" }), { ok: true, fields: { prompt: "手写" } }, "去块，context 本来就有");
+  assert.deepEqual(buildSession(o, { ...SDRAFT, convert: true, prompt: "新写的", context: "AGENTS.md\ndocs/a.md" }), { ok: true, fields: { prompt: "新写的", context: ["AGENTS.md", "docs/a.md"] } });
+  // 没有旧块：prompt 就是用户写的；convert 没有意义。
+  const plain = sessionInfo(procLine({}))!;
+  const same = { ...SDRAFT, thinking: undefined, handoff: "", options: "", context: "" };
+  assert.deepEqual(buildSession(plain, { ...same, prompt: "改了" }), { ok: true, fields: { prompt: "改了" } });
+  assert.deepEqual(buildSession(plain, { ...same, prompt: "提示词", convert: true }), { ok: true, fields: {} });
+});
+
+test("会话表: 填错了不发——模型、工作目录不能空，换段阈值、options、上下文文件的写法", () => {
+  const o = SESSION();
+  for (const bad of [{ model: " " }, { workdir: "  " }, { handoff: "0" }, { handoff: "abc" }, { options: "[" }, { context: "a,b" }, { context: "1\n2\n3\n4\n5\n6\n7\n8\n9" }]) {
+    assert.equal(buildSession(o, { ...SDRAFT, ...bad }).ok, false, JSON.stringify(bad));
+  }
+});
+
+test("会话表: 字段什么时候生效——调用参数下一次调用，结构性字段换段时；有结构性字段才给“保存后马上换段”", () => {
+  assert.deepEqual(["thinking", "options", "handoff"].map((f) => (EFFECT as any)[f]), ["call", "call", "call"]);
+  assert.deepEqual(["model", "prompt", "tools", "workdir", "context"].map((f) => (EFFECT as any)[f]), ["segment", "segment", "segment", "segment", "segment"]);
+  assert.deepEqual([EFFECT_TEXT.call, EFFECT_TEXT.segment], ["下一次调用生效", "换段时生效"]);
+  assert.deepEqual(["thinking", "model", "context", "id", "nope"].map(isStructural), [false, true, true, false, false]);
+  assert.equal(hasStructural({ thinking: null, handoff: 1, options: null }), false);
+  assert.equal(hasStructural({ thinking: null, prompt: "x" }), true);
+  assert.equal(hasStructural({}), false);
+  assert.equal(hasStructural(["model", "prompt"]), true);
+  assert.equal(hasStructural([]), false);
+});
+
+test("待换段条: 字段名写成中文，顺序照投影；没有待换配置没有这一条；新字段原样写", () => {
+  assert.equal(pendingText([]), null);
+  assert.equal(pendingText(["model", "prompt"]), "待换段：模型、提示词");
+  assert.equal(pendingText(["model", "prompt", "tools", "workdir", "context"]), "待换段：模型、提示词、工具、工作目录、上下文文件");
+  assert.equal(pendingText(["context", "future"]), "待换段：上下文文件、future");
+  assert.deepEqual(pendingOf(self("a", { pending: { fields: ["model", "prompt"] } })), ["model", "prompt"]);
+  assert.deepEqual(pendingOf(self("a")), []);
+  assert.deepEqual(pendingOf(undefined), []);
+  assert.deepEqual(pendingOf({ pending: { fields: [1, "tools"] } } as any), ["tools"]);
+});
+
+test("快照的更新: update 带来的变化——第一次见、模型、换段、待换配置变了才重读 inspect", () => {
+  const a = self("a", { segment: 2 });
+  assert.equal(needsInspect(undefined, a), true);
+  assert.equal(needsInspect(a, self("a", { segment: 2, messages: 9, context: { used: 500, window: 1000 }, phase: running })), false, "别的变化不重读");
+  assert.equal(needsInspect(a, self("a", { segment: 3 })), true, "换段：采用了待换的快照");
+  assert.equal(needsInspect(a, self("a", { segment: 2, model: "y/n" })), true);
+  assert.equal(needsInspect(a, self("a", { segment: 2, pending: { fields: ["prompt"] } })), true, "出现待换配置");
+  const p = self("a", { segment: 2, pending: { fields: ["prompt"] } });
+  assert.equal(needsInspect(p, self("a", { segment: 2, pending: { fields: ["prompt"] } })), false);
+  assert.equal(needsInspect(p, self("a", { segment: 2, pending: { fields: ["prompt", "tools"] } })), true);
+  assert.equal(needsInspect(p, a), true, "取消或采用以后没有了");
+});
+
+test("会话快照: 每次读到 inspect 都更新归类用的快照（阈值、模型、工具），不是建好后读一次", () => {
+  const before = seenFromInspect(procLine({ handoff: 90000 }))!;
+  const line = procLine({ handoff: 50000, thinking: "high", model: "y/n", toolDefs: [] });
+  (line as any).limits = { threshold: 50000 };
+  const after = seenFromInspect(line)!;
+  assert.deepEqual([before.threshold, before.handoff, before.model], [100_000, 90000, "x/m"]);
+  assert.deepEqual([after.threshold, after.handoff, after.thinking, after.model, after.tools], [50000, 50000, "high", "y/n", ["read", "memory"]]);
+  // 有 next 时，界面的会话快照还是当前的：threshold 按当前的算，next 只给表的初值。
+  const pending = procLine({}, { model: "z/w", context: ["AGENTS.md"] });
+  assert.deepEqual([seenFromInspect(pending)!.model, seenFromInspect(pending)!.context, sessionInfo(pending)!.model], ["x/m", undefined, "z/w"]);
+});
+
+test("回执的话: pending 为真说有待换配置，为假不乱说是哪一种", () => {
+  assert.match(receiptNote(true), /待换配置/);
+  assert.match(receiptNote(false), /没有待换配置/);
+  assert.notEqual(receiptNote(true), receiptNote(false));
+});
+
+test("重读工具定义: 发的是会话已存的工具列表，不是表里没保存的勾选；发的是副本", () => {
+  const o = SESSION();
+  assert.deepEqual(reloadFields(o), { tools: ["read", "memory", "mytool"] });
+  // 表里勾掉了 mytool、加了 bash 但没保存：reloadFields 只看会话快照，不看表。
+  const unsaved = { ...SDRAFT, tools: ["read", "bash"] };
+  assert.deepEqual(buildSession(o, unsaved), { ok: true, fields: { tools: ["read", "bash"] } }, "表确实改了");
+  assert.deepEqual(reloadFields(o), { tools: ["read", "memory", "mytool"] }, "但重读发的没变");
+  reloadFields(o).tools.push("x");
+  assert.deepEqual(o.tools, ["read", "memory", "mytool"], "改发出去的不动快照");
+  // 有待换配置时，快照取的是待换的那一份，重读发的也是它。
+  const pending = sessionInfo(procLine({}, { tools: ["read"], toolDefs: [] }))!;
+  assert.deepEqual(reloadFields(pending), { tools: ["read"] });
+});
+
+test("保存失败的原文: 只在表没动的时候显示；表一动（样子变了）就不显示，别的填写错误能露出来", () => {
+  const sig = JSON.stringify(SDRAFT);
+  assert.equal(shownErr(null, sig), null);
+  const err = { text: "服务拒绝：工具定义不存在", sig };
+  assert.equal(shownErr(err, sig), "服务拒绝：工具定义不存在");
+  assert.equal(shownErr(err, JSON.stringify({ ...SDRAFT, handoff: "abc" })), null, "改了换段阈值");
+  assert.equal(shownErr(err, JSON.stringify({ ...SDRAFT, tools: ["read"] })), null, "改了工具");
+  assert.equal(shownErr(err, JSON.stringify({ ...SDRAFT, workdir: "E:\\other" })), null, "改了工作目录");
+});
+
+/** 把全局 fetch 换成假的：回给定的几行，记下请求的正文。 */
+async function withFetch(lines: unknown[], fn: (calls: any[]) => Promise<void>): Promise<void> {
+  const real = globalThis.fetch;
+  const calls: any[] = [];
+  globalThis.fetch = (async (_url: any, init: any) => {
+    calls.push({ url: String(_url), body: JSON.parse(init.body) });
+    return new Response(`${lines.map((l) => JSON.stringify(l)).join("\n")}\n`, { status: 200 });
+  }) as typeof fetch;
+  try {
+    await fn(calls);
+  } finally {
+    globalThis.fetch = real;
+  }
+}
+
+test("api: tauCommand 认 reconfigured 回执，和 receipt、swept 一样当作成功；reconfigure 的封装带回 pending", async () => {
+  await withFetch([{ type: "reconfigured", process: "abc", pending: true }], async (calls) => {
+    assert.deepEqual(await tauCommand({ op: "reconfigure", process: "abc", fields: { prompt: "x" } }), { type: "reconfigured", process: "abc", pending: true });
+    assert.deepEqual(await apiReconfigure("abc", { fields: { thinking: null } }), { pending: true });
+    assert.deepEqual(await apiReconfigure("abc", { revert: true }), { pending: true });
+    assert.deepEqual(calls.map((c) => [c.url, c.body]), [
+      ["/api/tau", { op: "reconfigure", process: "abc", fields: { prompt: "x" } }],
+      ["/api/tau", { op: "reconfigure", process: "abc", fields: { thinking: null } }],
+      ["/api/tau", { op: "reconfigure", process: "abc", revert: true }],
+    ]);
+  });
+  await withFetch([{ type: "reconfigured", process: "abc", pending: false }], async () => assert.deepEqual(await apiReconfigure("abc", { fields: { handoff: 1 } }), { pending: false }));
+  await withFetch([{ type: "swept", blobs: 2 }], async () => assert.deepEqual(await tauCommand({ op: "sweep" }), { type: "swept", blobs: 2 }));
+  await withFetch([{ type: "receipt", process: "abc" }], async () => assert.equal((await tauCommand({ op: "stop", process: "abc" })).process, "abc"));
+});
+
+test("api: reconfigure 出错抛服务的原文，什么都没改；回执缺 pending、没有回执也抛错", async () => {
+  await withFetch([{ type: "error", message: "id 不能改：它是记忆库的 ID，换角色用 fork 带 preset" }], async () => {
+    await assert.rejects(apiReconfigure("abc", { fields: { id: "x" } as any }), /id 不能改/);
+  });
+  await withFetch([{ type: "reconfigured", process: "abc" }], async () => {
+    await assert.rejects(apiReconfigure("abc", { fields: { handoff: 1 } }), /回执/);
+  });
+  await withFetch([], async () => {
+    await assert.rejects(tauCommand({ op: "reconfigure", process: "abc", revert: true }), /没有回执/);
+  });
+});
+
+test("api: inspect 读一个进程的记录，没有这个进程时抛服务的错误", async () => {
+  const line = procLine({}, { prompt: "新" });
+  await withFetch([line, { type: "inspected", processes: 1, now: 1 }], async (calls) => {
+    assert.equal((await apiInspect("abc")).process.next.prompt, "新");
+    assert.deepEqual(calls[0].body, { op: "inspect", process: "abc" });
+  });
+  await withFetch([{ type: "error", message: "没有这个进程：abc" }], async () => {
+    await assert.rejects(apiInspect("abc"), /没有这个进程/);
+  });
 });

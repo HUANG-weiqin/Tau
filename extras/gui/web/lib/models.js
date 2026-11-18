@@ -164,7 +164,7 @@ export function parseOptions(text) {
 }
 
 /** 换段阈值：空是没有，否则正整数。 @param {string} text @returns {{ ok: true, value: number | undefined } | { ok: false, error: string }} */
-function parseHandoff(text) {
+export function parseHandoff(text) {
   const t = text.trim();
   if (t === "") return { ok: true, value: undefined };
   const n = Number(t);
@@ -172,27 +172,77 @@ function parseHandoff(text) {
   return { ok: true, value: n };
 }
 
+/** 上下文文件最多几项，每项最长几个字符。同内核读预设的写法（D72）；路径对不对由服务查，页面只管写得成一行。 */
+export const CONTEXT_MAX = 8;
+const CONTEXT_CHARS = 260;
+
 /**
- * 预设表里填的东西。`thinking` 是 undefined 表示不思考。`handoff`、`options` 是输入框里的文字。
- * @typedef {{ model: string, thinking: string | undefined, tools: string[], handoff: string, options: string, prompt: string }} Draft
+ * 上下文文件一行一个路径：去空白、跳空行、重复的去掉（留第一次的）。空是没有。
+ * 一项里不许有逗号（预设文件里写成逗号分隔的一行）和控制字符，最长 260 个字符。
+ * @param {string} text
+ * @returns {{ ok: true, value: string[] | undefined } | { ok: false, error: string }}
+ */
+export function parseContext(text) {
+  const items = [...new Set(text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== ""))];
+  if (items.length === 0) return { ok: true, value: undefined };
+  if (items.length > CONTEXT_MAX) return { ok: false, error: `上下文文件最多 ${CONTEXT_MAX} 行` };
+  const bad = items.find((x) => x.length > CONTEXT_CHARS || /[\u0000-\u001f\u007f,]/.test(x));
+  if (bad !== undefined) return { ok: false, error: `上下文文件的路径最长 ${CONTEXT_CHARS} 个字符，不能有逗号：${bad.slice(0, 40)}` };
+  return { ok: true, value: items };
+}
+
+/** `AGENTS.md` 勾选管的那一项。界面只认这个文件名，不认 CLAUDE.md。 */
+export const AGENTS_FILE = "AGENTS.md";
+
+/** 上下文文字里有没有 `AGENTS.md` 这一行。 @param {string} text */
+export function hasAgents(text) {
+  return text.split(/\r?\n/).some((l) => l.trim() === AGENTS_FILE);
+}
+
+/** 勾上就加一行 `AGENTS.md`（已有不重复），取消就去掉这一行，别的行原样。 @param {string} text @param {boolean} on */
+export function withAgents(text, on) {
+  const lines = text.split(/\r?\n/);
+  if (!on) return lines.filter((l) => l.trim() !== AGENTS_FILE).join("\n");
+  if (hasAgents(text)) return text;
+  const trimmed = text.replace(/\s+$/, "");
+  return trimmed === "" ? AGENTS_FILE : `${trimmed}\n${AGENTS_FILE}`;
+}
+
+/** 预设和会话快照里的上下文文件，变成输入框里的文字。 @param {string[] | undefined} list */
+export function contextText(list) {
+  return (list ?? []).join("\n");
+}
+
+/** 空数组和没有一样。 @param {string[] | undefined} list */
+export function noEmpty(list) {
+  return list && list.length > 0 ? list : undefined;
+}
+
+/**
+ * 预设表里填的东西。`thinking` 是 undefined 表示不思考。`handoff`、`options`、`context` 是输入框里的文字（`context` 一行一个路径）。
+ * `workdir` 只有会话表有（预设表里不能改）。`convert` 为真表示用户点了“转成上下文文件”：保存时去掉旧拼接块。
+ * @typedef {{ model: string, thinking: string | undefined, tools: string[], handoff: string, options: string, prompt: string, context: string, workdir?: string, convert?: boolean }} Draft
  */
 
 /**
- * 新建：只带填了的 thinking、handoff、options。
+ * 新建：只带填了的 thinking、handoff、options、context。
  * @param {Draft} d
- * @returns {{ ok: true, fields: { thinking?: string, handoff?: number, options?: Record<string, unknown> } } | { ok: false, error: string }}
+ * @returns {{ ok: true, fields: { thinking?: string, handoff?: number, options?: Record<string, unknown>, context?: string[] } } | { ok: false, error: string }}
  */
 export function buildCreate(d) {
   const h = parseHandoff(d.handoff);
   if (!h.ok) return h;
   const o = parseOptions(d.options);
   if (!o.ok) return o;
+  const c = parseContext(d.context);
+  if (!c.ok) return c;
   return {
     ok: true,
     fields: {
       ...(d.thinking === undefined ? {} : { thinking: d.thinking }),
       ...(h.value === undefined ? {} : { handoff: h.value }),
       ...(o.value === undefined ? {} : { options: o.value }),
+      ...(c.value === undefined ? {} : { context: c.value }),
     },
   };
 }
@@ -201,7 +251,7 @@ export function buildCreate(d) {
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 /**
- * 改预设：和现在的预设比，只发变了的字段；去掉的字段发 `null`。提示词没动不发。
+ * 改预设：和现在的预设比，只发变了的字段；去掉的字段发 `null`。提示词没动不发。旧拼接块只在 `convert` 时才去掉。
  * @param {Extract<PresetInfo, { ok: true }>} orig 现在预设文件读成的样子
  * @param {string} origPrompt 现在的提示词
  * @param {Draft} d
@@ -214,6 +264,8 @@ export function buildUpdate(orig, origPrompt, d) {
   if (!h.ok) return h;
   const o = parseOptions(d.options);
   if (!o.ok) return o;
+  const c = parseContext(d.context);
+  if (!c.ok) return c;
   /** @type {Record<string, unknown>} */
   const patch = {};
   if (model !== orig.model) patch["model"] = model;
@@ -221,8 +273,43 @@ export function buildUpdate(orig, origPrompt, d) {
   if (!same(d.tools, orig.tools)) patch["tools"] = d.tools;
   if (h.value !== orig.handoff) patch["handoff"] = h.value === undefined ? null : h.value;
   if (!same(o.value, orig.options)) patch["options"] = o.value === undefined ? null : o.value;
+  if (!same(c.value, noEmpty(orig.context))) patch["context"] = c.value === undefined ? null : c.value;
   if (d.prompt.trim() !== origPrompt.trim()) patch["prompt"] = d.prompt;
+  // 转成上下文文件：去掉提示词里的旧拼接块。`context` 里加 `AGENTS.md` 由表单在点的时候做。
+  if (d.convert === true && orig.agentsMd === "legacy") patch["agentsMd"] = false;
   return { ok: true, patch };
+}
+
+/**
+ * 项目里 AGENTS.md 的情况（`/api/agents-md` 查的结果，连同 `bad`：这个目录查不了）。还没查到是 null。
+ * @typedef {{ exists: boolean, bad?: true } | null} AgentsInfo
+ */
+
+/**
+ * “转成上下文文件”能不能做。项目里没有 AGENTS.md 时，旧块可能是内容的最后一份，转完内核读不到它：不让转。
+ * 还没查到、查不了的目录也不让转，因为不能确认文件在。
+ * @param {AgentsInfo} info
+ * @returns {{ ok: true } | { ok: false, note: string }}
+ */
+export function convertGate(info) {
+  if (info === null) return { ok: false, note: "正在查项目里有没有 AGENTS.md…" };
+  if (info.bad === true) return { ok: false, note: "没查到这个目录，不能确认项目里有 AGENTS.md，先不转" };
+  if (!info.exists) return { ok: false, note: "项目里没有 AGENTS.md，旧块是最后一份内容，转了就读不到" };
+  return { ok: true };
+}
+
+/**
+ * “转成上下文文件”的补丁：去掉提示词里的旧拼接块，`context` 里加 `AGENTS.md`（已有不重复）。项目概况里一键转用它。
+ * 项目里没有 AGENTS.md（`convertGate` 不让转）时不给补丁，只给原因。
+ * @param {{ context?: string[] }} preset 现在预设文件读成的样子
+ * @param {AgentsInfo} info 预设的工作目录里 AGENTS.md 的情况
+ * @returns {{ ok: true, patch: { agentsMd: false, context: string[] } } | { ok: false, note: string }}
+ */
+export function convertPatch(preset, info) {
+  const g = convertGate(info);
+  if (!g.ok) return g;
+  const c = preset.context ?? [];
+  return { ok: true, patch: { agentsMd: false, context: c.includes(AGENTS_FILE) ? c : [...c, AGENTS_FILE] } };
 }
 
 /**

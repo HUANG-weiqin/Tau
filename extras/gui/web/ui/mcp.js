@@ -238,7 +238,7 @@ export function McpSection({ app, installed, onChanged }) {
 
       <div class="mcp-foot">
         <${Pill} kind="accent" label=${busy === "install" ? "正在装…" : "装选中的"} disabled=${busy !== "" || picked.length === 0} onClick=${install} />
-        <span class="dnote">写 <span class="mono">~/.tau/tools/${"<定义名>"}.json</span>，只对新开的进程生效。</span>
+        <span class="dnote">写 <span class="mono">~/.tau/tools/${"<定义名>"}.json</span>。新出生的会话用新的，已有的会话在“改这个会话”里重读（换段时生效）。</span>
       </div>
     </${Fragment}>`}
 

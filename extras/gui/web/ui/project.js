@@ -1,5 +1,6 @@
 // 聚焦项目时的主区：铭牌、成员表、最近动态、写信框。
 import { html, projTitle, Pill, Lamp, Tex, Contour, pad2, clockS, useState, useEffect, Fragment } from "./common.js";
+import * as api from "../api.js";
 import { toItems, clipText } from "../lib/messages.js";
 import { currentOf } from "../lib/derive.js";
 import { formatContext } from "../lib/format.js";
@@ -59,15 +60,19 @@ function activityOf(app, p) {
   return out.sort((a, b) => b.ts - a.ts).slice(0, ACTIVITY_MAX);
 }
 
-/** 仓库：当前分支和分支数。读不到时是 null。 @param {import("../app.js").App} app @param {import("../lib/derive.js").Project | null} p */
-function useRepo(app, p) {
+/**
+ * 仓库：当前分支和分支数。读不到时是 null。
+ * 直接调 `api.js`，不弹提示：没有预设指向、也没登记的目录（例如会话改了工作目录）桥回 403，读不到就是读不到，不该弹错。
+ * @param {import("../lib/derive.js").Project | null} p
+ */
+function useRepo(p) {
   const path = p?.path ?? null;
   const [repo, setRepo] = useState(/** @type {{ path: string, branch: string | null, count: number } | null} */ (null));
   const idle = (p?.running ?? 0) === 0;
   useEffect(() => {
     let alive = true;
     if (path === null) return;
-    app.git(path, "branches").then(
+    api.git(path, "branches").then(
       (r) => {
         if (!alive) return;
         const list = /** @type {{ name: string, current: boolean }[]} */ (r?.branches ?? []);
@@ -196,7 +201,7 @@ function Activity({ app, items }) {
 export function ProjectView({ app }) {
   const p = app.project;
   const [picked, setPicked] = useState(/** @type {string | null} */ (null));
-  const repo = useRepo(app, p);
+  const repo = useRepo(p);
   if (!p) return html`<div class="pending"><${Tex} kind="tx-grid-l" /><p class="mono" style="position:relative">没有项目。</p></div>`;
   const members = membersOf(app, p);
   const target = members.find((e) => e.id === picked) ?? members[0] ?? null;

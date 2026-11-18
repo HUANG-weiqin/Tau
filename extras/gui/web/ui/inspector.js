@@ -2,12 +2,16 @@
 // 进程三页：概况、改动、后台。项目三页：概况、分支、后台。`app.tab` 是 0 到 2。
 // 改动页的文件树只列文件，点一个文件弹出 diff 窗（`diff.js`）。
 // git 和后台 log 的数据自己轮询：对象换了就重读，之后每 10 秒读一次，页面藏起来时不读。
-// 这里直接调 `api.js`，不用 `app.git`：那个出错会弹提示，轮询会一直弹。
+// 这里直接调 `api.js`，读 git 出错不弹提示（轮询会一直弹）：读不到就在页面上写“读不到”。
 import { html, Icon, Tex, useEffect, useRef, useState, Fragment } from "./common.js";
 import * as api from "../api.js";
 import { known } from "../lib/history.js";
 import { formatAgo } from "../lib/format.js";
 import { mailOf, rulerOf } from "../lib/derive.js";
+import { convertGate, convertPatch } from "../lib/models.js";
+import { useAgentsInfo } from "./presetform.js";
+import { canHandoff } from "../lib/messages.js";
+import { pendingOf, pendingText } from "../lib/session.js";
 import { pathKey } from "../lib/state.js";
 
 const PROC_TABS = [
@@ -175,12 +179,48 @@ function Mailbox({ records, id }) {
   </section>`;
 }
 
+/**
+ * 待换段条：有待换配置时写哪些字段要等换段才生效（来自投影的 `self.pending.fields`），两个键：
+ * “现在换段”（和铭牌上的“换段”同一条路，可用的条件也一样）、“取消”（`reconfigure` 带 `revert`，放弃待换的配置）。
+ * @param {{ app: import("../app.js").App, id: string, self: import("../lib/types.js").Self }} p
+ */
+function PendingBar({ app, id, self }) {
+  const [busy, setBusy] = useState(false);
+  const text = pendingText(pendingOf(self));
+  if (text === null) return null;
+  const running = self.phase.tag !== "idle";
+  const hasReply = canHandoff(app.messages(id));
+  const can = !running && hasReply;
+  const cancel = async () => {
+    setBusy(true);
+    try {
+      await app.reconfigure(id, { revert: true });
+      app.toast("已取消待换的配置，当前快照不变");
+    } catch (e) {
+      app.toast(`没取消成：${e instanceof Error ? e.message : e}`);
+    }
+    setBusy(false);
+  };
+  return html`<section class="pending-bar" role="status" aria-label="待换配置">
+    <div class="pb-t"><span class="tag acc">待换</span><b>${text}</b></div>
+    <p class="inote">这些改动已经存下，要等下一次换段才生效。待换的内容在“改这个会话”里看。</p>
+    <div class="pb-act">
+      <button type="button" class="link ilink" disabled=${!can} title=${running ? "进程在跑时不能换段" : !hasReply ? "这一段里还没有助手的回复，没有可交接的内容" : "寄一封换段信：新配置在换段时生效"} onClick=${() => app.handoff(id).catch(() => {})}>现在换段</button>
+      <button type="button" class="link ilink" disabled=${busy} title="放弃待换的配置，当前快照不变" onClick=${cancel}>取消</button>
+    </div>
+  </section>`;
+}
+
 function ProcOverview({ app }) {
   const id = app.focusedId;
   // 读全部进程记录。它的阶段、排队数、消息数变了就马上再读一次。
   const cur = id !== null ? app.store.procs[id]?.self : undefined;
   const ph0 = cur?.phase;
   const inspected = usePoll(id !== null ? `inspect:${id}` : null, () => api.tauAll({ op: "inspect" }), POLL_MS, cur ? `${ph0?.tag}:${ph0 && ph0.tag !== "idle" ? ph0.queued : 0}:${cur.messages}` : null);
+  // 读到的 inspect 也并进会话快照：reconfigure 能改段尺的刻线、模型和工具，不是建好后读一次。
+  useEffect(() => {
+    if (Array.isArray(inspected.value)) app.noteInspect(inspected.value);
+  }, [inspected.value]);
   /** @type {any[]} */
   const records = Array.isArray(inspected.value) ? inspected.value.filter((/** @type {any} */ x) => x?.type === "process").map((/** @type {any} */ x) => x.process) : [];
   if (id === null) return html`<${Note}>没有聚焦的进程。<//>`;
@@ -194,8 +234,8 @@ function ProcOverview({ app }) {
   const tools = entry?.tools ?? null;
   const memory = entry?.memory ?? null;
   const frozen = entry?.frozen ?? null;
-  const file = app.presets[self.preset];
   return html`<div class="ipage">
+    <${PendingBar} app=${app} id=${id} self=${self} />
     <${Stats}
       items=${[
         { en: "MSG", label: "本段消息", value: self.messages },
@@ -207,7 +247,7 @@ function ProcOverview({ app }) {
       <${SegmentRuler} app=${app} id=${id} self=${self} threshold=${frozen?.threshold} />
       <${Mailbox} records=${records} id=${id} />
       <section class="isection">
-        <${Sec} zh="预设快照" en="PRESET" />
+        <${Sec} zh="会话快照" en="SESSION" />
         <dl class="ikv">
           <dt>预设</dt><dd><span class="mono">${self.preset}</span></dd>
           <dt>模型</dt><dd><span class="mono">${self.model}</span></dd>
@@ -216,34 +256,43 @@ function ProcOverview({ app }) {
           ${frozen?.options !== undefined && html`<${Fragment}><dt>options</dt><dd><span class="mono">${JSON.stringify(frozen.options)}</span></dd></${Fragment}>`}
           <dt>目录</dt><dd>${workdir !== null ? html`<span class="mono">${workdir}</span>` : html`<span class="dim">没有</span>`}</dd>
           <dt>工具</dt><dd><${ToolTags} tools=${tools} /></dd>
+          <dt>上下文文件</dt><dd>${frozen === null ? html`<span class="dim">不知道</span>` : frozen.context ? html`<span class="itags">${frozen.context.map((c) => html`<span class="mono itag">${c}</span>`)}</span>` : html`<span class="dim">没有</span>`}</dd>
           <dt>记忆</dt><dd>${memory === null ? html`<span class="dim">不知道</span>` : memory ? html`带，库名 <span class="mono">${self.preset}</span>` : "不带"}</dd>
         </dl>
-        <p class="inote">这是进程冻结的快照，预设文件之后改了也不影响它。</p>
-        ${(file || memory) && html`<div class="ilinks">
-          ${file && html`<button type="button" class="link ilink" onClick=${(/** @type {Event} */ ev) => app.openDialog("editpreset", /** @type {Element} */ (ev.currentTarget), { preset: self.preset })}><span>改预设</span><${Icon} name="arrow" size=${13} sw=${2.8} /></button>`}
+        <p class="inote">这是这个会话现在的快照，预设文件之后改了也不影响它。要改它，用“改这个会话”。</p>
+        <div class="ilinks">
+          <button type="button" class="link ilink" onClick=${(/** @type {Event} */ ev) => app.openDialog("session", /** @type {Element} */ (ev.currentTarget), { process: id })}><span>改这个会话</span><${Icon} name="arrow" size=${13} sw=${2.8} /></button>
           ${memory && html`<button type="button" class="link ilink" onClick=${(/** @type {Event} */ ev) => app.openDialog("memory", /** @type {Element} */ (ev.currentTarget), { ns: self.preset })}><span>记忆</span><${Icon} name="arrow" size=${13} sw=${2.8} /></button>`}
-        </div>`}
+        </div>
       </section>
     </div>
   </div>`;
 }
 
-/** 预设提示词里拼的 AGENTS.md 过期了或文件没了。过期时给“重新拼”，只发 `agentsMd: true`。 @param {{ app: import("../app.js").App, pr: Extract<import("../lib/types.js").PresetInfo, { ok: true }> }} p */
-function AgentsMdMark({ app, pr }) {
+/**
+ * 预设的提示词里有 D58 留下的旧拼接块：标 legacy，给“转成上下文文件”（去掉块，`context` 里加 AGENTS.md，一次 `update`）。
+ * 项目里没有 AGENTS.md 时键是灰的：旧块可能是内容的最后一份，转完就读不到。只给有旧块的预设查。
+ * @param {{ app: import("../app.js").App, pr: Extract<import("../lib/types.js").PresetInfo, { ok: true }> }} p
+ */
+function LegacyMark({ app, pr }) {
   const [busy, setBusy] = useState(false);
-  if (pr.agentsMd === "missing") return html`<div class="agents-stale"><span class="tag warn">AGENTS.md 没了</span><span class="dim">预设里拼的是旧的，新进程还会用它。</span></div>`;
-  if (pr.agentsMd !== "stale") return null;
-  const regen = async () => {
+  const legacy = pr.agentsMd === "legacy";
+  const found = useAgentsInfo(legacy ? pr.workdir : "");
+  if (!legacy) return null;
+  const gate = convertGate(found);
+  const convert = async () => {
+    const r = convertPatch(pr, found);
+    if (!r.ok || busy) return;
     setBusy(true);
     try {
-      await app.updatePreset({ id: pr.id, agentsMd: true });
-      app.toast(`预设 ${pr.id} 重新拼好了。新开的进程用新的，在跑的进程不变`);
+      await app.updatePreset({ id: pr.id, ...r.patch });
+      app.toast(`预设 ${pr.id} 转成上下文文件了。新出生的会话每次换段读 AGENTS.md，已有的会话不变`);
     } catch (e) {
-      app.toast(`没拼成：${e instanceof Error ? e.message : e}`);
+      app.toast(`没转成：${e instanceof Error ? e.message : e}`);
     }
     setBusy(false);
   };
-  return html`<div class="agents-stale"><span class="tag acc">AGENTS.md 改过了</span><button type="button" class="link ilink" disabled=${busy} onClick=${regen}>${busy ? "拼接中" : "重新拼"}</button><span class="dim">只对新进程生效。</span></div>`;
+  return html`<div class="agents-stale"><span class="tag acc">legacy</span><button type="button" class="link ilink" disabled=${busy || !gate.ok} title="去掉提示词里拼进去的旧块，改成每次换段重读 AGENTS.md" onClick=${convert}>${busy ? "转换中" : "转成上下文文件"}</button><span class="dim">${gate.ok ? "提示词里有旧的拼接块，不再更新。" : `提示词里有旧的拼接块，不再更新。${gate.note}`}</span></div>`;
 }
 
 function ProjOverview({ app, status, branches }) {
@@ -275,7 +324,7 @@ function ProjOverview({ app, status, branches }) {
         <ul class="ipresets">
           ${p.presets.map(
             (pr) => html`<li>
-              <div class="ipreset-h"><span class="mono ipreset-id">${pr.id}</span><span class=${`tag ${pr.memory ? "acc" : "line"}`}>${pr.memory ? "带记忆" : "不带记忆"}</span>${pr.memory && html`<button type="button" class="link ilink" onClick=${(/** @type {Event} */ ev) => app.openDialog("memory", /** @type {Element} */ (ev.currentTarget), { ns: pr.id })}>记忆</button>`}<button type="button" class="link ilink" onClick=${(/** @type {Event} */ ev) => app.openDialog("editpreset", /** @type {Element} */ (ev.currentTarget), { preset: pr.id })}>改预设</button><${AgentsMdMark} app=${app} pr=${pr} /></div>
+              <div class="ipreset-h"><span class="mono ipreset-id">${pr.id}</span><span class=${`tag ${pr.memory ? "acc" : "line"}`}>${pr.memory ? "带记忆" : "不带记忆"}</span>${pr.memory && html`<button type="button" class="link ilink" onClick=${(/** @type {Event} */ ev) => app.openDialog("memory", /** @type {Element} */ (ev.currentTarget), { ns: pr.id })}>记忆</button>`}<button type="button" class="link ilink" onClick=${(/** @type {Event} */ ev) => app.openDialog("editpreset", /** @type {Element} */ (ev.currentTarget), { preset: pr.id })}>改预设</button><${LegacyMark} app=${app} pr=${pr} /></div>
               <dl class="ikv small"><dt>模型</dt><dd><span class="mono">${pr.model}</span>${pr.thinking ? html` <span class="tag line">${pr.thinking}</span>` : ""}</dd><dt>工具</dt><dd><${ToolTags} tools=${pr.tools} /></dd></dl>
             </li>`,
           )}

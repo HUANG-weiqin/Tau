@@ -1,5 +1,5 @@
 // 工具定义弹窗（设计稿 7.12）：01 已装的定义、02 工具库、03 MCP。
-// 删和覆盖都在行里二次确认。工具定义只对新开的进程生效。
+// 删和覆盖都在行里二次确认。工具定义的内容在会话出生时读进快照：新出生的会话用新的，已有的会话在“改这个会话”里重读。
 import { html, Popover, DlgHead, SecHead, Pill, useState, useEffect, useRef, Fragment } from "./common.js";
 import { CheckStrip } from "./presetform.js";
 import { McpSection } from "./mcp.js";
@@ -127,7 +127,7 @@ export function ToolsDialog({ app, onClose }) {
             </ul>`}
         <${McpSection} app=${app} installed=${installed} onChanged=${load} />
         ${err !== "" && html`<${CheckStrip} ok=${false} text=${err} label="tools" />`}
-        <p class="dnote">工具定义只对新开的进程生效。库里的工具和 MCP 的定义都装在 <span class="mono">~/.tau/tools/</span>；仓库挪了位置，点“更新”或“列出工具”重装。要用哪个，在预设的工具里勾选。</p>
+        <p class="dnote">工具定义的内容在会话出生时读进快照：装了、更新了，新出生的会话用新的；已有的会话要用，在“改这个会话”里勾上，或者点工具区的“重读工具定义”，换段时生效。库里的工具和 MCP 的定义都装在 <span class="mono">~/.tau/tools/</span>；仓库挪了位置，点“更新”或“列出工具”重装。要用哪个，在预设的工具里勾选。</p>
       </div>
       <div class="dlg-foot">
         <span class="cmdline">${data === null ? "" : `${installed.length} 个已装，工具库 ${library.length} 个`}</span>

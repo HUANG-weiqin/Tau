@@ -3,12 +3,15 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import path from "node:path";
-import { applyBlock, buildBlock, readAgentsMd, splitPrompt, stateOf } from "./agentsmd.ts";
+import { applyBlock, splitPrompt, stateOf } from "./agentsmd.ts";
 import type { AgentsMdState } from "./agentsmd.ts";
 import { HttpError, isAbsoluteWinPath, isObject } from "./util.ts";
 
 const THINKING = ["minimal", "low", "medium", "high", "xhigh", "max"];
 const CHECK_TIMEOUT_MS = 10_000;
+/** 上下文文件的个数和每项的长度上限，同内核读预设时的写法（D72）。路径对不对由服务的 `check` 说了算，这里只保证写得成一行。 */
+const CONTEXT_MAX_ITEMS = 8;
+const CONTEXT_MAX_CHARS = 260;
 
 export interface PresetOk {
   id: string;
@@ -20,9 +23,11 @@ export interface PresetOk {
   thinking?: string;
   handoff?: number;
   options?: Record<string, unknown>;
-  /** 提示词里用户写的部分，改预设时要显示。不含界面拼进去的 AGENTS.md 块。 */
+  /** 预设里写的上下文文件，原样（D72）。 */
+  context?: string[];
+  /** 提示词里用户写的部分，改预设时要显示。不含 D58 留下的旧拼接块。 */
   prompt: string;
-  /** 提示词末尾有没有拼 AGENTS.md，拼的和文件现在的关系。 */
+  /** 提示词里有没有旧拼接块：`none` 没有，`legacy` 有。 */
   agentsMd: AgentsMdState;
 }
 export type PresetInfo = PresetOk | { id: string; ok: false; error: string };
@@ -82,10 +87,11 @@ function infoOf(id: string, r: Checked): PresetInfo {
     tools,
     memory: tools.includes("memory"),
     prompt: user,
-    agentsMd: stateOf(block, s.workdir),
+    agentsMd: stateOf(block),
     ...(s.thinking === undefined ? {} : { thinking: s.thinking }),
     ...(s.handoff === undefined ? {} : { handoff: s.handoff }),
     ...(s.options === undefined ? {} : { options: s.options }),
+    ...(Array.isArray(s.context) ? { context: s.context } : {}),
   };
 }
 
@@ -141,17 +147,29 @@ function headFields(body: Record<string, unknown>, partial: boolean): [string, s
     if (!isObject(body.options)) throw new HttpError(400, "options 必须是对象");
     out.push(["options", JSON.stringify(body.options)]);
   } else if (partial && body.options === null) out.push(["options", null]);
+  if (body.context !== undefined && !(partial && body.context === null)) {
+    const items = contextItems(body.context);
+    // 空数组和没写一样：新建不写这一行，改预设删掉它。
+    if (items.length > 0) out.push(["context", items.join(", ")]);
+    else if (partial) out.push(["context", null]);
+  } else if (partial && body.context === null) out.push(["context", null]);
   return out;
 }
 
-/** 请求里的 `agentsMd`：`true` 读工作目录的 AGENTS.md 拼成块（没有文件回 400），`false` 是去掉（null），没给是不动（undefined）。 */
-function agentsBlock(v: unknown, workdir: string): string[] | null | undefined {
-  if (v === undefined) return undefined;
-  if (typeof v !== "boolean") throw new HttpError(400, "agentsMd 必须是布尔值");
-  if (!v) return null;
-  const f = readAgentsMd(workdir);
-  if (f === null) throw new HttpError(400, `项目里没有 AGENTS.md：${path.join(workdir, "AGENTS.md")}`);
-  return buildBlock(f);
+/** `context` 的值：字符串数组。去空白、跳空项、重复的去掉（保留第一次的）；写在一行里用逗号分隔，所以项里不能有逗号。 */
+function contextItems(v: unknown): string[] {
+  if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) throw new HttpError(400, "context 必须是路径的数组");
+  const items = [...new Set((v as string[]).map((x) => x.trim()).filter((x) => x !== ""))];
+  if (items.length > CONTEXT_MAX_ITEMS) throw new HttpError(400, `context 最多 ${CONTEXT_MAX_ITEMS} 项`);
+  if (items.some((x) => x.length > CONTEXT_MAX_CHARS || /[\u0000-\u001f\u007f,]/.test(x))) throw new HttpError(400, `context 的每一项最长 ${CONTEXT_MAX_CHARS} 个字符，不能有逗号和控制字符`);
+  return items;
+}
+
+/** 请求里的 `agentsMd`：只接受 `false`，去掉旧的拼接块；没给是不动。 */
+function dropBlock(v: unknown): boolean {
+  if (v === undefined) return false;
+  if (v !== false) throw new HttpError(400, "agentsMd 只接受 false（去掉旧的拼接块）");
+  return true;
 }
 
 export function createPreset(home: string, body: Record<string, unknown>): void {
@@ -165,12 +183,11 @@ export function createPreset(home: string, body: Record<string, unknown>): void 
   }
   const fields = headFields(body, false);
   if (typeof body.prompt !== "string") throw new HttpError(400, "prompt 必须是字符串");
-  const block = agentsBlock(body.agentsMd, workdir);
   const head = [`workdir: ${workdir}`, ...fields.map(([k, v]) => `${k}: ${v}`)];
   const dir = path.join(home, "presets");
   mkdirSync(dir, { recursive: true });
   try {
-    writeFileSync(path.join(dir, `${id}.md`), `---\n${head.join("\n")}\n---\n${applyBlock([], block, body.prompt).join("\n")}`, { flag: "wx" });
+    writeFileSync(path.join(dir, `${id}.md`), `---\n${head.join("\n")}\n---\n${body.prompt.trim()}\n`, { flag: "wx" });
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new HttpError(409, `预设已经存在：${id}`);
     throw e;
@@ -179,9 +196,9 @@ export function createPreset(home: string, body: Record<string, unknown>): void 
 
 /**
  * 在预设文本上改头部的几行：已有的原位替换，`null` 删掉，没有的追加到头部末尾；别的行、换行符、BOM 原样。
- * `prompt` 给了就换掉整个正文。文本没有头部就抛 400。
+ * `prompt` 给了就换掉用户写的部分（旧拼接块留着）；`drop` 为真去掉旧拼接块。文本没有头部就抛 400。
  */
-export function patchPreset(text: string, fields: [string, string | null][], prompt: string | undefined, block?: string[] | null): string {
+export function patchPreset(text: string, fields: [string, string | null][], prompt: string | undefined, drop = false): string {
   const bom = text.startsWith("\uFEFF");
   const body = bom ? text.slice(1) : text;
   const eol = /^[^\n]*\r\n/.test(body) ? "\r\n" : "\n";
@@ -196,7 +213,7 @@ export function patchPreset(text: string, fields: [string, string | null][], pro
       else head[i] = `${key}: ${value}`;
     } else if (value !== null) head.push(`${key}: ${value}`);
   }
-  const rest = applyBlock(lines.slice(end + 1), block, prompt);
+  const rest = applyBlock(lines.slice(end + 1), drop, prompt);
   return (bom ? "\uFEFF" : "") + ["---", ...head, "---", ...rest].join(eol);
 }
 
@@ -209,7 +226,7 @@ function writeAtomic(file: string, data: string | Buffer): void {
 let updating: Promise<unknown> = Promise.resolve();
 
 /**
- * 改预设：只换收到的字段（model、thinking、tools、handoff、options、prompt）。写临时文件再改名，
+ * 改预设：只换收到的字段（model、thinking、tools、handoff、options、context、prompt）和 `agentsMd: false`。写临时文件再改名，
  * 写完立刻 check；读不出或起不来，改回旧文件，错误原文抛 422。预设 ID 和工作目录不能改。
  * 一次只改一个，免得两次改动互相覆盖。
  */
@@ -223,6 +240,7 @@ async function doUpdate(home: string, pipe: string, body: Record<string, unknown
   const id = presetId(body.id);
   const fields = headFields(body, true);
   if (body.prompt !== undefined && typeof body.prompt !== "string") throw new HttpError(400, "prompt 必须是字符串");
+  const drop = dropBlock(body.agentsMd);
   if (fields.length === 0 && body.prompt === undefined && body.agentsMd === undefined) throw new HttpError(400, "没有要改的字段");
   const file = path.join(home, "presets", `${id}.md`);
   let old: Buffer;
@@ -232,10 +250,7 @@ async function doUpdate(home: string, pipe: string, body: Record<string, unknown
     if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new HttpError(404, `没有这个预设：${id}`);
     throw e;
   }
-  const text = old.toString("utf8");
-  // 每次都重新读文件，拼进去的总是最新的。工作目录取自这个预设文件的头部。
-  const workdir = /^workdir:[ \t]*(.+?)[ \t]*\r?$/m.exec(text)?.[1] ?? "";
-  writeAtomic(file, patchPreset(text, fields, body.prompt as string | undefined, agentsBlock(body.agentsMd, workdir)));
+  writeAtomic(file, patchPreset(old.toString("utf8"), fields, body.prompt as string | undefined, drop));
   let info: PresetInfo | undefined;
   try {
     info = infoOf(id, await check(pipe, id));

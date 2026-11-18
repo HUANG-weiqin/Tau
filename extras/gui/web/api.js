@@ -113,9 +113,9 @@ export async function tauAll(request) {
 
 /**
  * 发一条命令（start、send、fork、stop 等），拿到回执就断开。回执是 { type: "receipt", process }。
- * stop、remove、prune 等的回执也一样。出错抛错。
+ * stop、remove、prune 等的回执也一样；sweep 的回执是 `swept`，reconfigure 的是 `reconfigured`（带 `pending`）。出错抛错。
  * @param {Record<string, unknown>} request
- * @returns {Promise<{ process?: string }>}
+ * @returns {Promise<{ process?: string, pending?: boolean }>}
  */
 export async function tauCommand(request) {
   /** @type {any} */
@@ -123,7 +123,7 @@ export async function tauCommand(request) {
   /** @type {any} */
   let error = null;
   await tauStream(request, (r) => {
-    if (r.type === "receipt") {
+    if (r.type === "receipt" || r.type === "swept" || r.type === "reconfigured") {
       receipt = r;
       return true;
     }
@@ -131,15 +131,36 @@ export async function tauCommand(request) {
       error = r;
       return true;
     }
-    if (r.type === "swept") {
-      receipt = r;
-      return true;
-    }
     return false;
   });
   if (error) throw new ApiError(error.message);
   if (!receipt) throw new ApiError("服务没有回执");
   return receipt;
+}
+
+/**
+ * 改一个进程的会话快照（D71）。`body` 是 `{ fields }` 或 `{ revert: true }`。回执的 `pending` 是处理以后这个进程有没有待换配置。
+ * 出错（服务回 `error`）抛错，什么都没改，所以调用方不用回滚。
+ * @param {string} process
+ * @param {{ fields: Record<string, unknown> } | { revert: true }} body
+ * @returns {Promise<{ pending: boolean }>}
+ */
+export async function reconfigure(process, body) {
+  const r = await tauCommand({ op: "reconfigure", process, ...body });
+  if (typeof r.pending !== "boolean") throw new ApiError("服务没有回 reconfigure 的回执");
+  return { pending: r.pending };
+}
+
+/**
+ * 读一个进程的原样记录（`inspect`）：会话快照 `preset`、待换配置 `next`、`limits`。没有这个进程时服务回 `error`，抛错。
+ * @param {string} process
+ * @returns {Promise<any>} `type: "process"` 那一行
+ */
+export async function inspect(process) {
+  const rs = await tauAll({ op: "inspect", process });
+  const r = rs.find((x) => x.type === "process");
+  if (!r) throw new ApiError("服务没有回这个进程的记录");
+  return r;
 }
 
 export const presets = () => post("/api/presets", {}).then((r) => /** @type {any[]} */ (r.presets ?? []));
@@ -215,7 +236,7 @@ export async function memoryWrite(ops) {
 }
 
 /**
- * 工作目录里有没有 AGENTS.md，多大。预设表用它决定默认勾不勾“拼上项目的 AGENTS.md”。
+ * 工作目录里有没有 AGENTS.md，多大。预设表和会话表用它决定“用项目的 AGENTS.md”勾选可不可用、新建时默认勾不勾。
  * @param {string} workdir
  * @returns {Promise<{ exists: boolean, bytes?: number }>}
  */

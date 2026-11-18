@@ -1,6 +1,20 @@
-/* 预设表里的 AGENTS.md 勾选，和项目概况里的“改过了”标记。标记是预设卡里的一条暗槽，左边黄条：改过了；橙条：文件没了。 */
+/* 预设表和会话表里的上下文文件字段（“用项目的 AGENTS.md”勾选、字数、旧拼接块的转换），会话表字段旁的生效时间，
+   项目概况里 legacy 的标记，概况页顶上的待换段条。标记和待换段条是一条暗槽，左边黄条。 */
+.fl { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.fl .tag.eff { font-family: var(--mono); }
+.ctx .ctx-cap { font-size: 11.5px; }
+.ctx-n { font-size: 11.5px; font-family: var(--mono); }
+.ctx-n.over { color: var(--warn); }
+.ctx textarea[aria-invalid="true"] { box-shadow: inset 0 0 0 2px var(--warn); }
 .agents-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
 .agents-row .toggle[disabled] { opacity: .4; pointer-events: none; }
+.agents-legacy { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 12px; background: var(--ink0); box-shadow: inset 3px 0 0 var(--warn); font-size: 12px; line-height: 1.5; }
+.agents-legacy .toggle[disabled], .agents-stale .link[disabled] { opacity: .4; pointer-events: none; }
+.td-reload { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .ipreset-h .agents-stale { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 7px 10px 7px 12px; background: var(--ink0); box-shadow: inset 3px 0 0 var(--acc); font-size: 12px; line-height: 1.5; }
-.ipreset-h .agents-stale:has(.tag.warn) { box-shadow: inset 3px 0 0 var(--warn); }
 .ipreset-h .agents-stale .tag { margin-left: 0; font-family: var(--mono); }
+.ipage > .pending-bar { margin: 14px 18px 0; }
+.pending-bar { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 8px 14px; background: var(--ink0); box-shadow: inset 3px 0 0 var(--acc); }
+.pending-bar .pb-t { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 13px; }
+.pending-bar .pb-act { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.pending-bar .link[disabled] { opacity: .4; pointer-events: none; }

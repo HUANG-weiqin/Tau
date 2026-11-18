@@ -20,6 +20,7 @@ import type { BridgeOptions } from "../../../extras/gui/bridge/server.ts";
 import { DIFF_MAX_BYTES, runGit } from "../../../extras/gui/bridge/git.ts";
 import { parseExit } from "../../../extras/gui/bridge/bg.ts";
 import { seenFromInspect } from "../../../extras/gui/web/lib/derive.js";
+import { pendingOf, sessionInfo } from "../../../extras/gui/web/lib/session.js";
 import { canHandoff, HANDOFF_LETTER, parseUser } from "../../../extras/gui/web/lib/messages.js";
 
 interface Res {
@@ -349,7 +350,7 @@ test("转发：ps、start 加最终回复、history；/api/tau 的响应是分�
   assert.equal((await post(s.port, "/api/tau", { op: 5 })).status, 400);
 });
 
-test("转发：inspect 读到进程冻结的快照，预设文件之后改了也不变（界面据此归类）", async (t) => {
+test("转发：inspect 读到进程的会话快照，预设文件之后改了也不变（界面据此归类）", async (t) => {
   const s = await setupService(t);
   s.faux.setResponses([fauxAssistantMessage(fauxText("好"))]);
   const id: string = lines(await post(s.port, "/api/tau", { op: "start", preset: "p", text: "hi" }))[0].process;
@@ -361,6 +362,48 @@ test("转发：inspect 读到进程冻结的快照，预设文件之后改了也
   assert.deepEqual(seenFromInspect(all[0]), { workdir: s.work, tools: ["read"], input: all[0].process.preset.input, threshold: all[0].limits.threshold, memory: false, model: s.model });
   assert.equal(all.at(-1).type, "inspected");
   assert.deepEqual((await post(s.port, "/api/presets", {})).json.presets[0].tools, ["read", "memory"]);
+});
+
+test("转发：reconfigure 原样转发，回执 reconfigured 带 pending；inspect 读到 next，ps 的 self 带 pending；revert 取消；界面据此造表的初值", async (t) => {
+  const s = await setupService(t);
+  s.faux.setResponses([fauxAssistantMessage(fauxText("好"))]);
+  const id: string = lines(await post(s.port, "/api/tau", { op: "start", preset: "p", text: "hi" }))[0].process;
+  const tau = async (req: Record<string, unknown>) => lines(await post(s.port, "/api/tau", req));
+  const rec = async () => (await tau({ op: "inspect", process: id }))[0];
+
+  // 调用参数立即生效，没有待换配置；界面的阈值（limits.threshold）跟着快照变。
+  const t0 = seenFromInspect(await rec())!.threshold;
+  assert.deepEqual(await tau({ op: "reconfigure", process: id, fields: { thinking: "low", handoff: 50000 } }), [{ type: "reconfigured", process: id, pending: false }]);
+  const a = await rec();
+  assert.deepEqual([a.process.preset.thinking, a.process.preset.handoff, a.process.next], ["low", 50000, undefined]);
+  const f = seenFromInspect(a)!;
+  assert.deepEqual([f.thinking, f.handoff, f.threshold !== t0], ["low", 50000, true], "刻线按新的 handoff 算");
+  assert.equal(sessionInfo(a)!.pending, false);
+
+  // 结构性字段：段里已有助手消息，存成待换配置，当前快照不变。
+  assert.deepEqual(await tau({ op: "reconfigure", process: id, fields: { prompt: "新的提示词", context: ["AGENTS.md"] } }), [{ type: "reconfigured", process: id, pending: true }]);
+  const b = await rec();
+  assert.equal(b.process.preset.prompt, "你是测试助手。");
+  assert.deepEqual([b.process.next.prompt, b.process.next.context, b.process.next.thinking], ["新的提示词", ["AGENTS.md"], "low"], "待换的以现在的为底");
+  const info = sessionInfo(b)!;
+  assert.deepEqual([info.pending, info.prompt, info.context, info.thinking, info.id], [true, "新的提示词", ["AGENTS.md"], "low", "p"], "表的初值取 next");
+  const ps = (await tau({ op: "ps" }))[0].processes[0].self;
+  assert.deepEqual(pendingOf(ps), ["prompt", "context"]);
+  assert.deepEqual(seenFromInspect(b)!.context, undefined, "界面的会话快照是当前的，不是待换的");
+
+  // 取消：回到当前快照，没有 next，ps 里没有 pending。
+  assert.deepEqual(await tau({ op: "reconfigure", process: id, revert: true }), [{ type: "reconfigured", process: id, pending: false }]);
+  const c = await rec();
+  assert.equal(c.process.next, undefined);
+  assert.deepEqual(pendingOf((await tau({ op: "ps" }))[0].processes[0].self), []);
+
+  // 服务的错误原文照样转回，什么都没改。
+  const bad = await tau({ op: "reconfigure", process: id, fields: { id: "x" } });
+  assert.equal(bad[0].type, "error");
+  assert.match(bad[0].message, /id 不能改/);
+  assert.equal((await tau({ op: "reconfigure", process: "nobody", fields: { thinking: "low" } }))[0].type, "error");
+  assert.equal((await tau({ op: "reconfigure", process: id, fields: { model: "nobody/none" } }))[0].type, "error");
+  assert.equal((await rec()).process.next, undefined);
 });
 
 test("换段按钮：send 带 handoff 换段，信带进新段；信、段号、交接说明都能用 tau 读出来", async (t) => {
@@ -1083,11 +1126,20 @@ test("改预设：只换收到的字段，别的行、顺序、换行符、正�
   assert.equal(r2.status, 200, r2.text);
   assert.equal(read(e, "a"), `---\nworkdir: ${e.work}\nmodel: ${e.model}\ntools: read, write, memory\nhandoff: 160000\noptions: {"temperature":0.5}\nthinking: low\n---\n提示词\n第二行\n`);
 
+  // 上下文文件：追加到头部末尾，换已有的留在原位。
+  const r2b = await upd(e, { id: "a", context: ["AGENTS.md", "docs/x.md"] });
+  assert.equal(r2b.status, 200, r2b.text);
+  assert.deepEqual(r2b.json.preset.context, ["AGENTS.md", "docs/x.md"]);
+  assert.ok(read(e, "a").includes("thinking: low\ncontext: AGENTS.md, docs/x.md\n---\n"));
+  assert.equal((await upd(e, { id: "a", context: ["b.md"] })).status, 200);
+  assert.ok(read(e, "a").includes("thinking: low\ncontext: b.md\n---\n"));
+
   // null 删掉这一行；提示词整个换掉。
-  const r3 = await upd(e, { id: "a", thinking: null, handoff: null, options: null, prompt: "新的\n" });
+  const r3 = await upd(e, { id: "a", thinking: null, handoff: null, options: null, context: null, prompt: "新的\n" });
   assert.equal(r3.status, 200, r3.text);
   assert.equal(read(e, "a"), `---\nworkdir: ${e.work}\nmodel: ${e.model}\ntools: read, write, memory\n---\n新的\n`);
   assert.equal(r3.json.preset.thinking, undefined);
+  assert.equal(r3.json.preset.context, undefined);
 
   // CRLF 和 BOM 照旧；没提到 prompt 就不动正文。
   writeFileSync(join(e.home, "presets", "crlf.md"), `﻿---\r\nworkdir: ${e.work}\r\nmodel: ${e.model}\r\ntools: read\r\n---\r\n正文\r\n`);
@@ -1111,6 +1163,7 @@ test("改预设：读不出或起不来就改回旧文件，错误原文回给�
     [{ model: "nobody/none" }, /模型目录里没有/],
     [{ options: { model: "x" } }, /options/],
     [{ handoff: 5000 }, /窗口太小/],
+    [{ context: ["/e/x.md"] }, /context/],
     [{ tools: ["read", "ghost"] }, /ghost/],
   ];
   for (const [patch, re] of cases) {
@@ -1141,7 +1194,7 @@ test("改预设：服务不在时回 503 并改回去；请求不合法 400；�
 
   for (const id of ["", "../a", "a/b", "..", "a.", 7, undefined]) assert.equal((await upd(e, { id, thinking: "low" })).status, 400, JSON.stringify(id));
   assert.equal((await upd(e, { id: "ghost", thinking: "low" })).status, 404);
-  for (const patch of [{ thinking: "huge" }, { thinking: 3 }, { model: "a/b\nx: y" }, { model: "nomodel" }, { model: "" }, { tools: "read" }, { tools: ["a,b"] }, { handoff: 0 }, { handoff: 1.5 }, { handoff: "9" }, { options: [] }, { options: "x" }, { prompt: 3 }, {}]) {
+  for (const patch of [{ thinking: "huge" }, { thinking: 3 }, { model: "a/b\nx: y" }, { model: "nomodel" }, { model: "" }, { tools: "read" }, { tools: ["a,b"] }, { handoff: 0 }, { handoff: 1.5 }, { handoff: "9" }, { options: [] }, { options: "x" }, { prompt: 3 }, { context: "x" }, { context: ["a,b"] }, {}]) {
     assert.equal((await upd(e, { id: "a", ...patch })).status, 400, JSON.stringify(patch));
   }
   assert.equal(read(e, "a"), before, "出错的都没动文件");
@@ -1151,16 +1204,17 @@ test("改预设：服务不在时回 503 并改回去；请求不合法 400；�
   assert.equal((await raw(e.port, "/api/presets/update")).status, 405, "GET");
 });
 
-test("新建预设：也收 thinking、handoff、options，写成一行；不合法的 400", async (t) => {
+test("新建预设：也收 thinking、handoff、options、context，写成一行；不合法的 400", async (t) => {
   const e = await setupBridge(t, { service: true });
-  const ok = await post(e.port, "/api/presets/create", { id: "n", workdir: e.work, model: e.model, tools: ["read"], thinking: "high", handoff: 150000, options: { temperature: 0.3, metadata: { a: "b\nc" } }, prompt: "p" });
+  const ok = await post(e.port, "/api/presets/create", { id: "n", workdir: e.work, model: e.model, tools: ["read"], thinking: "high", handoff: 150000, options: { temperature: 0.3, metadata: { a: "b\nc" } }, context: ["AGENTS.md", "docs/x.md"], prompt: "p" });
   assert.equal(ok.status, 200, ok.text);
-  assert.equal(read(e, "n"), `---\nworkdir: ${e.work}\nmodel: ${e.model}\ntools: read\nthinking: high\nhandoff: 150000\noptions: {"temperature":0.3,"metadata":{"a":"b\\nc"}}\n---\np\n`);
+  assert.equal(read(e, "n"), `---\nworkdir: ${e.work}\nmodel: ${e.model}\ntools: read\nthinking: high\nhandoff: 150000\noptions: {"temperature":0.3,"metadata":{"a":"b\\nc"}}\ncontext: AGENTS.md, docs/x.md\n---\np\n`);
   const lst = (await post(e.port, "/api/presets", {})).json.presets[0];
   assert.equal(lst.ok, true, JSON.stringify(lst));
   assert.deepEqual(lst.options, { temperature: 0.3, metadata: { a: "b\nc" } });
+  assert.deepEqual(lst.context, ["AGENTS.md", "docs/x.md"]);
   const base = { workdir: e.work, model: e.model, tools: ["read"], prompt: "p" };
-  for (const patch of [{ handoff: 0 }, { handoff: "1" }, { options: [] }, { options: 5 }]) {
+  for (const patch of [{ handoff: 0 }, { handoff: "1" }, { options: [] }, { options: 5 }, { context: "AGENTS.md" }, { context: ["a,b"] }]) {
     assert.equal((await post(e.port, "/api/presets/create", { ...base, id: "w", ...patch })).status, 400, JSON.stringify(patch));
   }
   assert.deepEqual(listDir(join(e.home, "presets")), ["n.md"]);

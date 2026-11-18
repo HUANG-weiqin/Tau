@@ -15,13 +15,14 @@
  */
 
 /**
- * `update` 的 `self`，也就是投影的 `self`。
+ * `update` 的 `self`，也就是投影的 `self`。`pending` 有待换配置（`reconfigure` 存下的 `next`）时才有，`fields` 是和当前快照不一样的结构性字段名（D71）。
  * @typedef {ProcessView & {
  *   segment: number,
  *   segmentAge: number | null,
  *   context: { used: number, window: number },
  *   messages: number,
  *   usage: { input: number, output: number, cacheRead: number, cacheWrite: number },
+ *   pending?: { fields: string[] },
  * }} Self
  */
 
@@ -49,14 +50,15 @@
  *   | { type: "message", process?: string, segment: number, seq: number, message: Message }
  *   | { type: "end", segment: number, messages: number }
  *   | { type: "receipt", process: string }
+ *   | { type: "reconfigured", process: string, pending: boolean }
  *   | { type: "error", message: string }} Reply
  */
 
-/** 进程冻结的预设快照里界面要的几项（`inspect` 读来）。 @typedef {{ workdir: string, tools: string[], memory: boolean, model?: string, thinking?: string, handoff?: number, options?: Record<string, unknown>, input?: string[], threshold?: number }} Frozen */
+/** 进程的会话快照里界面要的几项（`inspect` 读来，`reconfigure` 之后会变，所以每次读到都更新）。名字是历史遗留。 @typedef {{ workdir: string, tools: string[], memory: boolean, model?: string, thinking?: string, handoff?: number, options?: Record<string, unknown>, context?: string[], input?: string[], threshold?: number }} Frozen */
 
 /**
  * `/api/presets` 回的一项。
- * @typedef {{ id: string, ok: true, workdir: string, model: string, tools: string[], memory: boolean, thinking?: string, handoff?: number, options?: Record<string, unknown>, prompt?: string, agentsMd?: "none" | "fresh" | "stale" | "missing" }
+ * @typedef {{ id: string, ok: true, workdir: string, model: string, tools: string[], memory: boolean, thinking?: string, handoff?: number, options?: Record<string, unknown>, context?: string[], prompt?: string, agentsMd?: "none" | "legacy" }
  *   | { id: string, ok: false, error: string }} PresetInfo
  */
 

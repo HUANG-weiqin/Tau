@@ -23,7 +23,7 @@ export function EditPresetDialog({ app, onClose }) {
     try {
       await app.updatePreset({ id, ...draft.patch });
       if (draft.patch["model"] !== undefined) app.rememberModel(form.model.trim()).catch(() => {});
-      app.toast(`预设 ${id} 改好了。新开的进程用新的，在跑的进程不变`);
+      app.toast(`预设 ${id} 改好了。新出生的会话用新的，已有的会话不变`);
       close();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -44,7 +44,7 @@ export function EditPresetDialog({ app, onClose }) {
               <${CheckStrip} ok=${false} text=${strip.text} />
             </${Fragment}>`
           : html`<${Fragment}>
-              <p class="dnote" style="color:var(--fg)">改了只对新开的进程生效。已经在跑的进程冻结着旧的，要换模型，用进程铭牌上的“换模型”。${procs > 0 ? `这个预设现在有 ${procs} 个进程。` : ""}</p>
+              <p class="dnote" style="color:var(--fg)">改的是预设文件，只对新出生的会话生效。已经有的会话不变，要改它们，用详情栏概况页里的“改这个会话”。${procs > 0 ? `这个预设现在有 ${procs} 个进程。` : ""}</p>
               <${SecHead} n="01" title="预设" en="PRESET" right=${html`<span class="dnote" style="font-size:11px">工作目录 ${orig.workdir}</span>`} />
               <${PresetFields} form=${form} app=${app} />
               <${CheckStrip} ok=${strip.ok} text=${strip.text} />

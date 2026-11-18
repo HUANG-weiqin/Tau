@@ -1,4 +1,4 @@
-// 换模型：进程冻结着旧模型，换模型 = 带着当前这一段分叉出一个新进程。
+// 换模型：带着当前这一段分叉出一个新进程（进程 ID 会变）。不想换 ID，用“改这个会话”（`session.js`）改模型，换段时生效。
 // 默认先改这个进程的预设，再带着这个预设分叉；也可以直接用同一个项目的另一个预设分叉。
 import { html, Popover, DlgHead, SecHead, Pill, useState, Fragment } from "./common.js";
 import { CheckStrip } from "./presetform.js";
@@ -12,14 +12,14 @@ export function SwitchModelDialog({ app, onClose }) {
   const e = app.byId[pid];
   const preset = e ? app.presets[e.preset] : undefined;
   const info = preset && preset.ok ? preset : undefined;
-  const frozenModel = e?.self.model ?? "";
-  const frozenThinking = e?.frozen?.thinking;
+  const nowModel = e?.self.model ?? "";
+  const nowThinking = e?.frozen?.thinking;
   const providers = app.models?.providers ?? null;
 
   const [mode, setMode] = useState(/** @type {"model" | "preset"} */ ("model"));
   // 默认从预设文件现在的样子起步：改预设 = 改文件。
-  const [model, setModel] = useState(info?.model ?? frozenModel);
-  const [thinking, setThinking] = useState(/** @type {string | undefined} */ (info ? info.thinking : frozenThinking));
+  const [model, setModel] = useState(info?.model ?? nowModel);
+  const [thinking, setThinking] = useState(/** @type {string | undefined} */ (info ? info.thinking : nowThinking));
   const [note, setNote] = useState("");
   const [other, setOther] = useState(/** @type {string | null} */ (null));
   const [busy, setBusy] = useState(false);
@@ -28,7 +28,7 @@ export function SwitchModelDialog({ app, onClose }) {
   const others = e ? app.presetList.filter((p) => p.ok && p.id !== e.preset && p.id !== app.gui.chief && e.workdir !== null && pathKey(p.workdir) === pathKey(e.workdir)) : [];
   const running = e?.status === "running";
   const info2 = findModel(providers, model)?.model ?? null;
-  const same = model === frozenModel && thinking === frozenThinking;
+  const same = model === nowModel && thinking === nowThinking;
   const can = !!e && !running && !busy && (mode === "model" ? !same && model.trim() !== "" && !!info : other !== null);
   const shown = e ? app.gui.names[e.preset] ?? e.preset : "";
 
@@ -63,7 +63,7 @@ export function SwitchModelDialog({ app, onClose }) {
     }
   };
 
-  const cur = findModel(providers, frozenModel);
+  const cur = findModel(providers, nowModel);
   return html`<${Popover} rect=${app.dialog?.rect} onClose=${onClose} label="换模型" width=${600} est=${700} class="switchmodel">
     ${(/** @type {() => void} */ close) => html`<${Fragment}>
       <${DlgHead} icon="fork" title="换模型" en="SWITCH MODEL" sub=${e ? `${shown} · ${e.id}` : "没有这个进程"} onClose=${close} />
@@ -71,11 +71,12 @@ export function SwitchModelDialog({ app, onClose }) {
         ${!e
           ? html`<div class="callout">没有这个进程。</div>`
           : html`<${Fragment}>
-          <div class="sw-now" aria-label="这个进程现在冻结的模型">
+          <div class="sw-now" aria-label="这个进程现在的模型">
             <span class="kicker">现在</span>
-            <span class="sw-now-m"><b>${cur ? cur.model.name : frozenModel}</b><span class="mono">${frozenModel}</span></span>
-            <span class="sw-now-t"><span class="label dim">THINK</span><span class="num">${frozenThinking ?? "—"}</span></span>
+            <span class="sw-now-m"><b>${cur ? cur.model.name : nowModel}</b><span class="mono">${nowModel}</span></span>
+            <span class="sw-now-t"><span class="label dim">THINK</span><span class="num">${nowThinking ?? "—"}</span></span>
           </div>
+          <p class="dnote">想保留进程 ID，用概况页里的“改这个会话”改模型，换段时生效。旧模型出故障时它换不了模型（交接说明要旧模型写），用这里。</p>
           ${running && html`<div class="callout">进程在跑，不能分叉。等这一轮结束，或者先停止。</div>`}
           ${!info && mode === "model" && html`<div class="callout">预设 ${e.preset} 现在读不出，没法改它的模型。可以换同项目的另一个预设。</div>`}
           <div class="sw-mode" role="group" aria-label="怎么换">
@@ -87,7 +88,7 @@ export function SwitchModelDialog({ app, onClose }) {
                 <${SecHead} n="01" title="新模型" en="MODEL" />
                 <${ModelPicker} app=${app} value=${model} onPick=${pickModel} label="模型" />
                 <${ThinkingBar} levels=${info2 === null ? null : info2.thinking} value=${thinking} onChange=${(/** @type {string | undefined} */ v) => { setThinking(v); setNote(""); }} note=${note} />
-                ${same && html`<p class="dnote">和这个进程现在冻结的一样，没有可换的。</p>`}
+                ${same && html`<p class="dnote">和这个进程现在的一样，没有可换的。</p>`}
               </${Fragment}>`
             : html`<${Fragment}>
                 <${SecHead} n="01" title="另一个预设" en="PRESET" right=${html`<span class="dnote" style="font-size:11px">同一个项目里的 ${others.length} 个</span>`} />
@@ -108,7 +109,7 @@ export function SwitchModelDialog({ app, onClose }) {
             <li>带着当前这一段的上下文开一个新进程，进程 ID 会变。</li>
             <li>旧进程留着。它的回信和它开的子进程，都留在旧进程那里。</li>
             ${mode === "model"
-              ? html`<li>预设 ${e.preset} 也一起改成新模型：预设 ID 不变，记忆库还是同一个，以后新开的进程也用新模型；其它在跑的进程不受影响。</li>`
+              ? html`<li>预设 ${e.preset} 也一起改成新模型：预设 ID 不变，记忆库还是同一个，以后新出生的会话也用新模型；其它在跑的会话不受影响。</li>`
               : html`<li>新进程用所选预设的提示词和工具，记忆库也跟着所选预设走。${e.memory ? `预设 ${e.preset} 的文件不动。` : ""}</li>`}
           </ul>
           ${err !== null && html`<${CheckStrip} ok=${false} text=${err} />`}
