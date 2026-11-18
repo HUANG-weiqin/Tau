@@ -80,6 +80,45 @@ test("兄弟：同一个预设下不处于 idle 的其他进程，带 ID、阶�
   assert.deepEqual(v.siblings[0]?.phase, { tag: "awaitingModel", purpose: "turn", steps: 3, queued: 1 });
 });
 
+test("同目录：同一个工作目录下不处于 idle 的其他进程，不看预设，不分大小写，自己不算，顺序照传入", () => {
+  const me = proc("me", A, 0, busy);
+  const upper = preset({ id: "up", workdir: "E:/WORK" });
+  const far = preset({ id: "far", workdir: "E:/elsewhere" });
+  const all = [me, proc("b-busy", B, 100, busy), proc("a-busy", A, 200, busy), proc("a-idle", A, 300), proc("far-busy", far, 400, tooling), proc("up-busy", upper, 500, busy)];
+  const v = observe(me, [], all, 1_000);
+  assert.deepEqual(
+    v.sameDir?.map((x) => [x.id, x.preset, x.phase.tag, x.age]),
+    [
+      ["b-busy", "b", "awaitingModel", 900],
+      ["a-busy", "a", "awaitingModel", 800],
+      ["up-busy", "up", "awaitingModel", 500],
+    ],
+  );
+  // 同目录同预设的也在：两个视角各自独立。
+  assert.deepEqual(v.siblings.map((x) => x.id), ["a-busy"]);
+});
+
+test("同目录：自己的运行中子进程同时在 children 和 sameDir；自己永远不在 sameDir", () => {
+  const me = proc("me", A, 0, busy);
+  const kid: Process = { ...proc("kid", B, 100, tooling), parent: "me" };
+  const v = observe(me, [], [me, kid], 1_000);
+  assert.deepEqual(v.children.map((c) => c.id), ["kid"]);
+  assert.deepEqual(v.sameDir?.map((s) => s.id), ["kid"]);
+});
+
+test("运行中个数：传入的进程里不处于 idle 的个数，含自己；全 idle 和空都是 0", () => {
+  const me = proc("me", A, 0, busy);
+  assert.equal(observe(me, [], [me, proc("b1", B, 1, busy), proc("b2", B, 2, tooling), proc("i", A, 3)], 0).running, 3);
+  assert.equal(observe(me, [], [proc("x"), proc("y")], 0).running, 0);
+  assert.equal(observe(me, [], [], 0).running, 0);
+});
+
+test("sameDir 和 running 总是给，不是 undefined", () => {
+  const v = observe(proc("me"), [], [], 0);
+  assert.deepEqual(v.sameDir, []);
+  assert.equal(v.running, 0);
+});
+
 test("observe 是纯函数：不改输入，同样的输入给同样的结果", () => {
   const me = deepFreeze(proc("me", A, 0, busy));
   const seg: readonly Message[] = deepFreeze([{ role: "user", content: "u", timestamp: 5 }]);

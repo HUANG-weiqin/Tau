@@ -657,8 +657,10 @@ interface Projection {
     pending?: { fields: string[] };        // 有待换配置时：它和当前快照结构性字段里不一样的键名；没有 next 就没有这个键
   };
   siblings: ProcessView[];                 // 同一个预设、不处于 idle 的其他进程
+  sameDir?: ProcessView[];                 // 同一个工作目录（不分大小写）、不处于 idle 的其他进程，不看预设（D78）；observe 总是给
   children: ProcessView[];                 // parent 是自己、不处于 idle 的进程
   idleChildren: number;                    // parent 是自己、处于 idle 的进程个数
+  running?: number;                        // 传入的全部进程里不处于 idle 的个数（D78）；observe 总是给
 }
 
 interface ProcessView { id: ProcessId; preset: string; model: string; phase: PhaseView; age: number; since?: Instant; parent?: ProcessId }
@@ -671,6 +673,7 @@ type PhaseView =
 
 - 只给时刻和时长，单位毫秒。`age = now - createdAt`。`queued` 只给条数。
 - `parent` 没有时没有这个键。`children` 和 `siblings` 都从传入的全部进程记录里按条件挑，保持传入的顺序；子进程也可能同时是兄弟。只看直接的子进程，不含孙子。空闲子进程的 ID 不在投影里：要找，就按 `parent` 从协议 `ps` 的投影里挑。
+- `sameDir`、`running`（D78）：和 `siblings`、`children` 各自独立，不去重；去重在 `self` 的文字里做（[kb-store](kb-store.md#self)）。`sameDir` 比较的是快照里 `workdir` 字符串的小写，不处理 junction、符号链接和 8.3 短名。`running` 是对传入记录的计数：`self`、`ps` 传全部进程，含自己；`watch` 传 `[p]`，用不到。写成可选键，因为契约只加可选键，`observe` 总是给。
 - `context.threshold` 是 `handoffThreshold(快照)`，含预设的 `handoff`。
 - `self.pending.fields`（D71）：`next` 和 `preset` 的结构性字段里不一样的键名，由 `snapshot.ts` 的 `pendingFields` 算。取值只有 `model`、`prompt`、`tools`、`workdir`、`context`，按这个顺序排。`toolDefs` 的内容变了算 `tools`；`contextWindow`、`input` 是按 `model` 查目录得来的，算 `model`。没有 `next` 时 `self` 里没有 `pending` 这个键。它放在 `self` 里，因为协议的 `watch` 的 `update` 只带 `self`，界面靠它知道有待换配置。`self` 工具的文字是同一份（[kb-store](kb-store.md#self)）。`next` 本身不在投影里：要看新快照的全部内容，用协议的 `inspect` 读进程记录。
 - `messages` 是当前段的消息条数；`usage` 是进程记录里的累计用量，不是从段里算的。

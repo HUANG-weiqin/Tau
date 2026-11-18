@@ -79,7 +79,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | 冻结什么 | 定义在 |
 |---|---|
 | 上面的不变量 | 本页 |
-| 类型：`Input`、`Letter`、`Sender`、`Phase`、`Turn`、`Effect`、`ToolResultContent`、`Limits`，`Process`、`PresetSnapshot`、`Projection` 的字段，段里消息的 `tau` 结构。内容块用 pi-ai 1.0.0 的类型。D64 加的字段见 [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)。D71、D72 加的：`Input` 的 `reconfigure`、`Process.next`、`Env.fresh`、`segment.contextView`、快照的 `context`、`Projection` 的 `self.pending`，见 [D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)、[D72](kb-decisions.md#d72-上下文文件开段重读) | [kb-kernel 的状态](kb-kernel.md#状态)、[输入、副作用、环境](kb-kernel.md#输入副作用环境)、[投影与命令](kb-kernel.md#投影与命令) |
+| 类型：`Input`、`Letter`、`Sender`、`Phase`、`Turn`、`Effect`、`ToolResultContent`、`Limits`，`Process`、`PresetSnapshot`、`Projection` 的字段，段里消息的 `tau` 结构。内容块用 pi-ai 1.0.0 的类型。D64 加的字段见 [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)。D71、D72 加的：`Input` 的 `reconfigure`、`Process.next`、`Env.fresh`、`segment.contextView`、快照的 `context`、`Projection` 的 `self.pending`，见 [D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)、[D72](kb-decisions.md#d72-上下文文件开段重读)。D78 加的：`Projection` 的 `sameDir`、`running`，见 [D78](kb-decisions.md#d78-self-多看同目录和全局的进程) | [kb-kernel 的状态](kb-kernel.md#状态)、[输入、副作用、环境](kb-kernel.md#输入副作用环境)、[投影与命令](kb-kernel.md#投影与命令) |
 | `decide` 的输出：新记录、追加的消息、回信 | [kb-kernel 的函数](kb-kernel.md#函数) |
 | 行为：回信的时机和正文的算法，`replyTo` 和 `hops` 并进 `turn` 的规则，`endTurn` 的顺序，排队的信的处理（`done` 时合并并开新一轮，只取这批信的 `replyTo` 和 `hops`；不是 `done` 时合并写进段、停在 `idle`） | [kb-kernel 的回信](kb-kernel.md#回信)、[流程：两个辅助步骤](kb-kernel.md#流程两个辅助步骤) |
 | 行为：安全点投递 | [kb-kernel 的安全点投递](kb-kernel.md#安全点投递) |

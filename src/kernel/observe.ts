@@ -43,11 +43,17 @@ export interface Projection {
   children: ProcessView[];
   /** parent 是自己、处于 idle 的进程个数。 */
   idleChildren: number;
+  /** 同一个工作目录下不处于 idle 的其他进程，不看预设，工作目录不分大小写比较（D78）。和 `siblings`、`children` 各自独立，会有重叠。写成可选键，因为契约只加可选键；`observe` 总是给。 */
+  sameDir?: ProcessView[];
+  /** 传入的全部进程里不处于 idle 的个数，含自己（自己在传入的进程里且不是 idle 时）（D78）。同上，总是给。 */
+  running?: number;
 }
 
 export function observe(p: Process, segment: readonly Message[], siblings: readonly Process[], now: Instant): Projection {
   const started = segmentStartedAt(segment);
   const kids = siblings.filter((s) => s.parent === p.id);
+  const dir = p.preset.workdir.toLowerCase();
+  const hot = siblings.filter((s) => s.phase.tag !== "idle");
   return {
     now,
     self: {
@@ -62,6 +68,8 @@ export function observe(p: Process, segment: readonly Message[], siblings: reado
     siblings: siblings.filter((s) => s.id !== p.id && s.preset.id === p.preset.id && s.phase.tag !== "idle").map((s) => view(s, now)),
     children: kids.filter((s) => s.phase.tag !== "idle").map((s) => view(s, now)),
     idleChildren: kids.filter((s) => s.phase.tag === "idle").length,
+    sameDir: hot.filter((s) => s.id !== p.id && s.preset.workdir.toLowerCase() === dir).map((s) => view(s, now)),
+    running: hot.length,
   };
 }
 

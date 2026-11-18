@@ -75,3 +75,64 @@ test("self 的文字：上下文那一行后面多一行换段阈值；有 hando
   const low: Process = { ...p, preset: { ...BOSS, handoff: 1_234 } };
   assert.ok(selfText(db, low).split("\n").includes("换段阈值：1234 token"));
 });
+
+/** 把库里的进程改成在等工具。 */
+function run(db: DatabaseSync, id: string): Process {
+  const p: Process = { ...loadProcess(db, id)!, lastEffect: 1, phase: { tag: "awaitingTool", turn: { steps: 1, queued: [], hops: 0, replyTo: [] } } };
+  saveProcess(db, p);
+  return p;
+}
+
+test("self 的文字：同一个工作目录下别的预设的运行中进程单独一段，算进全部运行中的个数", (t) => {
+  const db = tempDb(t);
+  const memory = fakeMemory();
+  startProcess(db, memory, "me", BOSS, "开始", 0);
+  // 目录只差大小写，也是同一个目录。
+  startProcess(db, memory, "other", { ...KID, id: "other", workdir: "E:/WORK" }, "开始", 0);
+  run(db, "me");
+  run(db, "other");
+  const text = selfText(db, loadProcess(db, "me")!);
+  assert.match(text, /^同一个工作目录下运行中的其他进程：$/m);
+  assert.match(text, /^- other：预设 other，等工具结果，本轮第 1 步，排队消息 0 条，已运行 10 秒$/m);
+  assert.match(text, /^全部运行中的进程：2 个（含自己）$/m);
+});
+
+test("self 的文字：同预设同目录的进程只在兄弟段出现一次，同目录段去重", (t) => {
+  const db = tempDb(t);
+  const memory = fakeMemory();
+  startProcess(db, memory, "me", BOSS, "开始", 0);
+  startProcess(db, memory, "sib", BOSS, "开始", 0);
+  run(db, "me");
+  run(db, "sib");
+  const text = selfText(db, loadProcess(db, "me")!);
+  assert.match(text, /^同一个预设下运行中的其他进程：$/m);
+  assert.equal(text.match(/^- sib：/gm)?.length, 1, text);
+  assert.doesNotMatch(text, /同一个工作目录下/);
+});
+
+test("self 的文字：同目录的运行中子进程只在子进程段，不重复", (t) => {
+  const db = tempDb(t);
+  const memory = fakeMemory();
+  startProcess(db, memory, "me", BOSS, "开始", 0);
+  startProcess(db, memory, "kid", KID, "开始", 0);
+  saveProcess(db, { ...loadProcess(db, "kid")!, parent: "me" });
+  run(db, "me");
+  run(db, "kid");
+  const text = selfText(db, loadProcess(db, "me")!);
+  assert.match(text, /^运行中的子进程：$/m);
+  assert.equal(text.match(/^- kid：/gm)?.length, 1, text);
+  assert.doesNotMatch(text, /同一个工作目录下/);
+});
+
+test("self 的文字：只有自己在跑时没有全部运行中的那行；别目录的进程不进同目录段但计入总数", (t) => {
+  const db = tempDb(t);
+  const memory = fakeMemory();
+  startProcess(db, memory, "me", BOSS, "开始", 0);
+  run(db, "me");
+  assert.doesNotMatch(selfText(db, loadProcess(db, "me")!), /全部运行中的进程/);
+  startProcess(db, memory, "far", { ...KID, id: "far", workdir: "E:/far" }, "开始", 0);
+  run(db, "far");
+  const text = selfText(db, loadProcess(db, "me")!);
+  assert.doesNotMatch(text, /同一个工作目录下/);
+  assert.match(text, /^全部运行中的进程：2 个（含自己）$/m);
+});

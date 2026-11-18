@@ -287,6 +287,13 @@ test("用 CLI 同时运行两个进程：带记忆的写入又读回记忆，不
   assert.deepEqual(ps1.rows.get(memId)?.slice(1, 3), ["mem", "等模型 第3步"]);
   // 兄弟进程只算同一个预设下的：两个进程的预设不同，互相不是兄弟。
   for (const p of await projections(e.pipe)) assert.deepEqual(p.siblings, [], `${p.self.id} 的兄弟进程`);
+  // 两个进程在同一个工作目录下、都还在跑：同目录段互相看见，全部运行中的是 2 个。
+  for (const p of await projections(e.pipe)) {
+    assert.equal(typeof p.running, "number", `${p.self.id} 的运行中个数`);
+    assert.ok(Array.isArray(p.sameDir), `${p.self.id} 的同目录进程`);
+    assert.equal(p.running, 2, `${p.self.id} 的运行中个数`);
+    assert.deepEqual(p.sameDir?.map((x) => x.id), [p.self.id === plainId ? memId : plainId], `${p.self.id} 的同目录进程`);
+  }
 
   // 带记忆的进程：memory_set 写入，memory_get 读回同一个版本和值。
   const [set, got, ...more] = memSeen;

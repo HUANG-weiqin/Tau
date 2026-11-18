@@ -206,6 +206,9 @@ function conflict(key: string, current: Versioned | null): ToolResultContent {
 /** 本地时间和时区在内核外格式化（见 .knowledge/kb-kernel.md）。 */
 function formatSelf(v: Projection): string {
   const s = v.self;
+  // 同预设的、子进程的已经在别的段列过，这里不重复。
+  const shown = new Set([...v.siblings, ...v.children].map((x) => x.id));
+  const dir = (v.sameDir ?? []).filter((x) => !shown.has(x.id));
   const lines = [
     `现在：${new Date(v.now).toLocaleString("zh-CN", { hour12: false })}（${Intl.DateTimeFormat().resolvedOptions().timeZone}）`,
     `进程：${s.id}，预设 ${s.preset}，模型 ${s.model}，已运行 ${duration(s.age)}`,
@@ -218,8 +221,10 @@ function formatSelf(v: Projection): string {
     `累计用量：输入 ${s.usage.input}，输出 ${s.usage.output}，缓存读 ${s.usage.cacheRead}，缓存写 ${s.usage.cacheWrite}（token）`,
     v.siblings.length === 0 ? "同一个预设下没有其他运行中的进程。" : "同一个预设下运行中的其他进程：",
     ...v.siblings.map((x) => `- ${x.id}：${phaseText(x.phase)}，已运行 ${duration(x.age)}`),
+    ...(dir.length === 0 ? [] : ["同一个工作目录下运行中的其他进程：", ...dir.map((x) => `- ${x.id}：预设 ${x.preset}，${phaseText(x.phase)}，已运行 ${duration(x.age)}`)]),
     ...(v.children.length === 0 ? [] : ["运行中的子进程：", ...v.children.map((x) => `- ${x.id}：预设 ${x.preset}，${phaseText(x.phase)}，已运行 ${duration(x.age)}`)]),
     ...(v.idleChildren === 0 ? [] : [`空闲的子进程：${v.idleChildren} 个`]),
+    ...((v.running ?? 0) > 1 ? [`全部运行中的进程：${v.running} 个（含自己）`] : []),
   ];
   return lines.join("\n");
 }
