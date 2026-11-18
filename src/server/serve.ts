@@ -74,7 +74,8 @@ export async function serve(opts: ServeOptions): Promise<Service> {
     ),
   );
 
-  const readPreset = (id: string) => loadPreset(opts.presetsDir, id, opts.models, opts.toolsDir);
+  /** `workdir` 顶掉预设文件里的工作目录（`spawn`、`start`、`check` 用）。 */
+  const readPreset = (id: string, workdir?: string) => loadPreset(opts.presetsDir, id, opts.models, opts.toolsDir, workdir);
 
   function pump(): void {
     for (;;) {
@@ -133,7 +134,7 @@ export async function serve(opts: ServeOptions): Promise<Service> {
     switch (req.op) {
       case "start": {
         const images = checkImages(req.images ?? []);
-        const preset = readPreset(req.preset);
+        const preset = readPreset(req.preset, req.workdir);
         const id = req.id ?? randomBytes(4).toString("hex");
         startProcess(db, memory, id, preset, req.text, now, images);
         return awaitFinal(s, id);
@@ -184,7 +185,7 @@ export async function serve(opts: ServeOptions): Promise<Service> {
         return;
       }
       case "check": {
-        const snapshot = readPreset(req.preset);
+        const snapshot = readPreset(req.preset, req.workdir);
         reply(s, { type: "check", snapshot, limits: limits(snapshot), error: startError(snapshot) }).end();
         return;
       }
@@ -386,7 +387,7 @@ function parseRequest(line: string): Request {
       return { op: "backup", path };
     }
     if (r.op === "inspect" && (!("process" in r) || str(r, "process"))) return r as Request;
-    if (r.op === "check" && str(r, "preset")) return r as Request;
+    if (r.op === "check" && str(r, "preset") && (!("workdir" in r) || str(r, "workdir"))) return r as Request;
     if (r.op === "remove" && str(r, "process")) return r as Request;
     if (r.op === "prune" && str(r, "process") && "before" in r && num("before")) return r as Request;
     if (r.op === "history" && str(r, "process") && num("segment") && num("from")) return r as Request;
@@ -400,7 +401,7 @@ function parseRequest(line: string): Request {
     const handoff = (r as Record<string, unknown>).handoff;
     const { from, reply, id } = r as Record<string, unknown>;
     if (r.op === "send" && str(r, "process") && str(r, "text") && imagesOk && (handoff === undefined || typeof handoff === "boolean") && (from === undefined || typeof from === "string") && (reply === undefined || (typeof reply === "boolean" && (reply === false || from !== undefined)))) return r as Request;
-    if (r.op === "start" && str(r, "preset") && str(r, "text") && imagesOk && idOk(id)) return r as Request;
+    if (r.op === "start" && str(r, "preset") && str(r, "text") && imagesOk && idOk(id) && (!("workdir" in r) || str(r, "workdir"))) return r as Request;
   }
   throw new Error(`无法识别的请求：${line}`);
 }

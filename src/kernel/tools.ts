@@ -94,7 +94,7 @@ const AGENTS: ToolSpec[] = [
   {
     name: "spawn",
     description: `用一个预设建新进程，你是它的父进程。text 是它收到的第一封信，它这一轮结束时会给你回信。${REPLY_NOTES}`,
-    parameters: object({ preset: str("预设 ID"), text: str("第一封信的正文") }, ["preset", "text"]),
+    parameters: object({ preset: str("预设 ID"), text: str("第一封信的正文"), workdir: str("工作目录，绝对路径，必须是已有的目录。不写就用预设里的") }, ["preset", "text"]),
     inStore: true,
   },
   {

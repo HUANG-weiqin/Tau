@@ -142,9 +142,9 @@ pump()
 - 记录和条数在同一个同步调用里读，中间不会处理别的输入，所以它们是同一刻的。条数只数当前段（`COUNT`），不读消息。记录加上 `history` 读这一段的前 `messages` 条，就是那一刻的状态。
 - 逐行写，不拼成一个大串。`watch` 不推原样记录：体积大、频率高。要详情就按需 `inspect`。
 
-`check`（`preset`）：
+`check`（`preset`，可选 `workdir`）：
 
-- 用 `start`、`fork`、`spawn` 同一个读预设的函数（`loadPreset`，含工具定义）。读不出，回 `error`，文字和 `start` 一字不差。
+- 用 `start`、`fork`、`spawn` 同一个读预设的函数（`loadPreset`，含工具定义）。读不出，回 `error`，文字和 `start` 一字不差。带 `workdir` 时和 `start` 带它一样：替换预设里的工作目录，检查不变（[D77](kb-decisions.md#d77-spawnstartcheck-带-workdir)）。
 - 读得出，回一行 `check`：`snapshot` 是此刻文件读成的快照（含声明的 `context`，不查文件在不在），`limits` 是它的限度，`error` 是 `startError` 的原文，`null` 表示此刻能启动。然后关闭。
 - 不读库，不开事务。它只描述此刻的文件；已有进程的限度看 `inspect` 的 `limits`。
 - 契约：读预设时的任何拒绝，只许加在 `loadPreset`（含它拆出的 `parsePresetFile`、`buildPreset`）、`loadToolDefs`、`startError` 里。这样 `check`、`start` 和 `reconfigure` 永远一致。
@@ -178,7 +178,7 @@ D64 第 6 组。服务不直接写 SQL，也不直接调 `memory.set`：读经 `
 
 ```ts
 type Request =
-  | { op: "start"; preset: string; text: string; images?: string[]; id?: string }   // images 是 base64；id 是调用方定的进程 ID
+  | { op: "start"; preset: string; text: string; images?: string[]; id?: string; workdir?: string }   // images 是 base64；id 是调用方定的进程 ID；workdir 替换预设里的工作目录（D77）
   | { op: "send"; process: string; text: string; images?: string[]; handoff?: boolean; from?: string; reply?: boolean }
   | { op: "stop"; process: string }
   | { op: "ps" }
@@ -187,7 +187,7 @@ type Request =
   | { op: "blob"; hash: string }                            // hash 不带 blob: 前缀
   | { op: "watch"; process?: string }
   | { op: "inspect"; process?: string }                // 原样读进程记录
-  | { op: "check"; preset: string }                    // 干跑预设的读取和启动检查
+  | { op: "check"; preset: string; workdir?: string } // 干跑预设的读取和启动检查；workdir 同 start
   | { op: "memory"; ns?: string }                      // 读记忆；不带 ns 列 ns
   | { op: "memory_write"; ops: MemoryOp[] }            // 整批一个事务
   | { op: "prune"; process: string; before: number }   // 删段号小于 before 的旧段
@@ -508,7 +508,7 @@ tau stop <进程>
 | `src/server/credentials.ts` | `piCredentials`：只读 pi 的凭据文件，只交出 `api_key` 条目 |
 | `src/protocol.ts` | `PIPE`、`Request`、`Reply` |
 | `src/images.ts` | `checkImages`、`imageType`、`imageSize`、`IMAGE_MAX_BYTES`、`IMAGE_MAX_EDGE` |
-| `test/server/protocol.test.ts` | `history`、`watch`、`text` 的进程和编号、图片和 `blob`、`fork`、`prune`、`remove`、`sweep`、`inspect`、`check`、`memory`、`memory_write`、`reconfigure` |
+| `test/server/protocol.test.ts` | `history`、`watch`、`text` 的进程和编号、图片和 `blob`、`fork`、`prune`、`remove`、`sweep`、`inspect`、`check`、`memory`、`memory_write`、`reconfigure`、`start` 和 `check` 带 `workdir`（D77） |
 | `test/server/backup.test.ts` | `backup`：回执、备份能当库打开、目标已存在、请求校验、不是输入、运行中也能备份 |
 | `test/presets/reconfigured.test.ts` | 新快照怎么造（`src/presets/load.ts`）：`context` 的写法的每条规则、`presetFields` 和 `buildPreset` 互逆、`buildPreset` 的拒绝和 `loadPreset` 一字不差、`reconfigured` 只改调用参数时不重读文件、有结构性字段时整个重建、以待换的为底 |
 | `test/images.test.ts` | 入口检查：常量、魔数、每种格式的尺寸、张数、大小、类型、尺寸、顺序、base64 |
@@ -516,7 +516,7 @@ tau stop <进程>
 | `src/main.ts` | 入口：`serve` 或 CLI；`~/.tau` 的位置；信号处理 |
 | `tau.cmd` | 启动脚本（cmd.exe） |
 | `tau` | 启动脚本（bash，git 里可执行） |
-| `test/server/e2e.test.ts` | faux 模型端到端；回执之前断开；连不上 |
+| `test/server/e2e.test.ts` | faux 模型端到端；回执之前断开；连不上；模型 `spawn` 带 `workdir`，子进程的快照用覆盖的目录（D77） |
 | `test/server/pairing.test.ts` | 服务层的工具调用配对：按顺序、运行中停止、运行中崩溃 |
 | `test/server/kill.test.ts`、`test/server/child.ts` | 子进程里的真服务被随机硬杀 |
 | `test/server/listen.test.ts` | 单实例 |

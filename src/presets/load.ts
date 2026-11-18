@@ -214,10 +214,11 @@ export function buildPreset(id: string, f: PresetFields, models: Models, toolsDi
   };
 }
 
-/** `dir` 是预设目录，`toolsDir` 是工具定义目录；预设的 tools 里不是内置工具的名字，都按工具定义读，一起冻结进快照。 */
-export function loadPreset(dir: string, id: string, models: Models, toolsDir: string): PresetSnapshot {
+/** `dir` 是预设目录，`toolsDir` 是工具定义目录；预设的 tools 里不是内置工具的名字，都按工具定义读，一起冻结进快照。`workdir` 给了就顶掉文件里的那个，检查照样走 `buildPreset`。 */
+export function loadPreset(dir: string, id: string, models: Models, toolsDir: string, workdir?: string): PresetSnapshot {
   checkPresetId(id);
-  return buildPreset(id, parsePresetFile(dir, id), models, toolsDir);
+  const fields = parsePresetFile(dir, id);
+  return buildPreset(id, workdir === undefined ? fields : { ...fields, workdir }, models, toolsDir);
 }
 
 /** 快照还原成预设字段：`tools` 是内置工具名加工具定义的名字。`buildPreset(id, presetFields(s))` 重读文件和目录以后，得到和 `s` 同样的快照。 */

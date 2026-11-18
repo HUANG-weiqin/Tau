@@ -135,6 +135,27 @@ test("missing workdir directory is an error", () => {
   assert.throws(() => loadPreset(dir, "nodir", models, toolsRoot), /工作目录不存在/);
 });
 
+test("workdir 参数顶掉文件里的那个：别的字段照旧", () => {
+  const dir = write("over", valid(["context: AGENTS.md"]));
+  const other = path.join(root, "over-work");
+  mkdirSync(other);
+  const base = loadPreset(dir, "over", models, toolsRoot);
+  assert.deepEqual(loadPreset(dir, "over", models, toolsRoot, other), { ...base, workdir: other });
+});
+
+test("workdir 参数自己也要过同样的检查：不存在、相对路径、空串", () => {
+  const dir = write("over-bad", valid());
+  assert.throws(() => loadPreset(dir, "over-bad", models, toolsRoot, path.join(work, "nope")), /工作目录不存在/);
+  assert.throws(() => loadPreset(dir, "over-bad", models, toolsRoot, "relative/dir"), /工作目录必须是绝对路径/);
+  assert.throws(() => loadPreset(dir, "over-bad", models, toolsRoot, ""), /工作目录必须是绝对路径/);
+});
+
+test("给了 workdir 就不再看文件里的那个：文件里的指向不存在的目录也能读出", () => {
+  const dir = write("over-gone", front([`workdir: ${path.join(work, "nope")}`, `model: ${modelStr}`, "tools: read"]));
+  assert.throws(() => loadPreset(dir, "over-gone", models, toolsRoot), /工作目录不存在/);
+  assert.equal(loadPreset(dir, "over-gone", models, toolsRoot, work).workdir, work);
+});
+
 test("missing file is an error naming the preset", () => {
   assert.throws(() => loadPreset(root, "ghost", models, toolsRoot), /ghost/);
 });

@@ -23,7 +23,7 @@ export interface ReconfigureFields {
 
 export type Request =
   /** `images` 是 base64 字符串，按入口检查（设计稿 5.6）。`id` 是调用方定的进程 ID（D64 第 9 组），只许 `[0-9a-z][0-9a-z_-]{0,31}`；已存在回 `error`，什么都不写。 */
-  | { op: "start"; preset: string; text: string; images?: string[]; id?: string }
+  | { op: "start"; preset: string; text: string; images?: string[]; id?: string; workdir?: string }
   /** `handoff` 为真：换段信（D64 第 7 组），这封信写进段时，下一次调用的用途是 handoff。`from` 是进程 ID：以它的名义寄出，发送者、跳数从它的记录构造；`reply` 为真时必须带 `from`，回信寄给它（D64 第 8 组）。 */
   | { op: "send"; process: string; text: string; images?: string[]; handoff?: boolean; from?: string; reply?: boolean }
   | { op: "stop"; process: string }
@@ -37,7 +37,7 @@ export type Request =
   /** 原样读进程记录。不带 `process` 回全部，按 ID 升序；没有这个进程回 `error`。不开事务，不调 `pump`。 */
   | { op: "inspect"; process?: string }
   /** 干跑预设的读取和启动检查，和 `start` 用同一个读预设的函数。不读库。 */
-  | { op: "check"; preset: string }
+  | { op: "check"; preset: string; workdir?: string }
   /** 读记忆：带 `ns` 回这个 ns 的键，不带回有键的全部 ns。`ns` 要过预设 ID 的检查，不要求预设存在。只读，不开事务。 */
   | { op: "memory"; ns?: string }
   /** 写记忆：`ops` 非空，按顺序在一个事务里执行，第一个失败整批回滚。`set` 的 `expected` 是 null 或正整数，`delete` 的是正整数；没有不带版本号的强写。 */

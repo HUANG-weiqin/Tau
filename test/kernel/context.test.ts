@@ -117,7 +117,7 @@ test("agents 组：post、spawn、stop_process 在库内，参数照设计稿 5.
     return { properties: Object.fromEntries(Object.entries(schema.properties).map(([k, v]) => [k, v.type])), required: schema.required };
   };
   assert.deepEqual(params("post"), { properties: { to: "string", text: "string", reply: "boolean" }, required: ["to", "text"] });
-  assert.deepEqual(params("spawn"), { properties: { preset: "string", text: "string" }, required: ["preset", "text"] });
+  assert.deepEqual(params("spawn"), { properties: { preset: "string", text: "string", workdir: "string" }, required: ["preset", "text"] });
   assert.deepEqual(params("stop_process"), { properties: { process: "string" }, required: ["process"] });
   // post 和 spawn 的说明写明回信的三件事。
   for (const name of ["post", "spawn"]) {

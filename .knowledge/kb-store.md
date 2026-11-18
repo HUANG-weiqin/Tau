@@ -446,7 +446,7 @@ CREATE TABLE blobs (
 | 工具 | 参数 | 做什么 |
 |---|---|---|
 | `post` | `to`、`text`、`reply?` | 往 `to` 的信箱放一封信。`reply` 为真时，信带 `replyTo` = 自己 |
-| `spawn` | `preset`、`text` | 读预设，建新进程（`parent` = 自己），第一封信带 `replyTo` = 自己 |
+| `spawn` | `preset`、`text`、`workdir?`（字符串、`null` 或省略） | 读预设，建新进程（`parent` = 自己），第一封信带 `replyTo` = 自己。带 `workdir` 就替换预设里的工作目录，检查和预设里的一样（[D77](kb-decisions.md#d77-spawnstartcheck-带-workdir)） |
 | `stop_process` | `process` | 往目标的信箱放一个 `stop` |
 
 信的 `from` 是 `{ kind: "process", id: 自己, preset: 自己的预设 ID }`，内容是一个文本块，`hops` = `turn.hops + 1`。

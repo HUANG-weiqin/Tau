@@ -12,8 +12,8 @@ import type { DeclaredCall, Env, Input, Instant, Memory, Message, PresetSnapshot
 import { readContextView } from "./context-files.ts";
 import { loadProcess, loadProcesses, putMail } from "./db.ts";
 
-/** 读预设的函数，由服务传进来；测试传假的。读不出时抛出，原因是错误信息。 */
-export type ReadPreset = (id: string) => PresetSnapshot;
+/** 读预设的函数，由服务传进来；测试传假的。`workdir` 顶掉预设文件里的工作目录。读不出时抛出，原因是错误信息。 */
+export type ReadPreset = (id: string, workdir?: string) => PresetSnapshot;
 
 const noPresets: ReadPreset = (id) => {
   throw new Error(`找不到预设：${id}`);
@@ -61,13 +61,14 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
       return ok(`已寄给 ${to}。${reply === true ? POST_REPLY : ""}`);
     }
     case "spawn": {
-      const { preset, text } = args;
+      const { preset, text, workdir } = args;
       if (typeof preset !== "string" || typeof text !== "string") return bad("preset 和 text 必须是字符串。");
+      if (workdir != null && typeof workdir !== "string") return bad("workdir 必须是字符串，或者省略。");
       const hops = nextHops(p);
       if (hops > HOPS_MAX) return hopsFail();
       let snapshot: PresetSnapshot;
       try {
-        snapshot = readPreset(preset);
+        snapshot = readPreset(preset, typeof workdir === "string" ? workdir : undefined);
       } catch (e) {
         return fail(`预设 ${preset} 读不出：${e instanceof Error ? e.message : String(e)}`);
       }

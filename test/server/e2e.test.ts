@@ -123,6 +123,37 @@ test("服务把预设读取函数交给 handleNext：模型 spawn 一个预设�
   }
 });
 
+// D77：模型的 spawn 调用带 workdir，经 handleNext 的读预设函数，一路到子进程的快照。参数声明在 tools.ts，由 test/kernel/context.test.ts 钉死：pi-ai 不会剥掉声明之外的键，去掉声明这条照样过。
+test("模型 spawn 带 workdir：子进程的快照用覆盖的目录，父进程不变", async () => {
+  const t = setup();
+  const other = join(t.dir, "other");
+  mkdirSync(other);
+  const head = (tools: string) => `---\nworkdir: ${t.work}\nmodel: ${t.faux.getModel().provider}/m\ntools: ${tools}\n---\n`;
+  writeFileSync(join(t.presets, "boss.md"), `${head("agents")}老板。\n`);
+  writeFileSync(join(t.presets, "kid.md"), `${head("read")}孩子。\n`);
+  const brain = (ctx: { messages: { role: string; content: unknown }[] }) => {
+    const last = ctx.messages.at(-1);
+    const lastText = JSON.stringify(last?.content);
+    if (lastText.includes("去做")) return fauxAssistantMessage(fauxText("孩子做完了"));
+    if (last?.role === "toolResult") return fauxAssistantMessage(fauxText("派出了"));
+    if (lastText.includes("的回信，")) return fauxAssistantMessage(fauxText("收到回信"));
+    return fauxAssistantMessage([fauxToolCall("spawn", { preset: "kid", text: "去做", workdir: other })], { stopReason: "toolUse" });
+  };
+  t.faux.setResponses(Array.from({ length: 6 }, () => brain));
+  const svc = await serve({ pipe: t.pipe, dbPath: join(t.dir, "tau.db"), presetsDir: t.presets, toolsDir: join(t.dir, "tools"), models: t.models, memory: sqliteMemory });
+  try {
+    await collect(t.pipe, { op: "start", preset: "boss", text: "开工" });
+    const rows = () => svc.db.prepare("SELECT state_json FROM processes").all().map((r) => JSON.parse(r.state_json as string) as { preset: { id: string; workdir: string }; phase: { tag: string } });
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && !(rows().length === 2 && rows().every((p) => p.phase.tag === "idle") && !svc.db.prepare("SELECT 1 FROM mailbox").get())) await new Promise((r) => setTimeout(r, 20));
+    assert.equal(rows().find((p) => p.preset.id === "kid")?.preset.workdir, other);
+    assert.equal(rows().find((p) => p.preset.id === "boss")?.preset.workdir, t.work);
+  } finally {
+    await svc.close();
+    rmSync(t.dir, { recursive: true, force: true });
+  }
+});
+
 // 第 4 步验收：bash 工具真的运行仓库的 tau 脚本，经 TAU_PIPE 连到测试服务（不是正式管道），看得到测试进程。
 test("bash 工具运行 tau ps，经 TAU_PIPE 连到测试服务", async () => {
   for (const k of Object.keys(process.env)) if (k.toUpperCase().startsWith("TAU_")) delete process.env[k];

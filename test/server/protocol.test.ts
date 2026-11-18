@@ -1230,6 +1230,45 @@ test("check 和 start 结论一致：读不出、工具定义坏、装不下、�
   }
 });
 
+// start、check 带 workdir：顶掉预设文件里的工作目录
+
+test("start 带 workdir：进程快照的工作目录是覆盖值；目录不存在回 error", async (t) => {
+  const e = await setup(t);
+  const other = join(e.work, "other");
+  mkdirSync(other);
+  e.faux.appendResponses([fauxAssistantMessage(fauxText("好的。"))]);
+  const first = (await collect(e.pipe, { op: "start", preset: "p", text: "你好", workdir: other }))[0];
+  assert.equal(first?.type, "receipt");
+  const id = first?.type === "receipt" ? first.process : "";
+  const row = rowsOf(await collect(e.pipe, { op: "inspect", process: id }))[0]!;
+  assert.equal(row.process.preset.workdir, other);
+  assert.match(errorOf(await collect(e.pipe, { op: "start", preset: "p", text: "你好", workdir: join(other, "nope") })), /工作目录不存在/);
+});
+
+test("check 带 workdir：回执快照的工作目录是覆盖值；同一个坏 workdir 的错误文字和 start 一字不差", async (t) => {
+  const e = await setup(t);
+  const other = join(e.work, "other");
+  mkdirSync(other);
+  const c = (await collect(e.pipe, { op: "check", preset: "p", workdir: other }))[0] as Checked;
+  assert.equal(c.type, "check");
+  assert.equal(c.error, null);
+  assert.equal(c.snapshot.workdir, other);
+  const missing = join(other, "nope");
+  const fromCheck = errorOf(await collect(e.pipe, { op: "check", preset: "p", workdir: missing }));
+  assert.equal(fromCheck, errorOf(await collect(e.pipe, { op: "start", preset: "p", text: "你好", workdir: missing })));
+  assert.match(fromCheck, /工作目录不存在/);
+});
+
+test("start、check 的 workdir 不是字符串：都回无法识别的请求", async (t) => {
+  const e = await setup(t);
+  for (const req of [
+    { op: "start", preset: "p", text: "你好", workdir: 5 },
+    { op: "check", preset: "p", workdir: 5 },
+  ]) {
+    assert.match(errorOf(await collect(e.pipe, req as unknown as Request)), /^无法识别的请求/);
+  }
+});
+
 // memory、memory_write（D64 第 6 组）
 
 type MemoryReply = Extract<Reply, { type: "memory" | "namespaces" | "memory_written" | "memory_rejected" }>;

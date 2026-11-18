@@ -51,6 +51,7 @@ tools: read, write, edit, bash, memory
 - 没有 `:` 的行、未知字段、重复字段、缺少的字段，都报错。`thinking`、`handoff`、`options`、`context` 可以不写，其余字段缺了报错。
 - 读预设时的一切拒绝，只在 `loadPreset`、`loadToolDefs` 和启动检查里做。协议的 `check` 走同一条路径，所以它和 `start` 的结论永远一致（D64）。
 - `workdir` 必须是绝对路径，而且是一个存在的目录。绝对路径只认两种：盘符开头（`E:/x`、`E:\x`）和 UNC（`\\server\share`）。不带盘符的 `/foo` 会落在服务当前目录所在的盘上，所以拒绝。
+  - 预设里的 `workdir` 是默认值。`spawn`、协议的 `start` 和 `check` 可以带一个 `workdir` 替换它，检查一样，预设里写的那个这时不再检查：角色和项目是两件事，一个角色用在多个项目，不必每个项目一个预设（[D77](../../.knowledge/kb-decisions.md#d77-spawnstartcheck-带-workdir)）。`fork` 和 CLI 不带。
 - `model` 在第一个 `/` 处拆成 provider 和模型 ID，两边都不能为空。模型 ID 里可以再有 `/`。
 - `tools` 按逗号拆开，去掉空白，跳过空项。不是内置工具和工具组的名字，都按工具定义读，读不出就报错（找不到、格式不对、重名、超过大小上限）。重复的去掉，保留第一次出现的顺序。
 - `tools` 可以为空。这时进程只有 `self` 和 `handoff`。
