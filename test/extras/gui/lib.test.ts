@@ -294,11 +294,23 @@ test("messages: 换段后的第一条读 tau.handoff：说明，和带过来的�
   assert.deepEqual(parseUser(noBody).handoff, { note: "说明", carried: null });
 });
 
+test("messages: 后台任务的完成通知认前缀，不当成人的信", () => {
+  const body = "[后台任务 build] 完成，退出码 0\n已生成 dist\n完整 log：E:\\x\\a.log";
+  const p = parseUser(tauMsg([{ from: U, body }]) as any);
+  assert.deepEqual(p.letters, [{ from: "bg", name: "build", text: body, hops: 0 }]);
+  // 前缀只有一种写法：名字的字符、空格都有要求。
+  const near = ["[后台任务 build]跑完了", "[后台任务 名字带空格 x] y", " [后台任务 build] x", "[后台任务 ] x"];
+  for (const t of near) assert.deepEqual(parseUser(tauMsg([{ from: U, body: t }]) as any).letters, [{ from: "user", text: t, hops: 0 }], t);
+  // 进程寄的信、回信不认前缀。
+  assert.equal((parseUser(tauMsg([{ from: P("ab", "w"), body }]) as any).letters[0] as any).from, "process");
+});
+
 test("messages: describeStart 看开头那封信的发送者", () => {
   assert.equal(describeStart(tauMsg([{ from: P("ab", "worker"), body: "x" }]) as any), "由 worker 的来信开始");
   assert.equal(describeStart(tauMsg([{ from: U, body: "x" }]) as any), "由你的来信开始");
   assert.equal(describeStart(tauMsg([{ from: R("ab", "worker", "done"), body: "x" }]) as any), "开始");
   assert.equal(describeStart(user("（来自进程 a，预设 b）\nx") as any), "由你的来信开始");
+  assert.equal(describeStart(tauMsg([{ from: U, body: "[后台任务 build] 完成，退出码 0" }]) as any), "由后台任务的完成通知开始");
 });
 
 test("messages: 图片块是 blob:hash", () => {

@@ -1,5 +1,6 @@
 // @ts-check
 // 从进程记录、预设和界面数据算出界面要显示的分组、排序和计数。全是纯函数，时间由调用方传入。
+import { bgName } from "./messages.js";
 import { pathKey } from "./state.js";
 /** @typedef {import("./types.js").Self} Self */
 /** @typedef {import("./types.js").GuiState} GuiState */
@@ -86,14 +87,22 @@ export function rulerOf(ctx, threshold) {
   return { pct, mark: has ? Math.max(0, Math.min(100, Math.round((threshold / ctx.window) * 100))) : null, near: has && ctx.used >= NEAR_RATIO * threshold };
 }
 
+/** 谁寄的。进程的信带 ID，后台任务的完成通知是带前缀的用户的信（`lib/messages.js` 的 `bgName`），其余是人的信。 @param {any} from @param {string} text */
+function senderOf(from, text) {
+  if (from?.kind === "process") return { id: String(from.id), label: `${from.preset} · ${from.id}`, reply: !!from.reply };
+  const name = bgName(text);
+  return name === null ? { id: null, label: "你", reply: false } : { id: null, label: `后台任务 · ${name}`, reply: false };
+}
+
 /** 一封信在列表里的样子：谁寄的、第一行。 @param {any} letter */
 function letterLine(letter) {
   const from = letter?.from;
   const content = Array.isArray(letter?.content) ? letter.content : [];
   const text = content.find((/** @type {any} */ b) => b?.type === "text");
-  const first = typeof text?.text === "string" ? (text.text.split(/\r?\n/).find((/** @type {string} */ l) => l.trim() !== "") ?? "").trim() : "";
+  const body = typeof text?.text === "string" ? text.text : "";
+  const first = (body.split(/\r?\n/).find((/** @type {string} */ l) => l.trim() !== "") ?? "").trim();
   const images = content.filter((/** @type {any} */ b) => b?.type === "image").length;
-  const who = from?.kind === "process" ? { id: String(from.id), label: `${from.preset} · ${from.id}`, reply: !!from.reply } : { id: null, label: "你", reply: false };
+  const who = senderOf(from, body);
   return { from: who.label, fromId: who.id, reply: who.reply, first: first || (images > 0 ? "（图片）" : ""), images, hops: Number(letter?.hops ?? 0), handoff: letter?.handoff === true };
 }
 

@@ -86,6 +86,9 @@ test("mailOf：排队的信，谁寄的、第一行", () => {
   assert.deepEqual([m.queued[0]!.from, m.queued[0]!.first], ["你", "第一行"]);
   assert.deepEqual([m.queued[1]!.from, m.queued[1]!.reply, m.queued[1]!.first, m.queued[1]!.images], ["pb · b", true, "（图片）", 1]);
   assert.deepEqual(mailOf([idle("a")], "a"), { queued: [], waitedBy: [], waitingOn: [] });
+  // 后台任务的完成通知标成后台任务，不标成“你”。
+  const bg = run("a", { queued: [{ from: user, content: txt("[后台任务 build] 完成，退出码 0\nlog 最后 3 行"), hops: 0 }] });
+  assert.deepEqual([mailOf([bg], "a").queued[0]!.from, mailOf([bg], "a").queued[0]!.first], ["后台任务 · build", "[后台任务 build] 完成，退出码 0"]);
 });
 
 test("mailOf：谁在等它回信，它在等谁", () => {

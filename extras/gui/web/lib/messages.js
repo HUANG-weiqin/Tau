@@ -1,5 +1,6 @@
 // @ts-check
 // 把一段的 pi-ai 消息变成界面要显示的条目。信的来历读消息的 `tau`（内核写的结构），不解析文字。
+// 例外：后台任务的完成通知不是进程寄的信，是带前缀的用户的信，靠 `bgName` 认那一个前缀（kb-gui 的“信的来历”）。
 /** @typedef {import("./types.js").Message} Message */
 /** @typedef {import("./types.js").Ended} Ended */
 /** @typedef {import("./types.js").PhaseView} PhaseView */
@@ -10,9 +11,11 @@ export const HANDOFF_HEADER = "（这是你在上一个工作段结束时写的�
 export const CARRY_HEADER = "（下面是写交接说明时还没处理的用户消息。）";
 
 /**
- * 一封信，来自消息的 `tau.letters`。`user`：用户的信；`process`：别的进程的信，`waiting` 是写信时它在等回信（有 `replyTo`）；
+ * 一封信，来自消息的 `tau.letters`。`user`：用户的信；`bg`：后台任务的完成通知，是带前缀的用户的信，`name` 是任务名；
+ * `process`：别的进程的信，`waiting` 是写信时它在等回信（有 `replyTo`）；
  * `reply`：回信，`ended` 是那一轮的结束原因。`hops` 是跳数；没有 `tau` 的旧消息没有它。
  * @typedef {{ from: "user", text: string, hops?: number }
+ *   | { from: "bg", name: string, text: string, hops?: number }
  *   | { from: "process", id: string, preset: string, waiting: boolean, text: string, hops?: number }
  *   | { from: "reply", id: string, endedText: string, ended: Ended, text: string, hops?: number }} Letter
  */
@@ -86,6 +89,15 @@ function tauText(m) {
 }
 
 /**
+ * 后台任务的完成通知的名字；不是这种信返回 null。
+ * 内核里它不是进程寄的信，是带前缀的用户的信（kb-kernel 的“信的头和合并”），前缀由 `extras/tools/bg_run.ts` 的 `finish` 写。
+ * @param {string} text
+ */
+export function bgName(text) {
+  return /^\[后台任务 ([A-Za-z0-9_-]{1,40})\] /.exec(text)?.[1] ?? null;
+}
+
+/**
  * 一封信的视图。
  * @param {import("./types.js").LetterMeta} meta
  * @param {string} text
@@ -93,7 +105,10 @@ function tauText(m) {
  */
 function letterOf(meta, text) {
   const f = meta.from;
-  if (f.kind === "user") return { from: "user", text, hops: meta.hops };
+  if (f.kind === "user") {
+    const name = bgName(text);
+    return name === null ? { from: "user", text, hops: meta.hops } : { from: "bg", name, text, hops: meta.hops };
+  }
   if (f.reply) return { from: "reply", id: f.id, endedText: endedLabel(f.reply.ended), ended: f.reply.ended, text, hops: meta.hops };
   return { from: "process", id: f.id, preset: f.preset, waiting: meta.replyTo !== undefined, text, hops: meta.hops };
 }
@@ -135,6 +150,7 @@ export function parseUser(m) {
 export function describeStart(m) {
   const l = parseUser(m).letters[0];
   if (l?.from === "process") return `由 ${l.preset} 的来信开始`;
+  if (l?.from === "bg") return "由后台任务的完成通知开始";
   return l?.from === "reply" ? "开始" : "由你的来信开始";
 }
 

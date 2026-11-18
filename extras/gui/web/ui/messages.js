@@ -32,6 +32,13 @@ function LetterCard({ letter, extra }) {
       <p class="lbody">${letter.text}</p>
     </article>`;
   }
+  if (letter.from === "bg") {
+    return html`<article class="card letter">
+      <div class="lh"><span class="lh-k">后台任务</span><span class="mono" style="color:var(--fg)">${letter.name}</span><span>跑完了</span>${extra}</div>
+      <div class="perf" aria-hidden="true"></div>
+      <p class="lbody">${letter.text}</p>
+    </article>`;
+  }
   if (letter.from === "reply") {
     return html`<article class="card letter">
       <div class="lh"><span class="lh-k">回信</span><span>进程 <span class="mono" style="color:var(--fg)">${letter.id}</span> 的这一轮</span><span class=${`lh-w ${letter.ended && typeof letter.ended === "object" ? "w" : ""}`}>${letter.endedText}</span>${extra}</div>

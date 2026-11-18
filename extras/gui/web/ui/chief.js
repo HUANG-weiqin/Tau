@@ -115,8 +115,9 @@ function splitTarget(text) {
   return m ? { target: /** @type {string} */ (m[1]), body: text.slice(m[0].length) } : { target: null, body: text };
 }
 
-/** 一封信：你写的，或别的进程寄来的。 @param {{ letter: any }} p */
+/** 一封信：你写的、后台任务寄来的，或别的进程寄来的。 @param {{ letter: any }} p */
 function Letter({ letter }) {
+  if (letter.from === "bg") return html`<div class="ch-me"><div class="ch-who"><span>后台任务</span><span class="ch-chip mono">${letter.name}</span></div><p>${letter.text}</p></div>`;
   if (letter.from === "user") {
     const { target, body } = splitTarget(letter.text);
     return html`<div class="ch-me"><div class="ch-who"><span>你</span>${target && html`<span class="ch-chip mono">在看 ${target}</span>`}</div><p>${body}</p></div>`;
