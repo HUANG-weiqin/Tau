@@ -171,58 +171,57 @@ mkdir -p "$HOME/.tau/extras/bg"
 
 多个进程同时改同一个仓库时，各用一个 git worktree，不共用主工作树。
 
-这是配方，不是工具。`git worktree add` 本来就是一条命令，缺的只是让队友的 `workdir` 指向它。预设的 `workdir` 在进程出生时读成会话快照，所以做法是写一个 `workdir` 不同的临时预设（[D57 题 3](kb-decisions.md#d57-推导测试第三次)）。不给 `spawn` 加 `workdir` 参数。契约冻结的是内置工具的名字，不是参数（[kb-contract](kb-contract.md#契约清单)），所以不是契约挡着，是取舍：临时预设只多两行命令，加参数却让出生配置有两个来源，预设和调用参数。
+这是配方，不是工具。`git worktree add` 本来就是一条命令，`spawn` 带 `workdir` 把队友指到它（[D77](kb-decisions.md#d77-spawnstartcheck-带-workdir)）。队友用平时的角色，不用为这一单活另写预设。
 
-`<名字>` 是这一单活的名字，`<基础>` 是队友平时用的预设：
+`<名字>` 是这一单活的名字，`REPO` 是项目目录，`<依赖目录>` 是项目里被 `.gitignore` 忽略、新 worktree 里没有的目录，例如 JS 项目的 `node_modules`。要链哪些，看项目的 `AGENTS.md`；没写就先问。项目目录里不写任何东西，所以这个清单由项目自己的 `AGENTS.md` 说，不由 tau 存。
 
 ```sh
 REPO=E:/tau
-WT="$(cygpath -m ~)/.tau/extras/worktrees/tau-<名字>"
+WT="$(cygpath -m ~)/.tau/extras/worktrees/<项目>-<名字>"
 git -C $REPO worktree add -b wt/<名字> "$WT" HEAD
-for d in node_modules extras/node_modules; do
+for d in <依赖目录>; do
   cmd //c "mklink /J $(cygpath -w "$WT/$d") $(cygpath -w "$REPO/$d")"
 done
-sed "s|^workdir:.*|workdir: $WT|" ~/.tau/presets/<基础>.md > ~/.tau/presets/wt-<名字>.md
 ```
 
-然后 `spawn` 预设 `wt-<名字>`。成功后立刻删掉 `~/.tau/presets/wt-<名字>.md`。
+然后 `spawn`：`preset` 是队友平时的角色，`workdir` 是 `$WT`，信里的路径写相对路径。
 
 - worktree 放在 `~/.tau/extras/worktrees/`，是上层的数据，不放进项目目录。分支叫 `wt/<名字>`，从当前提交起。
-- `node_modules` 用 junction 链到主树，免得再装一遍。它在 `.gitignore` 里，不进 `git status`。
-- 临时预设用完即删：预设文件只管出生，会话快照已经存进进程记录（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。之后要 `fork` 带 `preset` 才需要重写它。
-- 预设里 `context` 的相对路径按 `workdir` 解析，所以队友读到的是 worktree 里的 `AGENTS.md`（[kb-store](kb-store.md#上下文文件视图)）。
-- 队友的基础预设一般写着“不提交”。派工的人审完 diff，在 worktree 里提交：`git -C "$WT" add … && git -C "$WT" commit`。
-- `workdir` 只管相对路径和 bash 的起始目录。文件工具认绝对路径（[D57 题 3](kb-decisions.md#d57-推导测试第三次)），所以信里写 `E:/tau/src/x.ts`，队友就改主树。派工的信里用相对路径，别写主树的绝对路径。基础预设的提示词里写了主树绝对路径的，也要换掉。
+- 依赖目录用 junction 链到主树，免得再装一遍。它们在 `.gitignore` 里，不进 `git status`。构建产物（`dist`、`target` 之类）别链：两边同时构建会互相覆盖。
+- `workdir` 只管相对路径和 bash 的起始目录。文件工具认绝对路径（[D57 题 3](kb-decisions.md#d57-推导测试第三次)），所以信里写 `E:/tau/src/x.ts`，队友就改主树。派工的信里用相对路径，别写主树的绝对路径。角色的提示词里写了主树绝对路径的，也要换掉。
+- 角色预设里 `context` 的相对路径按 `workdir` 解析，队友读到的是 worktree 里的 `AGENTS.md`（[kb-store](kb-store.md#上下文文件视图)）。
+- 记忆的 `ns` 仍是预设 ID：带记忆的角色用在 worktree 里，记忆还是它那一份。
+- 队友的角色一般写着“不提交”。派工的人审完 diff，在 worktree 里提交：`git -C "$WT" add … && git -C "$WT" commit`。
 
 队友做完、审过以后，合并并清理：
 
 ```sh
 git -C $REPO merge-tree --write-tree --name-only main wt/<名字>   # 退出码 0 才是无冲突
 git -C $REPO merge wt/<名字>
-for d in node_modules extras/node_modules; do cmd //c "rmdir $(cygpath -w "$WT/$d")"; done
+for d in <依赖目录>; do cmd //c "rmdir $(cygpath -w "$WT/$d")"; done
 git -C $REPO worktree remove "$WT"
 git -C $REPO branch -d wt/<名字>
 ```
 
-- `main` 是 tau 仓库的主分支名，别的仓库换成它自己的。
-- 先删 junction，再删 worktree，顺序不能换。`rmdir` 对 junction 只删链接。没试过先 `worktree remove`：它可能顺着链接进主树的 `node_modules`。
+- `main` 是这个仓库的主分支名，别的仓库换成它自己的。
+- 先删 junction，再删 worktree，顺序不能换。`rmdir` 对 junction 只删链接。没试过先 `worktree remove`：它可能顺着链接进主树的依赖目录。
 - 主树里有别人未提交的改动时，`git merge` 只要不碰这些文件就能合。碰到了，git 会拒绝，等对方提交完再合。
 
 解决什么，没解决什么：
 
 - 解决：文件互踩；暂存区和提交互踩，比如一个人的 `git add -A` 带走另一个人的改动。
 - 没解决：两个队友改同一个文件。冲突在合并时才出现。
-- 没解决：并发跑全量 `npm test` 的计时类假红。那是 CPU 争用，不是文件互踩，全量测试照旧一次一个。
-- 运行中的服务用的是主树的 `src`。队友在 worktree 里改 `src`，不影响它。要看效果，在 worktree 里跑测试，测试自带服务。
+- 没解决：并发跑全量测试的计时类假红。那是 CPU 争用，不是文件互踩，全量测试照旧一次一个。
+- 运行中的服务用的是主树的代码。队友在 worktree 里改，不影响它。要看效果，在 worktree 里跑测试。
+- 界面把进程的 `workdir` 当项目：worktree 里的队友会让左栏多出一个“项目”（[D77](kb-decisions.md#d77-spawnstartcheck-带-workdir) 的后果）。
 
-实测过（2026-11-18，`tau-temp` 派生的临时预设，模型 `deepseek-v4.1-flash`）：
+实测过（2026-11-18，当时 `spawn` 还不能带 `workdir`，用的是一份只换 `workdir` 的临时预设；下面这些和 `spawn` 怎么指目录无关，仍然成立）：
 
 - 队友的 `pwd`、`git rev-parse --show-toplevel`、当前分支都在 worktree；`import('@earendil-works/pi-ai')` 经 junction 成功。
 - 它写的文件只在 worktree，主树 `git status` 为空。
-- `spawn` 之后删掉预设，队友照常完成这一轮。
-- `merge-tree` 退出码 0；清理后 `git worktree list` 只剩主树，主树的 `node_modules` 条目数不变。
+- `merge-tree` 退出码 0；清理后 `git worktree list` 只剩主树，主树的依赖目录条目数不变。
 
-没试过：真的 `merge`，主树脏时的 `merge`，先 `worktree remove` 再删 junction，预设写了 `context` 时队友读到 worktree 里的 `AGENTS.md`（测试用的预设没写 `context`）。
+没试过：真的 `merge`，主树脏时的 `merge`，先 `worktree remove` 再删 junction，`spawn` 带 `workdir` 经真模型走一遍（单元和服务测试覆盖了它，见 D77）。
 
 ### 工具库
 
