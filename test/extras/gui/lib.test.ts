@@ -14,6 +14,7 @@ import { newPace, paceArrive, paceStep } from "../../../extras/gui/web/lib/pace.
 import { buildCreate, buildUpdate, contextText, CONTEXT_MAX, convertGate, convertPatch, defaultModelRef, filterCatalog, findModel, formatWindow, hasAgents, keyActions, keyHint, keyLabel, modelPatch, nearestLevel, parseContext, parseOptions, pushRecent, recentEntries, sortProviders, splitModel, suggestId, moreSummary, withAgents } from "../../../extras/gui/web/lib/models.js";
 import { markdownToHtml, safeHref } from "../../../extras/gui/web/lib/markdown.js";
 import { firstLine, lastReply, notifyText, shouldNotify, tabTitle, trackResults, unseenCount, watchAttention } from "../../../extras/gui/web/lib/notify.js";
+import { applyTheme } from "../../../extras/gui/web/lib/theme.js";
 import { buildSession, EFFECT, EFFECT_TEXT, hasStructural, isStructural, needsInspect, pendingOf, pendingText, receiptNote, reloadFields, sessionInfo, shownErr } from "../../../extras/gui/web/lib/session.js";
 import { reconfigure as apiReconfigure, inspect as apiInspect, tauCommand } from "../../../extras/gui/web/api.js";
 
@@ -1237,6 +1238,27 @@ test("state: notify 只在为 true 时保留", () => {
   assert.equal(normalizeState({ notify: true }).notify, true);
   assert.equal("notify" in normalizeState({ notify: false }), false);
   assert.equal("notify" in normalizeState({ notify: "yes" }), false);
+});
+
+test("state: theme 只在为 night 时保留，别的都是亮", () => {
+  assert.equal(normalizeState({ theme: "night" }).theme, "night");
+  for (const v of ["day", "", "dark", 1, null]) assert.equal("theme" in normalizeState({ theme: v }), false);
+  assert.equal("theme" in normalizeState({}), false);
+});
+
+test("theme: applyTheme 设置和去掉 data-theme，同步 theme-color", () => {
+  const attrs = new Map<string, string>();
+  const meta = { content: "", setAttribute(_k: string, v: string) { this.content = v; } };
+  const doc = { documentElement: { setAttribute: (k: string, v: string) => attrs.set(k, v), removeAttribute: (k: string) => attrs.delete(k) }, querySelector: () => meta } as unknown as Document;
+  applyTheme("night", doc);
+  assert.equal(attrs.get("data-theme"), "night");
+  assert.equal(meta.content, "#0A0B09");
+  applyTheme(undefined, doc);
+  assert.equal(attrs.has("data-theme"), false);
+  assert.equal(meta.content, "#0C0D0C");
+  applyTheme("night", doc);
+  applyTheme("anything", doc);
+  assert.equal(attrs.has("data-theme"), false);
 });
 
 test("notify: 新结果——根进程一轮结束算，子进程不算，首次不算", () => {

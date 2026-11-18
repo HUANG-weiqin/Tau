@@ -979,7 +979,7 @@ function Root() {
 function Empty({ app }) {
   if (!app.ready) return html`<div class="pending" aria-busy="true"></div>`;
   return html`<div class="empty">
-    <span class="num" style="font-size:96px;color:#111211;opacity:.18">00</span>
+    <span class="num" style="font-size:96px;color:var(--tx);opacity:.18">00</span>
     <h2>还没有项目</h2>
     <p>项目就是一个文件夹。打开一个文件夹，把它的进程归到一起。</p>
     <${Pill} kind="dark" icon="plus" label="打开项目" onClick=${(/** @type {Event} */ e) => app.openDialog("openproj", /** @type {Element} */ (e.currentTarget))} />

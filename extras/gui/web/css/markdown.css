@@ -12,20 +12,20 @@
 .md ul { list-style: square; }
 .md ol { list-style: decimal; }
 .md li { margin: .2em 0; padding-left: .15em; }
-.md li::marker { color: var(--ink-2); }
+.md li::marker { color: var(--tx2); }
 .md li > ul, .md li > ol { margin: .2em 0 0; }
 .md li > p { margin: 0 0 .3em; }
-.md input[type="checkbox"] { margin: 0 .5em 0 -1.3em; vertical-align: -1px; accent-color: var(--ink); }
+.md input[type="checkbox"] { margin: 0 .5em 0 -1.3em; vertical-align: -1px; accent-color: var(--tx); }
 .md strong { font-weight: 800; }
 .md del { opacity: .6; }
-.md a { color: var(--ink); text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 3px; text-decoration-color: rgba(17,18,17,.45); transition: text-decoration-color var(--t-fast) var(--ease-in), background-color var(--t-fast) var(--ease-in); }
-.md a:hover { text-decoration-color: var(--ink); background: var(--acc); }
+.md a { color: var(--tx); text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 3px; text-decoration-color: rgb(var(--k) / .45); transition: text-decoration-color var(--t-fast) var(--ease-in), background-color var(--t-fast) var(--ease-in); }
+.md a:hover { color: var(--ink); text-decoration-color: var(--ink); background: var(--acc); }
 .md hr { border: 0; border-top: 1px solid var(--line-l); margin: 1.1em 0; }
-.md blockquote { margin: 0 0 .7em; padding: 2px 0 2px 14px; border-left: 3px solid var(--ink); color: var(--ink-2); }
+.md blockquote { margin: 0 0 .7em; padding: 2px 0 2px 14px; border-left: 3px solid var(--tx); color: var(--tx2); }
 .md blockquote > :last-child { margin-bottom: 0; }
 
 /* 行内代码 */
-.md code { font-family: var(--mono); font-size: .88em; padding: .1em .4em; background: rgba(17,18,17,.075); box-shadow: inset 0 0 0 1px rgba(17,18,17,.12); }
+.md code { font-family: var(--mono); font-size: .88em; padding: .1em .4em; background: rgb(var(--k) / .075); box-shadow: inset 0 0 0 1px rgb(var(--k) / .12); }
 
 /* 代码块：深底，长行在里面横向滚动 */
 .md .md-code { position: relative; margin: 0 0 .85em; background: var(--ink0); color: var(--fg); box-shadow: inset 3px 0 0 var(--ink5), inset 0 0 0 1px var(--ink4); max-width: 100%; }
@@ -53,7 +53,7 @@
 .md .md-tw { margin: 0 0 .85em; overflow-x: auto; max-width: 100%; }
 .md table { border-collapse: collapse; min-width: 100%; background: var(--card); box-shadow: inset 0 0 0 1px var(--line-l); font-size: 13.5px; line-height: 1.5; }
 .md th, .md td { padding: 7px 12px; border: 0; border-bottom: 1px solid var(--line-l); text-align: left; vertical-align: top; overflow-wrap: normal; }
-.md th { background: rgba(17,18,17,.06); border-bottom: 1.5px solid rgba(17,18,17,.32); font-weight: 800; font-size: var(--fs-sm); white-space: nowrap; }
+.md th { background: rgb(var(--k) / .06); border-bottom: 1.5px solid rgb(var(--k) / .32); font-weight: 800; font-size: var(--fs-sm); white-space: nowrap; }
 .md tr:last-child td { border-bottom: 0; }
 
 /* 总管弹窗是暗面：字用浅色，亮表换成暗表 */

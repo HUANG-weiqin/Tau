@@ -141,7 +141,7 @@ const CONTOURS = makeContours();
 
 /** 台面右下角的等高线。 */
 export function Contour() {
-  return html`<svg aria-hidden="true" width="760" height="560" viewBox="0 0 760 560" fill="none" stroke="rgba(17,18,17,0.065)" stroke-width="1" style="position:absolute;z-index:0;pointer-events:none;right:-150px;bottom:-190px">
+  return html`<svg aria-hidden="true" width="760" height="560" viewBox="0 0 760 560" fill="none" stroke-width="1" style="stroke:rgb(var(--k) / .065);position:absolute;z-index:0;pointer-events:none;right:-150px;bottom:-190px">
     ${CONTOURS.map((d) => html`<path d=${d} />`)}
   </svg>`;
 }
@@ -156,8 +156,8 @@ export function Thumb({ hash, fetchBlob, class: cls = "thumb" }) {
       alive = false;
     };
   }, [hash]);
-  if (src === undefined) return html`<span class=${cls} style="background:#C2C4BE;display:inline-block"></span>`;
-  if (src === null) return html`<span class=${cls} style="display:inline-grid;place-items:center;font-size:11px;color:var(--ink-2);background:#DFE0DA">图片读不到</span>`;
+  if (src === undefined) return html`<span class=${cls} style="background:rgb(var(--k) / .2);display:inline-block"></span>`;
+  if (src === null) return html`<span class=${cls} style="display:inline-grid;place-items:center;font-size:11px;color:var(--tx2);background:rgb(var(--k) / .1)">图片读不到</span>`;
   return html`<a href=${src} target="_blank" rel="noopener"><img class=${cls} src=${src} alt="图片" /></a>`;
 }
 

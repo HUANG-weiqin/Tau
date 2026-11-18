@@ -13,10 +13,32 @@
   --ink: #111211;
   --ink-2: #464843;
   --sel: #ECEEE9;
+  --sel-hi: #F1F2EE;
+  --sel-hl: rgba(255, 255, 255, .9);
+  --sel-top: #FFFFFF;
+  --sel-mid: #9FA29A;
+  --sel-press: #D8DBD3;
   --acc: #FFE600;
+  --acc-hi: #FFF68F;
+  --acc-mid: #D8C300;
   --acc-ledge: #9E8E00;
+  --acc-hot-hi: #FFFAA8;
+  --acc-hot: #FFEE2E;
   --warn: #FF5A36;
+  --warn-hi: #FF9A84;
+  --warn-mid: #D44727;
   --warn-ledge: #8F2812;
+  --warn-hot-hi: #FFB3A1;
+  --warn-hot: #FF7152;
+  /* 台面上的字和线。夜间换成浅色；--ink 永远是墨黑，只压在黄、橙、选中行上，或做暗块的底。 */
+  --tx: #111211;
+  --tx2: #464843;
+  --on-tx: #ECEDE9;
+  --edge: #111211;
+  --k: 17 18 17;
+  --card-me: rgba(244, 245, 241, .86);
+  --card-hl: rgba(255, 255, 255, .85);
+  --ledge-k: rgba(17, 18, 17, .7);
   --line-d: rgba(255, 255, 255, 0.08);
   --line-l: rgba(17, 18, 17, 0.14);
   --ui: "Archivo Variable", "Noto Sans SC Variable", "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
@@ -38,6 +60,49 @@
   --t-slow: 320ms;
   --t-leave: 160ms;
   color-scheme: dark;
+}
+
+/* 夜间：同一套比喻关了大灯。栏更深，台面浅一档，卡片再浅一档；黄和橙降亮度。取值和理由见 docs/design/gui.md「夜间配色」。 */
+:root[data-theme="night"] {
+  --ink0: #060706;
+  --ink1: #0A0B09;
+  --ink2: #0F100E;
+  --ink3: #181A17;
+  --ink4: #252722;
+  --ink5: #353731;
+  --fg: #D4D5CF;
+  --fg2: #979992;
+  --fg3: #6F716B;
+  --ink-2: #383A35;
+  --card: #2B2D29;
+  --sel: #A8ABA2;
+  --sel-hi: #BDC0B7;
+  --sel-hl: rgba(255, 255, 255, .38);
+  --sel-top: #C8CBC2;
+  --sel-mid: #6E716A;
+  --sel-press: #959890;
+  --acc: #CDB200;
+  --acc-hi: #E4CF4A;
+  --acc-mid: #AA9400;
+  --acc-ledge: #756600;
+  --acc-hot-hi: #EFDC66;
+  --acc-hot: #D9BF06;
+  --warn: #E4552F;
+  --warn-hi: #F08B73;
+  --warn-mid: #BC4120;
+  --warn-ledge: #7A2410;
+  --warn-hot-hi: #F59D88;
+  --warn-hot: #EE6A48;
+  --tx: #CFD0CA;
+  --tx2: #9A9C95;
+  --on-tx: #111211;
+  --edge: #6A6D65;
+  --k: 207 208 202;
+  --card-me: rgba(43, 45, 41, .86);
+  --card-hl: rgba(255, 255, 255, .06);
+  --ledge-k: rgba(0, 0, 0, .55);
+  --line-l: rgba(207, 208, 202, .11);
+  --stage: radial-gradient(125% 85% at 28% 0%, #232620 0%, #1B1D19 55%, #151713 100%);
 }
 
 * { box-sizing: border-box; }
@@ -87,11 +152,11 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .tx-grid-d2 { background-image: linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px); background-size: 16px 16px; }
 .tx-hatch-d { background-image: repeating-linear-gradient(-45deg, rgba(255,255,255,.045) 0 1.5px, transparent 1.5px 7px); }
 .tx-dots-y { background-image: radial-gradient(rgba(17,18,17,.18) 1px, transparent 1.6px); background-size: 6px 6px; }
-.tx-grid-l { background-image: linear-gradient(rgba(17,18,17,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(17,18,17,.05) 1px, transparent 1px); background-size: 32px 32px; }
-.hatch-l { background-image: repeating-linear-gradient(-45deg, rgba(17,18,17,.18) 0 1.5px, transparent 1.5px 6px); }
+.tx-grid-l { background-image: linear-gradient(rgb(var(--k) / .05) 1px, transparent 1px), linear-gradient(90deg, rgb(var(--k) / .05) 1px, transparent 1px); background-size: 32px 32px; }
+.hatch-l { background-image: repeating-linear-gradient(-45deg, rgb(var(--k) / .18) 0 1.5px, transparent 1.5px 6px); }
 .hatch-bar { background: repeating-linear-gradient(-45deg, var(--fg3) 0 2px, transparent 2px 6px); }
 .cross { position: absolute; z-index: 0; width: 13px; height: 13px; pointer-events: none; }
-.cross::before, .cross::after { content: ""; position: absolute; background: rgba(17,18,17,.3); }
+.cross::before, .cross::after { content: ""; position: absolute; background: rgb(var(--k) / .3); }
 .cross::before { left: 6px; top: 0; width: 1px; height: 13px; }
 .cross::after { left: 0; top: 6px; width: 13px; height: 1px; }
 
@@ -102,7 +167,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .tag.line { background: transparent; box-shadow: inset 0 0 0 1px currentColor; padding: 0 5px; font-size: var(--fs-micro); line-height: 1.6; }
 .badge { position: absolute; right: -5px; top: -5px; width: 11px; height: 11px; background: var(--acc); border: 2px solid var(--ink1); }
 .badge.warn { background: var(--warn); }
-.cur { display: inline-block; width: 8px; height: 17px; margin-left: 4px; vertical-align: -3px; background: var(--ink); }
+.cur { display: inline-block; width: 8px; height: 17px; margin-left: 4px; vertical-align: -3px; background: var(--tx); }
 .cur.y { background: var(--acc); }
 .cur.bye { opacity: 0; transition: opacity var(--t-leave) var(--ease-out); }
 .pulse { animation: tau-pulse 2.4s ease-in-out infinite; }
@@ -230,8 +295,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 .pill:not([disabled]):active .pill-shell { padding: 2.5px 1px 1.5px 1px; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .5)); }
 
 .pill.accent {
-  --b-top: #FFF68F;
-  --b-mid: #D8C300;
+  --b-top: var(--acc-hi);
+  --b-mid: var(--acc-mid);
   --b-ledge: var(--acc-ledge);
   --b-bg: var(--acc);
   --b-fg: var(--ink);
@@ -243,15 +308,15 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 }
 .pill.accent .pill-txt { font-weight: 900; }
 .pill.accent:not([disabled]):hover {
-  --b-top: #FFFAA8;
-  --b-bg: #FFEE2E;
+  --b-top: var(--acc-hot-hi);
+  --b-bg: var(--acc-hot);
   --b-tick: var(--ink);
   --c-bg: #1E201D;
 }
 
 .pill.warn {
-  --b-top: #FF9A84;
-  --b-mid: #D44727;
+  --b-top: var(--warn-hi);
+  --b-mid: var(--warn-mid);
   --b-ledge: var(--warn-ledge);
   --b-bg: var(--warn);
   --b-fg: var(--ink);
@@ -263,29 +328,29 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: non
 }
 .pill.warn .pill-txt { font-weight: 900; }
 .pill.warn:not([disabled]):hover {
-  --b-top: #FFB3A1;
-  --b-bg: #FF7152;
+  --b-top: var(--warn-hot-hi);
+  --b-bg: var(--warn-hot);
   --b-tick: var(--ink);
   --c-bg: #1E201D;
 }
 
 .pill.dark {
-  --b-top: var(--ink);
-  --b-mid: var(--ink);
-  --b-ledge: var(--ink);
+  --b-top: var(--edge);
+  --b-mid: var(--edge);
+  --b-ledge: var(--edge);
   --b-bg: var(--card);
-  --b-fg: var(--ink);
-  --b-hi: rgba(255, 255, 255, .85);
-  --b-tick: var(--ink);
+  --b-fg: var(--tx);
+  --b-hi: var(--card-hl);
+  --b-tick: var(--tx);
   --c-bg: var(--ink);
   --c-fg: var(--acc);
-  --bk: var(--ink);
+  --bk: var(--tx);
 }
 .pill.dark .pill-shell { filter: drop-shadow(0 2px 2px rgba(17, 18, 17, .16)); }
 .pill.dark:not([disabled]):hover {
-  --b-top: var(--ink);
-  --b-bg: var(--ink);
-  --b-fg: var(--fg);
+  --b-top: var(--tx);
+  --b-bg: var(--tx);
+  --b-fg: var(--on-tx);
   --b-hi: rgba(255, 255, 255, .14);
   --b-tick: var(--acc);
   --c-bg: var(--acc);
@@ -345,7 +410,7 @@ textarea.input { padding: 10px 12px; line-height: 1.6; resize: vertical; }
   background: var(--sel);
   color: var(--ink);
   font-weight: 900;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9);
+  box-shadow: inset 0 1px 0 var(--sel-hl);
   --bk: var(--ink);
 }
 .toggle[aria-pressed="true"]::before {
@@ -359,8 +424,8 @@ textarea.input { padding: 10px 12px; line-height: 1.6; resize: vertical; }
   border-left: 2px solid var(--ink);
   pointer-events: none;
 }
-.toggle[aria-pressed="true"]:not([disabled]):hover { background: var(--card); color: var(--ink); }
-.toggle[aria-pressed="true"]:not([disabled]):active { background: #D8DBD3; }
+.toggle[aria-pressed="true"]:not([disabled]):hover { background: var(--sel-hi); color: var(--ink); }
+.toggle[aria-pressed="true"]:not([disabled]):active { background: var(--sel-press); }
 
 /* 动效。减少动画时全部瞬间切换。 */
 @keyframes tau-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }

@@ -1,5 +1,5 @@
 /* 项目窄条 */
-.shell { position: relative; display: flex; align-items: stretch; height: 100%; min-height: 100vh; background: var(--ink1); font-family: var(--ui); color: var(--ink); overflow: hidden; }
+.shell { position: relative; display: flex; align-items: stretch; height: 100%; min-height: 100vh; background: var(--ink1); font-family: var(--ui); color: var(--tx); overflow: hidden; }
 .rail { position: relative; flex: 0 0 72px; width: 72px; background: linear-gradient(180deg, var(--ink1) 0%, var(--ink0) 100%); color: var(--fg); border-right: 1px solid var(--ink0); box-shadow: inset -1px 0 0 var(--ink4); display: flex; flex-direction: column; align-items: center; padding-bottom: 12px; z-index: 4; }
 .rail-logo { position: relative; z-index: 1; width: 72px; height: 56px; flex: none; background: var(--acc); border-bottom: 1px solid var(--ink0); box-shadow: inset 0 -2px 0 var(--acc-ledge); display: grid; place-items: center; overflow: hidden; }
 .rail-logo > svg { position: relative; z-index: 1; }
@@ -55,8 +55,8 @@
 .tile.pinned:not([aria-current]):hover .tile-face::before { border-color: var(--acc); opacity: 1; }
 .tile.pinned:not([aria-current]):hover .tile-n { color: var(--fg); }
 .tile:not([aria-current]):active .tile-shell, .chief-btn:active .tile-shell { padding: 2px 1px 1.5px 1px; }
-.tile.pinned[aria-current] .tile-shell { background: linear-gradient(180deg, #FFFFFF 0%, #9FA29A 54%, var(--ink0) 56%, var(--ink0) 100%); }
-.tile.pinned[aria-current] .tile-face { background: var(--sel); color: var(--ink); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .92); }
+.tile.pinned[aria-current] .tile-shell { background: linear-gradient(180deg, var(--sel-top) 0%, var(--sel-mid) 54%, var(--ink0) 56%, var(--ink0) 100%); }
+.tile.pinned[aria-current] .tile-face { background: var(--sel); color: var(--ink); box-shadow: inset 0 1px 0 var(--sel-hl); }
 .tile.pinned[aria-current] .tile-face::before { opacity: 0; }
 .tile.pinned[aria-current] .tile-n, .tile.pinned[aria-current] .tile-s { color: var(--ink); font-weight: 900; }
 .tile-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 3.5px; background: var(--acc); animation: tau-fade var(--t-mid) var(--ease-in); }

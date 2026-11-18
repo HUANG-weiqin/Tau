@@ -82,6 +82,7 @@
  *   defaultThinking?: string,
  *   titleModel?: string,
  *   notify?: boolean,
+ *   theme?: "night",
  * }} GuiState
  */
 
