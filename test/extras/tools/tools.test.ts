@@ -2,7 +2,7 @@
 // 全部用临时目录和测试管道。脚本的数据目录靠 USERPROFILE 指到临时目录，不碰真的 ~/.tau。
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
@@ -32,10 +32,11 @@ let svc: Service;
 let model = "";
 let savedProfile: string | undefined;
 
-/** faux 模型：用户消息带 `slow`（1.5 秒）或 `veryslow`（6 秒）就慢一点；带 `usetool` 就调一次 bash。 */
+/** faux 模型：用户消息带 `slow`（1.5 秒）或 `veryslow`（6 秒）就慢一点；带 `usetool` 就调一次 bash；带 `hold` 就调一次等 30 秒的 bash，进程因此长时间停在等工具。 */
 const reply: FauxResponseFactory = async (context) => {
   const last = context.messages.at(-1);
   const text = last?.role === "user" ? (typeof last.content === "string" ? last.content : last.content.map((b) => (b.type === "text" ? b.text : "")).join("")) : "";
+  if (text.includes("hold")) return fauxAssistantMessage([fauxText("我等着。"), fauxToolCall("bash", { command: "sleep 30" }, { id: "hold1" })], { stopReason: "toolUse" });
   if (text.includes("veryslow")) await sleep(6000);
   else if (text.includes("slow")) await sleep(1500);
   if (text.includes("usetool")) return fauxAssistantMessage([fauxText("我来跑一下。"), fauxToolCall("bash", { command: "echo hi" }, { id: "t1" })], { stopReason: "toolUse" });
@@ -110,6 +111,26 @@ async function untilIdle(id: string, ms = 20_000): Promise<void> {
     if (p?.tag === "idle" && p.ended !== undefined) return;
   }
   throw new Error(`进程 ${id} 没在 ${ms} 毫秒内结束`);
+}
+
+async function untilPhase(id: string, tag: string, ms = 20_000): Promise<void> {
+  for (const t = Date.now(); Date.now() - t < ms; await sleep(50)) if ((await phase(id))?.tag === tag) return;
+  throw new Error(`进程 ${id} 没在 ${ms} 毫秒内到 ${tag}`);
+}
+
+/** 直接跑工具脚本，`TAU_PROCESS` 指到一个真的进程（和内核执行器给的环境一样）：要一边等一边寄信，所以不用 spawnSync。 */
+function spawnTool(file: string, args: unknown, proc: string, meantime: () => Promise<void>): Promise<{ text: string; err: string; status: number | null; ms: number }> {
+  return new Promise((resolve) => {
+    const t = Date.now();
+    const p = spawn(process.execPath, [join(LIB, file)], { cwd: work, env: { ...process.env, TAU_PROCESS: proc, TAU_PIPE: pipe } });
+    let text = "";
+    let err = "";
+    p.stdout.setEncoding("utf8").on("data", (c: string) => (text += c));
+    p.stderr.setEncoding("utf8").on("data", (c: string) => (err += c));
+    p.on("close", (status) => resolve({ text, err, status, ms: Date.now() - t }));
+    p.stdin.end(JSON.stringify(args));
+    void meantime();
+  });
 }
 
 async function messages(id: string): Promise<string[]> {
@@ -361,6 +382,66 @@ describe("wait", () => {
       const r = await tool("wait", { processes }, "wt");
       assert.equal(r.isError, true, JSON.stringify(processes));
     }
+  });
+
+  test("等着的时候收到信：提前返回，写明被打断，照常列出每个子进程的状态", async () => {
+    const mine = await start("hold 抱着");
+    const child = await start("hold 也抱着");
+    await untilPhase(mine, "awaitingTool");
+    await untilPhase(child, "awaitingTool");
+    const r = await spawnTool("wait.ts", { processes: [child], timeout: 10 }, mine, async () => {
+      await sleep(400);
+      await request({ op: "send", process: mine, text: "来信了" });
+    });
+    await request({ op: "stop", process: mine });
+    await request({ op: "stop", process: child });
+    await untilIdle(mine);
+    await untilIdle(child);
+    assert.equal(r.status, 0, r.err);
+    assert.ok(r.ms < 5_000, `用了 ${r.ms} 毫秒`);
+    assert.match(r.text, /^被来信打断：有 1 封信排队/);
+    assert.match(r.text, /到下一个安全点并入/);
+    assert.ok(r.text.includes(`- ${child}：运行中，在等工具`), r.text);
+    // 信没丢：这一轮结束以后它在段里。
+    assert.ok((await messages(mine)).some((m) => m.includes("来信了")), "信没并进段");
+  });
+
+  test("开始等的时候已经有信排队：马上返回，不等 timeout", async () => {
+    const mine = await start("hold 抱着");
+    const child = await start("hold 也抱着");
+    await untilPhase(mine, "awaitingTool");
+    await request({ op: "send", process: mine, text: "先来的信" });
+    for (let i = 0; i < 100 && ((await phase(mine))?.queued ?? 0) < 1; i++) await sleep(50);
+    assert.equal((await phase(mine)).queued, 1, "信没排在队里");
+    const r = await spawnTool("wait.ts", { processes: [child], timeout: 10 }, mine, async () => {});
+    await request({ op: "stop", process: mine });
+    await request({ op: "stop", process: child });
+    await untilIdle(mine);
+    await untilIdle(child);
+    assert.equal(r.status, 0, r.err);
+    assert.ok(r.ms < 3_000, `用了 ${r.ms} 毫秒`);
+    assert.match(r.text, /^被来信打断：有 1 封信排队/);
+    assert.ok(r.text.includes(`- ${child}：运行中，在等工具`), r.text);
+  });
+
+  test("processes 里写了自己的 ID：只订阅一次，按等待目标那套规则处理", async () => {
+    // 自己的 ID 当普通等待目标：进程在跑就到不了“结束”，所以只能靠被打断或者超时。
+    const mine = await start("hold 抱着");
+    const child = await start("hold 也抱着");
+    await untilPhase(mine, "awaitingTool");
+    await untilPhase(child, "awaitingTool");
+    const r = await spawnTool("wait.ts", { processes: [mine, child], timeout: 10 }, mine, async () => {
+      await sleep(400);
+      await request({ op: "send", process: mine, text: "打断" });
+    });
+    await request({ op: "stop", process: mine });
+    await request({ op: "stop", process: child });
+    await untilIdle(mine);
+    await untilIdle(child);
+    assert.equal(r.status, 0, r.err);
+    assert.ok(r.ms < 5_000, `用了 ${r.ms} 毫秒`);
+    assert.match(r.text, /^被来信打断：有 1 封信排队/);
+    assert.ok(r.text.includes(`- ${mine}：运行中，在等工具`) && r.text.includes(`- ${child}：运行中，在等工具`), r.text);
   });
 
   test("阶段的判断：刚建、还没处理第一封信的 idle 不算结束", () => {
