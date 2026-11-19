@@ -23,7 +23,7 @@ test("系统提示词：没有上下文视图时和以前一字不变；有就�
   assert.equal(systemPrompt(p), `${p.preset.prompt}\n\n工作目录：${p.preset.workdir}${MEMORY_HEADING}k: v`);
   const q = withContext(p, VIEW);
   assert.equal(systemPrompt(q), fixedPrompt(q.preset) + CONTEXT_HEADING + VIEW + MEMORY_HEADING + "k: v");
-  assert.ok(systemPrompt(q).indexOf("上下文文件") < systemPrompt(q).indexOf("记忆（开段时的快照）"));
+  assert.ok(systemPrompt(q).indexOf("上下文文件") < systemPrompt(q).indexOf("记忆索引（开段时的快照）"));
   // 没有记忆时只有上下文一节。
   assert.equal(systemPrompt(withContext(start("p", preset(), env(0)), VIEW)), `${p.preset.prompt}\n\n工作目录：${p.preset.workdir}\n\n## 上下文文件（开段时的快照）\n\n${VIEW}`);
 });

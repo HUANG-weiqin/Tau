@@ -69,8 +69,8 @@ export type Reply =
   | { type: "inspected"; count: number; now: Instant }
   /** check 读得出时的回复：`error` 是启动检查的原文，`null` 表示此刻能启动。 */
   | { type: "check"; snapshot: PresetSnapshot; limits: Limits; error: string | null }
-  /** memory 带 ns 的回复：按键的 UTF-8 字节序。 */
-  | { type: "memory"; ns: string; entries: { key: string; value: string; version: number }[] }
+  /** memory 带 ns 的回复：按键的 UTF-8 字节序，带摘要和更新时间（毫秒）。 */
+  | { type: "memory"; ns: string; entries: { key: string; value: string; brief: string; updated: number; version: number }[] }
   /** memory 不带 ns 的回复：有键的全部 ns。 */
   | { type: "namespaces"; ns: string[] }
   /** memory_write 成功：每一项的版本，删除是 null。 */

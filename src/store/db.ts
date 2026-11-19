@@ -1,9 +1,10 @@
-// SQLite：表、事务和行的读写（见 .knowledge/kb-store.md）。只用 node:sqlite 最基本的同步 API。
+// SQLite：表、事务、行的读写和表结构迁移（见 .knowledge/kb-store.md）。只用 node:sqlite 最基本的同步 API。
 import { DatabaseSync } from "node:sqlite";
+import { briefOf } from "../kernel/derive.ts";
 import type { Input, Message, Process, ProcessId } from "../kernel/types.ts";
 
-/** 表结构的版本，记在 `PRAGMA user_version` 里。MVP 不做迁移。 */
-export const SCHEMA_VERSION = 5;
+/** 表结构的版本，记在 `PRAGMA user_version` 里。5 升 6 是第一次迁移（D81）。 */
+export const SCHEMA_VERSION = 6;
 
 const SCHEMA = `
 CREATE TABLE processes (
@@ -32,6 +33,8 @@ CREATE TABLE memory (
   ns TEXT NOT NULL,
   key TEXT NOT NULL,
   value TEXT NOT NULL,
+  brief TEXT NOT NULL DEFAULT '',
+  updated INTEGER NOT NULL DEFAULT 0,
   UNIQUE (ns, key)
 ) STRICT;
 CREATE TABLE blobs (
@@ -49,14 +52,31 @@ export function openDb(path: string): DatabaseSync {
     db.exec("PRAGMA synchronous = FULL");
     const version = db.prepare("PRAGMA user_version").get()?.user_version;
     if (version === 0) tx(db, () => db.exec(`${SCHEMA}PRAGMA user_version = ${SCHEMA_VERSION};`));
+    else if (version === 5) migrate5to6(db, Date.now());
     else if (version !== SCHEMA_VERSION) {
-      throw new Error(`库 ${path} 的表结构版本是 ${String(version)}，这个版本的 tau 要求 ${SCHEMA_VERSION}。MVP 不做迁移：停掉服务，把旧库移走，再启动 tau 重建一个新库。`);
+      throw new Error(`库 ${path} 的表结构版本是 ${String(version)}，这个版本的 tau 要求 ${SCHEMA_VERSION}。没有从这个版本起的迁移：停掉服务，把旧库移走，再启动 tau 重建一个新库。`);
     }
     return db;
   } catch (e) {
     db.close();
     throw e;
   }
+}
+
+/**
+ * 5 升 6（D81）：`memory` 加 `brief`、`updated` 两列，给旧行填摘要和更新时间。一个事务，崩溃后版本号仍是 5，下次启动重做。
+ * 摘要用 `briefOf(value)`；`updated` 是 `now`，真正的写入时间已经丢了，不精确。别的表和行不动。
+ */
+export function migrate5to6(db: DatabaseSync, now: number): void {
+  tx(db, () => {
+    db.exec("ALTER TABLE memory ADD COLUMN brief TEXT NOT NULL DEFAULT ''");
+    db.exec("ALTER TABLE memory ADD COLUMN updated INTEGER NOT NULL DEFAULT 0");
+    // 值按字节读出再解码：node:sqlite 读 TEXT 时在 U+0000 处截断。
+    const rows = db.prepare("SELECT version, CAST(value AS BLOB) AS value FROM memory").all();
+    const update = db.prepare("UPDATE memory SET brief = ?, updated = ? WHERE version = ?");
+    for (const r of rows) update.run(briefOf(Buffer.from(r.value as Uint8Array).toString("utf8")), now, r.version as number);
+    db.exec("PRAGMA user_version = 6");
+  });
 }
 
 /** 一个 `BEGIN IMMEDIATE … COMMIT` 事务；`f` 抛出时回滚。 */

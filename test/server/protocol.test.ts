@@ -1269,20 +1269,39 @@ test("start、check 的 workdir 不是字符串：都回无法识别的请求", 
   }
 });
 
-// memory、memory_write（D64 第 6 组）
+// memory、memory_write（D64 第 6 组、D81）
 
 type MemoryReply = Extract<Reply, { type: "memory" | "namespaces" | "memory_written" | "memory_rejected" }>;
 const w = (ops: unknown[]) => ({ op: "memory_write", ops }) as unknown as Request;
-const setOp = (ns: string, key: string, value: string, expected: unknown) => ({ kind: "set", ns, key, value, expected });
+const setOp = (ns: string, key: string, value: string, expected: unknown, brief?: string) => ({ kind: "set", ns, key, value, expected, ...(brief === undefined ? {} : { brief }) });
 
-test("memory：不带 ns 列出有键的 ns，带 ns 给键、值、版本；没有键给空数组", async (t) => {
+/** memory 回复里的 entries：`updated` 是毫秒时间戳（服务的 now），只断言它是个像样的数字，比较时换成 true。 */
+function entriesOf(replies: Reply[], ns: string): { key: string; value: string; brief: string; version: number; updated: boolean }[] {
+  const m = replies[0];
+  assert.ok(m?.type === "memory" && m.ns === ns, JSON.stringify(m));
+  return m.entries.map((e) => ({ key: e.key, value: e.value, brief: e.brief, version: e.version, updated: e.updated > 1_600_000_000_000 }));
+}
+
+test("memory：不带 ns 列出有键的 ns，带 ns 给键、值、摘要、更新时间、版本；没有键给空数组", async (t) => {
   const e = await setup(t);
   assert.deepEqual(await collect(e.pipe, { op: "memory" }), [{ type: "namespaces", ns: [] }]);
   assert.deepEqual(await collect(e.pipe, { op: "memory", ns: "m" }), [{ type: "memory", ns: "m", entries: [] }]);
   await collect(e.pipe, w([setOp("m", "b", "2", null), setOp("m", "a", "1", null), setOp("zz", "k", "v", null)]));
   assert.deepEqual(await collect(e.pipe, { op: "memory" }), [{ type: "namespaces", ns: ["m", "zz"] }]);
-  assert.deepEqual(await collect(e.pipe, { op: "memory", ns: "m" }), [
-    { type: "memory", ns: "m", entries: [{ key: "a", value: "1", version: 2 }, { key: "b", value: "2", version: 1 }] },
+  // 没带 brief：用 briefOf(value)。
+  assert.deepEqual(entriesOf(await collect(e.pipe, { op: "memory", ns: "m" }), "m"), [
+    { key: "a", value: "1", brief: "1", version: 2, updated: true },
+    { key: "b", value: "2", brief: "2", version: 1, updated: true },
+  ]);
+});
+
+test("memory_write：set 带 brief 就用它，不带就用 briefOf(value)", async (t) => {
+  const e = await setup(t);
+  const long = "x".repeat(300);
+  assert.deepEqual(await collect(e.pipe, w([setOp("m", "短", "值", null, "一句话说明"), setOp("m", "长", long, null)])), [{ type: "memory_written", versions: [1, 2] }]);
+  assert.deepEqual(entriesOf(await collect(e.pipe, { op: "memory", ns: "m" }), "m"), [
+    { key: "短", value: "值", brief: "一句话说明", version: 1, updated: true },
+    { key: "长", value: long, brief: "x".repeat(200), version: 2, updated: true },
   ]);
 });
 
@@ -1295,20 +1314,25 @@ test("memory_write：成功回 memory_written 和每项的版本；不要求预�
   assert.equal(e.svc.db.isTransaction, false);
 });
 
-test("memory_write：版本冲突和超限是正常回复不是 error，整批回滚", async (t) => {
+test("memory_write：版本冲突、超限是正常回复不是 error，整批回滚；brief 超限也报 brief", async (t) => {
   const e = await setup(t);
-  await collect(e.pipe, w([setOp("m", "k", "旧", null)]));
+  await collect(e.pipe, w([setOp("m", "k", "旧", null, "旧的")]));
   const conflict = await collect(e.pipe, w([setOp("m", "new", "1", null), setOp("m", "k", "新", 7)]));
-  assert.deepEqual(conflict, [{ type: "memory_rejected", index: 1, result: { ok: false, current: { value: "旧", version: 1 } } }]);
+  assert.equal(conflict[0]?.type, "memory_rejected");
+  const rejected = conflict[0] as Extract<Reply, { type: "memory_rejected" }>;
+  assert.equal(rejected.index, 1);
+  assert.ok("current" in rejected.result);
+  assert.deepEqual(rejected.result.current && { value: rejected.result.current.value, brief: rejected.result.current.brief, version: rejected.result.current.version, updated: rejected.result.current.updated > 1_600_000_000_000 }, { value: "旧", brief: "旧的", version: 1, updated: true });
   const over = await collect(e.pipe, w([setOp("m", "big", "x".repeat(5000), null)]));
   assert.deepEqual(over, [{ type: "memory_rejected", index: 0, result: { ok: false, over: "value", bytes: 5000 } }]);
+  const briefOver = await collect(e.pipe, w([setOp("m", "big", "v", null, "b".repeat(201))]));
+  assert.deepEqual(briefOver, [{ type: "memory_rejected", index: 0, result: { ok: false, over: "brief", bytes: 201 } }]);
   const gone = await collect(e.pipe, w([{ kind: "delete", ns: "m", key: "none", expected: 3 }]));
   assert.deepEqual(gone, [{ type: "memory_rejected", index: 0, result: { ok: false, current: null } }]);
-  const mem = (await collect(e.pipe, { op: "memory", ns: "m" }))[0] as MemoryReply;
-  assert.deepEqual(mem.type === "memory" && mem.entries, [{ key: "k", value: "旧", version: 1 }]);
+  assert.deepEqual(entriesOf(await collect(e.pipe, { op: "memory", ns: "m" }), "m"), [{ key: "k", value: "旧", brief: "旧的", version: 1, updated: true }]);
 });
 
-test("memory、memory_write 的校验：ns 不合法、expected 缺失或不是正整数、delete 的 expected 为 null、ops 为空，都回 error，库不变", async (t) => {
+test("memory、memory_write 的校验：ns 不合法、expected 缺失或不是正整数、brief 不是字符串、delete 的 expected 为 null、ops 为空，都回 error，库不变", async (t) => {
   const e = await setup(t);
   const bads: unknown[] = [
     { op: "memory", ns: "" },
@@ -1329,6 +1353,8 @@ test("memory、memory_write 的校验：ns 不合法、expected 缺失或不是�
     w([{ kind: "set", ns: "m", key: "k", value: "v" }]),
     w([{ kind: "set", ns: "m", key: 1, value: "v", expected: null }]),
     w([{ kind: "set", ns: "m", key: "k", value: 1, expected: null }]),
+    w([{ kind: "set", ns: "m", key: "k", value: "v", brief: 1, expected: null }]),
+    w([{ kind: "set", ns: "m", key: "k", value: "v", brief: null, expected: null }]),
     w([{ kind: "delete", ns: "m", key: "k", expected: null }]),
     w([{ kind: "delete", ns: "m", key: "k" }]),
     w([{ kind: "delete", ns: "m", key: "k", expected: 0 }]),
@@ -1336,6 +1362,7 @@ test("memory、memory_write 的校验：ns 不合法、expected 缺失或不是�
     w([null]),
     // 好的一项后面跟坏的一项：整批拒绝，好的也不写。
     w([setOp("m", "good", "v", null), { kind: "delete", ns: "m", key: "k", expected: null }]),
+    w([setOp("m", "good", "v", null), { kind: "set", ns: "m", key: "k", value: "v", brief: 1, expected: null }]),
   ];
   const before = dumpDb(e);
   for (const req of bads) {

@@ -10,8 +10,13 @@ test("新库：6 张表、WAL、synchronous=FULL、记下表结构版本", (t) =
   const db = tempDb(t);
   const tables = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((r) => r.name);
   assert.deepEqual(tables, ["blobs", "effects", "mailbox", "memory", "processes", "segment_messages"]);
-  assert.equal(SCHEMA_VERSION, 5);
+  assert.equal(SCHEMA_VERSION, 6);
   assert.deepEqual(db.prepare("PRAGMA table_info(blobs)").all().map((c) => [c.name, c.type]), [["hash", "TEXT"], ["data", "BLOB"]]);
+  assert.deepEqual(
+    db.prepare("PRAGMA table_info(memory)").all().map((c) => c.name),
+    ["version", "ns", "key", "value", "brief", "updated"],
+    "记忆表带摘要和更新时间（D81）",
+  );
   assert.equal(db.prepare("PRAGMA journal_mode").get()?.journal_mode, "wal");
   assert.equal(db.prepare("PRAGMA synchronous").get()?.synchronous, 2);
   assert.equal(db.prepare("PRAGMA user_version").get()?.user_version, SCHEMA_VERSION);

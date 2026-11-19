@@ -194,7 +194,7 @@ export async function serve(opts: ServeOptions): Promise<Service> {
         return;
       }
       case "memory_write": {
-        const r = writeMemory(db, memory, req.ops);
+        const r = writeMemory(db, memory, req.ops, now);
         reply(s, r.ok ? { type: "memory_written", versions: r.versions } : { type: "memory_rejected", index: r.index, result: r.result }).end();
         return;
       }
@@ -302,13 +302,14 @@ function reply(s: Socket, r: Reply): Socket {
   return s;
 }
 
-/** 一项记忆写入的形状：set 的 expected 是 null 或正整数，delete 的是正整数。 */
+/** 一项记忆写入的形状：set 的 expected 是 null 或正整数，`brief` 可以没有、有就要是字符串；delete 的 expected 是正整数。 */
 function memoryOp(x: unknown): x is MemoryOp {
   if (typeof x !== "object" || x === null) return false;
   const o = x as Record<string, unknown>;
   const version = typeof o.expected === "number" && Number.isSafeInteger(o.expected) && o.expected > 0;
   if (typeof o.ns !== "string" || typeof o.key !== "string") return false;
-  return o.kind === "set" ? typeof o.value === "string" && (o.expected === null || version) : o.kind === "delete" && version;
+  if (o.kind === "set") return typeof o.value === "string" && (o.expected === null || version) && (o.brief === undefined || typeof o.brief === "string");
+  return o.kind === "delete" && version;
 }
 
 /** 换段信：只有 true 才写 `handoff` 键。 */

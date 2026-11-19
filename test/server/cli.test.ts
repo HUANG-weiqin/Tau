@@ -258,7 +258,7 @@ test("用 CLI 同时运行两个进程：带记忆的写入又读回记忆，不
     switch (c.step) {
       case 1:
         memTools = c.tools;
-        return fauxAssistantMessage(fauxToolCall("memory_set", { key: "color", value: "blue" }), { stopReason: "toolUse" });
+        return fauxAssistantMessage(fauxToolCall("memory_set", { key: "color", value: "blue", brief: "用户喜欢的颜色" }), { stopReason: "toolUse" });
       case 2:
         return fauxAssistantMessage(fauxToolCall("memory_get", { key: "color" }), { stopReason: "toolUse" });
       default:
@@ -301,7 +301,9 @@ test("用 CLI 同时运行两个进程：带记忆的写入又读回记忆，不
   assert.equal(set.isError, false);
   const version = /^已写入 color，版本 (\d+)。$/.exec(set.text)?.[1];
   assert.ok(version, set.text);
-  assert.deepEqual(got, { name: "memory_get", text: `color（版本 ${version}）：\nblue`, isError: false });
+  assert.equal(got?.name, "memory_get");
+  assert.equal(got?.isError, false);
+  assert.match(got?.text ?? "", new RegExp(`^color（版本 ${version}，更新 \\d{4}-\\d{2}-\\d{2}）：\\n摘要：用户喜欢的颜色\\nblue$`));
   assert.deepEqual(more, []);
 
   // 工具列表取自 faux 收到的请求。

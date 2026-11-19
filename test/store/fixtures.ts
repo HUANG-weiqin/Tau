@@ -53,7 +53,7 @@ export function fakeMemory(): FakeMemory {
   const k = (ns: string, key: string) => JSON.stringify([ns, key]);
   const current = (ns: string, key: string): Versioned | null => {
     const r = rows.get(k(ns, key));
-    return r ? { value: r.value, version: r.version } : null;
+    return r ? { value: r.value, brief: r.brief, updated: r.updated, version: r.version } : null;
   };
   return {
     calls,
@@ -70,7 +70,7 @@ export function fakeMemory(): FakeMemory {
       return [...rows.values()]
         .filter((r) => r.ns === ns)
         .sort((a, b) => Buffer.compare(Buffer.from(a.key), Buffer.from(b.key)))
-        .map((r) => ({ key: r.key, value: r.value, version: r.version }));
+        .map((r) => ({ key: r.key, value: r.value, brief: r.brief, updated: r.updated, version: r.version }));
     },
     namespaces() {
       calls.push("namespaces");
@@ -80,11 +80,11 @@ export function fakeMemory(): FakeMemory {
       calls.push("get");
       return current(ns, key);
     },
-    set(ns, key, value, expected) {
+    set(ns, key, put, expected) {
       calls.push("set");
       const cur = current(ns, key);
       if ((cur?.version ?? null) !== expected) return { ok: false, current: cur };
-      rows.set(k(ns, key), { ns, key, value, version: ++last });
+      rows.set(k(ns, key), { ns, key, value: put.value, brief: put.brief, updated: put.now, version: ++last });
       return { ok: true, version: last };
     },
     delete(ns, key, expected) {
