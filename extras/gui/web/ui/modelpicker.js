@@ -73,7 +73,7 @@ export function ModelPicker({ app, value, onPick, label = "模型", tag = null }
       <span class="mp-chev" aria-hidden="true"><${Icon} name=${open ? "up" : "down"} size=${14} sw=${2.8} /></span>
     </button>
     ${hint !== null && html`<p class="mp-hint" role="status">${hint}</p>`}
-    ${found === null && value !== "" && html`<p class="mp-hint plain">模型目录里没有 ${value}，大概是手写的。表单照原样保留它，能不能启动由检查说了算。</p>`}
+    ${found === null && value !== "" && html`<p class="mp-hint plain">模型目录里没有 ${value}，大概是手写的，或者这个账号用不了它。表单照原样保留它，能不能启动由检查说了算。</p>`}
     ${open && html`<div class="mp-panel" data-esc role="listbox" aria-label="选模型">
       <div class="mp-search"><${Icon} name="search" size=${14} sw=${2.6} /><input type="text" placeholder="搜供应商、模型名" value=${query} aria-label="搜模型"
         onInput=${(/** @type {any} */ e) => setQuery(e.currentTarget.value)}
@@ -90,6 +90,7 @@ export function ModelPicker({ app, value, onPick, label = "模型", tag = null }
         ${groups.map(
           (p) => html`<${Fragment} key=${p.id}>
             <div class=${`mp-gh ${configured(p.key) ? "" : "off"}`}><span class="mp-gn">${p.name}</span><span class="label dim">${p.id}</span><span class="sep"></span><span class=${`tag ${configured(p.key) ? "acc" : "line"}`}>${keyLabel(p.key)}</span></div>
+            ${p.models.length === 0 && html`<p class="mp-none">这个账号没有可用的模型。</p>`}
             ${p.models.map((m) => {
               const ref = `${p.id}/${m.id}`;
               return html`<button type="button" role="option" key=${ref} class=${`mp-row ${configured(p.key) ? "" : "off"}`} aria-selected=${ref === value} onClick=${() => pick(ref)}>
