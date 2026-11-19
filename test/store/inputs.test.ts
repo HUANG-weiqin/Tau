@@ -30,7 +30,7 @@ test("启动进程：写入 idle 的进程记录，第一条消息进信箱；ID
 test("启动进程时冻结记忆视图；预设没有 memory 时不读记忆库", (t) => {
   const db = tempDb(t);
   const memory = fakeMemory();
-  memory.set(PRESET.id, "name", "tau", null);
+  memory.set(PRESET.id, "name", { value: "tau", brief: "名字", now: 0 }, null);
   startProcess(db, memory, "p1", PRESET, "a", 0);
   assert.equal(loadProcess(db, "p1")?.segment.memoryView, memory.view(PRESET.id));
   memory.calls.length = 0;
@@ -77,14 +77,14 @@ test("库外工具：插入 pending 行", async (t) => {
 test("库内工具：在同一个事务里执行，结果进信箱，不进副作用表", async (t) => {
   const db = tempDb(t);
   const memory = fakeMemory();
-  const exec = createExecutor(db, scripted([use(toolCall("c1", "memory_set", { key: "k", value: "v" })), say("好了")]));
+  const exec = createExecutor(db, scripted([use(toolCall("c1", "memory_set", { key: "k", value: "v", brief: "摘要" })), say("好了")]));
   startProcess(db, memory, "p1", PRESET, "记住", 0);
   handleNext(db, memory, 0);
   await exec.startNext();
   handleNext(db, memory, 0);
   assert.deepEqual(effectRows(db), []);
   assert.deepEqual(mailbox(db), [{ id: "p1", input: { kind: "toolResult", n: 2, outcome: { status: "ok", content: res("已写入 k，版本 1。") } } }]);
-  assert.deepEqual(memory.get(PRESET.id, "k"), { value: "v", version: 1 });
+  assert.deepEqual(memory.get(PRESET.id, "k"), { value: "v", brief: "摘要", updated: 0, version: 1 });
   assertStoreInvariants(db);
   await settle(db, memory, exec);
   assert.deepEqual(loadProcess(db, "p1")?.phase, { tag: "idle", ended: "done" });
@@ -206,18 +206,20 @@ test("记忆工具：读、写、冲突时带最新值、删除、参数错误",
   const p = start("p1", PRESET, { now: 0, memoryView: "" });
   const run = (name: string, args: Parameters<typeof toolCall>[2]) => plain(runInStore(db, memory, p, [], toolCall("c", name, args), 0));
   assert.deepEqual(run("memory_get", { key: "k" }), { text: "键 k 不存在。", isError: false });
-  assert.deepEqual(run("memory_set", { key: "k", value: "1" }), { text: "已写入 k，版本 1。", isError: false });
-  assert.deepEqual(run("memory_set", { key: "k", value: "2" }), { text: "版本冲突，没有写入。现在的值是 k（版本 1）：\n1", isError: true });
-  assert.deepEqual(run("memory_set", { key: "k", value: "2", version: 1 }), { text: "已写入 k，版本 2。", isError: false });
-  assert.deepEqual(run("memory_get", { key: "k" }), { text: "k（版本 2）：\n2", isError: false });
+  assert.deepEqual(run("memory_set", { key: "k", value: "1", brief: "甲" }), { text: "已写入 k，版本 1。", isError: false });
+  assert.deepEqual(run("memory_set", { key: "k", value: "2", brief: "乙" }), { text: "版本冲突，没有写入。现在的值是 k（版本 1，更新 1970-01-01）：\n摘要：甲\n1", isError: true });
+  assert.deepEqual(run("memory_set", { key: "k", value: "2", brief: "乙", version: 1 }), { text: "已写入 k，版本 2。", isError: false });
+  assert.deepEqual(run("memory_get", { key: "k" }), { text: "k（版本 2，更新 1970-01-01）：\n摘要：乙\n2", isError: false });
   assert.equal(run("memory_delete", { key: "k", version: 1 }).isError, true);
   assert.deepEqual(run("memory_delete", { key: "k", version: 2 }), { text: "已删除 k。", isError: false });
-  assert.deepEqual(run("memory_set", { key: "k", value: "3", version: 2 }), { text: "版本冲突，没有写入。键 k 现在不存在。", isError: true });
+  assert.deepEqual(run("memory_set", { key: "k", value: "3", brief: "丙", version: 2 }), { text: "版本冲突，没有写入。键 k 现在不存在。", isError: true });
   assert.equal(memory.get(PRESET.id, "k"), null);
   for (const [name, args] of [
     ["memory_get", {}],
-    ["memory_set", { key: "k", value: 1 }],
-    ["memory_set", { key: "k", value: "v", version: 1.5 }],
+    ["memory_set", { key: "k", value: 1, brief: "甲" }],
+    ["memory_set", { key: "k", value: "v", brief: 1 }],
+    ["memory_set", { key: "k", value: "v" }],
+    ["memory_set", { key: "k", value: "v", brief: "甲", version: 1.5 }],
     ["memory_delete", { key: "k" }],
   ] as const) {
     assert.match(run(name, args).text, /^参数错误/, name);

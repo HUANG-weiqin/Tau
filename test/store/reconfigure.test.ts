@@ -121,7 +121,7 @@ test("空闲、段里没有助手消息：直接采用，两个视图在这个�
   mkdirSync(work);
   writeFileSync(join(work, "AGENTS.md"), "规矩一");
   const memory = fakeMemory();
-  memory.set("helper", "k", "v", null);
+  memory.set("helper", "k", { value: "v", brief: "摘要", now: 0 }, null);
   idleWithoutReply(db, memory);
   assert.equal(loadProcess(db, "a")?.segment.memoryView, "", "旧快照没有 memory 工具");
   send(db, "a", rc({ ...NEW, workdir: work, context: ["AGENTS.md"] }));
@@ -144,7 +144,7 @@ test("fresh 只在该算的时候算：reconfigure 和接受交接的那条模�
   mkdirSync(work);
   writeFileSync(join(work, "AGENTS.md"), "旧内容");
   const memory = fakeMemory();
-  memory.set("helper", "k", "v", null);
+  memory.set("helper", "k", { value: "v", brief: "摘要", now: 0 }, null);
   // 旧快照没有 memory 工具：处理输入的 envFor 不读记忆视图，所以读到的每一次都是 fresh 的。
   idleWithReply(db, memory);
   const next = { ...NEW, workdir: work, context: ["AGENTS.md"] };
@@ -215,7 +215,7 @@ test("没有待换配置的换段：上下文视图重读，快照不变", (t) =
 
 test("freshFor：只对 reconfigure 和接受交接的模型结果返回视图；有 next 给 next 算，没有给 preset 算", () => {
   const memory = fakeMemory();
-  memory.set("helper", "k", "v", null);
+  memory.set("helper", "k", { value: "v", brief: "摘要", now: 0 }, null);
   const idle = start("a", { ...P, tools: ["read", "memory"] }, { now: 0, memoryView: "" });
   const handing = (over: Partial<Process> = {}): Process => ({ ...idle, lastEffect: 3, phase: { tag: "awaitingModel", purpose: "handoff", turn: { steps: 1, queued: [], hops: 0, replyTo: [] } }, ...over });
   const ok = (n: number): Input => model(n, say("交接说明"));
@@ -241,7 +241,7 @@ test("freshFor：只对 reconfigure 和接受交接的模型结果返回视图�
 test("换段采用 next：新快照、视图、下一次调用的记录都是新的；next 去掉", async (t) => {
   const db = tempDb(t);
   const memory = fakeMemory();
-  memory.set("helper", "k", "v", null);
+  memory.set("helper", "k", { value: "v", brief: "摘要", now: 0 }, null);
   idleWithReply(db, memory);
   send(db, "a", rc(NEW));
   send(db, "a", marked);

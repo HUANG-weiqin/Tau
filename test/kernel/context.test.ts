@@ -1,9 +1,9 @@
 // buildContext 和工具描述（设计稿第 4.3 节、第 10 节）。
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildContext, HANDOFF_INSTRUCTION, tailStart, toolDescriptions } from "../../src/kernel/context.ts";
+import { buildContext, CONTEXT_HEADING, HANDOFF_INSTRUCTION, MEMORY_HEADING, tailStart, toolDescriptions } from "../../src/kernel/context.ts";
 import { start } from "../../src/kernel/decide.ts";
-import { findTool, MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES, toolsFor } from "../../src/kernel/tools.ts";
+import { findTool, MEMORY_BRIEF_MAX_BYTES, MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES, toolsFor } from "../../src/kernel/tools.ts";
 import type { Message, Phase, PresetTool, Process, ToolDef } from "../../src/kernel/types.ts";
 import { assistant, call, deepFreeze, env, preset } from "./helpers.ts";
 
@@ -95,10 +95,29 @@ test("交接请求去掉段末连续的用户消息，但不去掉第一条", ()
   assert.deepEqual(buildContext(proc(["read"], HANDOFF), []).messages, [{ role: "user", content: HANDOFF_INSTRUCTION, timestamp: 0 }], "段空时取 createdAt");
 });
 
-test("memory_set 的说明引用三个上限", () => {
-  const text = findTool(preset({ tools: ["memory"] }), "memory_set")?.description ?? "";
-  for (const n of [MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES]) assert.ok(text.includes(`${n} 字节`), text);
-  assert.deepEqual([MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES], [128, 4096, 32768]);
+test("记忆索引这一节的标题和说明", () => {
+  assert.equal(MEMORY_HEADING, "\n\n## 记忆索引（开段时的快照）\n\n每行：键 | 更新日期（UTC） | 值的字节数 | 摘要。要看值，用 memory_get。\n\n");
+  assert.notEqual(MEMORY_HEADING, CONTEXT_HEADING);
+});
+
+test("memory_set 的说明引用四个上限、key、value、brief 都必填，还写了 tmp. 前缀的约定", () => {
+  const spec = findTool(preset({ tools: ["memory"] }), "memory_set")!;
+  const text = spec.description;
+  for (const n of [MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_BRIEF_MAX_BYTES, MEMORY_VIEW_MAX_BYTES]) assert.ok(text.includes(`${n} 字节`), text);
+  assert.deepEqual([MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_BRIEF_MAX_BYTES, MEMORY_VIEW_MAX_BYTES], [128, 4096, 200, 32768]);
+  assert.ok(text.includes("摘要显示在每次开段的记忆索引里，值改了就一起改摘要"), text);
+  assert.ok(text.includes("tmp."), text);
+  const schema = spec.parameters as unknown as { properties: Record<string, { type: string; description: string }>; required: string[] };
+  assert.deepEqual(Object.fromEntries(Object.entries(schema.properties).map(([k, v]) => [k, v.type])), { key: "string", value: "string", brief: "string", version: "integer" });
+  assert.deepEqual(schema.required, ["key", "value", "brief"]);
+  assert.equal(schema.properties.brief?.description, "摘要，一句话说清这个值是什么、什么时候该读它");
+});
+
+test("memory_get 的说明：系统提示词里的记忆索引是快照，每行只有摘要", () => {
+  const text = findTool(preset({ tools: ["memory"] }), "memory_get")!.description;
+  assert.ok(text.includes("值、摘要、更新日期和版本号"), text);
+  assert.ok(text.includes("记忆索引是开段时的快照，每行只有摘要"), text);
+  assert.ok(text.includes("要看值，或拿到最新版本号，用这个工具"), text);
 });
 
 test("idle 和 awaitingTool 时也不加交接指令", () => {

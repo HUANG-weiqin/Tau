@@ -172,8 +172,8 @@ test("带图片引用的段复制后存储层不变量成立，blobs 不增", (t
 test("fork 带预设：快照和记忆视图来自新预设，复制的消息不变，源进程和库里别的行不变", (t) => {
   const db = tempDb(t);
   const mem = fakeMemory();
-  mem.set("other", "k", "新预设的记忆", null);
-  mem.set("helper", "k", "源预设的记忆", null);
+  mem.set("other", "k", { value: "新预设的记忆", brief: "新", now: 0 }, null);
+  mem.set("helper", "k", { value: "源预设的记忆", brief: "源", now: 0 }, null);
   idleSource(db);
   const seg = loadSegment(db, loadProcess(db, "a")!);
   const before = dump(db);

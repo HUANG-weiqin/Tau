@@ -202,7 +202,7 @@ test("竞态：库内工具的结果还在信箱里排队时先处理用户消�
   const db = tempDb(t);
   const memory = fakeMemory();
   let replies = 0;
-  const actions = gated(() => (replies++ === 0 ? use(toolCall("c1", "memory_set", { key: "k", value: "v" })) : say("好")), okTool);
+  const actions = gated(() => (replies++ === 0 ? use(toolCall("c1", "memory_set", { key: "k", value: "v", brief: "摘要" })) : say("好")), okTool);
   const exec = createExecutor(db, actions);
   startProcess(db, memory, "p1", PRESET, "a", 0);
   handleNext(db, memory, 0);

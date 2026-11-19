@@ -1,6 +1,6 @@
 // 进程的事务：启动、分叉、收一条命令、处理一条输入、三个删除、写记忆（见 .knowledge/kb-store.md）。每个函数恰好一个事务。
 import { decide, effectOf, fork, start } from "../kernel/decide.ts";
-import { HOPS_MAX, startError } from "../kernel/derive.ts";
+import { briefOf, HOPS_MAX, startError } from "../kernel/derive.ts";
 import { findTool } from "../kernel/tools.ts";
 import { textContent, unreachable } from "../kernel/types.ts";
 import type { DatabaseSync } from "node:sqlite";
@@ -144,9 +144,10 @@ class Rejected extends Error {
 
 /**
  * 按顺序执行一批记忆写入，整批一个事务：第一个失败就整批回滚（版本号序列也不前进），返回它的下标和 `Memory` 的失败形状。成功时给每一项的版本，删除是 null。
+ * 更新时间都是 `now`。`set` 没带 `brief` 时用 `briefOf(value)`：不认识 `brief` 的上层脚本照常能写。
  * 不看预设是否存在、有没有 `memory`；不写进程记录、段和信箱。
  */
-export function writeMemory(db: DatabaseSync, memory: Memory, ops: readonly MemoryOp[]): { ok: true; versions: (number | null)[] } | { ok: false; index: number; result: MemoryFailure } {
+export function writeMemory(db: DatabaseSync, memory: Memory, ops: readonly MemoryOp[], now: Instant): { ok: true; versions: (number | null)[] } | { ok: false; index: number; result: MemoryFailure } {
   try {
     const versions = tx(db, () =>
       ops.map((op, i): number | null => {
@@ -155,7 +156,7 @@ export function writeMemory(db: DatabaseSync, memory: Memory, ops: readonly Memo
           if (!r.ok) throw new Rejected(i, r);
           return null;
         }
-        const r = memory.set(op.ns, op.key, op.value, op.expected);
+        const r = memory.set(op.ns, op.key, { value: op.value, brief: op.brief ?? briefOf(op.value), now }, op.expected);
         if (!r.ok) throw new Rejected(i, r);
         return r.version;
       }),

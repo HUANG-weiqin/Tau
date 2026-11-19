@@ -30,10 +30,10 @@ export function fixedPrompt(preset: PresetSnapshot): string {
   return `${preset.prompt}\n\n工作目录：${preset.workdir}`;
 }
 
-/** 记忆视图前面的标题，连同它前面的空行。 */
-export const MEMORY_HEADING = "\n\n## 记忆（开段时的快照）\n\n";
+/** 记忆索引前面的标题和每列的意思，连同它前面的空行。 */
+export const MEMORY_HEADING = "\n\n## 记忆索引（开段时的快照）\n\n每行：键 | 更新日期（UTC） | 值的字节数 | 摘要。要看值，用 memory_get。\n\n";
 
-/** 系统提示词里记忆的那一段，视图为空时没有。 */
+/** 系统提示词里记忆索引的那一段，视图为空时没有。 */
 export function memorySection(view: string): string {
   return view === "" ? "" : MEMORY_HEADING + view;
 }

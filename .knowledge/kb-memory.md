@@ -144,6 +144,13 @@ interface Memory {
 - 字节数让模型估算展开一个值要花多少上下文；日期让它判断新旧。
 - 日期用 UTC，不用本地时区：同样的库在任何机器上渲染出同样的文本。
 
+### 临时的键（约定）
+
+- 只对眼下这件事有用的内容，键以 `tmp.` 开头。长期的知识不用这个前缀（[D82](kb-decisions.md#d82-记忆不分级临时的键用-tmp-前缀)）。
+- 这是约定，不是机制：内核不校验前缀，不按它做任何事，也不自动清理。
+- 约定写在 `memory_set` 的描述里。模型看索引里的更新日期，自己删过期的。
+- 要自动清理，由上层的定时脚本按前缀和 `updated` 选，用协议 `memory_write` 的 `delete` 删。
+
 ### `briefOf`
 
 `briefOf(value)` 在 `src/kernel/derive.ts`：取值的前 `MEMORY_BRIEF_MAX_BYTES` 字节，不切断字符。值不超过时原样返回。两处用它：协议 `memory_write` 的 `set` 没带 `brief` 时，和表结构升级（5 到 6）时给旧行填摘要（[kb-store](kb-store.md#表)）。模型写入时不走它：`memory_set` 的 `brief` 必填。
@@ -177,6 +184,7 @@ interface Memory {
 - [D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)：第 4 步定下的上限、换段阈值和用量估算。
 - [D80](kb-decisions.md#d80-记忆视图的上限从-16-kib-放到-32-kib)：视图上限 32 KiB。
 - [D81](kb-decisions.md#d81-记忆视图改成索引键更新日期字节数摘要)：视图改成索引，加摘要和更新时间；改了 D18 第 20 条。
+- [D82](kb-decisions.md#d82-记忆不分级临时的键用-tmp-前缀)：记忆不分级，临时的键用 `tmp.` 前缀。
 
 模块内的决定：
 
@@ -272,4 +280,4 @@ interface Memory {
 - [kb-store.md](kb-store.md)：`memory` 表；处理输入的事务；记忆工具的参数、结果和文字。
 - [kb-kernel.md](kb-kernel.md)：视图进系统提示词；开段时的快照；换段阈值。
 - [kb-service.md](kb-service.md)：服务启动时建 `sqliteMemory`。
-- [kb-decisions.md](kb-decisions.md)：D6、D18、D19、D22、D80、D81。
+- [kb-decisions.md](kb-decisions.md)：D6、D18、D19、D22、D80、D81、D82。
