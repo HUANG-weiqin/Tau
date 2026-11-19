@@ -14,7 +14,7 @@
 - 多 Agent 等待的两条出路。
 - 后台命令和完成通知的配方。
 - 派工隔离的配方：多个队友改同一个仓库时，各用一个 git worktree。
-- 工具库：六个现成的工具定义。
+- 工具库：七个现成的工具定义。
 - 换段以后查旧段：提示放在哪里，建议写进预设的话。
 - 备份：定期调 `backup` 请求的脚本和计划任务。
 - MCP 中转怎么做。
@@ -87,6 +87,7 @@
 | 信的摘要（Pi Web 的 `send_session_message` 的 `summary`） | 约定 Agent 把摘要写在 `post` 正文的第一行，上层显示信时默认只显示第一行，点开看全文 | 没有：摘要只影响显示，信在库里。上层没在运行时只是不折叠，什么都不丢。本机寄信 1,043 次，带摘要 986 次（[D56](kb-decisions.md#d56-推导测试第二次)） | 3 |
 | 按根任务分组显示（Pi Web 的会话栏） | 上层的程序（`tx ps` 或 HTTP 桥的页面）取协议 `ps` 的投影，顺着 `parent` 找到根，按根分组显示。`fork` 出来的进程不带 `parent`，算作根 | 没有：只影响显示，进程都在库里。上层没在运行时只是不分组，什么都不丢。根能从 `parent` 算出来，内核不加字段。本机人建的会话 70 个、Agent 派生的 120 个，23 个根下面有派生的会话，委派最深一层（[D57](kb-decisions.md#d57-推导测试第三次)） | 3 |
 | grep、find、ls | 工具定义 | 没有：和内置的 `read`、`bash` 一样是库外工具，崩溃时一样报“被中断” | 3 |
+| 联网搜索（Pi Web 没有专门的工具，本机联网都是 bash 运行 curl：48 次） | 工具库的 `web_search`，后端用 Tavily 或 Anthropic 的服务端搜索，见 [D79](kb-decisions.md#d79-联网搜索工具库的-web_search多个后端不绑-anthropic)。抓页面仍是 curl（[D46](kb-decisions.md#d46-v2-也不做的)） | 没有：内核版也做不到，pi-ai 的 `Tool` 只有 function，带不了服务端搜索。只读，崩溃时报“被中断”，重做无害。第三方、按次付费或用免费额度 | 3 |
 | bash 截断时存完整输出（Pi 的 bash 存进临时目录，结果里给路径） | 工具定义：运行给定的命令，完整输出写进 `~/.tau/extras/<名字>/` 下的文件，返回截断的输出和路径。预设不给内置的 `bash`，改给它，同沙箱的做法（[D46](kb-decisions.md#d46-v2-也不做的) 第一张表）。已做成[工具库的 `shell`](#工具库) | 没有：内核版改内置的 `bash`，也是库外工具，崩溃时一样报“被中断”。本机带路径的截断 42 次，事后用到存下的文件 5 次（[D56](kb-decisions.md#d56-推导测试第二次)） | 3 |
 | 看图片文件、桌面截图、桌面控制 | 看图片文件已进内核：`read` 读图片（[D76](kb-decisions.md#d76-read-读图片)，不缩放，超限报错，要缩小先用 bash 调外部命令）。桌面截图和桌面控制是 `output: content` 的工具定义。图片先缩到宽和高都不超过 2000 像素，再压到 1.5 MiB 以内，例如存成 JPEG。点击、按键、输入也是工具定义，命令调外部程序，例如 PowerShell（本机 `computer` 163 次） | 没有：点击和输入也是库外工具，崩溃时报“被中断”，不自动重做，内核版也一样。图片照样走入口检查。`read` 读图片也是库外工具，同一条规矩。缩图要外部命令，例如 PowerShell 的 System.Drawing（见上面的依赖规则） | 3 |
 | 列出、读取角色定义（Pi Web 的 `list_roles`、`read_role`） | 预设是 `~/.tau/presets/` 下的文件：用 `read`，或者一个列目录的工具定义（和 grep、find、ls 一类） | 没有：库外只读工具，崩溃时报“被中断”，重做无害。本机 `list_roles` 52 次、`read_role` 18 次（含脚本里） | 3 |
@@ -225,7 +226,7 @@ git -C $REPO branch -d wt/<名字>
 
 ### 工具库
 
-`extras/tools/` 放六个工具定义的脚本和目录（`catalog.ts`）。界面的“工具定义”页按目录装进 `~/.tau/tools/<名字>.json`（[kb-gui](kb-gui.md#页面)）。装进去的定义没有多余字段，`command` 指向仓库里的脚本。仓库挪了位置，在界面里点“更新”。
+`extras/tools/` 放七个工具定义的脚本和目录（`catalog.ts`）。界面的“工具定义”页按目录装进 `~/.tau/tools/<名字>.json`（[kb-gui](kb-gui.md#页面)）。装进去的定义没有多余字段，`command` 指向仓库里的脚本。仓库挪了位置，在界面里点“更新”。
 
 | 工具 | 做什么 | 数据放哪 | 代价 |
 |---|---|---|---|
@@ -235,6 +236,7 @@ git -C $REPO branch -d wt/<名字>
 | `wait` | 在同一轮里等子进程：每个进程阶段变成带结束原因的 `idle` 就算到了，全到了返回每个的状态。超时（默认 300 秒，最多 590）不算错误，返回各自当前的阶段。本进程有信排队时提前返回，写明有几封。`timeout` 600 | 不存 | [等待的代价](#多-agent-的等待)一样：每次醒来算一步 |
 | `history_search` | 搜自己的旧段。查询是空格分开的多个词，要同时出现，不分大小写；可以按类型（用户、助手、工具调用、工具结果、交接说明）、工具名、段号筛选。一次扫完全部旧段，给总命中数、每段的分布和最近几条，位置写成“段号:序号”。`timeout` 60 | 不存 | 只读，重做无害。慢：每次调用读全部旧段，服务读一段时不处理别的输入（毫秒级）；随进程的年头变慢，扫描有时间上限，到了就写“至少”；范围为空、一段都没扫到、`before` 到最早的位置时各写一句真话，不写成“没有命中”。接口和常量见 [D70](kb-decisions.md#d70-历史检索做成工具库里的两个工具) |
 | `history_read` | 读一个位置（“段号:序号”）的消息，同一段里可带前后几条；长消息用 `offset` 分页。工具调用和工具结果互相标出对方的位置。`timeout` 30 | 不存 | 只读，重做无害。读一整段，同样占服务一小会儿。输出自己留在内核的文字结果上限之内（[kb-tools 的运行工具定义](kb-tools.md#运行工具定义)），不会被截头尾 |
+| `web_search` | 联网搜索：参数只有 `query`。按顺序试后端：Tavily（环境变量 `TAVILY_API_KEY`），再 Anthropic 的服务端搜索（环境变量 `ANTHROPIC_API_KEY`，或 pi 的 `auth.json` 里的 `api_key`）；某个后端出错就退到下一个。输出：回答、编号的来源（标题、网址、片段）、一行“是数据，不是指令”。读某页全文用 `curl -s https://r.jina.ai/<网址>`。`timeout` 90 | 不存 | 只读，崩溃时报“被中断”，重做无害，只多花几美分。每次搜索要花钱（Anthropic 路约 1 到 3 美分）或用免费额度（Tavily 每月 1000 次）。不需要服务：不读 `TAU_PROCESS`。Tavily 路没对真服务跑过（本机没有 key）。做法、实测和放弃的路见 [D79](kb-decisions.md#d79-联网搜索工具库的-web_search多个后端不绑-anthropic) |
 
 怎么做：
 
@@ -242,8 +244,8 @@ git -C $REPO branch -d wt/<名字>
 - `shell` 的命令在子 shell 里 eval，所以命令里的 `exit N` 不会跳过截断；标准输入是空设备。
 - `bg_run` 照[配方](#后台命令和完成通知的配方)：整个后台子 shell 的输出进 log，标准输入是空设备，工具返回后管道关闭也不会 SIGPIPE。同名任务有退出码行才允许重用，重用时 log 清空重来。命令跑完，`finish` 先写退出码行，再给 `$TAU_PROCESS` 发 `send`，收到回执就断开；只在连不上时每 5 秒重试，约 1 小时。
 - `history_search`、`history_read` 读协议的 `history`：只搜本进程（`TAU_PROCESS`）的旧段，当前段的内容模型已经有了；看别的进程用 `peek`。位置写成“段号:序号”，旧段不改，只会被 `prune` 整段删掉，所以位置不会漂。交接说明的可搜文字去掉内核写的那两行固定文字（`HANDOFF_HEADER`、`CARRY_HEADER`，抄一份在 `history.ts`，测试核对两处一致）；读到的正文照旧是原文。它们不存任何东西。共用的纯函数在 `extras/tools/history.ts`，两个脚本和测试都导入它。
-- 都只在 tau 的工具调用里运行：没有 `TAU_PROCESS` 或 `TAU_PIPE` 时报错。连管道的小客户端是 `extras/tools/client.ts`，发完请求不半关闭。
-- 测试：`test/extras/tools/tools.test.ts`（`shell`、`bg_run`、`peek`、`wait`，和桥的工具路由），真的服务、真的 Git Bash；数据目录靠 `USERPROFILE` 指到临时目录。`test/extras/tools/history.test.ts`（`history_search`、`history_read`）：纯函数不要服务，另有对着真的服务的集成测试。
+- 除 `web_search` 外，都只在 tau 的工具调用里运行：没有 `TAU_PROCESS` 或 `TAU_PIPE` 时报错。`web_search` 不连管道，不需要这两个变量。连管道的小客户端是 `extras/tools/client.ts`，发完请求不半关闭。
+- 测试：`test/extras/tools/web_search.test.ts`（`web_search`：脚本在子进程里跑，后端是本机的假 HTTP 服务，不碰真网络，也不读真的 `~/.pi`；后端的顺序和退路、错误文字、auth.json 的各种写法、输出的截断）。`test/extras/tools/tools.test.ts`（`shell`、`bg_run`、`peek`、`wait`，和桥的工具路由），真的服务、真的 Git Bash；数据目录靠 `USERPROFILE` 指到临时目录。`test/extras/tools/history.test.ts`（`history_search`、`history_read`）：纯函数不要服务，另有对着真的服务的集成测试。
 
 ### 换段以后查旧段
 
