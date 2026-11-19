@@ -14,7 +14,6 @@ import { serve } from "../../../src/server/serve.ts";
 import { createBridge } from "../../../extras/gui/bridge/server.ts";
 import { createServiceControl, launchArgv, newestMtime, restartCommand } from "../../../extras/gui/bridge/service.ts";
 import type { ServiceOps } from "../../../extras/gui/bridge/service.ts";
-import { piCredentials } from "../../../extras/gui/bridge/credentials.ts";
 import { cleanTitle, TITLE_SYSTEM } from "../../../extras/gui/bridge/title.ts";
 import { confirmText, staleOf } from "../../../extras/gui/web/lib/service.js";
 import { firstLetterText, wantsAutoTitle } from "../../../extras/gui/web/lib/titles.js";
@@ -263,25 +262,6 @@ test("cleanTitle：取第一个非空行，去引号和结尾标点，截到 16 
   assert.equal(cleanTitle("  \n "), null);
   assert.equal(cleanTitle("“”"), null);
   assert.match(TITLE_SYSTEM, /16/);
-});
-
-test("凭据：只认 api_key；`!` 开头或含 `$` 的 key 不认；OAuth 当没有；每次现读", async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "tau-gui-cred-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const file = join(dir, "auth.json");
-  const store = piCredentials(file);
-  assert.equal(await store.read("a"), undefined);
-  writeFileSync(file, JSON.stringify({ a: { type: "api_key", key: "k1" }, o: { type: "oauth", access: "x" }, c: { type: "api_key", key: "!echo hi" }, d: { type: "api_key", key: "a$b" } }));
-  assert.equal((await store.read("a"))?.type, "api_key");
-  assert.equal(await store.read("o"), undefined);
-  await assert.rejects(store.read("c"), /命令或变量/);
-  await assert.rejects(store.read("d"), /命令或变量/);
-  assert.deepEqual((await store.list()).map((x) => x.providerId), ["a", "c", "d"]);
-  writeFileSync(file, JSON.stringify({ a: { type: "api_key", key: "k2" } }));
-  assert.equal(((await store.read("a")) as any).key, "k2");
-  await assert.rejects(store.modify("a", async () => undefined as any), /只读/);
-  writeFileSync(file, "{坏");
-  await assert.rejects(store.read("a"), (e: Error) => !e.message.includes("坏"));
 });
 
 async function titleSetup(t: TestContext) {

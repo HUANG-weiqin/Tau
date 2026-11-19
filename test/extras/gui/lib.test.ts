@@ -974,10 +974,10 @@ test("models: 搜索按供应商和模型的名字、ID，每个词都要命中�
   assert.deepEqual(filterCatalog(CATALOG, "zzz"), []);
 });
 
-test("models: 供应商排序：配好的在前，读不了、OAuth 的次之，没配的最后，同样的按名字", () => {
+test("models: 供应商排序：配好的（key 或 OAuth 登录）在前，读不了的次之，没配的最后，同样的按名字", () => {
   const p = (id: string, key: string) => ({ id, name: id.toUpperCase(), key, models: [] }) as any;
   const sorted = sortProviders([p("zed", "none"), p("beta", "oauth"), p("alpha", "none"), p("gamma", "key"), p("delta", "unreadable"), p("aaa", "key")]);
-  assert.deepEqual(sorted.map((x: any) => x.id), ["aaa", "gamma", "delta", "beta", "alpha", "zed"]);
+  assert.deepEqual(sorted.map((x: any) => x.id), ["aaa", "beta", "gamma", "delta", "alpha", "zed"]);
 });
 
 test("models: 最近用过去重、最新在前、最多 6 个；只列目录里有的", () => {
@@ -992,23 +992,23 @@ test("models: 最近用过去重、最新在前、最多 6 个；只列目录里
 
 test("models: key 状态的字", () => {
   assert.equal(keyLabel("key"), "已配");
-  assert.equal(keyLabel("oauth"), "OAuth（tau 不支持）");
+  assert.equal(keyLabel("oauth"), "已登录");
   assert.equal(keyLabel("none"), "没配");
   assert.equal(keyLabel("unreadable"), "tau 读不了");
 });
 
-test("models: key 的动作：没配填、已配和读不了换、只有已配能清、OAuth 没有、文件读不出都不可用", () => {
+test("models: key 的动作：没配填、已配和读不了换、只有已配能清；OAuth 登录的不能填，只能登出；文件读不出都不可用", () => {
   assert.deepEqual(keyActions("none", true), { set: "填 key", clear: false });
   assert.deepEqual(keyActions("key", true), { set: "换 key", clear: true });
   assert.deepEqual(keyActions("unreadable", true), { set: "换 key", clear: false });
-  assert.equal(keyActions("oauth", true), null);
+  assert.deepEqual(keyActions("oauth", true), { set: null, clear: true });
   for (const k of ["key", "none", "unreadable", "oauth"] as const) assert.equal(keyActions(k, false), null);
 });
 
-test("models: 没配 key 的供应商，选中时给提示；配了的没有提示", () => {
+test("models: 没配 key 的供应商，选中时给提示；配了的（key 或 OAuth 登录）没有提示", () => {
   assert.equal(keyHint("key"), null);
+  assert.equal(keyHint("oauth"), null);
   assert.match(keyHint("none")!, /还没配 key.*第一次调模型时会出错.*设置里填/);
-  assert.match(keyHint("oauth")!, /OAuth.*不支持/);
   assert.match(keyHint("unreadable")!, /字面量/);
 });
 

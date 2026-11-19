@@ -1,7 +1,7 @@
 // 模型选择器和思考强度：新建预设、改预设、改这个会话、换模型共用。
 // 选择器是一个字段加一块展开的面板：按供应商分组、可以搜索、顶上是最近用过的；每行写窗口、能不能收图、支持的思考级别。
 import { html, Icon, useState, useEffect, useRef, Fragment } from "./common.js";
-import { LEVELS, filterCatalog, findModel, formatWindow, keyHint, keyLabel, nearestLevel, recentEntries, sortProviders } from "../lib/models.js";
+import { LEVELS, configured, filterCatalog, findModel, formatWindow, keyHint, keyLabel, nearestLevel, recentEntries, sortProviders } from "../lib/models.js";
 
 /** 思考级别的两字缩写，六格固定的位置：亮的是这个模型支持的。 */
 const LV_SHORT = { minimal: "MN", low: "LO", medium: "MD", high: "HI", xhigh: "XH", max: "MX" };
@@ -63,7 +63,7 @@ export function ModelPicker({ app, value, onPick, label = "模型", tag = null }
 
   return html`<div class="field mp" ref=${root}>
     <span id="mp-label" class="fl">${label}${tag}</span>
-    <button type="button" autofocus class=${`mp-cur ${(found && found.provider.key !== "key") || value === "" ? "off" : ""}`} aria-expanded=${open} aria-labelledby="mp-label" onClick=${() => setOpen(!open)}>
+    <button type="button" autofocus class=${`mp-cur ${(found && !configured(found.provider.key)) || value === "" ? "off" : ""}`} aria-expanded=${open} aria-labelledby="mp-label" onClick=${() => setOpen(!open)}>
       <span class="mp-prov label">${found ? found.provider.name : value === "" ? "NONE" : "CUSTOM"}</span>
       <span class="mp-main">
         <b class="mp-name">${found ? found.model.name : value || "还没有选"}</b>
@@ -89,10 +89,10 @@ export function ModelPicker({ app, value, onPick, label = "模型", tag = null }
         ${groups.length === 0 && html`<p class="mp-none">没有匹配的模型。</p>`}
         ${groups.map(
           (p) => html`<${Fragment} key=${p.id}>
-            <div class=${`mp-gh ${p.key === "key" ? "" : "off"}`}><span class="mp-gn">${p.name}</span><span class="label dim">${p.id}</span><span class="sep"></span><span class=${`tag ${p.key === "key" ? "acc" : "line"}`}>${keyLabel(p.key)}</span></div>
+            <div class=${`mp-gh ${configured(p.key) ? "" : "off"}`}><span class="mp-gn">${p.name}</span><span class="label dim">${p.id}</span><span class="sep"></span><span class=${`tag ${configured(p.key) ? "acc" : "line"}`}>${keyLabel(p.key)}</span></div>
             ${p.models.map((m) => {
               const ref = `${p.id}/${m.id}`;
-              return html`<button type="button" role="option" key=${ref} class=${`mp-row ${p.key === "key" ? "" : "off"}`} aria-selected=${ref === value} onClick=${() => pick(ref)}>
+              return html`<button type="button" role="option" key=${ref} class=${`mp-row ${configured(p.key) ? "" : "off"}`} aria-selected=${ref === value} onClick=${() => pick(ref)}>
                 <span class="mp-rn"><b>${m.name}</b><span class="mono">${m.id}</span></span>
                 <${Facts} m=${m} />
               </button>`;

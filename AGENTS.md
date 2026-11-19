@@ -79,7 +79,7 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 **边界与存储**（第 2 节、第 7 节、第 9 到 11 节）
 
 - `self` 只读，这是接口的范围，不是权限边界。没有沙箱。不做能被 bash 绕过的假边界。
-- 预设是 `~/.tau/presets/` 下的文件，工具定义是 `~/.tau/tools/` 下的文件，上层的数据在 `~/.tau/extras/<名字>/`，其余数据都在 `~/.tau/tau.db`，包括图片（`blobs` 表）。项目目录里不写任何东西。
+- 预设是 `~/.tau/presets/` 下的文件，工具定义是 `~/.tau/tools/` 下的文件，上层的数据在 `~/.tau/extras/<名字>/`，凭据（api key 和 OAuth 令牌）在 `~/.tau/auth.json`（[D83](.knowledge/kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)，这是唯一一个不进库的内核数据），其余数据都在 `~/.tau/tau.db`，包括图片（`blobs` 表）。项目目录里不写任何东西。
 - 服务只在命名管道上监听，监听成功才算持锁。MVP 只支持 Windows。
 
 ## 准入规则

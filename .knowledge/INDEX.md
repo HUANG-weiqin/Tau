@@ -1,6 +1,6 @@
 # Tau Knowledge Index
 
-`updated: 2026-11-18`
+`updated: 2026-11-19`
 
 知识库记录当前架构、已做的决定和容易破坏的不变量。源码和测试是实现证据。[MVP 设计稿](../docs/design/mvp.md)描述 MVP 要做成什么样。[内核 v2 设计稿](../docs/design/kernel-v2.md)已冻结，只留指向 kb 页的链接。[v2 执行清单](../docs/plan/kernel-v2-checklist.md)记录按什么顺序做。
 
@@ -23,6 +23,7 @@
 | 改记忆：接口、上限、视图格式、版本号 | [kb-memory.md](kb-memory.md) |
 | 改内核契约、判断一个改动算不算改契约 | [kb-contract.md](kb-contract.md) |
 | 做上层建筑（`extras/`） | [kb-extras.md](kb-extras.md) |
+| 接新供应商的认证、登录、登出、凭据文件（`~/.tau/auth.json`）、OAuth 令牌刷新 | [kb-service 的启动脚本和入口](kb-service.md#启动脚本和入口)、[kb-extras 的认证](kb-extras.md#认证)、[D83](kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的) |
 | 做图形界面（调度台） | [界面设计稿](../docs/design/gui.md)，再读 [kb-gui.md](kb-gui.md) 和 [kb-extras.md](kb-extras.md)；按什么顺序做见[界面执行清单](../docs/plan/gui-checklist.md) |
 | 改预设的格式和读取规则 | [设计稿第 2 节](../docs/design/mvp.md#2-预设) |
 | v2 为什么这样设计、冻结了什么、每个原语为什么在内核 | [kb-contract.md](kb-contract.md)、[D47](kb-decisions.md#d47-v2-的来由六个缺口和-v1v2-的对照) |
@@ -47,12 +48,12 @@
 | [kb-executor.md](kb-executor.md) | 待办副作用表一行的一生、执行器的三个事务、中止、失败怎样变成结果、模型和库外工具的调用、启动恢复、崩溃窗口、崩溃注入和竞态测试 |
 | [kb-memory.md](kb-memory.md) | `Memory` 接口的语义和契约、谁有记忆库、四个上限和 `set` 的检查顺序、视图的格式（索引）、版本号、键和值的编码 |
 | [kb-tools.md](kb-tools.md) | 工具定义（`~/.tau/tools/`）的格式、读取、大小上限和运行（标准输入、text 和 content 输出、带图的结果、声明库内动作的 `call` 项，契约原文）；`read`、`write`、`edit`、`bash` 的接口、行为和结果文本；参数被 pi-ai 改写的方式；路径解析；编码和换行；bash 用哪个 shell、包装脚本、超时、中止、怎样结束进程、输出上限、后台进程 |
-| [kb-service.md](kb-service.md) | 服务的启动顺序、`pump`、观察者和最终回复、线协议和请求校验、`inspect`、`check`、`memory`、`memory_write`、调用方定的 ID、`watch` 的追加消息和流式种类、`fork` 请求（参数、拒绝的情形、回执）、`reconfigure` 请求（校验、新快照的构造、回执）、`backup` 请求、删除请求（`prune`、`remove`、`sweep`）、历史和订阅、图片的入口检查和 `blob` 请求、进程 ID、流式文本、CLI 的命令、输出和退出码、`tau ps` 的文字格式、启动脚本、正常退出 |
+| [kb-service.md](kb-service.md) | 服务的启动顺序、`pump`、观察者和最终回复、线协议和请求校验、`inspect`、`check`、`memory`、`memory_write`、调用方定的 ID、`watch` 的追加消息和流式种类、`fork` 请求（参数、拒绝的情形、回执）、`reconfigure` 请求（校验、新快照的构造、回执）、`backup` 请求、删除请求（`prune`、`remove`、`sweep`）、历史和订阅、图片的入口检查和 `blob` 请求、进程 ID、流式文本、CLI 的命令、输出和退出码、`tau ps` 的文字格式、启动脚本、正常退出、凭据文件 `~/.tau/auth.json` 的读写、锁和原子写 |
 | [kb-gui.md](kb-gui.md) | 图形界面的代码在哪、怎么启动、HTTP 桥的路由和接口、界面数据文件的键、页面的模块划分和数据流、界面的测试 |
 | [kb-decisions.md](kb-decisions.md) | 决定的理由、核实过的事实、放弃的方案、未确认的默认值；v2 的来由和六个缺口（D47）、核实时对照的文档估算和需求来源（D48）；v2 也不做的三张表（D46） |
 | [kb-piweb-lessons.md](kb-piweb-lessons.md) | Pi Web 的实测问题，以及 tau 对应的规则 |
 | [kb-contract.md](kb-contract.md) | 冻结的内核契约清单、目标和不变量、每个原语为什么在内核、参与启动检查的量、改契约的程序、不算改契约的事、推导测试的做法、风险表 |
-| [kb-extras.md](kb-extras.md) | 上层建筑（`extras/`）放在哪、依赖规则、Pi Web 功能在 v2 上的做法和代价、上层命令行 `tx` 的约定、多 Agent 等待、后台命令和完成通知的配方、派工隔离的配方（git worktree）、工具库（含换段以后查旧段的提示）、备份脚本和计划任务、HTTP 桥的检查 |
+| [kb-extras.md](kb-extras.md) | 上层建筑（`extras/`）放在哪、依赖规则、Pi Web 功能在 v2 上的做法和代价、上层命令行 `tx` 的约定、多 Agent 等待、后台命令和完成通知的配方、派工隔离的配方（git worktree）、工具库（含换段以后查旧段的提示）、备份脚本和计划任务、认证（登录脚本和凭据库的拷贝）、HTTP 桥的检查 |
 | [kb-extending.md](kb-extending.md) | 扩展的核心原则、取舍顺序（放内核还是上层）、加功能的推导顺序、大致方向 |
 | [_template.md](_template.md) | 新页模板 |
 

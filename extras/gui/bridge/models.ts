@@ -1,4 +1,4 @@
-// 模型目录和 key 状态。目录来自 pi-ai 的公开函数，进程启动时算一次；key 状态每次现读 pi 的 auth.json。
+// 模型目录和 key 状态。目录来自 pi-ai 的公开函数，进程启动时算一次；key 状态每次现读 tau 的 auth.json（D83）。
 // 只看每个条目的 provider 名、`type`，以及 key 能不能被 tau 读：key 的值不出这个文件。
 import { readFileSync } from "node:fs";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
@@ -18,7 +18,7 @@ export interface CatalogProvider {
   name: string;
   models: ModelInfo[];
 }
-/** `key`：已配、OAuth（tau 不支持，当作没配）、没配、tau 读不了。 */
+/** `key`：已配 api_key、`oauth`：已用 OAuth 登录、没配、tau 读不了。 */
 export type KeyStatus = "key" | "oauth" | "none" | "unreadable";
 
 export function buildCatalog(): CatalogProvider[] {
@@ -37,12 +37,13 @@ export function buildCatalog(): CatalogProvider[] {
   return out;
 }
 
-/** 和 src/server/credentials.ts 的规则一致：`!` 开头或含 `$` 的 key，tau 不解析。 */
+/** 和凭据库 `read` 的检查一致（src/server/credentials.ts）：OAuth 缺字段、key 不是字符串、`!` 开头或含 `$` 的 key，tau 读不了。只有 `env` 没有 `key` 的条目（例如 cloudflare 的账号 ID）pi-ai 读得了。 */
 function keyStatus(c: unknown): KeyStatus {
   if (!isObject(c)) return "none";
-  if (c.type === "oauth") return "oauth";
+  if (c.type === "oauth") return typeof c.access === "string" && typeof c.refresh === "string" && typeof c.expires === "number" ? "oauth" : "unreadable";
   if (c.type !== "api_key") return "none";
   const key = c.key;
+  if (key === undefined) return isObject(c.env) ? "key" : "none";
   if (typeof key !== "string") return "unreadable";
   return key.startsWith("!") || key.includes("$") ? "unreadable" : "key";
 }
@@ -61,7 +62,7 @@ export function readKeys(file: string): { keys: Map<string, KeyStatus>; auth: { 
   try {
     raw = JSON.parse(text);
   } catch {
-    return { keys, auth: { ok: false, error: "auth.json 不是合法的 JSON，pi 正在写这个文件时也会这样" } };
+    return { keys, auth: { ok: false, error: "auth.json 不是合法的 JSON" } };
   }
   if (!isObject(raw)) return { keys, auth: { ok: false, error: "auth.json 的顶层不是 JSON 对象" } };
   for (const [id, c] of Object.entries(raw)) keys.set(id, keyStatus(c));

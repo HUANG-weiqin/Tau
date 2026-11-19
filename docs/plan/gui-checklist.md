@@ -89,7 +89,7 @@
 
 ## 第 6 步：第一批工作台功能
 
-只用 API key；不做 OAuth 订阅，不管本地模型。key 继续放在 pi 的 `auth.json`，界面只显示配了没有，这一批不改 key。界面不显示 token 和费用。内核 `src/` 不动。
+只用 API key；不做 OAuth 订阅，不管本地模型。key 当时放在 pi 的 `auth.json`，界面只显示配了没有，这一批不改 key（[D83](../../.knowledge/kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的) 起放 `~/.tau/auth.json`，支持 OAuth）。界面不显示 token 和费用。内核 `src/` 不动。
 
 - [x] 桥：`/api/models`（pi-ai 的目录，加每家的 key 状态，key 的值不出桥）。`extras/package.json` 加 pi-ai，锁 1.0.0。
 - [x] 桥：`/api/presets/update`（只换收到的字段，写完 `check`，不行改回旧文件）；新建预设也收 `thinking`、`handoff`、`options`。
@@ -99,8 +99,9 @@
 - [x] 换模型：铭牌上的按钮，改预设再带 `preset` 分叉，或者换同项目的另一个预设分叉。
 - [x] 设置：默认模型、默认思考强度、供应商和 key 状态（只读）、清理天数；`Ctrl+,`。
 - [x] 测试：桥（目录、key 状态不泄漏、改预设和改回去、新建带新字段）；纯逻辑（窗口、最近一档、搜索、排序、最近用过、默认模型、表单变请求、换模型的补丁）。
-- [ ] 以后：本地模型；OAuth 订阅。
-- [x] 界面填写和清除 api_key（[D69](../../.knowledge/kb-decisions.md#d69-界面可以填写和清除-api_key)）：桥 `keys/set`、`keys/clear`，设置页每家一行的填、换、清；测试要覆盖：值不进回复和错误、坏文件不覆盖、oauth 不碰、其它条目原样、`!` 和 `$` 拒绝。
+- [ ] 以后：本地模型。
+- [x] OAuth 订阅：tau 自己的凭据文件，终端登录脚本，设置页显示“已登录”、可登出（[D83](../../.knowledge/kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)）。界面里登录以后再做。
+- [x] 界面填写和清除 api_key（[D69](../../.knowledge/kb-decisions.md#d69-界面可以填写和清除-api_key)）：桥 `keys/set`、`keys/clear`，设置页每家一行的填、换、清；测试要覆盖：值不进回复和错误、坏文件不覆盖、其它条目原样、`!` 和 `$` 拒绝（oauth 不碰，D83 起改成：填 key 拒绝、清掉就是登出）。
 
 **验收**：在测试服务上，从界面走完一遍：改预设的模型，看到检查条；故意填一个装不下的换段阈值，看到错误原文、文件改回；给一个出错的进程换模型，聚焦到新进程。
 

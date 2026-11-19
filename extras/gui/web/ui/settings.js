@@ -3,7 +3,7 @@
 import { html, Popover, DlgHead, SecHead, Pill, useState, useRef, useEffect, Fragment } from "./common.js";
 import { CheckStrip } from "./presetform.js";
 import { ModelPicker, ThinkingBar, thinkingFor } from "./modelpicker.js";
-import { findModel, keyActions, keyLabel, sortProviders } from "../lib/models.js";
+import { configured, findModel, keyActions, keyLabel, sortProviders } from "../lib/models.js";
 import { setKey, clearKey } from "../api.js";
 
 /** @param {unknown} e */
@@ -62,6 +62,7 @@ function KeyEdit({ p, app, onDone, onCancel }) {
  */
 function ProviderRow({ p, app, authOk, editing, setEditing }) {
   const acts = keyActions(p.key, authOk);
+  const out = p.key === "oauth";
   const open = editing === p.id && acts !== null;
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -94,16 +95,16 @@ function ProviderRow({ p, app, authOk, editing, setEditing }) {
     setConfirm(false);
   };
 
-  return html`<li class=${`st-row ${p.key === "key" ? "" : "off"}`}>
+  return html`<li class=${`st-row ${configured(p.key) ? "" : "off"}`}>
     <span class="st-n"><b>${p.name}</b><span class="mono ell">${p.id}</span></span>
     <span class="ct mono">${p.models.length}</span>
-    <span class=${`tag ${p.key === "key" ? "acc" : p.key === "none" ? "line" : "warn"}`} aria-live="polite">${keyLabel(p.key)}</span>
+    <span class=${`tag ${configured(p.key) ? "acc" : p.key === "none" ? "line" : "warn"}`} aria-live="polite">${keyLabel(p.key)}</span>
     ${acts && html`<span class="st-acts">
-      <button type="button" class="link" ref=${setBtn} aria-expanded=${open} aria-label=${`${acts.set === "填 key" ? "填" : "换"} ${p.name} 的 key`} disabled=${busy} onClick=${toggleSet}>${acts.set}</button>
-      ${acts.clear && html`<button type="button" class=${`link ${confirm ? "warn" : ""}`} aria-label=${confirm ? `确定清掉 ${p.name} 的 key？` : `清掉 ${p.name} 的 key`} disabled=${busy} onClick=${clear} onBlur=${() => !busy && setConfirm(false)}>${confirm ? "确定清掉？" : "清掉"}</button>`}
+      ${acts.set && html`<button type="button" class="link" ref=${setBtn} aria-expanded=${open} aria-label=${`${acts.set === "填 key" ? "填" : "换"} ${p.name} 的 key`} disabled=${busy} onClick=${toggleSet}>${acts.set}</button>`}
+      ${acts.clear && html`<button type="button" class=${`link ${confirm ? "warn" : ""}`} aria-label=${confirm ? `确定${out ? "登出" : "清掉"} ${p.name}${out ? "" : " 的 key"}？` : `${out ? "登出" : "清掉"} ${p.name}${out ? "" : " 的 key"}`} disabled=${busy} onClick=${clear} onBlur=${() => !busy && setConfirm(false)}>${confirm ? (out ? "确定登出？" : "确定清掉？") : out ? "登出" : "清掉"}</button>`}
     </span>`}
     ${open && html`<${KeyEdit} p=${p} app=${app} onDone=${closeEdit} onCancel=${closeEdit} />`}
-    ${err !== "" && html`<div class="st-sub"><div class="st-err" role="alert">没有清掉：${err}</div></div>`}
+    ${err !== "" && html`<div class="st-sub"><div class="st-err" role="alert">没有${out ? "登出" : "清掉"}：${err}</div></div>`}
   </li>`;
 }
 
@@ -150,7 +151,7 @@ export function SettingsDialog({ app, onClose }) {
   const notifyWhy = notifyNote !== "" ? notifyNote : notifyOn && perm !== "granted" ? "开关开着，但浏览器没有许可通知，所以不会弹。" : "";
 
   const sorted = providers ? sortProviders(providers) : [];
-  const ready = sorted.filter((p) => p.key === "key").length;
+  const ready = sorted.filter((p) => configured(p.key)).length;
   const auth = app.models?.auth;
   const [editing, setEditing] = useState(/** @type {string | null} */ (null));
 
@@ -175,13 +176,13 @@ export function SettingsDialog({ app, onClose }) {
         ${providers === null
           ? html`<p class="dnote">${app.modelsError !== null ? `读不到模型目录：${app.modelsError}` : "正在读模型目录…"}</p>`
           : html`<${Fragment}>
-              <div class="st-big"><span class=${`num ${ready > 0 ? "ok" : ""}`}>${ready}</span><span class="dnote">家配了 key，共 ${providers.length} 家</span></div>
+              <div class="st-big"><span class=${`num ${ready > 0 ? "ok" : ""}`}>${ready}</span><span class="dnote">家配好了，共 ${providers.length} 家</span></div>
               <ul class="st-prov" aria-label="供应商和 key 状态">
                 ${sorted.map((p) => html`<${ProviderRow} key=${p.id} p=${p} app=${app} authOk=${auth?.ok !== false} editing=${editing} setEditing=${setEditing} />`)}
               </ul>
             </${Fragment}>`}
         ${auth && !auth.ok && html`<${CheckStrip} ok=${false} text=${auth.error} label="auth.json" />`}
-        <p class="dnote">key 写在 pi 的 <span class="mono">~/.pi/agent/auth.json</span> 里。tau 只动 api_key 条目，OAuth 的不碰。改完不用重启。界面不显示 key。</p>
+        <p class="dnote">key 和登录都存在 <span class="mono">~/.tau/auth.json</span>。OAuth 登录在终端里做：<span class="mono">node extras/auth/login.ts login 供应商 ID</span>。改完不用重启。界面不显示 key。</p>
 
         <${SecHead} n="04" title="完成通知" en="NOTIFY" />
         <div class="cl-days soft">

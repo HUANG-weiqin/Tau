@@ -77,7 +77,7 @@
 
 - [x] 核实 pi-ai 的消息格式，定下 `segment_messages` 的存储格式（[D21](../../.knowledge/kb-decisions.md#d21-第-3-步定下的事)）。
 - [x] 核实连续多条用户消息（模型出错后再发消息、交接指令接在用户消息后面），pi-ai 能否正确转换给用到的模型。只核实了 opencode-go/deepseek-v4.1-flash（[D24](../../.knowledge/kb-decisions.md#d24-真模型验收)）。
-- [x] 认证：只读复用 pi 的凭据文件里的 `api_key` 条目，没有时用环境变量（[D23](../../.knowledge/kb-decisions.md#d23-凭据只读复用-pi-的凭据文件)）。
+- [x] 认证：只读复用 pi 的凭据文件里的 `api_key` 条目，没有时用环境变量（[D23](../../.knowledge/kb-decisions.md#d23-凭据只读复用-pi-的凭据文件)）。（2026-11-19 起换成 tau 自己的凭据文件，读写，支持 OAuth：[D83](../../.knowledge/kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)。）
 - [x] 模型适配：`builtinModels()`（`@earendil-works/pi-ai/providers/all`）的模型目录加 `streamSimple`；按模型 ID 从目录取模型，查不到就上报 `error`；流式文本转发给观察者；助手消息原样存进工作段。
 - [x] 预设读取：3 个字段的前置信息，未知字段报错；启动时从模型目录查出 `contextWindow` 冻结进快照，查不到就启动失败。
 - [x] 4 个工具：`read`、`write`、`edit`、`bash`。定下 bash 用哪个 shell（[D21](../../.knowledge/kb-decisions.md#d21-第-3-步定下的事)）。

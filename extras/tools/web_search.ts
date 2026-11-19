@@ -1,5 +1,5 @@
 // web_search：联网搜索（kb-extras 的“工具库”，D79）。按顺序试后端，第一个成功的就是答案：
-// Tavily（环境变量 TAVILY_API_KEY），再 Anthropic（环境变量 ANTHROPIC_API_KEY，或 pi 的 auth.json 里的 api_key）。
+// Tavily（环境变量 TAVILY_API_KEY），再 Anthropic（环境变量 ANTHROPIC_API_KEY，或 ~/.tau/auth.json 里的 api_key）。
 // 不需要服务：不读 TAU_PROCESS 和管道。
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -83,12 +83,12 @@ async function anthropic(key: string, query: string): Promise<Found> {
   return parseAnthropic(j);
 }
 
-/** pi 的凭据文件里 anthropic 的 api_key。文件不在、读不出、key 是命令写法（`!` 开头）都当没有。 */
+/** ~/.tau/auth.json 里 anthropic 的 api_key。文件不在、读不出、key 是命令写法（`!` 开头）都当没有。 */
 async function anthropicKey(): Promise<string | undefined> {
   const env = process.env.ANTHROPIC_API_KEY;
   if (env !== undefined && env !== "") return env;
   try {
-    const c = JSON.parse(await readFile(path.join(homedir(), ".pi", "agent", "auth.json"), "utf8"))?.anthropic;
+    const c = JSON.parse(await readFile(path.join(homedir(), ".tau", "auth.json"), "utf8"))?.anthropic;
     return c?.type === "api_key" && typeof c.key === "string" && c.key !== "" && !c.key.startsWith("!") ? c.key : undefined;
   } catch {
     return undefined;
@@ -137,7 +137,7 @@ export async function search(query: string): Promise<string> {
   if (failed.length > 0) throw new Fail(`搜索失败。\n${failed.join("\n")}`);
   throw new Fail(
     "没有可用的搜索后端。任选一个配好：环境变量 TAVILY_API_KEY（tavily.com，每月 1000 次免费，不绑卡）；环境变量 ANTHROPIC_API_KEY；" +
-      "或者在 pi 的 auth.json 里放 anthropic 的 api_key。环境变量要重启 tau 服务才进得来工具，auth.json 随时生效。",
+      "或者在 ~/.tau/auth.json 里放 anthropic 的 api_key（界面设置里填，或 node extras/auth/login.ts login anthropic api_key）。环境变量要重启 tau 服务才进得来工具，auth.json 随时生效。",
   );
 }
 

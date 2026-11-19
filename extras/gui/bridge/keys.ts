@@ -1,76 +1,40 @@
-// 填写和清除 pi 的 auth.json 里的 api_key（D69）。只动这一家的 `api_key` 条目，其它条目原样带回。
-// 读、改、写之间没有 await；先写临时文件再改名。key 的值不进返回值、错误文字。不导入 src/。
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import path from "node:path";
-import { HttpError, isObject } from "./util.ts";
+// 填写和清除 ~/.tau/auth.json 里的 api_key，登出 OAuth（D69、D83）。读、改、写都走凭据库的 modify：持锁，先写临时文件再改名。
+// key 的值不进返回值、错误文字。不导入 src/。
+import type { CredentialStore } from "@earendil-works/pi-ai";
+import { checkKey as check } from "../../auth/key.ts";
+import { HttpError } from "./util.ts";
 
-const KEY_MAX_BYTES = 4096;
-const OAUTH = "OAuth 登录的，tau 不改";
-const NOT_API_KEY = "这一家的条目不是 api_key，tau 不改";
-
-/** 返回存进去的值（trim 后）。错误文字里没有 key 的任何字符。 */
+/** 检查不过是 400。规则在 extras/auth/key.ts，登录脚本共用。 */
 function checkKey(key: unknown): string {
-  if (typeof key !== "string") throw new HttpError(400, "key 必须是字符串");
-  const k = key.trim();
-  if (k === "") throw new HttpError(400, "key 不能是空的");
-  if (/[\u0000-\u001f\u007f]/.test(k)) throw new HttpError(400, "key 里不能有控制字符或换行");
-  if (Buffer.byteLength(k) > KEY_MAX_BYTES) throw new HttpError(400, `key 超过 ${KEY_MAX_BYTES} 字节`);
-  if (k.startsWith("!") || k.includes("$")) throw new HttpError(400, "key 不能以 ! 开头或含 $：tau 不执行命令也不展开变量");
-  return k;
-}
-
-/** 读整个文件。文件不存在是 `{}`；读不出、不是合法 JSON、顶层不是对象都拒绝，原因不带文件内容。 */
-function readAll(file: string): Record<string, unknown> {
-  let text: string;
   try {
-    text = readFileSync(file, "utf8");
+    return check(key);
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return {};
-    throw new HttpError(409, "读不了 auth.json，没有改它");
+    throw new HttpError(400, e instanceof Error ? e.message : String(e));
   }
-  let raw: unknown;
+}
+
+/** 凭据库的错误（文件坏了、被占着、写不了）原样告诉用户，说明没有改。错误文字不带文件内容。 */
+async function guard(op: () => Promise<unknown>): Promise<void> {
   try {
-    raw = JSON.parse(text);
-  } catch {
-    throw new HttpError(409, "auth.json 不是合法的 JSON，没有改它。pi 正在写这个文件时也会这样，稍后再试");
-  }
-  if (!isObject(raw)) throw new HttpError(409, "auth.json 的顶层不是 JSON 对象，没有改它");
-  return raw;
-}
-
-function writeAll(file: string, obj: Record<string, unknown>): void {
-  const tmp = `${file}.tmp`;
-  try {
-    mkdirSync(path.dirname(file), { recursive: true });
-    writeFileSync(tmp, `${JSON.stringify(obj, null, 2)}\n`);
-    renameSync(tmp, file);
-  } catch {
-    try {
-      rmSync(tmp, { force: true });
-    } catch {}
-    throw new HttpError(500, "写不了 auth.json");
+    await op();
+  } catch (e) {
+    if (e instanceof HttpError) throw e;
+    throw new HttpError(409, `${e instanceof Error ? e.message : String(e)}没有改它。`);
   }
 }
 
-/** 这一家已有的条目：必须没有，或者是 api_key。 */
-function existing(obj: Record<string, unknown>, provider: string): Record<string, unknown> | undefined {
-  if (!Object.hasOwn(obj, provider)) return undefined;
-  const c = obj[provider];
-  if (isObject(c) && c.type === "api_key") return c;
-  throw new HttpError(409, isObject(c) && c.type === "oauth" ? OAUTH : NOT_API_KEY);
-}
-
-export function setKey(file: string, provider: string, key: unknown): void {
+/** 这一家已有 api_key 条目的其它字段（例如 `env`）原样留着，只换 key。已经是 OAuth 登录的，先登出。 */
+export async function setKey(store: CredentialStore, provider: string, key: unknown): Promise<void> {
   const k = checkKey(key);
-  const obj = readAll(file);
-  const have = existing(obj, provider);
-  obj[provider] = have === undefined ? { type: "api_key", key: k } : { ...have, key: k };
-  writeAll(file, obj);
+  await guard(() =>
+    store.modify(provider, async (cur) => {
+      if (cur?.type === "oauth") throw new HttpError(409, "这一家是 OAuth 登录的，先登出再填 key");
+      return { ...cur, type: "api_key", key: k };
+    }),
+  );
 }
 
-export function clearKey(file: string, provider: string): void {
-  const obj = readAll(file);
-  if (existing(obj, provider) === undefined) return;
-  delete obj[provider];
-  writeAll(file, obj);
+/** 清掉 api_key，或登出 OAuth：删掉这一家的条目，别家原样。没有这一家就什么也不做。 */
+export async function clearKey(store: CredentialStore, provider: string): Promise<void> {
+  await guard(() => store.delete(provider));
 }

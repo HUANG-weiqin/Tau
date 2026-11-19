@@ -194,7 +194,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 - 删除原语是冻结以后第一次改契约，见 [D59](kb-decisions.md#d59-删除原语旧段和空闲进程)。第二次是内核的四类自由度，见 [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)，它也改了目标 4。第三次是会话配置、上下文文件和 `backup`，见 [D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)、[D72](kb-decisions.md#d72-上下文文件开段重读)、[D73](kb-decisions.md#d73-backup-请求)，它改了不变量 6，给不变量 9 加了一个例外；推导测试见 D75。迁移的规矩是 [D74](kb-decisions.md#d74-迁移的规矩)，不改契约。第四次是记忆视图改成索引，见 [D81](kb-decisions.md#d81-记忆视图改成索引键更新日期字节数摘要)（第一次真迁移），它改了表结构和视图格式；推导测试的受试者换成 deepseek-v4.1-flash，通过，有一处保留，记在 D81 末尾。
 - 常量的状态（已定、暂定）只写在 [kb-kernel 的常量](kb-kernel.md#常量)的表里，这里不重复。
 - 常量的出处：`IMAGE_TOKENS` 见 [D42](kb-decisions.md#d42-第-6-步量-image_tokens核实收图片)；图片的其余常量和 `HOPS_MAX` 见 [kb-kernel 的常量](kb-kernel.md#常量)和 [kb-service 的图片](kb-service.md#图片)；`MESSAGE_MAX_BYTES` 见 [D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)；工具定义的两个上限见 [kb-tools 的工具定义](kb-tools.md#工具定义)。
-- `WATCH_BUFFER_MAX`、`MODEL_RETRIES` 和 OAuth 订阅：[未确认的默认值](kb-decisions.md#未确认的默认值)。
+- `WATCH_BUFFER_MAX`、`MODEL_RETRIES` 和 OAuth 订阅（[D83](kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)，凭据文件不在契约清单里）：[未确认的默认值](kb-decisions.md#未确认的默认值)。
 
 ## 认知模型
 

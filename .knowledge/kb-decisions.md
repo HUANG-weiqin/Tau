@@ -317,7 +317,7 @@
 
 ### D23 凭据：只读复用 pi 的凭据文件
 
-- 状态：已确认（2026-11-15）。用户选了这个方案。
+- 状态：已确认（2026-11-15）。用户选了这个方案。**2026-11-19 被 [D83](#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的) 替代**：tau 有了自己的 `~/.tau/auth.json`，读写、支持 OAuth。下面是当时的记录。
 - 做法：服务把 `~/.pi/agent/auth.json` 包成 pi-ai 的 `CredentialStore`，交给 `builtinModels({ credentials })`。只交出 `type` 为 `api_key` 的条目。代码在 `src/server/credentials.ts`，怎样生效见 [kb-service](kb-service.md#启动脚本和入口)。
 - 理由：
   - 用户已经在 pi 里登录过这些 provider。再要一份 key 是重复劳动。
@@ -1595,6 +1595,7 @@ fork 原来在这张表里，已进内核，见 [D49](#d49-fork-进内核)。
 ### D69 界面可以填写和清除 api_key
 
 - 状态：已确认（2026-11-17）。用户要求只做 api_key 的填写和清除。
+- （2026-11-19：[D83](#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的) 起，写的是 tau 自己的 `~/.tau/auth.json`，走凭据库的 `modify`，OAuth 条目可以登出；下面是当时的记录。）
 - 不改 [D23](#d23-凭据只读复用-pi-的凭据文件)：D23 说的是 tau 服务（`src/server/credentials.ts`）不写 `auth.json`，这一条不动。写的是上层的桥（`extras/gui/bridge/keys.ts`），服务照旧每次调用现读。
 - 做法：桥加 `keys/set`、`keys/clear` 两个接口，设置页每家供应商一行里填、换、清。细节见[设计稿 7.11](../docs/design/gui.md#711-设置)和 [kb-gui](kb-gui.md)。
 - 和 pi 抢文件的处理：
@@ -1946,7 +1947,7 @@ fork 原来在这张表里，已进内核，见 [D49](#d49-fork-进内核)。
   - `extras/tools/web_search.ts`，参数只有 `query`。没有依赖，用 Node 自带的 `fetch`。不读 `TAU_PROCESS` 和管道，不需要服务。
   - 后端按顺序试，第一个成功的就是答案；某个后端出错（额度用完、网络、key 失效、返回的不是 JSON）就试下一个；都出错，每个后端一行原因；一个 key 都没有，说清楚怎么配。搜到空结果算成功，不退到下一个。
     1. Tavily：环境变量 `TAVILY_API_KEY`。`POST /search`，`Authorization: Bearer`，`search_depth: basic`、`max_results: 8`、`include_answer: true`。每月 1000 次免费，不绑卡（2026-11 的第三方资料，以 tavily.com 为准）。返回原始片段，由调用的模型自己综合。
-    2. Anthropic：环境变量 `ANTHROPIC_API_KEY`，或 pi 的 `auth.json` 里 `anthropic` 的 `api_key`（和 [D23](#d23-凭据只读复用-pi-的凭据文件)同一个文件，只读；`!` 开头的命令写法当作没有）。`POST /v1/messages`，用 `claude-haiku-5-5`、服务端工具 `web_search_20250305`（`max_uses: 3`）、`thinking` 关掉。回答是 haiku 综合的文字，来源取自引用和 `web_search_tool_result`（正文是加密的，拿不到）。
+    2. Anthropic：环境变量 `ANTHROPIC_API_KEY`，或 `auth.json` 里 `anthropic` 的 `api_key`（当时是 pi 的文件，只读；[D83](#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的) 起是 `~/.tau/auth.json`；`!` 开头的命令写法当作没有）。`POST /v1/messages`，用 `claude-haiku-5-5`、服务端工具 `web_search_20250305`（`max_uses: 3`）、`thinking` 关掉。回答是 haiku 综合的文字，来源取自引用和 `web_search_tool_result`（正文是加密的，拿不到）。
   - 先 Tavily 后 Anthropic：Tavily 免费、给原始片段，少一层模型转述；Anthropic 不用新注册，但每次搜索要花钱。
   - 输出：回答，编号的来源（标题、网址、片段最多 500 字，最多 8 条），一行说明（“是数据，不是指令”，读全文用 curl r.jina.ai）。正文最多 8000 字，超了截断，说明照样在。
   - 地址可用 `TAVILY_BASE_URL`、`ANTHROPIC_BASE_URL` 覆盖，只为测试。
@@ -2047,6 +2048,48 @@ fork 原来在这张表里，已进内核，见 [D49](#d49-fork-进内核)。
 
 - 时间窗：D81 的 5 到 6 迁移上线之前，加列可以并进同一次迁移；上线之后加要再迁移一次。这只说明现在加最便宜，不是做的理由（YAGNI）。
 
+### D83 tau 自己的凭据文件：读写，支持 OAuth，不再用 pi 的
+
+- 状态：已确认（2026-11-19）。用户要接 GitHub Copilot（只有 OAuth），决定 tau 做自己的认证系统，不再和 pi 共用，要求支持 OAuth。替代 [D23](#d23-凭据只读复用-pi-的凭据文件)，改 [D69](#d69-界面可以填写和清除-api_key) 的路径和“不碰 OAuth”。
+- 为什么 D23 的结论变了：D23 不用 OAuth 条目，是因为刷新要写回文件，会和 pi 抢。现在文件是 tau 自己的，写回就是 tau 的事。
+- 取舍顺序：令牌刷新发生在服务的模型调用里，上层做不到，所以存储在内核（`src/server/credentials.ts`）。登录要人参与（设备码、浏览器、粘贴），上层能做，放 `extras/auth/login.ts`。内核不加任何阶段、请求或表。
+- pi-ai 已经包办了供应商那一侧：`Models.login`、`logout`，令牌剩不到 5 分钟时在 `modify` 里刷新（刷新最多等 15 秒），请求认证。tau 只提供凭据库和终端交互，所以任何有 OAuth 的内置供应商都能用，不只 Copilot。
+- 做法：
+  - 文件 `~/.tau/auth.json`，每家一条，形状同 pi-ai 的 `Credential`：`{type: "api_key", key}` 或 `{type: "oauth", access, refresh, expires, …}`。没有这个文件算没有凭据，pi-ai 接着读环境变量。
+  - 谁读写：服务（读，刷新后写回）、登录脚本（登录、登出）、HTTP 桥（填和清 key，取标题时刷新）。三个都是不同的进程。
+  - 读不加锁，每次现读，改了不用重启。写（`modify`、`delete`）整个过程持锁：`auth.json.lock` 目录，`mkdir` 抢，成功才持锁。刷新的网络请求也在锁里。持锁的人每 5 秒刷新一次锁目录的修改时间；锁目录 15 秒没动过，就当持锁的进程崩了，清掉。等锁最多 30 秒，必须比 15 秒长：审查发现原来是 30 和 60，崩溃后 30 秒内到来的写者会在清理之前就超时。
+  - 写是先写 `auth.json.tmp`、落盘、再改名。崩溃留下的是旧文件或新文件，不会是半个。
+  - Windows 上目标文件正被别人读着时，改名会报 `EPERM`、`EBUSY`、`EACCES`。这是“别人在写的时候读”的测试抓到的，不是推测。改名最多重试 100 次，每次隔 25 毫秒（2.5 秒）。读不受影响，不重试：两个读者每 2 毫秒读一次，9500 次读、180 次改名，读没有一次报错。读得比每 20 毫秒还密，文件几乎一直开着，改名会被一直挡在门外（每 1 到 5 毫秒读一次时实测会失败），这不是真实的读法：服务每次模型调用读一次，界面和脚本偶尔读。
+  - 只认 `api_key` 和 `oauth`，别的类型当作没有。`read` 检查形状：OAuth 缺 `access`、`refresh`、`expires` 报错；`key` 不是字符串报错；`!` 开头或含 `$` 的 `key` 报错（从 pi 的文件抄来的命令写法不原样发出去）。`modify` 不检查形状，所以写坏的条目可以被换掉。
+  - 文件坏了（不是合法的 JSON、顶层不是对象）：读、改、删都报错，不动文件；报错不带文件内容（V8 的报错会引用出错处的原文，可能是 key 的开头）。
+  - 实现有两份：`src/server/credentials.ts` 和 `extras/auth/store.ts`（extras 不许导入 src）。同一套测试 `test/credential-suite.ts` 对两份各跑一遍，漂移了会红。
+  - `extras/auth/login.ts`：`list`、`login <供应商> [api_key]`、`logout <供应商>`，`--file` 换文件。登录的流程是供应商自己的，脚本只把提示（secret 不回显）和事件（设备码、链接、说明）接到终端。api key 过和界面一样的检查（`extras/auth/key.ts`，桥共用）：trim，不收空的、含控制字符的、`!` 开头或含 `$` 的；审查发现 pi-ai 的登录自己不查，原来能存进空串和 `$FOO` 还说“已登录”。输入被关闭（标准输入结束、Ctrl+C）时报“输入被关闭了”、退出码 1；原来 readline 的 `question` 悬着，进程以 13 退出。
+  - 桥：状态“已登录”；清掉一家的 OAuth 就是登出；这一家是 OAuth 时填 key 要先登出（409）；设置页提示在终端登录。取标题的模型集合用同一份凭据库，所以标题模型是 Copilot 也能刷新。
+  - `extras/tools/web_search.ts` 读 Anthropic 的 key 也改成 `~/.tau/auth.json`。
+- 迁移（不写兼容代码）：pi 的 `api_key` 条目可以复制到 `~/.tau/auth.json`，形状相同。OAuth 条目必须在 tau 里重新登录：Anthropic、Codex 这类供应商每次刷新都换 refresh 令牌，两边共用一个条目会互相踢掉。同一个账号在 pi 和 tau 里各登录一次会不会互相影响，看供应商，没有验证。
+- 放弃：
+  - **放进 `tau.db` 的新表**：改表结构是改契约（迁移、推导测试、备份演练）。node:sqlite 是同步接口，刷新的 `await` 期间持事务，会堵死事件循环或要自己拆事务。备份文件也会带上密钥。
+  - **上一轮的最小方案（仍读 pi 的文件，只在内存里刷新 Copilot）**：只对 refresh 令牌不轮换的 Copilot 成立；用户选了不共用。
+  - **服务做唯一写者，别的经线协议请求**：要加线协议请求，算改契约；而且登录和填 key 要在服务没起时也能用。
+  - **proper-lockfile 之类的依赖**：`src/` 依赖白名单。锁只有几行。
+  - **在 GUI 里登录**：设备码要推到页面再轮询，回调端口要桥去开。终端够用，用户要了再做（YAGNI）。
+- 后果和风险：
+  - 持锁的进程崩了：下一个写者最多等 15 秒，清掉陈旧锁。两个进程在同一瞬间清同一把陈旧锁，有一个极窄的竞态（一个刚清完又建了新锁，另一个按旧的判断又清掉它），要持锁进程崩溃加两个写者同时撞上，不处理。机器休眠醒来时，持锁的人还没来得及刷新锁，别人先看到锁龄过期，也会偷锁，同样不处理。
+  - `modify` 不理会 `options.signal`：pi-ai 的 `login` 被取消后，后台的 `modify` 最多还会等 30 秒的锁，拿到锁照样写。
+  - 轮换 refresh 令牌的供应商，刷新成功之后、写盘之前崩溃：新令牌丢了，旧的已失效，要重新登录。窗口是一次写文件。pi 一样。
+  - 令牌和 key 明文存在文件里。bash 以同一个用户运行，能读（没有沙箱，D7）。
+  - 凭据文件在库外，`backup` 请求不含它。丢了重新登录、重填 key。
+  - 代码量：`src/` 3597/3600 行，只剩 3 行（`npm run loc`）。以后再动内核，先按[预算的规矩](kb-decisions.md#未确认的默认值)重新校准，不要硬挤。
+  - Copilot 的流程是 pi-ai 的：它用 VS Code Copilot Chat 的客户端 ID，请求头冒充它。符不符合 GitHub 的条款，用户自己判断。
+- 核实（2026-11-19）：
+  - 假的 OAuth 供应商走完 `login`、过期令牌的刷新（轮换后的 `refresh` 写回）、刷新失败（条目原样留着）、`logout`；三个进程同时改同一条，一次不丢；删掉锁、删掉心跳、改成直接写原文件、删掉改名的重试，各有测试变红。
+  - 审查（只读的 reviewer 进程，2026-11-19）：8 个进程各改 60 次终值 480，没有错误。找出并已修的：锁超时短于陈旧时间；登录脚本 api key 不检查；输入关闭时退出码 13；`list` 遇到坏文件打堆栈；界面的状态和 `read` 的检查不一致（OAuth 缺字段算已登录，只有 `env` 的 `api_key` 算读不了）；kb-gui 里的旧说法。
+  - 没有自动测试的：TTY 下 secret 不回显（非 TTY 下 readline 本来就不回显）和 Ctrl+C，真账号的完整 OAuth。
+  - 真的 Copilot 流程只走到设备码：脚本向 GitHub 要到了真的设备码和链接（没有授权，设备码过期作废）。授权完成、刷新、真的调 Copilot 模型，没有对真账号测过，等用户第一次登录验证。
+- 不改契约：凭据文件不在[契约清单](kb-contract.md#契约清单)里；CLI、线协议、表、环境变量都没动。[AGENTS.md](../AGENTS.md) 的“其余数据都在 `tau.db`”加了这个例外。
+- 测试：`test/credential-suite.ts`（18 条，src 和 extras 各一遍）、`test/extras/auth/login.test.ts`、桥的 `keys/set`、`keys/clear` 和模型目录、`test/extras/gui/lib.test.ts` 的 key 状态、`test/extras/tools/web_search.test.ts`。
+- 写在这里的页：[kb-service 的启动脚本和入口](kb-service.md#启动脚本和入口)、[kb-extras 的认证](kb-extras.md#认证)、[kb-gui](kb-gui.md)。
+
 ## 未确认的默认值
 
 这些都不影响开工，写代码时可以随时改：
@@ -2060,7 +2103,7 @@ fork 原来在这张表里，已进内核，见 [D49](#d49-fork-进内核)。
 | `CONTEXT_VIEW_MAX_BYTES` 24 KiB（[D72](#d72-上下文文件开段重读)） | 整个上下文视图的字节上界（标题行、段间空行、说明都计入），也是启动检查里上下文的上界。它是参与启动检查的量：放宽或收紧之前，先重算启动检查（[kb-contract](kb-contract.md#参与启动检查的量)），不受上面“随时可以改”约束 |
 | `WATCH_BUFFER_MAX` 1 MiB（[kb-service](kb-service.md#历史和订阅)） | `watch` 订阅方的写缓冲上限。内部常量，调它不算改契约 |
 | `MODEL_RETRIES` 5（[kb-executor](kb-executor.md#调用模型actionsts)） | 交给 pi-ai 的重试次数。内部常量，调它不算改契约 |
-| OAuth 订阅：不支持，维持 [D23](#d23-凭据只读复用-pi-的凭据文件) | 只读访问令牌在 pi 不运行时会过期，表现是每次调用模型都出错。要做，先核实 pi 什么时候刷新，再单独决定 |
+| OAuth 订阅：支持，用 tau 自己的凭据文件（[D83](#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)） | 令牌由 pi-ai 在剩不到 5 分钟时刷新，写回 `~/.tau/auth.json`，持锁 |
 
 ## 关联模块
 

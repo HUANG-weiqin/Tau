@@ -56,8 +56,8 @@ export function findModel(providers, ref) {
   return provider && model ? { provider, model } : null;
 }
 
-/** key 状态的先后：配好的在前，读不了的、OAuth 的次之，没配的最后；同样的按名字。 */
-const KEY_ORDER = { key: 0, unreadable: 1, oauth: 2, none: 3 };
+/** key 状态的先后：配好的（key 或登录）在前，读不了的次之，没配的最后；同样的按名字。 */
+const KEY_ORDER = { key: 0, oauth: 0, unreadable: 1, none: 2 };
 
 /** @param {CatalogProvider[]} providers */
 export function sortProviders(providers) {
@@ -89,13 +89,15 @@ export function filterCatalog(providers, query) {
   return out;
 }
 
+/** 这一家配好了：填了 api key，或者用 OAuth 登录了。 @param {KeyStatus} k */
+export const configured = (k) => k === "key" || k === "oauth";
+
 /**
  * 选了一个 key 有问题的供应商，表单里提示一句。没问题是 null。
  * @param {KeyStatus} k @returns {string | null}
  */
 export function keyHint(k) {
-  if (k === "key") return null;
-  if (k === "oauth") return "这家在 pi 里是 OAuth 登录，tau 不支持，进程第一次调模型时会出错；要换成 API key，在 pi 的 auth.json 里配。";
+  if (configured(k)) return null;
   if (k === "unreadable") return "tau 只认字面量的 key，不认 ! 开头的命令和含 $ 的写法，进程第一次调模型时会出错；在设置里换成字面量的 key。";
   return "这家还没配 key，进程第一次调模型时会出错；key 在设置里填。";
 }
@@ -109,7 +111,7 @@ export function defaultModelRef(gui, providers) {
   if (gui.defaultModel) return gui.defaultModel;
   const recent = recentEntries(providers, gui.recentModels)[0];
   if (recent) return recent.ref;
-  const p = providers?.find((x) => x.key === "key" && x.models.length > 0);
+  const p = providers?.find((x) => configured(x.key) && x.models.length > 0);
   const m = p?.models[0];
   return p && m ? `${p.id}/${m.id}` : "";
 }
@@ -131,16 +133,17 @@ export function recentEntries(providers, recent) {
 
 /** @param {KeyStatus} k */
 export function keyLabel(k) {
-  return k === "key" ? "已配" : k === "oauth" ? "OAuth（tau 不支持）" : k === "unreadable" ? "tau 读不了" : "没配";
+  return k === "key" ? "已配" : k === "oauth" ? "已登录" : k === "unreadable" ? "tau 读不了" : "没配";
 }
 
 /**
- * 一家供应商一行右边有哪些动作：填或换 key 的字，能不能清。OAuth 的没有动作；auth.json 读不出时都不可用。
+ * 一家供应商一行右边有哪些动作：填或换 key 的字（OAuth 登录的没有，先登出），能不能清（OAuth 的清掉就是登出）；auth.json 读不出时都不可用。
  * @param {KeyStatus} k @param {boolean} authOk
- * @returns {{ set: "填 key" | "换 key", clear: boolean } | null}
+ * @returns {{ set: "填 key" | "换 key" | null, clear: boolean } | null}
  */
 export function keyActions(k, authOk) {
-  if (!authOk || k === "oauth") return null;
+  if (!authOk) return null;
+  if (k === "oauth") return { set: null, clear: true };
   return { set: k === "none" ? "填 key" : "换 key", clear: k === "key" };
 }
 

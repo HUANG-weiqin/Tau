@@ -11,7 +11,7 @@ import { createGit, runGit } from "./git.ts";
 import type { GitRunner } from "./git.ts";
 import { pickFolder as realPick } from "./pick.ts";
 import type { PickFolder } from "./pick.ts";
-import { piCredentials } from "./credentials.ts";
+import { fileCredentials } from "../../auth/store.ts";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { clearKey, setKey } from "./keys.ts";
 import { buildCatalog, readKeys } from "./models.ts";
@@ -46,7 +46,7 @@ export interface BridgeOptions {
   /** 测试注入。 */
   git?: GitRunner;
   pickFolder?: PickFolder;
-  /** pi 的凭据文件，只读它每个条目的 provider 名和类型。默认 ~/.pi/agent/auth.json。 */
+  /** tau 的凭据文件（D83）：读 key 状态，填、清 key，取标题时刷新令牌。默认 <home>/auth.json。 */
   authFile?: string;
   /** 自动标题用的模型集合。默认是内置的全部供应商，凭据读 authFile。测试注入假的。 */
   titleModels?: Models;
@@ -110,7 +110,8 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
   };
   const git = createGit(opts.git ?? runGit, knownDirs);
   const mcpPipe = opts.mcpPipe ?? process.env.TAU_MCP_PIPE ?? "\\\\.\\pipe\\tau-mcp";
-  const authFile = opts.authFile ?? path.join(os.homedir(), ".pi", "agent", "auth.json");
+  const authFile = opts.authFile ?? path.join(home, "auth.json");
+  const credentials = fileCredentials(authFile);
   let catalog: CatalogProvider[] | null = null;
   let titleModels: Models | null = opts.titleModels ?? null;
   const control = createServiceControl({ pipe, repo: opts.repo ?? DEFAULT_REPO, ...(opts.serviceOps ? { ops: opts.serviceOps } : {}), ...(opts.bridgeStartedAt === undefined ? {} : { bridgeStartedAt: opts.bridgeStartedAt }) });
@@ -156,7 +157,7 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
       case "presets/update":
         return json(res, 200, { ok: true, preset: await updatePreset(home, pipe, body) });
       case "models": {
-        // 目录算一次；key 状态每次现读，pi 里改了不用重启。
+        // 目录算一次；key 状态每次现读，登录脚本里改了不用重启。
         catalog ??= buildCatalog();
         const { keys, auth } = readKeys(authFile);
         return json(res, 200, { providers: catalog.map((p) => ({ ...p, key: keys.get(p.id) ?? "none" })), auth });
@@ -166,9 +167,9 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
         catalog ??= buildCatalog();
         const provider = body.provider;
         if (typeof provider !== "string" || !catalog.some((p) => p.id === provider)) throw new HttpError(400, "provider 必须是模型目录里的供应商");
-        // 同步写，读、改、写之间没有 await。key 的值只在这里和 keys.ts 里过，不记录。
-        if (name === "keys/set") setKey(authFile, provider, body.key);
-        else clearKey(authFile, provider);
+        // key 的值只在这里和 keys.ts 里过，不记录。
+        if (name === "keys/set") await setKey(credentials, provider, body.key);
+        else await clearKey(credentials, provider);
         return json(res, 200, { ok: true, key: readKeys(authFile).keys.get(provider) ?? "none" });
       }
       case "service":
@@ -183,7 +184,7 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
       case "title": {
         if (typeof body.process !== "string" || body.process === "" || /[\\/:\0]/.test(body.process)) throw new HttpError(400, "process 必须是进程 ID");
         if (typeof body.model !== "string" || body.model === "") throw new HttpError(400, "model 必须是 供应商/模型");
-        titleModels ??= builtinModels({ credentials: piCredentials(authFile) });
+        titleModels ??= builtinModels({ credentials });
         return json(res, 200, { title: await generateTitle({ pipe, models: titleModels, process: body.process, model: body.model }) });
       }
       case "agents-md":

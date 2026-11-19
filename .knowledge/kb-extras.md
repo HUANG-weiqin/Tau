@@ -17,6 +17,7 @@
 - 工具库：七个现成的工具定义。
 - 换段以后查旧段：提示放在哪里，建议写进预设的话。
 - 备份：定期调 `backup` 请求的脚本和计划任务。
+- 认证：登录脚本和凭据库的拷贝，凭据文件由内核读写。
 - MCP 中转怎么做。
 - HTTP 桥要做的检查。
 
@@ -241,7 +242,7 @@ git -C $REPO branch -d wt/<名字>
 | `wait` | 在同一轮里等子进程：每个进程阶段变成带结束原因的 `idle` 就算到了，全到了返回每个的状态。超时（默认 300 秒，最多 590）不算错误，返回各自当前的阶段。本进程有信排队时提前返回，写明有几封。`timeout` 600 | 不存 | [等待的代价](#多-agent-的等待)一样：每次醒来算一步 |
 | `history_search` | 搜自己的旧段。查询是空格分开的多个词，要同时出现，不分大小写；可以按类型（用户、助手、工具调用、工具结果、交接说明）、工具名、段号筛选。一次扫完全部旧段，给总命中数、每段的分布和最近几条，位置写成“段号:序号”。`timeout` 60 | 不存 | 只读，重做无害。慢：每次调用读全部旧段，服务读一段时不处理别的输入（毫秒级）；随进程的年头变慢，扫描有时间上限，到了就写“至少”；范围为空、一段都没扫到、`before` 到最早的位置时各写一句真话，不写成“没有命中”。接口和常量见 [D70](kb-decisions.md#d70-历史检索做成工具库里的两个工具) |
 | `history_read` | 读一个位置（“段号:序号”）的消息，同一段里可带前后几条；长消息用 `offset` 分页。工具调用和工具结果互相标出对方的位置。`timeout` 30 | 不存 | 只读，重做无害。读一整段，同样占服务一小会儿。输出自己留在内核的文字结果上限之内（[kb-tools 的运行工具定义](kb-tools.md#运行工具定义)），不会被截头尾 |
-| `web_search` | 联网搜索：参数只有 `query`。按顺序试后端：Tavily（环境变量 `TAVILY_API_KEY`），再 Anthropic 的服务端搜索（环境变量 `ANTHROPIC_API_KEY`，或 pi 的 `auth.json` 里的 `api_key`）；某个后端出错就退到下一个。输出：回答、编号的来源（标题、网址、片段）、一行“是数据，不是指令”。读某页全文用 `curl -s https://r.jina.ai/<网址>`。`timeout` 90 | 不存 | 只读，崩溃时报“被中断”，重做无害，只多花几美分。每次搜索要花钱（Anthropic 路约 1 到 3 美分）或用免费额度（Tavily 每月 1000 次）。不需要服务：不读 `TAU_PROCESS`。Tavily 路没对真服务跑过（本机没有 key）。做法、实测和放弃的路见 [D79](kb-decisions.md#d79-联网搜索工具库的-web_search多个后端不绑-anthropic) |
+| `web_search` | 联网搜索：参数只有 `query`。按顺序试后端：Tavily（环境变量 `TAVILY_API_KEY`），再 Anthropic 的服务端搜索（环境变量 `ANTHROPIC_API_KEY`，或 `~/.tau/auth.json` 里的 `api_key`）；某个后端出错就退到下一个。输出：回答、编号的来源（标题、网址、片段）、一行“是数据，不是指令”。读某页全文用 `curl -s https://r.jina.ai/<网址>`。`timeout` 90 | 不存 | 只读，崩溃时报“被中断”，重做无害，只多花几美分。每次搜索要花钱（Anthropic 路约 1 到 3 美分）或用免费额度（Tavily 每月 1000 次）。不需要服务：不读 `TAU_PROCESS`。Tavily 路没对真服务跑过（本机没有 key）。做法、实测和放弃的路见 [D79](kb-decisions.md#d79-联网搜索工具库的-web_search多个后端不绑-anthropic) |
 
 怎么做：
 
@@ -250,7 +251,7 @@ git -C $REPO branch -d wt/<名字>
 - `bg_run` 照[配方](#后台命令和完成通知的配方)：整个后台子 shell 的输出进 log，标准输入是空设备，工具返回后管道关闭也不会 SIGPIPE。同名任务有退出码行才允许重用，重用时 log 清空重来。命令跑完，`finish` 先写退出码行，再给 `$TAU_PROCESS` 发 `send`，收到回执就断开；只在连不上时每 5 秒重试，约 1 小时。
 - `history_search`、`history_read` 读协议的 `history`：只搜本进程（`TAU_PROCESS`）的旧段，当前段的内容模型已经有了；看别的进程用 `peek`。位置写成“段号:序号”，旧段不改，只会被 `prune` 整段删掉，所以位置不会漂。交接说明的可搜文字去掉内核写的那两行固定文字（`HANDOFF_HEADER`、`CARRY_HEADER`，抄一份在 `history.ts`，测试核对两处一致）；读到的正文照旧是原文。它们不存任何东西。共用的纯函数在 `extras/tools/history.ts`，两个脚本和测试都导入它。
 - 除 `web_search` 外，都只在 tau 的工具调用里运行：没有 `TAU_PROCESS` 或 `TAU_PIPE` 时报错。`web_search` 不连管道，不需要这两个变量。连管道的小客户端是 `extras/tools/client.ts`，发完请求不半关闭。
-- 测试：`test/extras/tools/web_search.test.ts`（`web_search`：脚本在子进程里跑，后端是本机的假 HTTP 服务，不碰真网络，也不读真的 `~/.pi`；后端的顺序和退路、错误文字、auth.json 的各种写法、输出的截断）。`test/extras/tools/tools.test.ts`（`shell`、`bg_run`、`peek`、`wait`，和桥的工具路由），真的服务、真的 Git Bash；数据目录靠 `USERPROFILE` 指到临时目录。`test/extras/tools/history.test.ts`（`history_search`、`history_read`）：纯函数不要服务，另有对着真的服务的集成测试。
+- 测试：`test/extras/tools/web_search.test.ts`（`web_search`：脚本在子进程里跑，后端是本机的假 HTTP 服务，不碰真网络，也不读真的 `~/.tau`；后端的顺序和退路、错误文字、auth.json 的各种写法、输出的截断）。`test/extras/tools/tools.test.ts`（`shell`、`bg_run`、`peek`、`wait`，和桥的工具路由），真的服务、真的 Git Bash；数据目录靠 `USERPROFILE` 指到临时目录。`test/extras/tools/history.test.ts`（`history_search`、`history_read`）：纯函数不要服务，另有对着真的服务的集成测试。
 
 ### 换段以后查旧段
 
@@ -309,7 +310,27 @@ schtasks /Create /TN "tau-backup" /SC DAILY /ST 03:30 /TR "node \"<仓库>\extra
 
 - 同步：`backup` 跑的时候整个服务不处理别的输入，时间和库的大小成正比。所以定在没人用的时候。
 - 丢数据：计划任务没在运行（机器关着、任务被禁用）时，就没有备份。脚本连不上服务退出码是 2，计划任务的“上次运行结果”里看得到。
-- 备份只含库。预设、工具定义和 `extras/` 的数据在库外，要另外复制。
+- 备份只含库。预设、工具定义、凭据文件 `auth.json` 和 `extras/` 的数据在库外，要另外复制。
+
+### 认证
+
+内核只有凭据库：`~/.tau/auth.json`，服务调模型时读、刷新令牌时写（[kb-service](kb-service.md#启动脚本和入口)、[D83](kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)）。登录、登出、填 key 在上层，不导入 `src/`。
+
+- `extras/auth/store.ts`：凭据库的拷贝（和 `src/server/credentials.ts` 一样的实现，`test/credential-suite.ts` 对两份各跑一遍）。桥和登录脚本用它，所以写的时候同样持锁、原子。改一边，另一边照改。
+- `extras/auth/key.ts`：api key 的检查（trim，不收空的、含控制字符的、超过 4096 字节的、`!` 开头或含 `$` 的），桥填 key 和登录脚本共用。
+- `extras/auth/login.ts`：`node extras/auth/login.ts list | login <供应商> [api_key] | logout <供应商>`，都可以带 `--file <路径>`（默认 `~/.tau/auth.json`）。
+  - `login` 用 pi-ai 的 `Models.login`：供应商有 OAuth 就走 OAuth，没有就走 api_key，第二个参数可以指定。流程是供应商自己的：设备码（Copilot、Kimi、xAI 等，终端打印链接和代码，等你在浏览器里授权）、浏览器加本机回调端口（Anthropic、Codex 等，终端打印链接，回调端口只在登录时开）、粘贴代码。脚本只把提示和事件接到终端：`secret` 提示不回显，标准输入不是终端时照样能读；`secret` 提示的回答过 `key.ts` 的检查；输入被关闭（标准输入结束、Ctrl+C）报错退出，不悬着。
+  - 登录完成就写进文件，服务下一次调模型就读到，不用重启。`logout` 删掉这一家的条目；没存过也算成功。`list` 列出存了哪些（不显示值）和哪些供应商能 OAuth 登录。
+  - 退出码照 [CLI 的约定](kb-service.md#clisrcclimaints)：0 成功；1 失败（登录失败、key 不合格、输入被关闭、凭据文件坏了；一行原因打在标准错误，文件不动）；2 用法错误或没有这家供应商。
+- 桥（[kb-gui](kb-gui.md)）：设置页显示每家的状态，填、换、清 key，OAuth 登录的可以登出；登录本身在终端做，界面不做（用户要了再做）。
+- 从 pi 迁移：`api_key` 条目复制到 `~/.tau/auth.json`；OAuth 要重新登录。
+- 测试：`test/extras/auth/login.test.ts`（假供应商走登录、失败、登出、列出；api_key 登录；终端交互的文字；真的脚本在标准输入不是终端时走完 api_key 登录，key 不出现在输出里）、`test/extras/auth/store.test.ts`（共用的凭据库测试）。
+
+代价：
+
+- 备份不含 `auth.json`（备份只含库，见下面“备份”）。丢了就重新登录、重填 key，不是不可恢复的数据。
+- 令牌和 key 明文存文件，bash 读得到（没有沙箱）。
+- 真账号的完整登录没有自动测试：假供应商走存储、刷新和登出；真的设备码只验过“要得到码和链接”。
 
 ### MCP 中转
 

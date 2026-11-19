@@ -30,7 +30,7 @@
 | `extras/package.json` | 上层的依赖，精确锁定（[D63](kb-decisions.md#d63-上层的依赖随便加)）。`@earendil-works/pi-ai` 和根目录同一个版本，桥只用它的公开函数读模型目录 |
 | `extras/gui/bridge/main.ts` | 桥的入口，Node 直接运行 |
 | `extras/gui/bridge/server.ts` | `createBridge`：检查和路由。测试用它在进程里起桥，可以换掉 git 和选文件夹 |
-| `extras/gui/bridge/*.ts` | 其余各部分：`forward.ts` 转发，`static.ts` 静态文件，`presets.ts`（经 `check` 列预设，写、改和删预设文件）、`models.ts`（模型目录和 key 状态）、`git.ts`、`bg.ts`、`tools.ts`（列、装、删工具定义）、`state.ts`、`pick.ts`，`pipe.ts`（一次性的管道请求、管道在不在）、`service.ts`（服务和桥的状态、旧代码的判断、起重启脚本）、`title.ts`（自动标题）、`mcp.ts`（MCP 的服务器、工具定义和 relay 状态）、`credentials.ts`（只读的 auth.json 凭据库）、`keys.ts`（填和清 api_key，[D69](kb-decisions.md#d69-界面可以填写和清除-api_key)），`util.ts` 放公用的小函数 |
+| `extras/gui/bridge/*.ts` | 其余各部分：`forward.ts` 转发，`static.ts` 静态文件，`presets.ts`（经 `check` 列预设，写、改和删预设文件）、`models.ts`（模型目录和 key 状态）、`git.ts`、`bg.ts`、`tools.ts`（列、装、删工具定义）、`state.ts`、`pick.ts`，`pipe.ts`（一次性的管道请求、管道在不在）、`service.ts`（服务和桥的状态、旧代码的判断、起重启脚本）、`title.ts`（自动标题）、`mcp.ts`（MCP 的服务器、工具定义和 relay 状态）、`keys.ts`（填和清 api_key，登出 OAuth，经凭据库 `extras/auth/store.ts` 写，[D69](kb-decisions.md#d69-界面可以填写和清除-api_key)、[D83](kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)），`util.ts` 放公用的小函数 |
 | `extras/gui/web/index.html` | 页面 |
 | `extras/gui/web/lib/*.js` | 页面的纯逻辑。不碰 DOM，不发请求。文件头写 `// @ts-check`，类型用 JSDoc |
 | `extras/gui/web/ui/*.js` | 组件 |
@@ -50,7 +50,7 @@
   - `--port`：默认 4317。只在 `127.0.0.1` 上监听。
   - `--home`：默认 `~/.tau`。测试用临时目录。
   - `--host`：额外认的 `Host` 名字，可以写多次，给 Tailscale 用。
-  - 凭据文件 `~/.pi/agent/auth.json` 的路径是 `createBridge` 的选项 `authFile`，没有命令行参数；测试用临时文件。
+  - 凭据文件默认 `<home>/auth.json`（`~/.tau/auth.json`），路径是 `createBridge` 的选项 `authFile`，没有命令行参数；测试用临时文件。桥用 `extras/auth/store.ts` 读写它，取标题的模型集合也用同一份，所以标题模型是 OAuth 供应商也能刷新令牌。
 - 管道：`TAU_PIPE` 有值就用它，否则用 `\\.\pipe\tau`，和 CLI 一样。
 - `start.ps1`：管道不在就起服务，端口没人听就起桥，都和终端脱开，日志写进 `~/.tau/extras/gui/`。然后打开页面。不做开机自启。带 `-Popup` 时，出错弹一个对话框，写原因。
 - 桌面快捷方式：`shortcut.ps1` 画图标 `~/.tau/extras/gui/tau.ico`（黄底黑字的 τ，和左上角的标志一样），在桌面放 `tau.lnk`。仓库挪了位置就重新运行它。
@@ -136,15 +136,15 @@
 
 - 目录：用 pi-ai 的 `getBuiltinProviders`、`getBuiltinModels`、`builtinProviders`（显示名）和 `getSupportedThinkingLevels`，桥第一次收到请求时算一次。只含有模型的供应商。
 - `providers` 每项：`{ id, name, key, models }`。`models` 每项：`{ id, name, window, image, thinking }`，`thinking` 是支持的级别，已去掉预设不收的 `off`。
-- `key` 每次请求现读 `authFile`，只看每个条目的供应商名和 `type`：`key`（`api_key`）、`oauth`（tau 不支持，当作没配）、`unreadable`（`api_key` 但 key 不是字符串、`!` 开头或含 `$`，和 `src/server/credentials.ts` 的规则一致）、`none`。key 的值不进回复、日志和错误文字。
+- `key` 每次请求现读 `authFile`，只看每个条目的供应商名和 `type`：`key`（`api_key`）、`oauth`（已登录，字段齐全）、`unreadable`（OAuth 缺 `access`、`refresh` 或 `expires`；`api_key` 的 key 不是字符串、`!` 开头或含 `$`；和凭据库 `read` 的检查一致）、`none`。只有 `env` 没有 `key` 的 `api_key` 条目算 `key`（pi-ai 读得了）。key 的值不进回复、日志和错误文字。
 - `auth` 是 `{ ok: true }`；文件读不出或不是 JSON 对象时是 `{ ok: false, error }`，`error` 是固定的中文，不带文件内容，这时每家都是 `none`。文件不存在算没配，`ok: true`。
 
 填和清 api_key（`keys.ts`，接口 `keys/set`、`keys/clear`，理由和代价见 [D69](kb-decisions.md#d69-界面可以填写和清除-api_key)）：
 
 - 请求 `{ provider, key }` 和 `{ provider }`；`provider` 必须在模型目录里，否则 400。成功回 `{ ok: true, key: <这一家现在的状态> }`。
-- 读、改、写之间没有 `await`；先写 `<authFile>.tmp` 再改名。文件读不出、不是合法 JSON、顶层不是对象：409，不覆盖。写失败 500，删临时文件。
-- 只动这一家的条目；这一家已有 `oauth` 或别的类型的条目：409，不动。已有 `api_key` 条目时保留它的其它字段，只换 `key`。`clear` 没有这一条就什么也不做。
-- `key` 先 trim；空的、含控制字符（含换行）、超过 4096 字节、`!` 开头、含 `$`：400。key 的值不进返回值、错误文字、日志。
+- 读、改、写都经凭据库（`extras/auth/store.ts`）的 `modify`、`delete`：持锁，先写 `<authFile>.tmp` 再改名（[D83](kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)）。凭据库的错误（文件读不出、不是合法 JSON、顶层不是对象、等锁超时、写不了）：409，说明原文加“没有改它”，不覆盖，不带文件内容。
+- 只动这一家的条目，别家原样。`set`：这一家是 `oauth` 登录的，409（先登出）；已有 `api_key` 条目时保留它的其它字段，只换 `key`；别的类型或写坏的条目直接换掉。`clear`：删掉这一家的条目，`api_key` 是清掉，`oauth` 就是登出；没有这一条就什么也不做。
+- `key` 的检查在 `extras/auth/key.ts`（登录脚本共用）：先 trim；空的、含控制字符（含换行）、超过 4096 字节、`!` 开头、含 `$`：400。key 的值不进返回值、错误文字、日志。
 - 重写整个文件会把缩进统一成 2 空格，顶层整数形状的名字按 JS 的规则排到前面。
 
 git：
@@ -212,7 +212,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
 
 - 对象：页面里没有 `parent`、`kind` 是临时的进程。桥通过管道读第 1 段第一条用户消息（`history`），取第一封信的正文，截到 2000 字。
 - 用 pi-ai 的 `completeSimple` 调一次模型：不传 `reasoning`（思考关掉），`maxTokens` 是 100，超时 30 秒，`maxRetries` 是 1。`model` 是请求里的 `<供应商>/<模型 ID>`，页面按“标题用的模型、默认模型、进程自己的模型”的顺序填。
-- 凭据：`bridge/credentials.ts` 的只读凭据库，规则和 `src/server/credentials.ts` 一样（[D23](kb-decisions.md#d23-凭据只读复用-pi-的凭据文件)）：只认 `api_key`，`!` 开头或含 `$` 的 key 不认，每次现读。`extras/` 不许导入 `src/`，所以抄了一份。
+- 凭据：`extras/auth/store.ts` 的凭据库（`src/server/credentials.ts` 的拷贝，[D83](kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)），和键的写入共用。标题模型是 OAuth 供应商时，令牌快过期会在这里刷新、写回。
 - 回 `{ title }`：模型的第一个非空行，去掉两头的引号和结尾标点，最多 16 个字。参数不对 400，没有这个进程 404，模型不在目录 422，模型出错或给不出标题 502，服务不在 503。
 - 桥不写界面数据：标题由页面存进 `titles`，并把进程 ID 记进 `titled`。写入只有页面一个来源，不和页面自己的写入抢。
 
@@ -335,7 +335,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
   - 写冲突时服务回的 `current`（别处现在的值和版本号，或键已被删的 `null`）就是新的 `base`：用户写的字留着，别处的值列在文本框下，再按保存才覆盖。删除冲突不重试，只重读。
   - 一次只开一个编辑；编辑开着时其它行的“改”“删”不可用。
   - 页面不显示给模型看的视图，只显示库里的键值。
-- 设置：`ui/settings.js`。外观、默认模型、默认思考强度、完成通知、标题用的模型改一项记一项。清理的天数不在这里，只在清理弹窗里改（`cleanDays` 还是同一个键）。供应商一行（`ProviderRow`）右边是填、换、清的动作，哪些可用由 `lib/models.js` 的 `keyActions` 定（OAuth 和 `auth.json` 读不出时都没有）；填 key 的密码框（`KeyEdit`）输入只留在组件里，收起就丢，保存成功后 `app.reloadModels()`；清掉点两次，失焦还原。接口 `api.js` 的 `setKey`、`clearKey`。
+- 设置：`ui/settings.js`。外观、默认模型、默认思考强度、完成通知、标题用的模型改一项记一项。清理的天数不在这里，只在清理弹窗里改（`cleanDays` 还是同一个键）。供应商一行（`ProviderRow`）右边是填、换、清的动作，哪些可用由 `lib/models.js` 的 `keyActions` 定（`auth.json` 读不出时都没有；OAuth 登录的只有“登出”，没有填 key）；填 key 的密码框（`KeyEdit`）输入只留在组件里，收起就丢，保存成功后 `app.reloadModels()`；清掉（OAuth 登录的叫登出）点两次，失焦还原。设置页的说明里写着终端登录的命令。接口 `api.js` 的 `setKey`、`clearKey`。
 - 界面数据写失败以后 30 秒内不再自动写（清理旧键），不会反复重试。
 - 信的来历读段里消息的 `tau`（`lib/messages.js` 的 `parseUser`），不解析文字：
   - 一封信的发送者、跳数、`replyTo`（写信时它在等回信）、回信的结束原因来自 `tau.letters`；正文是消息文本里 `at` 指的那段。
@@ -357,7 +357,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
 
 | 文件 | 测什么 |
 |---|---|
-| `test/extras/gui/bridge.test.ts` | 每条检查的反例；GET 不出目录；转发对着测试服务（临时目录、测试管道、faux 模型），含 `watch` 分块推送和浏览器断开；预设经 `check` 读（带 `options` 的读得出、读不出和装不下的错误文字和 `start` 一字不差、服务不在回 503）、新建不覆盖和删除；`inspect` 转发读到会话快照；换段信真的换段、信带进新段；`reconfigure` 经桥转发，回执 `reconfigured` 原样返回；git 带 `--no-optional-locks`、工作目录不对时拒绝；界面数据改名写入；模型目录和 pi-ai 一致、key 状态四种且值不进回复、auth.json 坏了或不存在、改了不用重启；改预设只换收到的字段（顺序、CRLF、BOM、正文原样，`null` 删行）、读不出或起不来改回旧文件、服务不在改回去、请求不合法；新建带 `handoff`、`options`、`context`，`context` 给 `null` 删行 |
+| `test/extras/gui/bridge.test.ts` | 每条检查的反例；GET 不出目录；转发对着测试服务（临时目录、测试管道、faux 模型），含 `watch` 分块推送和浏览器断开；预设经 `check` 读（带 `options` 的读得出、读不出和装不下的错误文字和 `start` 一字不差、服务不在回 503）、新建不覆盖和删除；`inspect` 转发读到会话快照；换段信真的换段、信带进新段；`reconfigure` 经桥转发，回执 `reconfigured` 原样返回；git 带 `--no-optional-locks`、工作目录不对时拒绝；界面数据改名写入；模型目录和 pi-ai 一致、key 状态四种（含已登录）且值不进回复；填 key 遇 OAuth 拒绝，清掉就是登出，不认识的条目可换可删、auth.json 坏了或不存在、改了不用重启；改预设只换收到的字段（顺序、CRLF、BOM、正文原样，`null` 删行）、读不出或起不来改回旧文件、服务不在改回去、请求不合法；新建带 `handoff`、`options`、`context`，`context` 给 `null` 删行 |
 | `test/extras/tools/tools.test.ts` | 工具库：`shell`、`bg_run`、`peek`、`wait` 的脚本在真的服务和 Git Bash 里跑（截断和存文件、退出码、超时结束整个进程组、7 天清理；后台立刻返回、跑完寄信、同名拒绝；peek 的输出；wait 等到结束、超时、停止）；桥的列、装、改过后拒绝覆盖、更新、预设用到时拒删；库里全部的定义装好以后内核 `check` 读得出。历史检索的两个脚本和 `web_search` 不在这里，见 [kb-extras 的工具库](kb-extras.md#工具库) |
 | `test/extras/gui/service.test.ts` | 旧代码的判断（修改时间对比、服务不在、缓存和作废）；重启接口（有进程在跑回 409 且不动、`force`、只重启桥、参数不对）用假的 runner 和假的 `ps`，另有生成的重启命令行和真跑一次 powershell 的“父进程退出后孙进程还在”；`/web/` 的缓存头；自动标题（假模型：提示词、输出上限、思考关掉、整理标题、各种错误码）；只读凭据库；标题的条件和 `titled`；助手文字第一行去标记 |
 | `test/extras/gui/agentsmd.test.ts` | 上下文文件和旧的拼接块：认出和去掉旧块（CRLF、BOM、手写的末尾空行字节不变）、给了 prompt 块留着、没有结束标记当没有块；接口：`/api/agents-md`、新建勾选写 `context: AGENTS.md` 而不拼块、CLAUDE.md 不认、列表里 `agentsMd` 只有 `none` 和 `legacy`、`agentsMd: false` 去块、`true` 回 400、转成上下文文件（去块加 `context`，已有不重复）、`context` 加上以后装不下窗口改回旧文件 |

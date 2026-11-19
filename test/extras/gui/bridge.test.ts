@@ -931,6 +931,8 @@ test("模型目录：供应商、模型、窗口、能不能收图、思考级�
       deepseek: { type: "api_key", key: "pre$SECRET-var" },
       "opencode-go": { type: "api_key", key: 12345 },
       "not-a-provider": { type: "api_key", key: "sk-SECRET-orphan" },
+      mistral: { type: "oauth", access: "OAUTH-SECRET-4444" },
+      xai: { type: "api_key", env: { ACCOUNT: "x" } },
     }),
   );
   const mixed = await post(e.port, "/api/models", {});
@@ -940,7 +942,8 @@ test("模型目录：供应商、模型、窗口、能不能收图、思考级�
   assert.equal(status["google"], "unreadable");
   assert.equal(status["deepseek"], "unreadable");
   assert.equal(status["opencode-go"], "unreadable");
-  assert.equal(status["mistral"], "none");
+  assert.equal(status["mistral"], "unreadable", "OAuth 缺 refresh 和 expires：凭据库 read 会报错，界面也说读不了");
+  assert.equal(status["xai"], "key", "只有 env 没有 key，凭据库放行");
   assert.doesNotMatch(mixed.text, /SECRET|12345|op read/);
 
   // 文件坏了：全是“没配”，说明原因，不带文件内容。
@@ -954,7 +957,7 @@ test("模型目录：供应商、模型、窗口、能不能收图、思考级�
   assert.equal((await raw(e.port, "/api/models")).status, 405, "GET");
 });
 
-// 填写和清除 api_key（D69）
+// 填写和清除 api_key，登出 OAuth（D69、D83）
 
 async function keysEnv(t: TestContext, name = "auth.json") {
   const root = mkdtempSync(join(tmpdir(), "tau-gui-keys-"));
@@ -975,7 +978,7 @@ test("填 key：文件和目录都不存在也能建；换已有 api_key 只换 
   assert.equal(created.status, 200, created.text);
   assert.deepEqual(created.json, { ok: true, key: "key" });
   assert.doesNotMatch(created.text, /SECRET|1111/);
-  // 存的是 trim 后的值；格式和 pi 的一样。
+  // 存的是 trim 后的值；格式和凭据库写的一样。
   assert.equal(readFileSync(authFile, "utf8"), `${JSON.stringify({ anthropic: { type: "api_key", key: "sk-ant-SECRET-1111" } }, null, 2)}\n`);
   assert.equal(await status("anthropic"), "key", "写完立刻读到，不用重启");
 
@@ -1032,20 +1035,32 @@ test("填 key：文件读不出（坏 JSON、顶层是数组、顶层是字符�
   assert.deepEqual(readdirSync(dir), ["auth.json"]);
 });
 
-test("填 key：OAuth 条目和未知类型的条目，填和清都 409，文件字节不变", async (t) => {
-  const { authFile, set, clear, dir } = await keysEnv(t);
+test("填 key：OAuth 登录的，填 key 409、文件不变；清掉就是登出，只删这一家；不认识的条目可以换、可以删", async (t) => {
+  const { authFile, set, clear, status, dir } = await keysEnv(t);
   mkdirSync(dir, { recursive: true });
-  const text = `${JSON.stringify({ openai: { type: "oauth", access: "OAUTH-SECRET-1", refresh: "OAUTH-SECRET-2", expires: 1 }, google: { type: "weird", key: "X-SECRET" }, mistral: "oops", xai: null }, null, 2)}\n`;
+  const before = { openai: { type: "oauth", access: "OAUTH-SECRET-1", refresh: "OAUTH-SECRET-2", expires: 1 }, google: { type: "weird", key: "X-SECRET" }, anthropic: { type: "api_key", key: "keep" } };
+  const text = `${JSON.stringify(before, null, 2)}\n`;
   writeFileSync(authFile, text);
-  const bytes = readFileSync(authFile);
-  for (const [p, want] of [["openai", /OAuth 登录的，tau 不改/], ["google", /不是 api_key，tau 不改/], ["mistral", /不是 api_key，tau 不改/], ["xai", /不是 api_key，tau 不改/]] as const) {
-    for (const r of [await set(p, "sk-new"), await clear(p)]) {
-      assert.equal(r.status, 409, p);
-      assert.match(r.json.error, want, p);
-      assert.doesNotMatch(r.text, /SECRET|sk-new/);
-    }
-  }
-  assert.deepEqual(readFileSync(authFile), bytes);
+  assert.equal(await status("openai"), "oauth");
+  const r = await set("openai", "sk-new");
+  assert.equal(r.status, 409);
+  assert.match(r.json.error, /OAuth 登录的，先登出/);
+  assert.doesNotMatch(r.text, /SECRET|sk-new/);
+  assert.equal(readFileSync(authFile, "utf8"), text);
+  // 登出：只删这一家，响应里是新状态，令牌不进响应。
+  const out = await clear("openai");
+  assert.deepEqual(out.json, { ok: true, key: "none" });
+  assert.doesNotMatch(out.text, /SECRET/);
+  const { openai: _gone, ...rest } = before;
+  assert.equal(readFileSync(authFile, "utf8"), `${JSON.stringify(rest, null, 2)}\n`);
+  // 登出以后可以填 key。
+  assert.deepEqual((await set("openai", "sk-new")).json, { ok: true, key: "key" });
+  // 类型不认识的条目（别的程序写的、手改的）：填是换掉，清是删掉。
+  assert.deepEqual((await set("google", "sk-g")).json, { ok: true, key: "key" });
+  assert.deepEqual(JSON.parse(readFileSync(authFile, "utf8")).google, { type: "api_key", key: "sk-g" });
+  writeFileSync(authFile, `${JSON.stringify({ google: { type: "weird" }, mistral: "oops", anthropic: { type: "api_key", key: "keep" } }, null, 2)}\n`);
+  assert.equal((await clear("mistral")).status, 200);
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(authFile, "utf8"))), ["google", "anthropic"]);
   assert.deepEqual(readdirSync(dir), ["auth.json"]);
 });
 

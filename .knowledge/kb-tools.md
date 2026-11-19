@@ -417,7 +417,7 @@ WRAPPER = echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$
 - **临时目录和 `LANG`。** msys 按 `LANG` 的字符集把 pgid 文件路径转成 Windows 路径。`LANG` 不设或是 UTF-8 时没问题。临时目录路径有非 ASCII 字符、`LANG` 又是别的字符集时，会出两种错，都实测过：
   - `zh_CN.GBK`：pgid 文件写不进。每条命令都不运行，结果是 bash 的报错和 `[退出码 1]`。
   - `ja_JP.SJIS`：文件写到乱码路径上，在临时目录的上一级。命令照常运行，但 pgid 读到空，超时或中止时不按进程组找。那个文件也没人删。
-- **bash 继承服务的全部环境变量，`MSYS_NO_PATHCONV` 除外。** 服务环境里的 API Key，命令都能读到。bash 和服务以同一个用户运行，所以也能读 pi 的凭据文件（[D23](kb-decisions.md#d23-凭据只读复用-pi-的凭据文件)）。这符合“没有沙箱”（D7）。
+- **bash 继承服务的全部环境变量，`MSYS_NO_PATHCONV` 除外。** 服务环境里的 API Key，命令都能读到。bash 和服务以同一个用户运行，所以也能读 tau 的凭据文件 `~/.tau/auth.json`（[D83](kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)）。这符合“没有沙箱”（D7）。
 - **shell 路径缓存了“找不到”。** 服务启动之后才装 Git，要重启服务。
 - **结束不了就不返回。** bash 启动之后，调用只在它的 `exit` 或 `close` 之后返回。`ps` 和 `taskkill` 没有超时。它们挂住，或者结束不了 bash 时，调用一直不返回。停止进程只让执行器丢弃结果（[kb-executor](kb-executor.md#控制流)）。
 - **服务退出时不结束 bash。** 崩溃时没有人调用 `killAll`；正常退出也不中止动作（[kb-executor](kb-executor.md#崩溃窗口)）。手动核实过：硬杀运行 `bash()` 的 Node 进程后，`usr\bin\bash.exe`、原生孙进程和 msys 孙进程都继续运行到结束，pgid 文件留下。它们之后的输出无处可去。仓库里没有测试覆盖这一点（设计稿[风险](../docs/design/mvp.md#风险)）。

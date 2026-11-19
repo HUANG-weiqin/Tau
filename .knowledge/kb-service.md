@@ -436,13 +436,16 @@ tau stop <进程>
 - 管道名、库和预设的位置写死在 `protocol.ts`、`main.ts` 和 `presets/load.ts`。`serve()` 和 CLI 的 `main` 接受别的管道和路径，只给测试用。
 - `TAU_PIPE`：CLI 的 `main` 的管道参数默认取 `process.env.TAU_PIPE`，空或没设就用 `PIPE`。bash 工具给命令设的 `TAU_PIPE` 是服务实际监听的管道（[kb-tools](kb-tools.md#包装脚本)），所以测试服务里的 Agent 运行 `tau`，连的是测试服务。
 - `tau`（不带扩展名，`#!/bin/sh`，git 里是可执行）：给 bash 用的启动脚本，和 `tau.cmd` 放在仓库根目录。`MSYS_NO_PATHCONV=1 exec node "$(cygpath -w "$(dirname "$0")")/src/main.ts" "$@"`。`MSYS_NO_PATHCONV=1` 不让 msys 改写参数，否则以 `/` 开头的消息正文会被改成 Windows 路径；`cygpath -w` 因为 node 要 Windows 路径才找得到 `main.ts`。bash 找不到不带扩展名的 `tau`，所以光有 `tau.cmd` 不够：写全名才行，还经 cmd.exe 解析参数。
-- 服务的模型目录是 `builtinModels({ credentials })`（[kb-executor.md](kb-executor.md#调用模型actionsts)）。`credentials` 只读 `~/.pi/agent/auth.json` 里 `type` 为 `api_key` 的条目，每次调用都重读，从不写入（`src/server/credentials.ts`，理由见 [D23](kb-decisions.md#d23-凭据只读复用-pi-的凭据文件)）。
-- 文件里这个 provider 的 `key` 非空时，API Key 用它。没有这个条目（包括只有 OAuth 条目），或者 `key` 缺失时，pi-ai 从服务进程的环境变量读 API Key（例如 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`）。
+- 服务的模型目录是 `builtinModels({ credentials })`（[kb-executor.md](kb-executor.md#调用模型actionsts)）。`credentials` 是 tau 自己的凭据文件 `~/.tau/auth.json`，可读可写：`fileCredentials`（`src/server/credentials.ts`，理由、取舍和风险见 [D83](kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)）。路径写死在 `main.ts`。
+- 每家供应商一条，形状同 pi-ai 的 `Credential`：`{type: "api_key", key}` 或 `{type: "oauth", access, refresh, expires, …}`。别的类型当作没有。pi-ai 在 OAuth 令牌剩不到 5 分钟时，经 `modify` 刷新并写回（刷新最多等 15 秒）。
+- 读：每次调用都重读，不加锁。写（`modify`、`delete`）整个过程持锁：`auth.json.lock` 目录，`mkdir` 抢；持锁的人每 5 秒刷新锁目录的修改时间，15 秒没动过算持锁的进程崩了，清掉；等锁最多 30 秒（必须比 15 秒长）。写入是先写 `auth.json.tmp`、落盘、再改名。改名遇到 `EPERM`、`EBUSY`、`EACCES`（Windows 上目标正被别人读着）重试，最多 100 次，每次隔 25 毫秒；读不受影响，不重试。
+- 写的人有三个，都是不同的进程：服务（刷新）、登录脚本、HTTP 桥（填和清 key）。登录和登出见 [kb-extras 的认证](kb-extras.md#认证)。
+- 文件里这个 provider 的 `key` 非空时，API Key 用它。没有这个条目，或者 `key` 缺失时，pi-ai 从服务进程的环境变量读 API Key（例如 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`）。有 OAuth 条目的供应商不再看环境变量。
 - `key` 是空串时各家不同。多数 provider 照样读环境变量。cloudflare-workers-ai、cloudflare-ai-gateway、google-vertex 把空串当成已有的值，不读环境变量，结果是没有配置。条目的 `env` 字段也是这样逐字段合并。
-- tau 不检查 `env` 的形状。写坏的 `env` 可能被忽略，退回进程的环境变量。pi 自己不会写出这种文件。
-- 只支持字面量 `key`。以 `!` 开头（pi 当命令执行）或含 `$`（pi 可能当变量或转义）的 `key` 会报错，不原样发出去。含 `$` 一律拒绝，比 pi 严；已知的 provider key 都不含 `$`。
-- 文件不存在算没有凭据。不是合法的 JSON、顶层不是对象、`key` 不是字符串时，这次模型调用以错误结束。报错不带文件内容：V8 的 JSON 报错会引用出错处附近的原文，可能是 key 的开头，而报错会存进库、显示在 CLI 上。
-- 路径写死成 `~/.pi/agent/auth.json`，不跟随 pi 的 `PI_CODING_AGENT_DIR`。
+- tau 不检查 `env` 的形状。写坏的 `env` 可能被忽略，退回进程的环境变量。
+- `read` 检查形状：只支持字面量 `key`（`!` 开头或含 `$` 的报错，不原样发出去：从 pi 抄来的命令写法不会被当成 key 发给供应商）；`key` 不是字符串、OAuth 条目缺 `access`、`refresh`、`expires` 也报错。`modify` 不检查，所以写坏的条目可以被换掉。
+- 文件不存在算没有凭据。不是合法的 JSON、顶层不是对象时，这次模型调用以错误结束，`modify` 和 `delete` 拒绝、不动文件。报错不带文件内容：V8 的 JSON 报错会引用出错处附近的原文，可能是 key 的开头，而报错会存进库、显示在 CLI 上。
+- 服务不读 pi 的文件。从 pi 迁移：`api_key` 条目可以复制过来；OAuth 条目要在 tau 里重新登录（[D83](kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)）。
 - 模型调用由服务进程发出。CLI 的环境不影响模型调用。
 
 ### 退出
@@ -505,7 +508,7 @@ tau stop <进程>
 |---|---|
 | `src/server/serve.ts` | `serve`：启动顺序、`pump`、`settle`、`push`、`awaitFinal`、`handle`（含 `fork`、`reconfigure`、`backup`）、`parseRequest`、`close`；`WATCH_BUFFER_MAX` |
 | `src/server/listen.ts` | `listen`：在命名管道上监听；`EADDRINUSE` 变成“已经有一个 tau 服务” |
-| `src/server/credentials.ts` | `piCredentials`：只读 pi 的凭据文件，只交出 `api_key` 条目 |
+| `src/server/credentials.ts` | `fileCredentials`：`~/.tau/auth.json` 的凭据库，可读可写，写持锁、原子；`extras/auth/store.ts` 是它的拷贝 |
 | `src/protocol.ts` | `PIPE`、`Request`、`Reply` |
 | `src/images.ts` | `checkImages`、`imageType`、`imageSize`、`IMAGE_MAX_BYTES`、`IMAGE_MAX_EDGE` |
 | `test/server/protocol.test.ts` | `history`、`watch`、`text` 的进程和编号、图片和 `blob`、`fork`、`prune`、`remove`、`sweep`、`inspect`、`check`、`memory`、`memory_write`、`reconfigure`、`start` 和 `check` 带 `workdir`（D77） |
@@ -520,7 +523,7 @@ tau stop <进程>
 | `test/server/pairing.test.ts` | 服务层的工具调用配对：按顺序、运行中停止、运行中崩溃 |
 | `test/server/kill.test.ts`、`test/server/child.ts` | 子进程里的真服务被随机硬杀 |
 | `test/server/listen.test.ts` | 单实例 |
-| `test/server/credentials.test.ts` | 只交出 `api_key`；不写入；文件不存在、格式坏、顶层不是对象，报错不带文件内容；只支持字面量 key；每次重读；接进 pi-ai 后 key 的优先顺序和坏文件的结果 |
+| `test/server/credentials.test.ts`、`test/credential-suite.ts` | 凭据库的 18 条测试，对 src 和 extras 的两份各跑一遍：交出 `api_key` 和 `oauth`；文件不存在、格式坏、顶层不是对象，报错不带文件内容，坏文件不被改；只支持字面量 key；`modify` 保留别的条目、fn 抛错不动文件；陈旧锁、持锁的进程崩了（超时前清掉）、持锁的人慢不被偷锁、被占着、超时；同一文件并发和三个进程各改 15 次一次不丢；别人在写时读；接进 pi-ai 的登录、刷新、刷新失败、登出、环境变量的优先顺序 |
 | `test/server/cli.test.ts` | 第 5 步验收：经 CLI 同时跑两个进程；`self` 和 `tau ps` 一致；流式文本；模型不在目录里 |
 
 命令：`npm test`。只跑服务测试：`node --test "test/server/*.test.ts"`。
@@ -565,7 +568,7 @@ tau stop <进程>
 - **`tau.cmd` 经 cmd.exe 解析参数，`&` 是命令分隔符。** 正文里的 `&` 会把命令截断。外部程序和系统计划任务寄信，要直接连管道，或者直接运行 `node <仓库>\src\main.ts`，不要经 `tau.cmd`。bash 里用 `tau` 脚本，它不经 cmd.exe。
 - **`MSYS_NO_PATHCONV` 会留在服务的环境里。** `tau` 脚本只为 `exec node` 设它，但它在 node 的环境里。在 Git Bash 里运行 `tau serve`，服务就带着它。所以 bash 工具构造命令环境时去掉它（[kb-tools](kb-tools.md#包装脚本)）；服务自己的环境不动。
 - **在 `pump` 之外推进状态。** `pump` 的同步是服务里“没有并发”的唯一来源。验证：pairing 的停止用例（中止及时到达）、kill 测试。
-- **pi 正在写凭据文件。** pi 在锁里原地截断再写，tau 读时不拿锁。读到空文件或半个文件时，这次模型调用以“不是合法的 JSON”结束，重发即可。窗口很小，但服务要跑很多年。
+- **持锁的进程崩了，凭据文件的锁目录留下。** 下一个写者最多等 15 秒，清掉陈旧锁再写。两个写者同时清同一把陈旧锁，有一个极窄的竞态，机器休眠醒来时也可能偷锁，都不处理（[D83](kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)）。轮换 refresh 令牌的供应商，刷新成功之后、写盘之前崩溃，新令牌丢了，要重新登录。
 - **客户端发完请求不能半关闭。** 不要调用 `end` 或 `shutdown`。Windows 命名管道不支持半关闭：客户端一半关，连接就整个关了，之后服务写的都丢。两端都设 `allowHalfOpen` 也一样。同步写出的回执、快照和 `history` 还能到，后来的最终回复和 `watch` 的增量都丢，所以简单的测试发现不了。测试里的客户端也不要半关闭。
 - **`watch` 订阅方卡住就被断开。** 订阅方读得比服务推得慢，写缓冲涨过上限，连接就被服务关掉。订阅方重连、重新拿快照，再用 `history` 补读。
 - **回执提前发。** 回执必须在事务提交之后。kill 测试断言有回执的消息一条不丢。
