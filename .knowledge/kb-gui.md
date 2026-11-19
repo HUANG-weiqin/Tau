@@ -331,7 +331,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
 - 待换段条：概况页顶上（`ui/inspector.js` 的 `PendingBar`）。数据只有 `update.self.pending`（`watch` 的 `update` 只带 `self`，有它才出现，字段取 `pending.fields`），写“待换段：模型、提示词……”，不读 `inspect` 的 `process.next`；待换的内容在“改这个会话”里看，那个弹窗的初值取 `next`。两个键：“现在换段”走 `app.handoff`，可用条件同铭牌上的“换段”；“取消”发 `reconfigure` 带 `revert: true`。
 - 换模型：`ui/switchmodel.js`。第一种换法先 `app.updatePreset`，再 `app.fork(id, undefined, preset)`；第二种直接带另一个预设分叉。`fork` 带 `preset` 时，新进程属于那个预设，带记忆的成为它的当前进程。进程 ID 会变；不想换 ID 用“改这个会话”，旧模型出故障时它换不了模型，用这里。
 - 工具定义页：`ui/tools.js`，入口在设置里，hash 是 `#dlg=tools`。已装的在上，工具库在下；删和覆盖在行里确认。预设表（`ui/presetform.js`）打开时读 `/api/tools`，把已装的定义列成第二组工具开关。
-- 记忆页：`ui/memory.js`，数据走 `/api/tau` 转发 `memory`、`memory_write`（`api.js` 的 `memoryRead`、`memoryWrite`），桥不用改。纯逻辑在 `lib/memory.js`：排序、折叠、编辑状态、读写回复（`interpretWrite`）、冲突（`afterConflict`）。值只能是字符串；键和值的字节上限由服务查，页面不抄。
+- 记忆页：`ui/memory.js`，数据走 `/api/tau` 转发 `memory`、`memory_write`（`api.js` 的 `memoryRead`、`memoryWrite`），桥不用改。纯逻辑在 `lib/memory.js`：排序、折叠、编辑状态（值和摘要）、读写回复（`interpretWrite`）、冲突（`afterConflict`，带别处的摘要）。值只能是字符串；键、值、摘要的字节上限由服务查，页面不抄。保存的 `set` 总是带 `brief`，不用服务的缺省（D81）。
   - 写冲突时服务回的 `current`（别处现在的值和版本号，或键已被删的 `null`）就是新的 `base`：用户写的字留着，别处的值列在文本框下，再按保存才覆盖。删除冲突不重试，只重读。
   - 一次只开一个编辑；编辑开着时其它行的“改”“删”不可用。
   - 页面不显示给模型看的视图，只显示库里的键值。
@@ -361,7 +361,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
 | `test/extras/tools/tools.test.ts` | 工具库：`shell`、`bg_run`、`peek`、`wait` 的脚本在真的服务和 Git Bash 里跑（截断和存文件、退出码、超时结束整个进程组、7 天清理；后台立刻返回、跑完寄信、同名拒绝；peek 的输出；wait 等到结束、超时、停止）；桥的列、装、改过后拒绝覆盖、更新、预设用到时拒删；库里全部的定义装好以后内核 `check` 读得出。历史检索的两个脚本和 `web_search` 不在这里，见 [kb-extras 的工具库](kb-extras.md#工具库) |
 | `test/extras/gui/service.test.ts` | 旧代码的判断（修改时间对比、服务不在、缓存和作废）；重启接口（有进程在跑回 409 且不动、`force`、只重启桥、参数不对）用假的 runner 和假的 `ps`，另有生成的重启命令行和真跑一次 powershell 的“父进程退出后孙进程还在”；`/web/` 的缓存头；自动标题（假模型：提示词、输出上限、思考关掉、整理标题、各种错误码）；只读凭据库；标题的条件和 `titled`；助手文字第一行去标记 |
 | `test/extras/gui/agentsmd.test.ts` | 上下文文件和旧的拼接块：认出和去掉旧块（CRLF、BOM、手写的末尾空行字节不变）、给了 prompt 块留着、没有结束标记当没有块；接口：`/api/agents-md`、新建勾选写 `context: AGENTS.md` 而不拼块、CLAUDE.md 不认、列表里 `agentsMd` 只有 `none` 和 `legacy`、`agentsMd: false` 去块、`true` 回 400、转成上下文文件（去块加 `context`，已有不重复）、`context` 加上以后装不下窗口改回旧文件 |
-| `test/extras/gui/memory.test.ts` | 记忆页的纯逻辑（字节序排序、折叠、编辑状态、写回复的判读、冲突后字和版本的处理）；经桥对着真的服务：新键、改、兄弟先写造成的冲突不覆盖、删、已删键的冲突、超限 |
+| `test/extras/gui/memory.test.ts` | 记忆页的纯逻辑（字节序排序、折叠、编辑状态、写回复的判读、冲突后字和版本的处理、摘要）；经桥对着真的服务：新键带摘要、改值不丢摘要、兄弟先写造成的冲突不覆盖、删、已删键的冲突、超限（含摘要超限） |
 | `test/extras/gui/image.test.ts` | 图片常量和 `src/` 的真常量一致；缩放尺寸、原样发的条件、压缩尝试的顺序、张数；快照多带的输入类型和阈值、不收图片的判断；段尺比例和九成警告；排队的信、谁在等谁、后台任务的通知标成后台任务 |
 | `test/extras/gui/lib.test.ts` | 纯逻辑：信的来历读 `tau`（发送者、跳数、回信、`after`、换段、`filled`，旧消息、被截过的消息）、后台任务的通知认前缀（名字的字符、空格、不是进程的信不认）、`canHandoff`、进程按会话快照归类、增量读跨换段、重连后不丢不重、标题、当前进程、筛选计数、全部停止和清理的顺序、删进程的拒绝条件、`prunePatch`；模型选择（窗口的写法、思考级别取最近一档、搜索、供应商排序、最近用过、默认模型、key 提示）、预设表变成请求（只发变了的字段）、会话表变成 `reconfigure` 的 `fields`（只发变了的，去掉的发 `null`）、重读工具定义发已存的工具列表、保存失败的原文表一动就不显示、转成上下文文件要项目里有 `AGENTS.md`（`convertGate`、`convertPatch`）、待换段条的字段名、换模型的补丁、界面数据的新键、快照多带的几项；流式文本按 `kind` 分开、watch 推来的消息并进缓存（重复、跳号、换段）、末尾几条的推送并进；吐字的节奏（平稳的小块、成批到、收尾追平、一次来一大块）和 `latestSeq`；Markdown（GFM、原始 HTML 转义、链接和图片的过滤、代码块）；通知（谁刚进入待你看、该不该弹、正文、标题）；`notify` 键 |
 
