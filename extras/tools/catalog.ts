@@ -43,22 +43,27 @@ export const CATALOG: ToolEntry[] = [
     name: "bg_run",
     script: "bg_run.ts",
     description:
-      "把命令放到后台运行，立刻返回，不用等。跑完会给你寄一封信：退出码加 log 最后几行。" +
+      "运行一条可能很长的命令：先等 wait 秒（默认 60）。在这么久里跑完了，结果就是输出和退出码，和 bash 一样，不占后面一轮；" +
+      "没跑完就留在后台、立刻返回，跑完给你寄一封信：退出码加 log 最后几行。" +
       "log 写在 ~/.tau/extras/bg/ 下，结果里给出路径，想看进度用 read 读。命令没有标准输入。同名任务还在跑时拒绝。",
     parameters: {
       type: "object",
       properties: {
         name: { type: "string", description: "任务名，字母、数字、下划线、连字符，最多 40 个字符", pattern: "^[A-Za-z0-9_-]{1,40}$" },
-        command: { type: "string", description: "要在后台运行的命令" },
+        command: { type: "string", description: "要运行的命令" },
+        wait: { type: "integer", description: "先等几秒（0 到 300）。0 就是立刻返回，不等。省略是 60", minimum: 0, maximum: 300 },
       },
       required: ["name", "command"],
       additionalProperties: false,
     },
-    timeout: 30,
+    // 工具自己的超时要大于 wait：wait 60 秒时给 90 秒，留出启动和收尾的余量。
+    timeout: 90,
     output: "text",
     // 后台子 shell 的输出全进 log：工具返回后管道会关闭，往它写会 SIGPIPE。跑完由 finish 写退出码行并寄信。
+    // start 的第二个参数是 wait 的默认值（老定义不传，就是 0，行为不变），实际秒数写在 <log>.wait 里。
+    // 后台子 shell 一起，就先问 hold：等到了就把结果直接回给模型（finish 看到 <log>.sync 就不寄信），没等到才把话回给模型。
     command: (s) =>
-      `out=$(node "${s}" start) || exit 1; l=\${out%%${NL}*}; r=\${out#*${NL}}; m=\${r%%${NL}*}; c=\${r#*${NL}}; ( (eval "$c") </dev/null; code=$?; node "${s}" finish "$l" "$code" ) >>"$l" 2>&1 </dev/null & echo "$m"`,
+      `out=$(node "${s}" start 60) || exit 1; l=\${out%%${NL}*}; r=\${out#*${NL}}; m=\${r%%${NL}*}; c=\${r#*${NL}}; ( (eval "$c") </dev/null; code=$?; node "${s}" finish "$l" "$code" ) >>"$l" 2>&1 </dev/null & w=$(cat "$l.wait" 2>/dev/null || echo 0); if [ "$w" -gt 0 ]; then node "${s}" hold "$l" "$w" && { node "${s}" report "$l"; exit $?; }; fi; echo "$m"`,
   },
   {
     name: "peek",

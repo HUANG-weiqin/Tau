@@ -228,7 +228,7 @@ describe("bg_run", () => {
     await untilIdle(id);
     // 命令等一个文件出现才结束：工具返回时它一定还在跑，不靠时间判断“立刻”。
     const go = join(dir, `go-${id}`).replace(/\\/g, "/");
-    const r = await tool("bg_run", { name: "job1", command: `while [ ! -e "${go}" ]; do sleep 0.1; done; echo 第一行; echo second >&2; exit 4` }, id);
+    const r = await tool("bg_run", { name: "job1", wait: 0, command: `while [ ! -e "${go}" ]; do sleep 0.1; done; echo 第一行; echo second >&2; exit 4` }, id);
     assert.equal(r.isError, false, r.text);
     const log = extras("bg", `${id}-job1.log`);
     assert.ok(r.text.includes("已在后台运行：job1") && r.text.includes(log.replace(/\//g, "\\")), r.text);
@@ -236,7 +236,7 @@ describe("bg_run", () => {
     assert.equal(parseExit(readFileSync(log, "utf8")), null, "跑完以前没有退出码行");
 
     // 同名任务还在跑：拒绝，也没有清掉它的 log。
-    const again = await tool("bg_run", { name: "job1", command: "echo x" }, id);
+    const again = await tool("bg_run", { name: "job1", wait: 0, command: "echo x" }, id);
     assert.equal(again.isError, true);
     assert.match(again.text, /还在运行/);
     writeFileSync(go, "");
@@ -251,22 +251,86 @@ describe("bg_run", () => {
     await untilIdle(id);
 
     // 跑完以后同名可以再用：log 重新开始。输出不以换行结尾时，退出码行照样独占一行，认得出。
-    const third = await tool("bg_run", { name: "job1", command: "printf again" }, id);
+    const third = await tool("bg_run", { name: "job1", wait: 0, command: "printf again" }, id);
     assert.equal(third.isError, false, third.text);
     for (let i = 0; i < 100 && parseExit(readFileSync(log, "utf8")) !== 0; i++) await sleep(100);
     assert.equal(parseExit(readFileSync(log, "utf8")), 0);
     assert.ok(!readFileSync(log, "utf8").includes("第一行"));
     for (let i = 0; i < 100 && !(await messages(id)).some((m) => m.includes("完成，退出码 0")); i++) await sleep(100);
-    const fourth = await tool("bg_run", { name: "job1", command: "true" }, id);
+    const fourth = await tool("bg_run", { name: "job1", wait: 0, command: "true" }, id);
     assert.equal(fourth.isError, false, fourth.text);
+  });
+
+  test("wait 里跑完：结果就是输出和退出码，和 bash 一样，不寄信", async () => {
+    const id = await start("你好");
+    await untilIdle(id);
+    const r = await tool("bg_run", { name: "fast", wait: 20, command: "echo 完成; echo 错 >&2; exit 3" }, id);
+    assert.equal(r.isError, true, "退出码不是 0 算错误");
+    assert.match(r.text, /完成/);
+    assert.match(r.text, /错/);
+    assert.match(r.text, /\[后台任务 fast\] 退出码 3/);
+    assert.ok(!r.text.includes("已在后台运行"), r.text);
+    assert.equal(parseExit(readFileSync(extras("bg", `${id}-fast.log`), "utf8")), 3);
+    // 结果已经在这条工具结果里了：不再寄一封信，省一轮。
+    await sleep(1000);
+    assert.deepEqual((await messages(id)).filter((m) => m.includes("后台任务 fast")), []);
+    // 成功的那次：isError 是 false。
+    const ok = await tool("bg_run", { name: "fast2", wait: 20, command: "echo hi" }, id);
+    assert.equal(ok.isError, false, ok.text);
+    assert.match(ok.text, /^hi\n\[后台任务 fast2\] 退出码 0/);
+  });
+
+  test("wait 用完还没跑完：立刻返回“已在后台运行”，跑完照样寄信", async () => {
+    const id = await start("你好");
+    await untilIdle(id);
+    const go = join(dir, `go-slow-${id}`).replace(/\\/g, "/");
+    const r = await tool("bg_run", { name: "slow", wait: 1, command: `while [ ! -e "${go}" ]; do sleep 0.1; done; echo 后来` }, id);
+    assert.equal(r.isError, false, r.text);
+    assert.match(r.text, /已在后台运行：slow/);
+    assert.match(r.text, /跑完会给你寄一封信/);
+    writeFileSync(go, "");
+    for (let i = 0; i < 300 && !(await messages(id)).some((m) => m.includes("[后台任务 slow] 完成")); i++) await sleep(100);
+    const letter = (await messages(id)).find((m) => m.includes("[后台任务 slow] 完成"));
+    assert.ok(letter !== undefined, "没有收到通知");
+    assert.ok(letter.includes("后来"), letter);
+  });
+
+  test("wait 的值不对：清楚的错误，不建 log", async () => {
+    const id = await start("你好");
+    await untilIdle(id);
+    for (const wait of [-1, 301, 1.5, "60"]) {
+      const r = await tool("bg_run", { name: "bad", wait, command: "true" }, id);
+      assert.equal(r.isError, true, String(wait));
+      assert.match(r.text, /wait 是 0 到 300 的整数/, String(wait));
+    }
+    assert.equal(existsSync(extras("bg", `${id}-bad.log`)), false);
+  });
+
+  test("老快照里的定义（不传 start 的默认秒数、不问 hold）：照旧立刻返回、照旧寄信", async () => {
+    const id = await start("你好");
+    await untilIdle(id);
+    const go = join(dir, `go-old-${id}`).replace(/\\/g, "/");
+    // 旧模板：start 不带默认秒数，也不读 <log>.wait。
+    const NL = "$'\\n'";
+    const dir7 = LIB.replace(/\\/g, "/");
+    const old = `out=$(node "${dir7}/bg_run.ts" start) || exit 1; l=\${out%%${NL}*}; r=\${out#*${NL}}; m=\${r%%${NL}*}; c=\${r#*${NL}}; ( (eval "$c") </dev/null; code=$?; node "${dir7}/bg_run.ts" finish "$l" "$code" ) >>"$l" 2>&1 </dev/null & echo "$m"`;
+    const r = await tool("bg_run", { name: "old", command: `while [ ! -e "${go}" ]; do sleep 0.1; done; echo 老的` }, id, { command: old });
+    assert.equal(r.isError, false, r.text);
+    assert.match(r.text, /已在后台运行：old/);
+    assert.equal(existsSync(extras("bg", `${id}-old.log.wait`)), false, "没有 wait 就不建标记");
+    writeFileSync(go, "");
+    for (let i = 0; i < 300 && !(await messages(id)).some((m) => m.includes("[后台任务 old] 完成")); i++) await sleep(100);
+    const letter = (await messages(id)).find((m) => m.includes("[后台任务 old] 完成"));
+    assert.ok(letter !== undefined, "老定义照样收到通知");
+    assert.ok(letter.includes("老的"), letter);
   });
 
   test("名字不合规矩、命令为空：错误，不建 log", async () => {
     for (const name of ["", "a b", "../x", "x".repeat(41)]) {
-      const r = await tool("bg_run", { name, command: "true" }, "bg-x");
+      const r = await tool("bg_run", { name, wait: 0, command: "true" }, "bg-x");
       assert.equal(r.isError, true, name);
     }
-    assert.equal((await tool("bg_run", { name: "ok", command: " " }, "bg-x")).isError, true);
+    assert.equal((await tool("bg_run", { name: "ok", wait: 0, command: " " }, "bg-x")).isError, true);
     assert.equal(existsSync(extras("bg", "bg-x-ok.log")), false);
   });
 
