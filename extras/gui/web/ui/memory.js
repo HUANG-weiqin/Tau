@@ -1,7 +1,7 @@
 // 记忆页（设计稿 7.13）：看和改一个预设的记忆库。键按字节序，值能折起，写带版本号，冲突不覆盖。
 import { html, Popover, DlgHead, SecHead, Pill, useState, useEffect, useRef, Fragment } from "./common.js";
 import { memoryRead, memoryWrite } from "../api.js";
-import { sortEntries, isLong, preview, editOf, newEdit, editDirty, editError, setOp, deleteOp, interpretWrite, afterConflict, overText, utf8Bytes } from "../lib/memory.js";
+import { sortEntries, isLong, preview, editOf, newEdit, editDirty, editError, setOp, deleteOp, interpretWrite, afterConflict, overText, utf8Bytes, dayOf } from "../lib/memory.js";
 
 /** @typedef {import("../lib/memory.js").Entry} Entry */
 /** @typedef {import("../lib/memory.js").Edit} Edit */
@@ -137,12 +137,14 @@ export function MemoryDialog({ app, onClose }) {
         : html`<span class="mono mem-k">${e.key}</span>`}
       ${e.base !== null && html`<span class="mono dim mem-v">版本 ${e.base}</span>`}
     </div>
+    <input class="input mem-brief-in" aria-label="摘要" placeholder="摘要：一句话说清这个值是什么" value=${e.brief} onInput=${(/** @type {any} */ ev) => setEdit({ ...e, brief: ev.currentTarget.value })} />
+    <div class="dnote mono mem-bytes">${utf8Bytes(e.brief)} 字节</div>
     <textarea class="input mono mem-ta" aria-label="值" rows="5" spellcheck="false" placeholder="值" value=${e.draft} ref=${e.isNew ? undefined : focusOnce} onInput=${(/** @type {any} */ ev) => setEdit({ ...e, draft: ev.currentTarget.value })}></textarea>
     <div class="dnote mono mem-bytes">${utf8Bytes(e.draft)} 字节</div>
     ${e.other &&
     ("gone" in e.other
       ? html`<div class="callout warn" role="status">别处把这个键删了。</div>`
-      : html`<div class="callout warn" role="status"><div class="mem-other-h">别处现在的值</div><pre class="mem-pre">${e.other.value}</pre></div>`)}
+      : html`<div class="callout warn" role="status"><div class="mem-other-h">别处现在的值</div><div class="mem-brief">摘要：${e.other.brief === "" ? html`<span class="dim">（无摘要）</span>` : e.other.brief}</div><pre class="mem-pre">${e.other.value}</pre></div>`)}
     <div class="mem-acts">
       <${Pill} label="取消" disabled=${busy} onClick=${() => {
         setEdit(null);
@@ -156,7 +158,7 @@ export function MemoryDialog({ app, onClose }) {
     ${(/** @type {() => void} */ close) => html`<${Fragment}>
       <${DlgHead} icon="tau" title=${`${ns} 的记忆`} en="MEMORY" sub=${sub} onClose=${close} />
       <div class="dlg-body">
-        <p class="dnote" style="color:var(--fg)">写入马上进库。运行中的进程用 memory_get 读到的是最新的；它提示词里挂的那份是开段时的快照，换段或者新开进程才更新。</p>
+        <p class="dnote" style="color:var(--fg)">写入马上进库。进程提示词里挂的是开段时的索引（键、日期、字节数、摘要），换段或者新开进程才更新。要看值，进程用 memory_get，读到的是最新的。</p>
         ${noMemoryTool && html`<p class="dnote">这个预设没有 memory 工具，进程自己读写不了这个库。</p>`}
         ${notice && html`<div class=${`callout ${notice.warn ? "warn" : ""}`} role="alert">${notice.text}</div>`}
         ${loadErr !== null && html`<div class="callout warn" role="alert">读不到记忆：${loadErr}</div>`}
@@ -176,8 +178,10 @@ export function MemoryDialog({ app, onClose }) {
             return html`<li class=${`mem-row ${ask ? "asking" : ""}`} key=${en.key}>
               <div class="mem-h">
                 <span class="mono mem-k">${en.key}</span>
+                <span class="mono dim mem-v">更新 ${dayOf(en.updated)}</span>
                 <span class="mono dim mem-v">版本 ${en.version}</span>
               </div>
+              ${en.brief === "" ? html`<div class="mem-brief dim">（无摘要）</div>` : html`<div class="mem-brief">${en.brief}</div>`}
               ${long && !expanded ? html`<div class="mem-fold">${preview(en.value)}<span class="dim"> …共 ${utf8Bytes(en.value)} 字节</span></div>` : html`<pre class="mem-pre">${en.value === "" ? "（空）" : en.value}</pre>`}
               ${ask
                 ? html`<div class="mem-ask" role="alert"><span>删掉“${en.key}”？删了找不回。</span><${Pill} size="sm" label="取消" disabled=${busy} onClick=${() => setAsking(null)} /><${Pill} size="sm" kind="warn" icon="trash" label=${busy ? "删除中" : "删掉"} disabled=${busy} onClick=${() => remove(en)} /></div>`

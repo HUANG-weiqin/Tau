@@ -214,7 +214,7 @@ export function blobUrl(hash) {
 /**
  * 读一个 ns 的记忆，按键的字节序。`ns` 过预设 ID 的检查，没有键就是空数组。
  * @param {string} ns
- * @returns {Promise<{ key: string, value: string, version: number }[]>}
+ * @returns {Promise<{ key: string, value: string, brief: string, updated: number, version: number }[]>}
  */
 export async function memoryRead(ns) {
   const rs = await tauAll({ op: "memory", ns });
