@@ -259,6 +259,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
 | `defaultThinking` | 设置里的默认思考强度。空字符串或没有就是不思考 |
 | `notify` | 完成通知开关。只在 `true` 时有，关就是没有这个键 |
 | `theme` | 外观。只在 `night`、`vscode` 时有，亮就是没有这个键（文件里可能写着 `day`，读的时候丢掉） |
+| `motion` | 动效开关。只在 `false` 时有，开就是没有这个键（文件里可能写着 `true`，读的时候当开） |
 
 ### 页面
 
@@ -289,6 +290,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
   - favicon 是 canvas 画的 data: URL。CSP 的 `img-src` 本来就有 `data:`，没有改 CSP。
   - 开关在设置里，点击时调 `Notification.requestPermission()`：浏览器只认用户操作里的申请。
 - 外观（[设计稿的夜间配色](../docs/design/gui.md#夜间配色)）：`theme` 在界面数据里，`ui/notify.js` 的 `Notifier` 用 `lib/theme.js` 的 `applyTheme` 把它换成 `<html data-theme="night">` 或 `"vscode"`（亮就是没有这个属性）并同步 `theme-color`。设置里的开关改的是同一个键，不读也不写别处，没有第二份。
+  - 动效开关（[设计稿第 9 节](../docs/design/gui.md#9-交互和动效)）：`motion` 在界面数据里，同上的 `Notifier` 用 `lib/motion.js` 的 `applyMotion` 换成 `<html data-motion="off">`（开就是没有这个属性）。只看这个键，不看系统的“减少动画”（2026-11-19 用户定）。`css/base.css` 的 `:root[data-motion="off"] *` 停掉所有动画和过渡，脚本这边 `motionOn()` 读到关就直接到位：`ui/typer.js` 吐字定格、`ui/follow.js` 跟随不滑、`ui/common.js` 弹窗收起不等那 160ms。改这几处别再读 `matchMedia("(prefers-reduced-motion: reduce)")`。
   - 样式只靠 `css/base.css` 开头的令牌换色：`:root` 是亮，`:root[data-theme="night"]` 只覆盖令牌，选择器不重写。
   - 台面上的文字和线用 `--tx`、`--tx2`、`--k`（线和纹理写成 `rgb(var(--k) / .2)`），台面和卡片用 `--stage`、`--card`、`--card-me`、`--line-l`。`--ink`、`--ink-2` 永远是墨黑：只压在黄、橙和选中行（`--sel`、`--sel-hi`）上，或做暗块的底。新写的台面样式别用它们。
   - 黄和橙的渐变高光（按钮上沿、悬停）是 `--acc-*`、`--warn-*`，选中行的高光是 `--sel-*`；外沿的投影不变色。
@@ -327,7 +329,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
   - 写冲突时服务回的 `current`（别处现在的值和版本号，或键已被删的 `null`）就是新的 `base`：用户写的字留着，别处的值列在文本框下，再按保存才覆盖。删除冲突不重试，只重读。
   - 一次只开一个编辑；编辑开着时其它行的“改”“删”不可用。
   - 页面不显示给模型看的视图，只显示库里的键值。
-- 设置：`ui/settings.js`。外观、默认模型、默认思考强度、完成通知改一项记一项。清理的天数不在这里，只在清理弹窗里改（`cleanDays` 还是同一个键）。供应商一行（`ProviderRow`）右边是填、换、清的动作，哪些可用由 `lib/models.js` 的 `keyActions` 定（`auth.json` 读不出时都没有；OAuth 登录的只有“登出”，没有填 key）；填 key 的密码框（`KeyEdit`）输入只留在组件里，收起就丢，保存成功后 `app.reloadModels()`；清掉（OAuth 登录的叫登出）点两次，失焦还原。设置页的说明里写着终端登录的命令。接口 `api.js` 的 `setKey`、`clearKey`。
+- 设置：`ui/settings.js`。外观（主题、动效）、默认模型、默认思考强度、完成通知改一项记一项。清理的天数不在这里，只在清理弹窗里改（`cleanDays` 还是同一个键）。供应商一行（`ProviderRow`）右边是填、换、清的动作，哪些可用由 `lib/models.js` 的 `keyActions` 定（`auth.json` 读不出时都没有；OAuth 登录的只有“登出”，没有填 key）；填 key 的密码框（`KeyEdit`）输入只留在组件里，收起就丢，保存成功后 `app.reloadModels()`；清掉（OAuth 登录的叫登出）点两次，失焦还原。设置页的说明里写着终端登录的命令。接口 `api.js` 的 `setKey`、`clearKey`。
 - 界面数据写失败以后 30 秒内不再自动写（清理旧键），不会反复重试。
 - 信的来历读段里消息的 `tau`（`lib/messages.js` 的 `parseUser`），不解析文字：
   - 一封信的发送者、跳数、`replyTo`（写信时它在等回信）、回信的结束原因来自 `tau.letters`；正文是消息文本里 `at` 指的那段。

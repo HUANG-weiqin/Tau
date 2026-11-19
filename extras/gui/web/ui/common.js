@@ -3,6 +3,7 @@ import { h, Fragment } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "preact/hooks";
 import htm from "htm";
 import { pathKey } from "../lib/state.js";
+import { motionOn } from "../lib/motion.js";
 
 export const html = htm.bind(h);
 export { h, Fragment, useEffect, useLayoutEffect, useRef, useState, useCallback };
@@ -273,7 +274,7 @@ export function Popover({ rect, onClose, onClosing, label, width = 640, align = 
     closing.current = true;
     onClosingRef.current?.();
     setLeaving(true);
-    const quick = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const quick = !motionOn();
     setTimeout(() => onCloseRef.current(), quick ? 0 : 160);
   }, []);
 

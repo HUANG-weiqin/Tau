@@ -7,6 +7,7 @@
 // 依次接手同一条记录，字接着出，不重来，也不会认错别的消息。
 import { html, useRef, useLayoutEffect } from "./common.js";
 import { newPace, paceArrive, paceStep } from "../lib/pace.js";
+import { motionOn } from "../lib/motion.js";
 
 /** 新出的字由淡到实用多久，ms。 */
 const FADE_MS = 200;
@@ -18,8 +19,6 @@ const GAP_MS = 1000;
 const STALE_MS = 3000;
 /** 写完以后历史还没回来，最多留住字这么久。 */
 const HOLD_MS = 3000;
-
-const reduceQ = matchMedia("(prefers-reduced-motion: reduce)");
 
 /**
  * 一次模型调用的字：已收到的文字、吐字进度。`owner` 是正在显示它的那个 Typer。
@@ -103,8 +102,10 @@ function tick(now) {
   const gap = now - lastTs;
   lastTs = now;
   const dt = Math.min(0.25, Math.max(0.001, gap / 1000));
+  // 停动效时，正在吐的字直接定格（开关是这一刻的状态，中途关掉也当场生效）。
+  const moving = motionOn();
   for (const r of [...running]) {
-    if (gap > GAP_MS) r.showAll();
+    if (gap > GAP_MS || !moving) r.showAll();
     else r.frame(now, dt);
     if (!r.busy()) running.delete(r);
   }
@@ -133,7 +134,6 @@ class Run {
     this.final = o.final;
     this.curClass = o.cur;
     this.caught = o.caught;
-    this.reduced = reduceQ.matches;
     /** 已经收到的全文，和按字（码点）拆开的样子。 */
     this.text = "";
     /** @type {string[]} */
@@ -159,7 +159,7 @@ class Run {
 
   /** 直接显示、不做动画。 */
   get fast() {
-    return this.reduced || this.instant;
+    return this.instant || !motionOn();
   }
 
   /**
@@ -308,7 +308,7 @@ class Run {
       this.wantCur = false;
       const c = this.cur;
       if (c) {
-        if (this.reduced) c.remove();
+        if (this.fast) c.remove();
         else {
           c.classList.add("bye");
           this.byeTimer = window.setTimeout(() => c.remove(), BYE_MS);

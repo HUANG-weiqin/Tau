@@ -3,6 +3,7 @@
 // 字在空白里写，页面不动；写满了再进一次。读字时页面静止，眼睛不用追着跑。
 // 推的动作是临界阻尼弹簧，起步和停下都是缓的。按需跑：推到位就停掉 rAF。
 // 只有用户自己的操作能让它离开末尾：往上滚就离开，往下滚到看得见末尾就重新跟上。程序自己设的 scrollTop 不算。
+import { motionOn } from "../lib/motion.js";
 
 /** 推一次以后，末尾下面留的空白占台面的比例。 */
 const HEAD = 0.4;
@@ -20,8 +21,6 @@ const STEP = 1 / 120;
 const USER_MS = 400;
 /** 点“有新消息”时，离得比这个倍数的一屏还远，就先跳到离目标一屏的地方再滑。 */
 const FAR_SCREENS = 1.5;
-
-const reduceQ = matchMedia("(prefers-reduced-motion: reduce)");
 
 export class Follower {
   /**
@@ -231,8 +230,8 @@ export class Follower {
     }
     if (this.target === null) return true;
     const goal = Math.min(this.target, Math.max(0, n.scrollHeight - v));
-    // 要推的距离比一屏还大、页面在后台、系统要求减少动画：直接到位，不滑。
-    if (reduceQ.matches || document.hidden || goal - this.pos > v) {
+    // 要推的距离比一屏还大、页面在后台、动效关着：直接到位，不滑。
+    if (!motionOn() || document.hidden || goal - this.pos > v) {
       this.target = null;
       this.vel = 0;
       this.set(goal);

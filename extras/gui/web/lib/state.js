@@ -42,6 +42,7 @@ export function normalizeState(raw) {
     ...(typeof r["defaultThinking"] === "string" && LEVELS.includes(r["defaultThinking"]) ? { defaultThinking: r["defaultThinking"] } : {}),
     ...(r["notify"] === true ? { notify: true } : {}),
     ...(r["theme"] === "night" || r["theme"] === "vscode" ? { theme: r["theme"] } : {}),
+    motion: r["motion"] !== false,
     cleanDays: typeof days === "number" && Number.isFinite(days) && days >= 1 ? Math.floor(days) : DEFAULT_CLEAN_DAYS,
   };
 }

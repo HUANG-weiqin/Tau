@@ -1,9 +1,10 @@
-// 不画任何东西的页面级副作用：标签页标题、favicon、完成通知、外观（夜间配色）。
+// 不画任何东西的页面级副作用：标签页标题、favicon、完成通知、外观（配色、动效开关）。
 // 两类要看的东西：`app.attention`（derive.js 的 `attention`，出错的进程）和根进程的“新结果”（lib/notify.js 的 `trackResults`）。
 // 规则都在 lib/notify.js。
 import { useEffect } from "preact/hooks";
 import { lastReply, notifyText, shouldNotify, tabTitle, trackResults, unseenCount, watchAttention } from "../lib/notify.js";
 import { applyTheme } from "../lib/theme.js";
+import { applyMotion } from "../lib/motion.js";
 
 /** 上一次看到的待你看的进程。null 表示还没看过（页面刚打开）。 @type {ReadonlySet<string> | null} */
 let seen = null;
@@ -72,6 +73,7 @@ export function Notifier({ app }) {
   latest = app;
   const ids = app.attention.map((a) => a.id);
   useEffect(() => applyTheme(app.gui.theme), [app.gui.theme]);
+  useEffect(() => applyMotion(app.gui.motion !== false), [app.gui.motion]);
   useEffect(() => {
     const ready = app.ready && app.procsReady;
     const away = document.hidden || !document.hasFocus();

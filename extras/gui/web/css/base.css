@@ -490,7 +490,7 @@ textarea.input { padding: 10px 12px; line-height: 1.6; resize: vertical; }
 .toggle[aria-pressed="true"]:not([disabled]):hover { background: var(--sel-hi); color: var(--on-fill); }
 .toggle[aria-pressed="true"]:not([disabled]):active { background: var(--sel-press); }
 
-/* 动效。减少动画时全部瞬间切换。 */
+/* 动效。设置里的“动效”关掉时全部瞬间切换（`<html data-motion="off">`，见 lib/motion.js）。 */
 @keyframes tau-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
 @keyframes tau-panel { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
 @keyframes tau-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -499,9 +499,9 @@ textarea.input { padding: 10px 12px; line-height: 1.6; resize: vertical; }
 @keyframes tau-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes tau-fade-out { from { opacity: 1; } to { opacity: 0; } }
 @keyframes tau-wipe { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
-}
+:root[data-motion="off"] *,
+:root[data-motion="off"] *::before,
+:root[data-motion="off"] *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 
 /* 提示牌（悬停浮出）。贴着目标，固定定位，不被滚动区裁掉。 */
 .tip { position: fixed; z-index: 90; pointer-events: none; min-width: 160px; max-width: 280px; padding: 10px 12px; background: var(--ink1); color: var(--fg); box-shadow: 0 0 0 1px var(--ink5), inset 0 1px 0 rgba(255,255,255,.08), 0 12px 30px rgba(0,0,0,.45); font-size: var(--fs-sm); line-height: 1.5; animation: tau-fade var(--t-fast) var(--ease-in); }

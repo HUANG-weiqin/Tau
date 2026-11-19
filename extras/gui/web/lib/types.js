@@ -81,6 +81,7 @@
  *   defaultThinking?: string,
  *   notify?: boolean,
  *   theme?: "night" | "vscode",
+ *   motion: boolean,
  * }} GuiState
  */
 

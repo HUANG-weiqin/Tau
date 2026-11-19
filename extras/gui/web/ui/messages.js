@@ -81,7 +81,7 @@ export function HandoffRow({ app, item, segment }) {
     </article>`;
 }
 
-/** 正在跑的东西底下的扫描线：一直在走，说明还在动。系统要求减少动画时停在原地。 */
+/** 正在跑的东西底下的扫描线：一直在走，说明还在动。动效关掉时停在原地（css/base.css 的 `data-motion="off"`）。 */
 const Scan = () => html`<span class="scan" aria-hidden="true"></span>`;
 
 /** 一次工具调用：暗色条。`since` 是发出这批调用的助手消息的时间戳。 */

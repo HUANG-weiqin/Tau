@@ -131,6 +131,7 @@ export function SettingsDialog({ app, onClose }) {
     quiet(app.setGui({ defaultThinking: v ?? "" }));
   };
   const theme = app.gui.theme ?? "day";
+  const motion = app.gui.motion !== false;
 
   // 开关在点击的处理函数里申请许可：浏览器只认用户操作里的申请。
   const notifyOn = app.gui.notify === true;
@@ -163,6 +164,10 @@ export function SettingsDialog({ app, onClose }) {
         <div class="cl-days soft">
           <div class="toggles" role="group" aria-label="外观">${THEMES.map(([k, l]) => html`<button type="button" class="toggle" aria-pressed=${theme === k} onClick=${() => theme !== k && quiet(app.setGui({ theme: k }))}>${l}</button>`)}</div>
           <span>夜：台面和黄色都调暗，适合昏暗的环境。VS Code：深灰配蓝，和编辑器一个样。</span>
+        </div>
+        <div class="cl-days soft">
+          <div class="toggles" role="group" aria-label="动效"><button type="button" class="toggle" aria-pressed=${motion} onClick=${() => !motion && quiet(app.setGui({ motion: true }))}>开</button><button type="button" class="toggle" aria-pressed=${!motion} onClick=${() => motion && quiet(app.setGui({ motion: false }))}>关</button></div>
+          <span>动效：关掉以后，弹窗、吐字、滚动都瞬间完成。只看这个开关，不跟系统设置。</span>
         </div>
 
         <${SecHead} n="02" title="默认模型" en="DEFAULT MODEL" right=${html`<span class="dnote" style="font-size:11px">新建预设时预填</span>`} />
