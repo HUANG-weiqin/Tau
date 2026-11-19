@@ -2136,7 +2136,7 @@ fork 原来在这张表里，已进内核，见 [D49](#d49-fork-进内核)。
   - 版本号可选，不带就覆盖：不带的调用没有保护，弱模型恰好不带，丢写没人发现。
   - 取消，永远强写：违背“写入必须带读到的版本号”。
 - 代价：这一步的摩擦还在。弱模型填了别的正整数、键又已存在时，要靠冲突结果里的现值和版本号抄上重试。本机整库没出现过一次真的版本冲突：这个保险没有证明救过一次，但本机有过两个 manager 窗口共用同一个记忆库的情况。
-- 验证：`test/store/inputs.test.ts` 的反例（新键带 0、负数、正数；已有键带 0 冲突不覆盖；删除不存在的键文字不变）先红后绿。`npm run typecheck`、`git diff --check` 通过，`src/` 3598 行。全量 `npm test` 1434 条，红的 5 条都是 Windows 孙进程和进程树一族（MCP 的 relay、shell 超时）：`test/extras/tools/tools.test.ts` 和 `test/extras/gui/mcp.test.ts` 单跑 43 条全绿，`test/extras/mcp/mcp.test.ts` 是已知基线红。
+- 验证：`test/store/inputs.test.ts` 的反例（新键带 0、负数、正数；已有键带 0 冲突不覆盖；删除不存在的键文字不变）先红后绿。`npm run typecheck`、`git diff --check` 通过，`src/` 3598 行。全量 `npm test` 1434 条，红的 5 条都是 Windows 孙进程和进程树一族（MCP 的 relay、shell 超时）：`test/extras/tools/tools.test.ts`、`test/extras/gui/mcp.test.ts`（43 条）和 `test/extras/mcp/mcp.test.ts`（19 条）单跑全绿：全量里红，是并发争用（孙进程、进程树、临时目录占用）造成的假红，不是代码问题。
 - 写在这里的页：[kb-store 的记忆工具](kb-store.md#记忆工具)。
 
 ## 未确认的默认值
