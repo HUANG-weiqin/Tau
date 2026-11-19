@@ -600,14 +600,14 @@ describe("桥：工具定义", () => {
     const written = JSON.parse(readFileSync(file, "utf8"));
     assert.deepEqual(Object.keys(written).sort(), ["command", "description", "output", "parameters", "timeout"]);
     assert.ok(written.command.includes(`${LIB}/shell.ts`), written.command);
-    assert.equal(written.timeout, 90, "shell 先等 60 秒：工具自己的超时要更大");
+    assert.equal(written.timeout, 360, "shell 先等 60 秒、wait 最多 300 秒：工具自己的超时要更大，留出余量");
     assert.deepEqual(Object.keys(written.parameters.properties).sort(), ["command", "wait"]);
     assert.deepEqual(readdirSync(join(bhome, "tools")).sort(), ["bg_run.json", "history_read.json", "history_search.json", "peek.json", "shell.json", "wait.json", "web_search.json"]);
 
     l = await list();
     assert.deepEqual(l.library.map((x: any) => x.status), ["installed", "installed", "installed", "installed", "installed", "installed", "installed"]);
     const shell = l.installed.find((x: any) => x.name === "shell");
-    assert.deepEqual([shell.params, shell.timeout, shell.output, shell.usedBy], [["command", "wait"], 90, "text", []]);
+    assert.deepEqual([shell.params, shell.timeout, shell.output, shell.usedBy], [["command", "wait"], 360, "text", []]);
     assert.equal((await post(port, "/api/tools/install", { name: "shell" })).status, 200, "内容一样：再装不报错");
 
     // 用户改过：状态变成“不同”，不带 replace 就拒绝，文件不动。
@@ -619,7 +619,7 @@ describe("桥：工具定义", () => {
     assert.match(refused.json.error, /内容和工具库里的不同/);
     assert.equal(JSON.parse(readFileSync(file, "utf8")).timeout, 5);
     assert.equal((await post(port, "/api/tools/install", { name: "shell", replace: true })).status, 200);
-    assert.equal(JSON.parse(readFileSync(file, "utf8")).timeout, 90);
+    assert.equal(JSON.parse(readFileSync(file, "utf8")).timeout, 360);
     assert.ok(!existsSync(`${file}.tmp`));
 
     // 读不出的定义列出来，带原因。
@@ -670,6 +670,11 @@ test("catalog：每个工具的名字合规，脚本存在，定义没有多余�
     assert.deepEqual(Object.keys(definitionOf(e, LIB)), ["description", "parameters", "command", "timeout", "output"]);
     assert.ok(e.timeout >= 1 && e.timeout <= 600);
     assert.equal((e.parameters as any).type, "object");
+  }
+  // 带 wait 参数的工具：自己的 timeout 必须比 wait 的上限大，留出启动和收尾，不然 wait 取大值时被内核先杀掉，走不到“转后台”。
+  for (const e of CATALOG) {
+    const wait = (e.parameters as any).properties?.wait;
+    if (wait !== undefined) assert.ok(e.timeout >= wait.maximum + 30, `${e.name} 的 timeout ${e.timeout} 要比 wait 上限 ${wait.maximum} 至少大 30`);
   }
   // 脚本都能被 node 解析（类型擦除语法）。
   for (const e of CATALOG) execFileSync(process.execPath, ["--check", join(LIB, e.script)]);

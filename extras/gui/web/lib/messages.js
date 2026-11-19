@@ -155,14 +155,15 @@ export function describeStart(m) {
 }
 
 /**
- * 工具调用的一行摘要：bash 取命令，读写改取路径，其它取第一个字符串参数。
+ * 工具调用的一行摘要：参数里有字符串 command 就取它（bash、shell、bg_run 和手写的工具定义都一样），
+ * 读写改取路径，其它取第一个字符串参数。
  * @param {string} name
  * @param {Record<string, unknown>} args
  */
 export function summarizeCall(name, args) {
   /** @type {unknown} */
   let v;
-  if (name === "bash") v = args["command"];
+  if (typeof args["command"] === "string") v = args["command"];
   else if (name === "read" || name === "write" || name === "edit") v = args["path"] ?? args["file_path"] ?? args["filePath"];
   if (typeof v !== "string") v = Object.values(args).find((x) => typeof x === "string");
   if (typeof v !== "string") return Object.keys(args).length === 0 ? "" : clipText(JSON.stringify(args), 80);

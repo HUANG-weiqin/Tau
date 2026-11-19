@@ -103,7 +103,7 @@ function CallStrip({ call, running, app, since, out = "" }) {
   return html`<li class=${`call ${st} ${live ? "run" : ""}`}>
     ${can ? html`<button type="button" class="chead" aria-expanded=${open} onClick=${() => setOpen(!open)}>${head}</button>` : html`<div class="chead">${head}</div>`}
     ${open && r && html`<div class="cout">
-      ${call.name === "bash" && typeof call.args["command"] === "string" && call.summary !== call.args["command"] ? html`<pre class="ccmd">$ ${call.args["command"]}</pre>` : ""}
+      ${typeof call.args["command"] === "string" && call.summary !== call.args["command"] ? html`<pre class="ccmd">$ ${call.args["command"]}</pre>` : ""}
       ${r.images.length > 0 && html`<div class="thumbs" style="padding:8px 14px 0 14px">${r.images.map((im) => html`<${Thumb} hash=${im.hash} fetchBlob=${app.blob} />`)}</div>`}
       <pre>${r.text.length > 20000 ? r.text.slice(0, 20000) + `\n…（还有 ${formatBytes(r.text.length - 20000)}）` : r.text}</pre>
     </div>`}

@@ -121,6 +121,7 @@
 
 - 读预设不自己解析：列出 `presets/` 下的每个 `.md`，对每个文件名发一次 `check`（经管道，和 `/api/tau` 同一条管道）。读得出、能不能启动、错误文字都和 `start` 一致（[kb-service 的 `check`](kb-service.md#读记录和干跑inspectcheck)），预设以后加字段（例如 `options`）桥不用改。
 - 每个预设回 `{ id, ok: true, workdir, model, tools, memory, prompt, agentsMd, thinking?, handoff?, options?, context? }`。`prompt` 是改预设时要显示的提示词，只有用户写的部分，不含旧的 AGENTS.md 拼接块。`agentsMd` 是旧块的状态：`none` 或 `legacy`，见[上下文文件](#上下文文件)。`context` 是预设里写的上下文文件，原样。`tools` 是内置工具加工具定义的名字，`memory` 是 `tools` 里有没有 `memory`。读不出，或者读得出但此刻起不来（`check` 的 `error` 不是 `null`，例如窗口装不下），回 `{ id, ok: false, error }`，照样列出，`error` 是服务给的原文。
+- 保存预设（新建和改）时，`tools` 里点到工具库（`extras/tools/catalog.ts`）里的名字，而 `<home>/tools/<名字>.json` 还没有，桥先装上（`bridge/tools.ts` 的 `installTool`）。已经有的不动，包括用户改过内容的。这样模型一看到预设就有能运行命令的工具，不用先去工具定义页点安装。
 - 连不上服务回 503，不当成每个预设都读不出：页面连上以后再读。
 - 新建时只写认识的字段，提示词写在第二个 `---` 后面。`thinking`、`handoff`（正整数）、`options`（对象，写成一行 JSON）、`context`（字符串数组，逗号分隔写成一行）有就写，没有不写。ID 只许字母、数字、`.`、`_`、`-`，工作目录必须是存在的绝对路径。模型、工具名只查格式，不查模型目录和工具定义：写出来的文件能不能用，由 `check` 说了算。
 - 改预设只换收到的字段，别的行、顺序、换行符、BOM、提示词原样：

@@ -3,8 +3,10 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import path from "node:path";
+import { CATALOG } from "../../tools/catalog.ts";
 import { applyBlock, splitPrompt, stateOf } from "./agentsmd.ts";
 import type { AgentsMdState } from "./agentsmd.ts";
+import { installTool, readDef } from "./tools.ts";
 import { HttpError, isAbsoluteWinPath, isObject } from "./util.ts";
 
 const THINKING = ["minimal", "low", "medium", "high", "xhigh", "max"];
@@ -172,6 +174,16 @@ function dropBlock(v: unknown): boolean {
   return true;
 }
 
+/**
+ * 预设引用了工具库里的工具、而 `tools/` 下还没有它：先装上，不然预设起不来。
+ * 已经有的不动，包括用户改过内容的：那是他的版本（要用库里的，去工具定义页点更新）。
+ */
+function ensureLibraryTools(home: string, tools: unknown): void {
+  if (!Array.isArray(tools)) return;
+  const dir = path.join(home, "tools");
+  for (const e of CATALOG) if (tools.includes(e.name) && readDef(dir, e.name) === null) installTool(home, { name: e.name });
+}
+
 export function createPreset(home: string, body: Record<string, unknown>): void {
   const id = presetId(body.id);
   const workdir = line("workdir", body.workdir);
@@ -183,6 +195,7 @@ export function createPreset(home: string, body: Record<string, unknown>): void 
   }
   const fields = headFields(body, false);
   if (typeof body.prompt !== "string") throw new HttpError(400, "prompt 必须是字符串");
+  ensureLibraryTools(home, body.tools);
   const head = [`workdir: ${workdir}`, ...fields.map(([k, v]) => `${k}: ${v}`)];
   const dir = path.join(home, "presets");
   mkdirSync(dir, { recursive: true });
@@ -240,6 +253,7 @@ async function doUpdate(home: string, pipe: string, body: Record<string, unknown
   const id = presetId(body.id);
   const fields = headFields(body, true);
   if (body.prompt !== undefined && typeof body.prompt !== "string") throw new HttpError(400, "prompt 必须是字符串");
+  if (body.tools !== undefined) ensureLibraryTools(home, body.tools);
   const drop = dropBlock(body.agentsMd);
   if (fields.length === 0 && body.prompt === undefined && body.agentsMd === undefined) throw new HttpError(400, "没有要改的字段");
   const file = path.join(home, "presets", `${id}.md`);

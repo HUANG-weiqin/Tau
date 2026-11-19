@@ -221,6 +221,7 @@ WRAPPER = echo $$ > "$TAU_PGID" || exit; export -n TAU_PGID TAU_COMMAND; eval "$
 #### 超时和中止
 
 - `timeout` 的单位是秒。省略时 120，超过 600 按 600。不是正数时报错，不运行。
+- 长命令别用 bash：超时就是失败，进程被结束，不会转到后台。要转到后台用工具库的 `shell` 或 `bg_run`（[kb-extras 的工具库](kb-extras.md#工具库)）。
 - 调用前信号已中止：不运行。
 - 超时或中止时结束进程（见“结束进程”）。等结束做完、bash 退出后才返回。结果是错误，已有的输出保留。
 - bash 退出后不再理会超时和中止。

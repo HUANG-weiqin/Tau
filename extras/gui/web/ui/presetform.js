@@ -11,7 +11,8 @@ import { groupByServer, withGroup } from "../lib/mcp.js";
 import { formatBytes } from "../lib/format.js";
 
 export const TOOLS = ["read", "write", "edit", "bash", "memory", "agents"];
-const NEW_TOOLS = ["read", "write", "edit", "bash", "memory"];
+// 新建预设在工具区默认勾的工具：命令用工具库的 shell，bash 只当兜底。
+const NEW_TOOLS = ["read", "write", "edit", "memory", "shell"];
 
 /**
  * 项目里 AGENTS.md 的情况，连同它是对哪个目录查的。`workdir` 是空串、或还没查到，是 null。
@@ -253,7 +254,7 @@ export function PresetFields({ form, app, placeholder = "my-project", promptHint
                 <div class="toggles" role="group" aria-label="工具定义">${others.map((d) => toggleOf(d.name))}${orphans.map((t) => toggleOf(t))}</div>
               </div>`}
             </${Fragment}>`}
-      ${tools.includes("shell") && tools.includes("bash") && html`<span class="dnote" style="font-size:11.5px">shell 和 bash 同时开着：两个都能运行命令，通常只留一个。</span>`}
+      ${tools.includes("shell") && tools.includes("bash") && html`<span class="dnote" style="font-size:11.5px">shell 和 bash 同时开着：通常只留 shell；bash 超时就杀进程，不转后台。</span>`}
       ${toolsExtra}
     </div>
     <label class="field"><span class="fl">换段阈值（token，可以不填）${eff("handoff")}</span>

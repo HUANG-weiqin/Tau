@@ -564,6 +564,34 @@ test("新建预设：只写认识的字段；不覆盖已有的；ID 和工作�
   assert.equal(listDir(join(e.home, "presets")).length, 1, "出错的都没写文件");
 });
 
+test("保存预设：引用了工具库里没装的工具，桥先装上；已有的不同内容不覆盖", async (t) => {
+  const e = await setupBridge(t, { service: true });
+  const dir = join(e.home, "tools");
+  const shell = join(dir, "shell.json");
+  assert.ok(!existsSync(shell), "开始时没装");
+
+  const mk = await post(e.port, "/api/presets/create", { id: "sh", workdir: e.work, model: e.model, tools: ["read", "shell"], prompt: "p" });
+  assert.equal(mk.status, 200, mk.text);
+  assert.ok(existsSync(shell), "新建时引用的 shell 装上了");
+
+  const up = await post(e.port, "/api/presets/update", { id: "sh", tools: ["read", "shell", "bg_run"] });
+  assert.equal(up.status, 200, up.text);
+  assert.ok(existsSync(join(dir, "bg_run.json")), "改预设时引用的 bg_run 也装上");
+
+  // 用户改过的定义不动：不覆盖、也不报错。
+  const mine = { ...JSON.parse(readFileSync(shell, "utf8")), timeout: 5 };
+  writeFileSync(shell, JSON.stringify(mine));
+  const again = await post(e.port, "/api/presets/update", { id: "sh", tools: ["read", "shell"] });
+  assert.equal(again.status, 200, again.text);
+  assert.equal(JSON.parse(readFileSync(shell, "utf8")).timeout, 5, "已有的还留着用户的版本");
+
+  // 预设里没有库里的名字时不碰 tools/。
+  rmSync(dir, { recursive: true });
+  const plain = await post(e.port, "/api/presets/update", { id: "sh", tools: ["read", "memory"] });
+  assert.equal(plain.status, 200, plain.text);
+  assert.ok(!existsSync(dir), "没有库里的名字就不建 tools/");
+});
+
 test("删预设：只删对应的文件；ID 不合法 400；没有这个文件 404；只收 POST", async (t) => {
   const e = await setupBridge(t);
   const mk = (id: string) => post(e.port, "/api/presets/create", { id, workdir: e.work, model: "a/b", tools: ["read"], prompt: "p" });
