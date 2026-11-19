@@ -51,7 +51,7 @@ const BASH: ToolSpec = {
 /** 记忆的上限，按 UTF-8 字节算。由记忆的实现检查；视图按渲染后的文本算。 */
 export const MEMORY_KEY_MAX_BYTES = 128;
 export const MEMORY_VALUE_MAX_BYTES = 4096;
-export const MEMORY_VIEW_MAX_BYTES = 16384;
+export const MEMORY_VIEW_MAX_BYTES = 32 * 1024;
 /** 上下文文件视图的上界（D72），按 UTF-8 字节算，整个视图都计入：标题行、段间空行和各种说明。参与启动检查，改它要先重算（见 kb-contract）。 */
 export const CONTEXT_VIEW_MAX_BYTES = 24 * 1024;
 

@@ -40,16 +40,18 @@ test("writeMemory：删除失败也整批回滚；超限的失败带 over 和字
 test("writeMemory：顺序有关。库满时先删后写成功，先写后删在写那一项失败，什么都不变", (t) => {
   const db = tempDb(t);
   const memory = sqliteMemory(db);
-  for (const k of ["k1", "k2", "k3", "k4"]) memory.set("a", k, "x".repeat(4000), null);
+  // 七个满值再放一条 4000 的，视图就只剩不到一行的空间（上限见 MEMORY_VIEW_MAX_BYTES）。
+  for (const k of ["k1", "k2", "k3", "k4", "k5", "k6", "k7"]) assert.equal(memory.set("a", k, "x".repeat(4096), null).ok, true);
+  assert.equal(memory.set("a", "k8", "x".repeat(4000), null).ok, true);
   const before = memory.entries("a");
-  const r = writeMemory(db, memory, [set("a", "k5", "x".repeat(4000)), del("a", "k1", 1)]);
+  const r = writeMemory(db, memory, [set("a", "k5x", "x".repeat(4000)), del("a", "k1", 1)]);
   assert.equal(r.ok, false);
   assert.equal(!r.ok && r.index, 0);
   assert.equal(!r.ok && "over" in r.result && r.result.over, "view");
   assert.deepEqual(memory.entries("a"), before);
-  const ok = writeMemory(db, memory, [del("a", "k1", 1), set("a", "k5", "x".repeat(4000))]);
+  const ok = writeMemory(db, memory, [del("a", "k1", 1), set("a", "k5x", "x".repeat(4000))]);
   assert.equal(ok.ok, true);
-  assert.deepEqual(memory.entries("a").map((e) => e.key), ["k2", "k3", "k4", "k5"]);
+  assert.deepEqual(memory.entries("a").map((e) => e.key).sort(), ["k2", "k3", "k4", "k5", "k5x", "k6", "k7", "k8"]);
 });
 
 test("writeMemory：同一批里同一个键可以连写，后一项用前一项给的版本", (t) => {

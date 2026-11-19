@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import type { DatabaseSync } from "node:sqlite";
 import { start } from "../../src/kernel/decide.ts";
 import { utf8Bytes } from "../../src/kernel/derive.ts";
+import { MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../../src/kernel/tools.ts";
 import type { Memory } from "../../src/kernel/types.ts";
 import { sqliteMemory } from "../../src/memory/kv.ts";
 import { runInStore } from "../../src/store/instore.ts";
@@ -25,6 +26,24 @@ function setup(t: TestContext): { db: DatabaseSync; memory: Memory; set: (key: s
 const rows = (db: DatabaseSync) => db.prepare("SELECT version, ns, key, value FROM memory ORDER BY version").all();
 const over = (text: string): Plain => ({ text: `超出上限，没有写入：${text}`, isError: true });
 
+/** 用满值的键把视图填到离上限不到一行那么多。之后补的最后一行一定放得下。 */
+function bulk(memory: Memory): void {
+  while (MEMORY_VIEW_MAX_BYTES - utf8Bytes(memory.view(NS)) >= 16 + MEMORY_VALUE_MAX_BYTES + 8 + 1) {
+    assert.equal(memory.set(NS, `b${memory.entries(NS).length}`, "x".repeat(MEMORY_VALUE_MAX_BYTES), null).ok, true);
+  }
+}
+
+/** 补一行正好到上限：先写同名的空值，量出还能写多少，再写满。返回这一行的版本号和值的字节数。 */
+function fill(memory: Memory, key: string): { version: number; room: number } {
+  const empty = memory.set(NS, key, "", null);
+  assert.ok(empty.ok, `空值写不进去 ${JSON.stringify(empty)}`);
+  const room = MEMORY_VIEW_MAX_BYTES - utf8Bytes(memory.view(NS));
+  const full = memory.set(NS, key, "x".repeat(room), empty.version);
+  assert.ok(full.ok, `写满到上限被拒绝 ${JSON.stringify(full)}`);
+  assert.equal(utf8Bytes(memory.view(NS)), MEMORY_VIEW_MAX_BYTES);
+  return { version: full.version, room };
+}
+
 test("键、值或整个视图超出上限：给出确切的文本，库不变，版本号不前进", (t) => {
   const { db, memory, set } = setup(t);
   assert.deepEqual(set("a", "1"), { text: "已写入 a，版本 1。", isError: false });
@@ -35,49 +54,43 @@ test("键、值或整个视图超出上限：给出确切的文本，库不变�
   assert.deepEqual(set("键".repeat(43), "v"), over("键有 129 字节，上限 128 字节。"));
   assert.deepEqual(set("b", "x".repeat(4097)), over("值有 4097 字节，上限 4096 字节。"));
   for (const k of ["c", "d"]) assert.equal(set(k, "x".repeat(4096)).isError, false);
+  bulk(memory);
+  // 把视图补到正好上限，再加 1 字节就超。
+  const { room, version } = fill(memory, "f");
   const filled = rows(db);
-  const viewBytes = utf8Bytes(memory.view(NS));
-  const expected = viewBytes + 1 + utf8Bytes(`"f": "${"x".repeat(4000)}"`);
-  assert.deepEqual(set("f", "x".repeat(4000)), over(`写入后记忆视图有 ${expected} 字节，上限 16384 字节。先删掉或缩短不需要的键。`));
-  assert.deepEqual(memory.set(NS, "f", "x".repeat(4000), null), { ok: false, over: "view", bytes: expected });
+  const tooBig = MEMORY_VIEW_MAX_BYTES + 1;
+  assert.deepEqual(set("f", "x".repeat(room + 1), version), over(`写入后记忆视图有 ${tooBig} 字节，上限 ${MEMORY_VIEW_MAX_BYTES} 字节。先删掉或缩短不需要的键。`));
+  assert.deepEqual(memory.set(NS, "f", "x".repeat(room + 1), version), { ok: false, over: "view", bytes: tooBig });
   assert.deepEqual(memory.set(NS, "k".repeat(129), "v", null), { ok: false, over: "key", bytes: 129 });
   assert.deepEqual(memory.set(NS, "b", "值".repeat(1366), null), { ok: false, over: "value", bytes: 4098 });
 
   assert.deepEqual(rows(db), filled, "被拒绝的写入什么都没改");
   assert.deepEqual(filled.slice(0, before.length), before);
   const max = Math.max(...filled.map((r) => r.version as number));
+  assert.equal(memory.delete(NS, "f", version).ok, true, "先腾出位置：视图已经在上限");
   assert.deepEqual(memory.set(NS, "g", "小", null), { ok: true, version: max + 1 }, "被拒绝的写入没有用掉版本号");
 });
 
-test("视图正好 16384 字节可以写，16385 字节拒绝；在上限处用同样长的值覆盖可以写", (t) => {
+test(`视图正好 ${MEMORY_VIEW_MAX_BYTES} 字节可以写，多 1 字节拒绝；在上限处用同样长的值覆盖可以写`, (t) => {
   const { memory } = setup(t);
-  // 每行是 `"k1": "xxx…"`，比值多 8 字节；四行之间三个换行。
-  for (const k of ["k1", "k2", "k3"]) assert.equal(memory.set(NS, k, "x".repeat(4096), null).ok, true);
-  const v4 = memory.set(NS, "k4", "x".repeat(16384 - 3 * 4104 - 3 - 8), null);
-  assert.equal(v4.ok, true);
-  assert.equal(utf8Bytes(memory.view(NS)), 16384);
-  const version = v4.ok ? v4.version : 0;
-  assert.deepEqual(memory.set(NS, "k4", "x".repeat(16384 - 3 * 4104 - 3 - 8 + 1), version), { ok: false, over: "view", bytes: 16385 });
-  assert.deepEqual(memory.set(NS, "k5", "", null), { ok: false, over: "view", bytes: 16384 + 1 + utf8Bytes(`"k5": ""`) });
-  const same = memory.set(NS, "k4", "y".repeat(16384 - 3 * 4104 - 3 - 8), version);
+  bulk(memory);
+  const { room, version } = fill(memory, "k4");
+  assert.deepEqual(memory.set(NS, "k4", "x".repeat(room + 1), version), { ok: false, over: "view", bytes: MEMORY_VIEW_MAX_BYTES + 1 });
+  assert.deepEqual(memory.set(NS, "k5", "", null), { ok: false, over: "view", bytes: MEMORY_VIEW_MAX_BYTES + 1 + utf8Bytes(`"k5": ""`) });
+  const same = memory.set(NS, "k4", "y".repeat(room), version);
   assert.equal(same.ok, true, "旧的那一行不算在内");
-  assert.equal(utf8Bytes(memory.view(NS)), 16384);
+  assert.equal(utf8Bytes(memory.view(NS)), MEMORY_VIEW_MAX_BYTES);
 });
 
 test("键里有 U+0000 或孤立的代理项：在上限处写满、用同样长的值覆盖都可以，超一字节就拒绝", (t) => {
   for (const key of ["kk", "k\u0000", "k\uD800"]) {
     const { memory } = setup(t);
-    for (const k of ["k1", "k2", "k3"]) assert.equal(memory.set(NS, k, "x".repeat(4096), null).ok, true);
-    const empty = memory.set(NS, key, "", null);
-    assert.ok(empty.ok);
-    // 值是 n 个 ASCII 字符时，视图正好 16384 字节。
-    const n = 16384 - utf8Bytes(memory.view(NS));
-    const full = memory.set(NS, key, "x".repeat(n), empty.version);
-    assert.ok(full.ok, `${JSON.stringify(key)}：写满到上限被拒绝 ${JSON.stringify(full)}`);
-    assert.equal(utf8Bytes(memory.view(NS)), 16384);
-    assert.deepEqual(memory.set(NS, key, "x".repeat(n + 1), full.version), { ok: false, over: "view", bytes: 16385 });
-    assert.equal(memory.set(NS, key, "y".repeat(n), full.version).ok, true, `${JSON.stringify(key)}：同样长的值覆盖被拒绝`);
-    assert.equal(memory.view(NS).split("\n").length, 4);
+    bulk(memory);
+    const lines = memory.view(NS).split("\n").length;
+    const { room, version } = fill(memory, key);
+    assert.deepEqual(memory.set(NS, key, "x".repeat(room + 1), version), { ok: false, over: "view", bytes: MEMORY_VIEW_MAX_BYTES + 1 });
+    assert.equal(memory.set(NS, key, "y".repeat(room), version).ok, true, `${JSON.stringify(key)}：同样长的值覆盖被拒绝`);
+    assert.equal(memory.view(NS).split("\n").length, lines + 1);
   }
 });
 

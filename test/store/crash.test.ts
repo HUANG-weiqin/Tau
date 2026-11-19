@@ -32,11 +32,12 @@ const PRUNES = 4;
 const REMOVES = 8;
 const SWEEPS = 3;
 const DELETE_FROM = 14;
-/** 窗口小一些，让换段也会发生。 */
+/** 窗口小一些，让换段也会发生。不带记忆：启动检查要给记忆的上界留 16,403 token（D80），这个窗口装不下；带记忆的快照由 `reconfigured` 造。 */
 const CRASH_PRESET: PresetSnapshot = {
   ...PRESET,
   contextWindow: 60_000,
   handoff: 10_000,
+  tools: ["read"],
   input: ["text", "image"],
   toolDefs: [{ name: "decl", description: "声明库内动作", parameters: { type: "object" }, command: "x", timeout: 60, output: "content" }],
 };

@@ -98,7 +98,7 @@ test("交接请求去掉段末连续的用户消息，但不去掉第一条", ()
 test("memory_set 的说明引用三个上限", () => {
   const text = findTool(preset({ tools: ["memory"] }), "memory_set")?.description ?? "";
   for (const n of [MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES]) assert.ok(text.includes(`${n} 字节`), text);
-  assert.deepEqual([MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES], [128, 4096, 16384]);
+  assert.deepEqual([MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES], [128, 4096, 32768]);
 });
 
 test("idle 和 awaitingTool 时也不加交接指令", () => {
