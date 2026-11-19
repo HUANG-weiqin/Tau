@@ -86,7 +86,7 @@ async function bodyAfterFork(): Promise<Body> {
   return { ...body, messages: body.messages.filter((x) => x.role !== "system") };
 }
 
-test("fork 成 opus：别家的思考成纯文字（无签名），调用 ID 合规，调用和结果配得上", async () => {
+test("fork 成 opus：别家的思考被丢掉（不当思考块发，也不变成文字），调用 ID 合规，调用和结果配得上", async () => {
   const { messages } = await bodyAfterFork();
   const blocks = messages.flatMap((m) => (typeof m.content === "string" ? [] : m.content));
   assert.ok(!blocks.some((b) => b.type === "thinking" || b.type === "redacted_thinking" || "signature" in b), "别家的思考不能当 Anthropic 的 thinking 块发出");
@@ -95,7 +95,8 @@ test("fork 成 opus：别家的思考成纯文字（无签名），调用 ID 合
     ["user", "assistant", "user", "assistant", "user", "assistant", "user"],
   );
   const assistantTexts = messages.filter((m) => m.role === "assistant").map((m) => (m.content as Block[]).filter((b) => b.type === "text").map((b) => b.text));
-  assert.deepEqual(assistantTexts, [["先取第一个。"], ["再取第二个。"], ["好了。", "两个暗号是 MANGO7 和 KIWI42。"]]);
+  assert.deepEqual(assistantTexts, [[], [], ["两个暗号是 MANGO7 和 KIWI42。"]], "别家的思考整段丢掉，只剩文字");
+  assert.ok(!JSON.stringify(messages).match(/先取第一个|再取第二个|好了。/), "思考的文字哪里都不出现");
   const uses = blocks.filter((b) => b.type === "tool_use");
   const results = blocks.filter((b) => b.type === "tool_result");
   assert.deepEqual(uses.map((b) => b.name), ["code_a", "code_b"]);

@@ -50,7 +50,7 @@
 ### 依赖规则
 
 - 只依赖线协议、CLI、工具定义和预设。不导入 `src/`，不读库：要读的事实经协议拿（上面的原语）。`test/extras-imports.test.ts` 负责检查。
-- npm 依赖随便加，不用写决策记录。依赖写在 `extras/` 自己的 `package.json` 里，精确锁定版本，和根目录的 `src/` 白名单分开（[D63](kb-decisions.md#d63-上层的依赖随便加)）。外部命令（例如 PowerShell）照样能用。
+- npm 依赖随便加，不用写决策记录。依赖写在 `extras/` 自己的 `package.json` 里，精确锁定版本（pi-ai 除外：它写 `^` 范围，和根目录同一个版本，`test/pi-ai-version.test.ts` 守着，[D84](kb-decisions.md#d84-pi-ai-升级版本不再写死)），和根目录的 `src/` 白名单分开（[D63](kb-decisions.md#d63-上层的依赖随便加)）。外部命令（例如 PowerShell）照样能用。
 - 连管道时，`TAU_PIPE` 有值就用它，否则用默认的管道，和 CLI 一样。这样在测试服务里，上层的工具定义也不会连到正式服务。
 
 ### Pi Web 的功能在 v2 上的做法

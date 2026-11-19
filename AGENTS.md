@@ -112,8 +112,8 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 
 ## 小而硬规矩
 
-- `src/` 的依赖白名单：`@earendil-works/pi-ai`（精确锁定 `1.0.0`），开发依赖 `typescript` 和 `@types/node`。加新依赖要在[决策记录](.knowledge/kb-decisions.md)里写明理由。
-- `extras/`（上层建筑）不导入 `src/`。它的依赖随便加，写在 `extras/` 自己的 `package.json` 里，精确锁定版本，不进上面的白名单（[D63](.knowledge/kb-decisions.md#d63-上层的依赖随便加)）。`test/extras-imports.test.ts` 只检查不导入 `src/`（和其它 extras/ 之外的仓库文件）。细节见 [kb-extras](.knowledge/kb-extras.md#依赖规则)。
+- `src/` 的依赖白名单：`@earendil-works/pi-ai`（`package.json` 写 `^` 范围，实际版本由锁文件定；它会经常升级，文档和注释里不写它的版本号，[D84](.knowledge/kb-decisions.md#d84-pi-ai-升级版本不再写死)；怎样升级见 [kb-executor](.knowledge/kb-executor.md#升级-pi-ai)），开发依赖 `typescript` 和 `@types/node`。加新依赖要在[决策记录](.knowledge/kb-decisions.md)里写明理由。
+- `extras/`（上层建筑）不导入 `src/`。它的依赖随便加，写在 `extras/` 自己的 `package.json` 里，精确锁定版本（pi-ai 除外，它和根目录同一个范围、同一个版本，见上），不进上面的白名单（[D63](.knowledge/kb-decisions.md#d63-上层的依赖随便加)）。`test/extras-imports.test.ts` 只检查不导入 `src/`（和其它 extras/ 之外的仓库文件）。细节见 [kb-extras](.knowledge/kb-extras.md#依赖规则)。
 - SQLite 用内置的 `node:sqlite`。
 - 没有构建步骤：Node 24（不低于 24.21）直接运行 `.ts`。只用可擦除的 TS 语法（不用 enum、namespace、参数属性）；import 写 `.ts` 扩展名。
 - tsconfig：strict 全开，`noEmit`、`erasableSyntaxOnly`、`allowImportingTsExtensions`、`verbatimModuleSyntax`。

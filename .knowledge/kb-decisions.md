@@ -1,6 +1,6 @@
 # 决策记录
 
-`updated: 2026-11-18`
+`updated: 2026-11-19`
 
 ## 这个模块是干什么的
 
@@ -2089,6 +2089,27 @@ fork 原来在这张表里，已进内核，见 [D49](#d49-fork-进内核)。
 - 不改契约：凭据文件不在[契约清单](kb-contract.md#契约清单)里；CLI、线协议、表、环境变量都没动。[AGENTS.md](../AGENTS.md) 的“其余数据都在 `tau.db`”加了这个例外。
 - 测试：`test/credential-suite.ts`（18 条，src 和 extras 各一遍）、`test/extras/auth/login.test.ts`、桥的 `keys/set`、`keys/clear` 和模型目录、`test/extras/gui/lib.test.ts` 的 key 状态、`test/extras/tools/web_search.test.ts`。
 - 写在这里的页：[kb-service 的启动脚本和入口](kb-service.md#启动脚本和入口)、[kb-extras 的认证](kb-extras.md#认证)、[kb-gui](kb-gui.md)。
+
+### D84 pi-ai 升级，版本不再写死
+
+- 状态：已确认（2026-11-19）。用户想在配模型的入口加“刷新”按钮。查下来：pi-ai 的在线刷新（`Models.refresh()`）只有 `radius` 一家实现，1.0.0 和 1.5.2 都是；用户在用的供应商，模型清单只随 pi-ai 的版本变。用户选了升级（1.0.0 到 1.5.2），并定：今后会经常升级，不要写死版本。
+- 没做刷新按钮的理由：服务和桥是两个进程，服务自己校验预设里的模型、调用时查模型。只在桥里刷新，界面会列出服务不认的模型；要让服务也刷新得加线协议请求，算改契约，而且对在用的供应商没有任何效果。
+- 版本规矩变了（只对 pi-ai）：根 `package.json` 和 `extras/package.json` 写 `^` 范围，不再精确锁定。重装可重复靠锁文件（`npm ci`），不靠 `package.json` 的写法。升级就是两处各 `npm update`。主版本要手改范围。D63 的“版本照样精确锁定”对别的依赖不变，`typescript`、`@types/node` 也不变。文档、注释、测试名里不写 pi-ai 的版本号；决策记录里的历史记述除外。
+- 两处必须同版本：服务用根目录的，桥的模型目录用 `extras/` 的。差了，界面会列出服务不认的模型。`test/pi-ai-version.test.ts` 查两个锁文件和两份已装的。
+- 升级做法写在 [kb-executor 的升级 pi-ai](kb-executor.md#升级-pi-ai)。要点：worktree 里 `node_modules` 单独装，不链主树（升级改的就是它，服务正用着，pi-ai 有懒加载的模块）。
+- 升级到 1.5.2 时发现的行为变化：
+  - **别家模型的思考整段丢掉。** 1.0.0 把没有签名的别家思考转成普通文字块；1.5.2 的 `transform-messages.js` 直接丢掉（注释写的理由：可读的思考当文字发，新模型会把它当成可见回复的一部分）。tau 不用改：段里照旧存着思考，只是请求体里没有。[D53](#d53-fork-带-preset跨模型的真模型核实) 里“别家的思考成了普通 `text` 块”不再成立，`test/store/fork-model-payload.test.ts` 的预期改了。
+  - **`clampMaxTokensToContext` 的公式变了。** 旧版截到 `窗口 − 估算 − 4096`，新版的余量是 `max(4096, 输入的 15%)`，另有一档 32,768 的下限。换段阈值的前提是交接调用的 `cap` 不被压低。核算：对目录里 1632 个模型，用量取 `handoffThreshold` 加 `resultReserve` 加交接指令，一个都没有被压到 `cap` 以下。
+  - 新增的 `samplingParams`、`telemetry`、`identity` 等选项没接（YAGNI）；预设的 `options` 白名单没动，`tsc` 通过。
+- 目录的变化（影响你选模型）：anthropic 加了 claude-fable-5-2、claude-haiku-5-5；opencode-go 29 到 32 个，删了 deepseek-v4-flash、minimax-m2.7；github-copilot 34 到 27 个；openai-codex 9 到 8 个，删了 gpt-5.5、gpt-5.3-codex-spark。预设和库里进程快照用到的模型（opencode-go/deepseek-v4.1-flash、anthropic/claude-sonnet-5-5）都还在。
+- 核实（2026-11-19）：
+  - `tsc` 通过；全量 `npm test` 1434 条，升级后只有 `fork-model-payload` 一条红，就是上面第一条，改完全绿。
+  - 真调用：opencode-go/deepseek-v4.1-flash 和 anthropic/claude-haiku-4-5，各一次“思考加工具调用加工具结果”的往返，都正常结束，答对暗号。头一次冒烟的两个错是脚本的问题：没传 `sessionId`（opencode-go 回 400 `MissingSessionID`，执行器本来就传），`maxTokens` 太小（按预算思考的路径，预算被压到 1,024 以下，Anthropic 回 400）。
+  - 回放真库：`backup` 请求取一致副本，38 个进程的当前工作段，经 `createActions`、真的 pi-ai 适配器和假 fetch，全部转成请求体。
+- 没核实的：openai-codex 和 github-copilot 的真账号调用；别的供应商。
+- 不改契约：线协议、CLI、表、文件格式都没动。段里消息的 JSON 是 pi-ai 的类型，规矩仍是只加可选键（D64）：1.5.2 的类型 `tsc` 通过，真库回放通过。以后升级若消息类型有不兼容的改动，要走改契约的程序。`src/` 行数不变（3597/3600）。
+- 要用户做：合并后主树 `npm ci`（根目录和 `extras/`），然后重启服务和桥，新目录才生效。
+- 写在这里的页：[kb-executor 的升级 pi-ai](kb-executor.md#升级-pi-ai)、[AGENTS.md 的小而硬规矩](../AGENTS.md#小而硬规矩)、[kb-extras 的依赖规则](kb-extras.md#依赖规则)。
 
 ## 未确认的默认值
 

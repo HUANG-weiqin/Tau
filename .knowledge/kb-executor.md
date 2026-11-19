@@ -100,7 +100,7 @@ abort(id, n)
 
 - 为什么是窗口的 1/8：换段阈值只给一次回复留 `outputMax` 的空间（[kb-kernel](kb-kernel.md#换段阈值)）。请求得更多，交接请求就可能放不进窗口。
 - 为什么取较小的：不向模型要它给不了的输出。快照只存窗口和 `input`，`model.maxTokens` 调用时现查（[D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)）。
-- pi-ai 1.0.0 的 `buildBaseOptions` 取 `options.maxTokens ?? model.maxTokens`，再截到 `max(1, 窗口 − 它的估算 − 4096)`。这一步只会调低。
+- pi-ai 的 `buildBaseOptions` 取 `options.maxTokens ?? model.maxTokens`，再按窗口截一次（`clampMaxTokensToContext`：窗口减去它估算的输入，再减一份随输入增加的安全余量）。这一步只会调低，所以总输出不超过 `cap` 仍成立。换段阈值的前提是：用量到阈值、又来一个最大的工具结果和交接指令时，这一截仍不低于 `cap`。余量怎么算是 pi-ai 的事，升级时重新核（[升级 pi-ai](#升级-pi-ai)）。
 - pi-ai 的估算是锚点用量加上之后的字符数 / 4，不超过纯函数层的估算（字节数 / 2）。所以轮次调用时这一截不起作用。交接调用时，它最多把交接说明的上限压低“补的结果 + 交接指令”那么多。
 思考级别：
 
@@ -120,17 +120,30 @@ abort(id, n)
 
 - 回答最坏剩 max(`cap` − 预算, 1,024)。`cap` 不大于“预算 + 1,024”时，pi-ai 把预算压到 `cap − 1,024`，回答只剩 1,024。
 - pi-ai 的默认预算：`minimal` 1,024，`low` 2,048，`medium` 8,192，`high` 及以上 16,384。所以回答只剩 1,024 的边界是：`high` 及以上 `cap` ≤ 17,408，`medium` ≤ 9,216，`low` ≤ 3,072，`minimal` ≤ 2,048。
-- pi-ai 1.0.0 的目录里，落在这里的是 vercel-ai-gateway 经 anthropic-messages 接入的 21 个非 Anthropic 模型，例如 zai/glm-4.5。其中 6 个连 `medium` 也落在范围里（`cap` 5,120 到 8,250）。Anthropic 自己的模型 `cap` 都不小于 25,000。在用的 haiku-4-5 在 `high` 及以上最坏剩 8,616。
+- 落在这里的主要是 vercel-ai-gateway 经 anthropic-messages 接入的非 Anthropic 模型，例如 alibaba/qwen-3-14b、deepseek/deepseek-r1，其中一部分连 `medium` 也落在范围里。哪些模型、多少个随目录变，用上面的式子对当前目录算。Anthropic 自己的模型 `cap` 都不小于 25,000：在用的 haiku-4-5 在 `high` 及以上最坏剩 8,616。
 - 预设换到走预算路径的模型，先按上面的式子算。落在范围里，就把 `thinking` 降到不落在范围里的级别，或者不设 `thinking`，或者换模型。预设的 `options.thinkingBudgets` 写了对应级别的值，预算就取它，式子里的“预算”换成实际用的那个（仍被压到“上限减 1,024”以内）；没写才用上面的默认预算。测试和核实表查不出这件事，只能靠算。
 
 重试：
 
-- 执行器传 `maxRetries: MODEL_RETRIES`（5）。pi-ai 1.0.0 的 `maxRetries` 默认是 0，所以必须显式传。内核不传 `maxRetryDelayMs`；预设的 `options` 写了就照它传，没写时 pi-ai 的默认是 60,000。
+- 执行器传 `maxRetries: MODEL_RETRIES`（5）。pi-ai 的 `maxRetries` 没传时不重试（`retryProviderRequest` 的默认是 0），所以必须显式传。内核不传 `maxRetryDelayMs`；预设的 `options` 写了就照它传，没写时 pi-ai 的默认是 60,000。
 - pi-ai 只重试拿到成功的响应之前的失败：没有状态码的连接错误，以及 408、409、429 和 5xx 的错误响应，以错误响应的 `x-should-retry` 头为准。重试可以被中止。
 - 等多久：错误响应带 `retry-after-ms` 或 `retry-after` 时，按它等；超过 60 秒就直接失败（预设没写 `maxRetryDelayMs` 时；写 0 表示没有上限，会一直等到那个时间），429 通常带这个头，5 次最坏约 5 分钟（同样只在没写时成立）。不带时，退避从 0.5 秒起翻倍，乘 0.75 到 1 的随机数，单次最多 8 秒，5 次一共约 12 到 16 秒。等的时候，进程停在“等模型”。
 - 这不是重做副作用：还是同一个副作用，也还没有任何结果。崩溃后照样报“被中断”，不重做。
 - 流式输出开始以后出的错不重试，本轮出错结束。这比 Pi SDK 弱：它按最终消息判断要不要重试。
 - 状态：重试不存状态。
+
+### 升级 pi-ai
+
+pi-ai 会经常升级（[D84](kb-decisions.md#d84-pi-ai-升级版本不再写死)）。根目录和 `extras/` 的 `package.json` 都写 `^` 范围，实际版本由两个锁文件定。
+
+1. 在 worktree 里做（[派工隔离的配方](kb-extras.md#派工隔离的配方git-worktree)），但 `node_modules` 不链主树：升级改的就是它，服务正用着它，pi-ai 又有懒加载的模块，边跑边换会混版本。worktree 里根目录和 `extras/` 各 `npm ci`，再各 `npm update @earendil-works/pi-ai`。主版本变了要手改范围。
+2. 两处必须同一个版本：服务用根目录那份，桥的模型目录用 `extras/` 那份。`test/pi-ai-version.test.ts` 查两个锁文件和两份已装的。
+3. `npm run typecheck`、`npm test`。钉着 pi-ai 行为的测试会红，这是预警：`test/store/model-call.test.ts`（输出上限、思考预算、重试）、`test/store/fork-model-payload.test.ts`（跨模型历史的请求体）、`test/credential-suite.ts`（接进登录和刷新）。逐条看：新行为合理就改测试的预期、在决策记录里写一行；不合理就不升。
+4. 在用的模型还在新目录里：预设文件里的 `model`，和库里每个进程快照的 `model`（目录删了模型，调用时报“模型目录里没有”）。
+5. 换段阈值的前提还成立：对目录里每个模型，用量取 `handoffThreshold` 加 `resultReserve` 加交接指令，看 `clampMaxTokensToContext` 会不会把交接调用的 `cap` 压低。
+6. 真调用冒烟：在用的每家各来一次带工具的往返，要传 `sessionId`（opencode-go 没有它回 400），`maxTokens` 别给得太小（按预算思考的路径预算不足 1,024 会被 Anthropic 拒绝）。
+7. 回放真库：用 `backup` 请求取一个一致的副本（别拷 `tau.db`，最近的数据在 `-wal` 里），对每个进程的当前工作段，经 `createActions` 加假 fetch 截请求体，都应能转成请求体。
+8. 合并后主树 `npm ci`（根目录和 `extras/`），紧接着重启服务和桥。
 
 ### 运行工具（`actions.ts`）
 
@@ -203,6 +216,8 @@ abort(id, n)
 | `src/main.ts` | 用 `builtinModels()` 建模型目录 |
 | `test/store/executor.test.ts` | 开始、完成、中止、失败上报、启动恢复、竞态 |
 | `test/store/model-call.test.ts` | 真目录里在用的六个模型：经 `createActions`、真的 pi-ai 适配器和假 fetch，用 `onPayload` 断言请求体的输出上限和思考预算；执行器传给 pi-ai 的参数；重试的种类和 60 秒上限 |
+| `test/store/fork-model-payload.test.ts` | 别家模型产生的历史 fork 成 opus 的预设后的请求体（[D53](kb-decisions.md#d53-fork-带-preset跨模型的真模型核实)）：别家的思考整段丢掉，不当思考块发，也不变成文字；调用 ID 合规、调用和结果配得上 |
+| `test/pi-ai-version.test.ts` | pi-ai 在根目录和 `extras/` 两个锁文件里、两份已装的版本一致（[D84](kb-decisions.md#d84-pi-ai-升级版本不再写死)） |
 | `test/store/crash.test.ts` | 真库上的随机序列和崩溃注入；每个 `read` 结果都带一张图片，崩溃前后 `blobs` 和信箱一致 |
 | `test/store/toolimages.test.ts` | 带图的工具结果的最小反例：上报前 `blobs` 没有图片、运行中被杀、上报后被杀、停止后结果丢弃时图片也不写 |
 | `test/store/readimage.test.ts` | `read` 经执行器读图片：`accepts` 取自会话快照的 `input`，收图片时带图和字节，不收时只有占位行（[D76](kb-decisions.md#d76-read-读图片)） |

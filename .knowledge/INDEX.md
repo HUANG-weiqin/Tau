@@ -17,7 +17,7 @@
 | 想加一个看起来合理的机制（压缩、wait 工具、只读 bash 审查、按项目存数据） | 先读 [Pi Web 的教训](kb-piweb-lessons.md) |
 | 改纯函数层：类型、`decide`、`fork` 的复制规则、会话配置（`reconfigure`、待换配置）、上下文文件的系统提示词和启动检查、流程、换段和换段阈值、用量估算、投影的字段 | [kb-kernel.md](kb-kernel.md) |
 | 改存储：表、处理输入的事务、库内工具的结果、上下文视图的读取 | [kb-store.md](kb-store.md) |
-| 改执行器、启动恢复、崩溃注入测试 | [kb-executor.md](kb-executor.md) |
+| 改执行器、启动恢复、崩溃注入测试；升级 pi-ai | [kb-executor.md](kb-executor.md)、[升级 pi-ai](kb-executor.md#升级-pi-ai) |
 | 改 `read`、`write`、`edit`、`bash`：路径、编码、shell、结束进程、输出；改工具定义的格式、读取和运行（标准输入、text 和 content 输出、带图的结果，契约原文） | [kb-tools.md](kb-tools.md) |
 | 改服务、线协议（含 `fork`、`reconfigure`、`backup`、`prune`、`remove`、`sweep`）、CLI、`tau ps` 的文字、正常退出 | [kb-service.md](kb-service.md) |
 | 改记忆：接口、上限、视图格式、版本号 | [kb-memory.md](kb-memory.md) |

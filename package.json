@@ -11,7 +11,7 @@
     "loc": "node scripts/loc.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "1.0.0"
+    "@earendil-works/pi-ai": "^1.5.2"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
