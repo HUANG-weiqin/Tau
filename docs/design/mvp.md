@@ -151,7 +151,7 @@ src/
 
 ### 8.2 规则
 
-谁有记忆库、三个上限和检查顺序、视图的格式、版本号的规则，在 [kb-memory.md](../../.knowledge/kb-memory.md)。记忆工具的参数和结果在 [kb-store.md](../../.knowledge/kb-store.md#记忆工具)。
+谁有记忆库、四个上限和检查顺序、视图的格式（索引，D81）、版本号的规则，在 [kb-memory.md](../../.knowledge/kb-memory.md)。记忆工具的参数和结果在 [kb-store.md](../../.knowledge/kb-store.md#记忆工具)。
 
 长期方向（挂载、日志、整理）见[决策记录](../../.knowledge/kb-decisions.md#d6-mvp-的记忆是带版本号的键值存储)。
 

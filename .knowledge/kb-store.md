@@ -71,6 +71,8 @@ CREATE TABLE memory (
   ns TEXT NOT NULL,
   key TEXT NOT NULL,
   value TEXT NOT NULL,
+  brief TEXT NOT NULL DEFAULT '',
+  updated INTEGER NOT NULL DEFAULT 0,
   UNIQUE (ns, key)
 ) STRICT;
 CREATE TABLE blobs (
@@ -85,7 +87,7 @@ CREATE TABLE blobs (
 | `segment_messages` | 一条工作段消息。`message_json` 是 pi-ai 的消息，原样存 | `handleNext` 追加；`pruneSegments` 删旧段；`removeProcess` 删全部段 |
 | `mailbox` | 一条输入。`input_json` 是 `Input` 的 JSON | 见下 |
 | `effects` | 进程正在等的库外副作用：编号 `n` 和状态 | `handleNext` 和执行器 |
-| `memory` | 一个键现在的值 | `Memory` 的实现 `src/memory/kv.ts` |
+| `memory` | 一个键现在的值、摘要和更新时间（毫秒）。`DEFAULT` 只为升级旧库时 `ADD COLUMN`，写入总是给全 | `Memory` 的实现 `src/memory/kv.ts` |
 | `blobs` | 一块图片：哈希和原始字节；`sweepBlobs` 删没人引用的行 | `startProcess`、`send` 和引用它的信在同一个事务里插入（`INSERT OR IGNORE`）；带图的工具结果由执行器上报结果的事务写（[kb-executor](kb-executor.md#运行工具actionsts)） |
 
 - 段号从 1 开始。段内序号从 0 开始，每段重新计。
@@ -117,9 +119,10 @@ CREATE TABLE blobs (
 1. `PRAGMA journal_mode = WAL`。结果不是 `wal` 就关库并抛出。所以 `:memory:` 会被拒绝。
 2. `PRAGMA synchronous = FULL`。回执承诺“写进库才返回”，所以每次提交都要落盘。这是连接级设置，每次打开都设。
 3. 读 `PRAGMA user_version`：
-   - 0 是新库：在一个事务里建 6 张表，并写入 `SCHEMA_VERSION`（现在是 5）。
+   - 0 是新库：在一个事务里建 6 张表，并写入 `SCHEMA_VERSION`（现在是 6）。
    - 等于 `SCHEMA_VERSION`：直接用。
-   - 其它值：关库并抛出，提示停掉服务、移走旧库、重启后重建。现在没有迁移。以后改表结构，不许只加版本号：必须同时写迁移（用 `PRAGMA user_version`，启动时把版本 N 原地升到 N+1，数据不动），并且迁移要有测试（旧版本的库升上来，行数和内容不变）。`state_json` 只加可选键不用迁移：`next`、`contextView`、`context` 都是这样加的；`input_json` 没有种类约束，新的输入种类 `reconfigure` 也不用升版本（[D74](kb-decisions.md#d74-迁移的规矩)）。
+   - 5：迁移到 6（[D81](kb-decisions.md#d81-记忆视图改成索引键更新日期字节数摘要)）。一个事务里：`memory` 加 `brief`、`updated` 两列（`ADD COLUMN … NOT NULL DEFAULT`）；每一行的 `brief` 填 `briefOf(value)`，`updated` 填迁移那一刻（`Date.now()`，真正的写入时间已经丢了，不精确）；写 `user_version = 6`。崩溃后版本号仍是 5，下次启动重做。别的表和行不动。这是第一次迁移，升级前先 `backup`（[D73](kb-decisions.md#d73-backup-请求)）。
+   - 其它值：关库并抛出，提示停掉服务、移走旧库、重启后重建。没有别的迁移。以后改表结构，不许只加版本号：必须同时写迁移（用 `PRAGMA user_version`，启动时把版本 N 原地升到 N+1，数据不动），并且迁移要有测试（旧版本的库升上来，行数和内容不变）。`state_json` 只加可选键不用迁移：`next`、`contextView`、`context` 都是这样加的；`input_json` 没有种类约束，新的输入种类 `reconfigure` 也不用升版本（[D74](kb-decisions.md#d74-迁移的规矩)）。
 
 `tx(db, f)`：`BEGIN IMMEDIATE`，执行 `f`，`COMMIT`。`f` 抛出时，如果库还开着并且还在事务里，就 `ROLLBACK`，再把错误抛出去。
 
@@ -138,7 +141,7 @@ CREATE TABLE blobs (
 | `pruneSegments(db, id, before)` | 删这个进程段号小于 `before` 的全部旧段。`before` ≤ 1 什么都不删，照样成功 | 没有这个进程、`before` 大于当前段号：抛错，什么都不删 |
 | `removeProcess(db, id)` | 删一个空闲、没人引用的进程的记录和全部段。不碰记忆、`blobs`、`effects` | 没有这个进程、不是 `idle`、信箱里有它的输入、有进程的 `parent` 是它、它在任何 `turn.replyTo` 或排队的信的 `replyTo` 里：抛错，什么都不删 |
 | `sweepBlobs(db)` | 删没人引用的 `blobs` 行，返回删掉的行数 | 抛出时整个事务回滚 |
-| `writeMemory(db, memory, ops)` | 按顺序执行一批记忆写入（`MemoryOp`：`set` 带 `expected`（`null` 或版本号），`delete` 带版本号），整批一个事务。成功返回每一项的版本，`delete` 是 `null`。不写进程记录、段、信箱、`effects`，不看预设存不存在、有没有 `memory` | 第一个失败（版本冲突或超出上限）：整批回滚，包括前面已成功的，`AUTOINCREMENT` 的版本号序列也不前进。事务内抛一个私有错误触发回滚，在 `tx` 之外捕获，返回 `{ ok: false, index, result }`，`result` 是 `Memory` 的失败形状。失败是返回值，不抛。其它异常照常抛出 |
+| `writeMemory(db, memory, ops, now)` | 按顺序执行一批记忆写入（`MemoryOp`：`set` 带 `value`、可选的 `brief`（缺省 `briefOf(value)`）和 `expected`（`null` 或版本号），`delete` 带版本号），整批一个事务，更新时间都是 `now`。成功返回每一项的版本，`delete` 是 `null`。不写进程记录、段、信箱、`effects`，不看预设存不存在、有没有 `memory` | 第一个失败（版本冲突或超出上限）：整批回滚，包括前面已成功的，`AUTOINCREMENT` 的版本号序列也不前进。事务内抛一个私有错误触发回滚，在 `tx` 之外捕获，返回 `{ ok: false, index, result }`，`result` 是 `Memory` 的失败形状。失败是返回值，不抛。其它异常照常抛出 |
 
 `Env` 怎样算：`now` 由调用方传入；预设 `tools` 含 `memory` 时，`memoryView` 是 `memory.view(preset.id)`，否则是空串，不碰记忆。
 
@@ -376,23 +379,24 @@ CREATE TABLE blobs (
 
 | 工具 | 参数 | 成功的结果 |
 |---|---|---|
-| `memory_get` | `key` 字符串 | `<key>（版本 <v>）：` 换行接值。键不存在时是 `键 <key> 不存在。`，不算错误 |
-| `memory_set` | `key`、`value` 字符串；`version` 整数、`null` 或省略 | `已写入 <key>，版本 <v>。` |
+| `memory_get` | `key` 字符串 | `<key>（版本 <v>，更新 <日期>）：` 换行接 `摘要：<brief>`，换行接值。日期是 UTC 的 `YYYY-MM-DD`。键不存在时是 `键 <key> 不存在。`，不算错误 |
+| `memory_set` | `key`、`value`、`brief` 字符串，都必填；`version` 整数、`null` 或省略 | `已写入 <key>，版本 <v>。` |
 | `memory_delete` | `key` 字符串；`version` 整数，必填 | `已删除 <key>。` |
 
 - `version` 省略或为 `null`：这个键现在必须不存在。
 - `version` 必须是整数，`1.5` 也不行。
-- 参数不对：结果是 `参数错误：<说明>`，`isError` 为 `true`，不碰记忆。
-- 版本对不上：不写入，`isError` 为 `true`，结果带最新值：`版本冲突，没有写入。现在的值是 <key>（版本 <v>）：` 换行接值。键已不存在时是 `版本冲突，没有写入。键 <key> 现在不存在。`。`memory_delete` 也用这两句。
+- 参数不对：结果是 `参数错误：<说明>`，`isError` 为 `true`，不碰记忆。`brief` 缺了或不是字符串也在这里。更新时间是这条输入的 `now`。
+- 版本对不上：不写入，`isError` 为 `true`，结果带最新值：`版本冲突，没有写入。现在的值是 ` 接 `memory_get` 那一段（键、版本、更新日期、摘要、值）。键已不存在时是 `版本冲突，没有写入。键 <key> 现在不存在。`。`memory_delete` 也用这两句。
 - `memory_set` 超出上限：不写入，`isError` 为 `true`。结果是 `超出上限，没有写入：` 接下表的一句。`N` 是 `Memory.set` 返回的 `bytes`，上限取自 `src/kernel/tools.ts` 的常量。
 
 | 超出的 | 接的那句 |
 |---|---|
 | `key` | `键有 N 字节，上限 128 字节。` |
 | `value` | `值有 N 字节，上限 4096 字节。` |
-| `view` | `写入后记忆视图有 N 字节，上限 32768 字节。先删掉或缩短不需要的键。` |
+| `brief` | `摘要有 N 字节，上限 200 字节。` |
+| `view` | `写入后记忆视图有 N 字节，上限 32768 字节。先删掉不需要的键，或缩短键和摘要。` |
 
-- 超出上限和版本冲突同时发生时报哪个，见 [kb-memory.md 的检查顺序](kb-memory.md#set-的检查顺序)。`memory_set` 的描述引用这三个上限（[kb-kernel.md](kb-kernel.md#工具描述)）。
+- 超出上限和版本冲突同时发生时报哪个，见 [kb-memory.md 的检查顺序](kb-memory.md#set-的检查顺序)。`memory_set` 的描述引用这四个上限（[kb-kernel.md](kb-kernel.md#工具描述)）。
 - 这一节的文字由 `instore.ts` 写。`Memory` 只返回结构化的失败，不带文字。
 
 ### `self`

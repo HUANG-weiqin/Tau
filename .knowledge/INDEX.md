@@ -45,7 +45,7 @@
 | [kb-kernel.md](kb-kernel.md) | 纯函数层的类型（含段里消息的 `tau`、进程的 `since` 和 `next`）、预设的 `options`、换段信、会话配置（`reconfigure` 的 `decide` 规则、换段时采用待换配置、会话快照的比较 `snapshot.ts`）、上下文文件在纯函数层的部分（系统提示词、启动检查）、`start`、`fork`、`decide`、`effectOf`、`buildContext`、`observe` 和投影的字段（含 `self.pending`）、派生值、常量、工具描述、第 5 节的流程、纯函数层不变量 |
 | [kb-store.md](kb-store.md) | 库的位置、表结构和 PRAGMA、八个存储事务（含 fork、三个删除和写记忆的事务；`send` 带 `from`），工具定义声明的库内动作、图片（`blobs`）的存取、待办副作用表的同步、处理一条输入读什么（含 `fresh` 何时算）、上下文视图的拼法、存储层不变量、库内工具的参数、结果和文字格式 |
 | [kb-executor.md](kb-executor.md) | 待办副作用表一行的一生、执行器的三个事务、中止、失败怎样变成结果、模型和库外工具的调用、启动恢复、崩溃窗口、崩溃注入和竞态测试 |
-| [kb-memory.md](kb-memory.md) | `Memory` 接口的语义和契约、谁有记忆库、三个上限和 `set` 的检查顺序、视图的格式、版本号、键和值的编码 |
+| [kb-memory.md](kb-memory.md) | `Memory` 接口的语义和契约、谁有记忆库、四个上限和 `set` 的检查顺序、视图的格式（索引）、版本号、键和值的编码 |
 | [kb-tools.md](kb-tools.md) | 工具定义（`~/.tau/tools/`）的格式、读取、大小上限和运行（标准输入、text 和 content 输出、带图的结果、声明库内动作的 `call` 项，契约原文）；`read`、`write`、`edit`、`bash` 的接口、行为和结果文本；参数被 pi-ai 改写的方式；路径解析；编码和换行；bash 用哪个 shell、包装脚本、超时、中止、怎样结束进程、输出上限、后台进程 |
 | [kb-service.md](kb-service.md) | 服务的启动顺序、`pump`、观察者和最终回复、线协议和请求校验、`inspect`、`check`、`memory`、`memory_write`、调用方定的 ID、`watch` 的追加消息和流式种类、`fork` 请求（参数、拒绝的情形、回执）、`reconfigure` 请求（校验、新快照的构造、回执）、`backup` 请求、删除请求（`prune`、`remove`、`sweep`）、历史和订阅、图片的入口检查和 `blob` 请求、进程 ID、流式文本、CLI 的命令、输出和退出码、`tau ps` 的文字格式、启动脚本、正常退出 |
 | [kb-gui.md](kb-gui.md) | 图形界面的代码在哪、怎么启动、HTTP 桥的路由和接口、界面数据文件的键、页面的模块划分和数据流、界面的测试 |

@@ -101,7 +101,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | 工具定义的运行（原文在这一节），含 D64 的 `call` 项 | [kb-tools 的运行工具定义](kb-tools.md#运行工具定义) |
 | 环境变量：`TAU_PROCESS`、`TAU_PIPE` | [kb-tools 的包装脚本](kb-tools.md#包装脚本)、[kb-service 的启动脚本和入口](kb-service.md#启动脚本和入口) |
 | CLI：v1 的命令、输出和退出码，加上 `TAU_PIPE`。入口是仓库里的 `tau`、`tau.cmd` 和 `node src/main.ts` | [kb-service 的 CLI](kb-service.md#clisrcclimaints)、[启动脚本和入口](kb-service.md#启动脚本和入口) |
-| `decide` 写进段的固定文字：信的头、结束原因的文字、D25 的说明、`HANDOFF_HEADER`、`CARRY_HEADER`、`INTERRUPTED`、`SKIPPED`、图片的占位行。还有系统提示词里上下文一节的标题（和记忆一节的标题并排，[D72](kb-decisions.md#d72-上下文文件开段重读)）。还有段里消息的 `tau` 结构：上层显示“谁说的”，读它，不解析文字（[D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)） | [kb-kernel 的信的头和合并](kb-kernel.md#信的头和合并)、[结束原因的文字](kb-kernel.md#结束原因的文字)、[常量](kb-kernel.md#常量)、[请求里的图片](kb-kernel.md#请求里的图片)、[kb-store 的图片](kb-store.md#图片) |
+| `decide` 写进段的固定文字：信的头、结束原因的文字、D25 的说明、`HANDOFF_HEADER`、`CARRY_HEADER`、`INTERRUPTED`、`SKIPPED`、图片的占位行。还有系统提示词里上下文一节的标题（和记忆一节的标题、说明行并排，[D72](kb-decisions.md#d72-上下文文件开段重读)）。还有段里消息的 `tau` 结构：上层显示“谁说的”，读它，不解析文字（[D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)） | [kb-kernel 的信的头和合并](kb-kernel.md#信的头和合并)、[结束原因的文字](kb-kernel.md#结束原因的文字)、[常量](kb-kernel.md#常量)、[请求里的图片](kb-kernel.md#请求里的图片)、[kb-store 的图片](kb-store.md#图片) |
 | 内置工具和工具组的名字。工具定义不能和它们重名，所以加一个内置工具，会让用户已有的同名定义启动失败 | [kb-kernel 的工具描述](kb-kernel.md#工具描述) |
 | 入口条件：图片检查的全部条件（张数、大小、类型按魔数收 png、jpeg、gif、webp、尺寸） | [kb-service 的图片](kb-service.md#图片) |
 | 入口条件：`MESSAGE_MAX_BYTES`、`HOPS_MAX` | [kb-kernel 的常量](kb-kernel.md#常量) |

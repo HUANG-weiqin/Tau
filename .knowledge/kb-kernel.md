@@ -127,7 +127,7 @@ interface Env { now: Instant; memoryView: string; fresh?: { memoryView: string; 
 
 `buildContext`：
 
-- 系统提示词由四部分连接：预设提示词；`工作目录：<workdir>`；上下文视图不为空时，`## 上下文文件（开段时的快照）` 加视图；记忆视图不为空时，`## 记忆（开段时的快照）` 加视图。`systemPrompt(p)` = 固定部分（前两项）+ 上下文一节 + 记忆一节，上下文在记忆前面。每一节是空行、标题、空行、视图；标题常量放在 `context.ts`，和 `MEMORY_HEADING` 并排。视图取自 `p.segment`。
+- 系统提示词由四部分连接：预设提示词；`工作目录：<workdir>`；上下文视图不为空时，`## 上下文文件（开段时的快照）` 加视图；记忆视图不为空时，`## 记忆索引（开段时的快照）`、一行说明每列、再加视图。`systemPrompt(p)` = 固定部分（前两项）+ 上下文一节 + 记忆一节，上下文在记忆前面。每一节是空行、标题、空行、视图；标题常量放在 `context.ts`，和 `MEMORY_HEADING` 并排。记忆一节的标题带那行说明：`## 记忆索引（开段时的快照）`、空行、`每行：键 | 更新日期（UTC） | 值的字节数 | 摘要。要看值，用 memory_get。`、空行（[D81](kb-decisions.md#d81-记忆视图改成索引键更新日期字节数摘要)）。视图取自 `p.segment`。
 - 工具：`toolDescriptions(preset)`，只放 `name`、`description`、`parameters`。工具定义的 `command`、`timeout`、`output` 不给模型。交接调用带同样的工具，请求前缀不变。
 - 消息就是工作段。`awaitingModel(handoff)` 时：
   - 去掉段末连续的用户消息（从 `tailStart` 起）。下标 0 总保留：第一条消息是写交接说明的依据。段末没有用户消息时什么都不去掉。
@@ -191,7 +191,7 @@ interface Env { now: Instant; memoryView: string; fresh?: { memoryView: string; 
 | `edit` | `path`、`old`、`new`、`replaceAll?` | 否 | `tools` 含 `edit` |
 | `bash` | `command`、`timeout?` | 否 | `tools` 含 `bash` |
 | `memory_get` | `key` | 是 | `tools` 含 `memory` |
-| `memory_set` | `key`、`value`、`version?` | 是 | `tools` 含 `memory` |
+| `memory_set` | `key`、`value`、`brief`、`version?` | 是 | `tools` 含 `memory` |
 | `memory_delete` | `key`、`version` | 是 | `tools` 含 `memory` |
 | `post` | `to`、`text`、`reply?` | 是 | `tools` 含 `agents` |
 | `spawn` | `preset`、`text` | 是 | `tools` 含 `agents` |
@@ -202,7 +202,7 @@ interface Env { now: Instant; memoryView: string; fresh?: { memoryView: string; 
 
 - 参数都是 `additionalProperties: false` 的对象。
 - 顺序固定，按上表：工具定义最后，在 `handoff` 之后，按预设 `tools` 里的顺序。
-- `memory_set` 的描述引用 `tools.ts` 里的三个记忆上限：`MEMORY_KEY_MAX_BYTES`、`MEMORY_VALUE_MAX_BYTES`、`MEMORY_VIEW_MAX_BYTES`。检查在记忆的实现里（[kb-memory.md](kb-memory.md#上限在哪里检查)）。
+- `memory_set` 的描述引用 `tools.ts` 里的四个记忆上限：`MEMORY_KEY_MAX_BYTES`、`MEMORY_VALUE_MAX_BYTES`、`MEMORY_BRIEF_MAX_BYTES`、`MEMORY_VIEW_MAX_BYTES`。检查在记忆的实现里（[kb-memory.md](kb-memory.md#上限在哪里检查)）。
 - `findTool` 对不认识的工具和预设里没有的工具都返回 `undefined`。
 
 ### 派生值
@@ -692,7 +692,7 @@ type PhaseView =
 | `src/kernel/context.ts` | `buildContext`、`tailStart`、`systemPrompt`（含上下文一节）、记忆和上下文两个标题常量、`toolDescriptions`、交接文本、`IMAGE_UNSUPPORTED` |
 | `src/presets/tooldefs.ts` | 读工具定义（不在 `kernel` 里，格式见 [kb-tools](kb-tools.md#工具定义)） |
 | `src/kernel/observe.ts` | `observe` |
-| `src/kernel/tools.ts` | 工具描述、记忆的三个上限 |
+| `src/kernel/tools.ts` | 工具描述、记忆的四个上限 |
 | `test/invariants.ts` | `assertInvariants(p, seg, relaxed)` |
 | `test/kernel/helpers.ts` | 内存里的 `World`（含 `relaxed`）、`feed`、`reply`、`toolDone` |
 | `test/kernel/flow.test.ts` | 第 5 节每一行流程和丢弃规则 |
