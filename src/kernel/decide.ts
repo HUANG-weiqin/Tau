@@ -163,11 +163,13 @@ function onReply(d: Draft, turn: Turn, m: AssistantMessage): void {
   const r = m.stopReason;
   switch (r) {
     case "toolUse":
-    case "stop":
-      if (tooManyCalls(m)) return endTurn(d, turn, { error: "一次回复的工具调用太多" });
-      push(d, m);
+    case "stop": {
+      const fitted = fitCalls(m);
+      if (fitted === null) return endTurn(d, turn, { error: "一次回复的工具调用太多" });
+      push(d, fitted);
       if (r === "toolUse" && pendingCalls(d.seg).length > 0) return enter(d, { tag: "awaitingTool", turn });
       return endTurn(d, turn, "done");
+    }
     case "length":
       return endTurn(d, turn, { error: "输出被截断" });
     case "error":
@@ -183,13 +185,23 @@ function onReply(d: Draft, turn: Turn, m: AssistantMessage): void {
   }
 }
 
-/**
- * 这条回复的工具调用要是都补成“未执行”，补的结果和交接指令放不放得进 MARGIN_TOKENS。放不进时换段请求可能超过窗口，
- * 所以和 `length` 一样不写入。ID 算两次：它由服务端分配，回复的用量里没有它，之后的请求里调用和结果各带一次。
- */
-function tooManyCalls(m: AssistantMessage): boolean {
-  const bytes = m.content.reduce((n, c) => (c.type === "toolCall" ? n + 2 * utf8Bytes(c.id) + utf8Bytes(c.name) + utf8Bytes(SKIPPED) : n), 0);
-  return tokens(bytes) + tokens(utf8Bytes(HANDOFF_INSTRUCTION)) > MARGIN_TOKENS;
+/** 调用都补成“未执行”后放不进余量时只留放得下的前几个（D87）。预算只有余量减去交接指令：阈值之上的余量已经分给了一次
+ * 回复、一个没检查的工具结果和交接说明的输出。ID 算两次（调用和结果各带一次，回复的用量里没有它）。截断后没有文字时把尾巴
+ * 里最后一个文字块接回来，免得回信正文是空串；连一个调用都放不下时返回 null。 */
+function fitCalls(m: AssistantMessage): AssistantMessage | null {
+  const budget = MARGIN_TOKENS - tokens(utf8Bytes(HANDOFF_INSTRUCTION));
+  let bytes = 0;
+  let cut = -1;
+  for (const [i, c] of m.content.entries()) {
+    if (cut >= 0 || c.type !== "toolCall") continue;
+    const next = bytes + 2 * utf8Bytes(c.id) + utf8Bytes(c.name) + utf8Bytes(SKIPPED);
+    if (tokens(next) <= budget) bytes = next;
+    else cut = i;
+  }
+  if (cut < 0) return m;
+  const kept = m.content.slice(0, cut);
+  if (!kept.some((c) => c.type === "text")) kept.push(...m.content.slice(cut).filter((c) => c.type === "text").slice(-1));
+  return kept.some((c) => c.type === "toolCall") ? { ...m, content: kept } : null;
 }
 
 /**

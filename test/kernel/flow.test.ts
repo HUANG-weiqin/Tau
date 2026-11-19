@@ -728,3 +728,35 @@ describe("上一轮没有正常结束：下一条用户消息前面加一句说�
     assert.ok(utf8Bytes(text) <= MESSAGE_MAX_BYTES);
   });
 });
+
+test("一次回复的调用放不进余量：留放得下的前几个，文字和后几个调用一起截掉，模型下一轮重发（D87）", () => {
+  const w = world();
+  feed(w, userInput("开始"));
+  const id = (i: number) => `toolu_${String(i).padStart(24, "0")}`;
+  const calls = Array.from({ length: 200 }, (_, i) => call(id(i)));
+  const s = reply(w, assistant({ usage: 10, text: "先读这些", calls }));
+  assert.equal(w.p.phase.tag, "awaitingTool");
+  const written = current(w).findLast((m) => m.role === "assistant");
+  assert.ok(written?.role === "assistant");
+  const kept = written.content.filter((c) => c.type === "toolCall");
+  assert.ok(kept.length > 0 && kept.length < 200, `留下的调用数：${kept.length}`);
+  assert.deepEqual(kept.map((c) => c.id), calls.slice(0, kept.length).map((c) => c.id), "留的是前几个，顺序不变");
+  assert.deepEqual(written.content.find((c) => c.type === "text"), { type: "text", text: "先读这些" }, "调用前面的文字留着");
+  assert.equal(s.append.length, 1, "回复写进段了，不再是整条作废");
+});
+
+test("截断后正文不能丢：文字排在调用后面时，接回最后一个文字块，回信正文不是空串（D87）", () => {
+  const w = world();
+  feed(w, userInput("开始"));
+  const id = (i: number) => `toolu_${String(i).padStart(24, "0")}`;
+  // openai-responses 的形状：文字和调用交错，结论写在最后。
+  const calls = Array.from({ length: 120 }, (_, i) => call(id(i)));
+  // assistant() 把 calls 放在最后，所以这里手工把结论拼在调用后面。
+  const m = assistant({ usage: 10, stopReason: "stop", calls });
+  m.content.push({ type: "text", text: "结论是 X" });
+  reply(w, m);
+  const written = current(w).findLast((m) => m.role === "assistant");
+  assert.ok(written?.role === "assistant");
+  assert.ok(written.content.filter((c) => c.type === "toolCall").length < 120, "截断了");
+  assert.deepEqual(written.content.at(-1), { type: "text", text: "结论是 X" }, "最后的文字块接回来了");
+});

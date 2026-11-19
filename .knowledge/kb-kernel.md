@@ -1,6 +1,6 @@
 # 纯函数层
 
-`updated: 2026-11-18`
+`updated: 2026-11-19`
 
 ## 这个模块是干什么的
 
@@ -477,7 +477,8 @@ W 是 `preset.contextWindow`。快照里只存它和 `input`，不存模型的�
 
 | `stopReason` | 写入段 | 处理 |
 |---|---|---|
-| `toolUse` 或 `stop`，工具调用太多（先检查） | 否 | `endTurn(turn, { error: "一次回复的工具调用太多" })` |
+| `toolUse` 或 `stop`，调用太多、连第一个都放不下（先检查） | 否 | `endTurn(turn, { error: "一次回复的工具调用太多" })` |
+| `toolUse` 或 `stop`，调用太多但放得下前几个 | 是，只写留下的 | 后面的调用和文字截掉；`toolUse` 进 `awaitingTool`，`stop` 照常结束（留下的补 `SKIPPED`） |
 | `toolUse`，有工具调用 | 是 | 进入 `awaitingTool`，等第一个调用。这里不检查阈值 |
 | `toolUse`，没有工具调用 | 是 | `endTurn(turn, "done")` |
 | `stop` | 是 | `endTurn(turn, "done")`。带着工具调用时，它们都补 `SKIPPED` |
@@ -487,10 +488,11 @@ W 是 `preset.contextWindow`。快照里只存它和 `input`，不存模型的�
 
 失败的回复不写入。所以错误不会被藏起来，最后一条助手消息的用量也不会变成 0。
 
-工具调用太多：每个调用按 2 × ID + 名称 + `未执行` 的字节算补的结果，换成 token 后加上交接指令的 234，超过 `MARGIN_TOKENS`。这样的回复写进去，换段请求可能超过窗口，所以和 `length` 一样不写入。
+工具调用太多：每个调用按 2 × ID + 名称 + `未执行` 的字节算补的结果，换成 token 后加上交接指令的 234。超过 `MARGIN_TOKENS` 时只留放得下的前几个调用，后面的调用和它们后面的文字一起丢掉（[D87](kb-decisions.md#d87-一次回复的工具调用放不下时截断不再作废整条回复)）；连第一个都放不下才不写入、本轮出错。截断是静默的：模型看到自己只发了留下的那些，下一轮会重发没拿到结果的调用。留下几个用同一个口径算：把所有字节加起来再换成 token，不逐个取整，所以留的是“放得下的最长前缀”。
 
 - ID 算两次：它由服务端分配，不在回复的用量里；之后的请求里调用和结果各带一次。
-- 上限和窗口无关。以 `read` 为例：2 字节的 ID 约 454 个，Anthropic 的 ID（30 字节）约 105 个，openai-responses 的 ID（81 字节）约 44 个。
+- 上限和窗口无关，只和 ID 的长度有关。以 `read` 为例（实测 2000 个调用二分）：2 字节的 ID 454 个，Anthropic 的 ID（30 字节）105 个，openai-responses 的 ID（81 字节）44 个。余量已经分给一次回复、一个没检查的工具结果和交接说明，挪不动；要让一次回复能带更多调用，只能改 `MARGIN_TOKENS` 或者换 ID 短的供应商。
+- 截断只发生在一条回复里；换段用途（`purpose` 是 `handoff`）的回复走 `onHandoff`，它的工具调用本来就不进段，没有这个问题。`stop` 的回复被截断时这一轮照常结束，没有“下一轮重发”。
 
 ### 安全点投递
 
@@ -705,7 +707,7 @@ type PhaseView =
 | `test/kernel/since.test.ts` | `since` 在各转移上的值，`fork` 的 `since`，投影带 `since` |
 | `test/kernel/usage.test.ts` | 累计用量：每种回复都加，丢弃的和被中断的不加 |
 | `test/kernel/context.test.ts` | 系统提示词、工具描述、交接请求去掉段末用户消息 |
-| `test/kernel/acceptance.test.ts` | 换段不会无限循环；5 种窗口下，主路径和三条角落路径的交接请求加交接说明放得进窗口；工具调用太多的回复不写入 |
+| `test/kernel/acceptance.test.ts` | 换段不会无限循环；5 种窗口下，主路径和三条角落路径的交接请求加交接说明放得进窗口；工具调用太多时只留放得下的前几个，交接请求照样放得进窗口（D87） |
 | `test/kernel/fork-preset.test.ts` | `fork` 带 `to`：快照和记忆视图来自新预设；图片换成说明、形状对；估算和新阈值的边界；用量锚点放行而估算拒绝的反例 |
 | `test/kernel/replies.test.ts` | 回信：每种结束原因、最终回复在合并之前算、排队的信里的 `replyTo`、每个进程一封、跳数 |
 | `test/kernel/random.test.ts` | 带种子的随机序列（含 `reconfigure`）；每轮结束时 `out` 的收件人、正文、头和跳数都按[寄出的规则](#回信)检查 |

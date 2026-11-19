@@ -58,7 +58,7 @@ describe("累计用量", () => {
     assert.deepEqual(w.p.usage, sum(1, 2, 4));
   });
 
-  test("工具调用太多的回复不写进段，用量照加", () => {
+  test("一条回复的调用连第一个都放不下：不写进段，用量照加", () => {
     const w = begin();
     const s = reply(w, assistant({ usage: u(3), calls: [call("x".repeat(9_000))] }));
     assert.deepEqual(s.append, []);

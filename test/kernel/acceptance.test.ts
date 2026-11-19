@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildContext, HANDOFF_INSTRUCTION, tailStart } from "../../src/kernel/context.ts";
-import { effectOf } from "../../src/kernel/decide.ts";
+import { effectOf, SKIPPED } from "../../src/kernel/decide.ts";
 import { contextUsed, handoffThreshold, MARGIN_TOKENS, MESSAGE_MAX_BYTES, messageBytes, outputMax, STEPS_PER_TURN, tokens, usageOf, utf8Bytes } from "../../src/kernel/derive.ts";
 import { assistant, call, codeText, current, feed, preset, reply, stopInput, toolDone, userInput, world } from "./helpers.ts";
 import type { ReplySpec, World } from "./helpers.ts";
@@ -206,33 +206,44 @@ const ID_SHAPES: [string, number, (i: number) => string][] = [
   ["openai-responses", 81, (i) => `call_${String(i).padStart(24, "0")}|fc_${String(i).padStart(48, "0")}`],
 ];
 
-test("一条回复的工具调用多到补的结果放不进余量：不写入这条回复；刚好放得进时交接请求放得进窗口", () => {
+test("一条回复的工具调用多到补的结果放不进余量：只留放得下的前几个，交接请求照样放得进窗口（D87）", () => {
   for (const [shape, bytes, id] of ID_SHAPES) {
     assert.equal(utf8Bytes(id(0)), bytes);
-    // 能写入的最多调用数：二分，lo 个能写入，hi 个不能。
-    const accepted = (n: number) => worstReply(65_536, 1_000, 0, manyCalls(n, id)).p.phase.tag === "awaitingTool";
-    let [lo, hi] = [40, 1_000];
-    assert.ok(accepted(lo), `${shape}：${lo} 个调用应该能写入`);
-    assert.ok(!accepted(hi), `${shape}：${hi} 个调用应该被拒绝`);
-    while (hi - lo > 1) {
-      const mid = (lo + hi) >> 1;
-      if (accepted(mid)) lo = mid;
-      else hi = mid;
-    }
+    // 上限用公式独立算：结果余量 + 余量 − 交接指令，再按每个调用的字节换成 token 取整（不依赖二分）。
+    const budget = MARGIN_TOKENS - tokens(utf8Bytes(HANDOFF_INSTRUCTION));
+    const per = 2 * bytes + utf8Bytes("read") + utf8Bytes(SKIPPED);
+    // 上限用公式独立算（不照抄实现）：字节先合起来再换 token，所以直接找最大的 n。
+    let cap = 0;
+    while (tokens(per * (cap + 1)) <= budget) cap++;
+    const keptCalls = (n: number, W = 65_536) => {
+      const w = worstReply(W, 1_000, 0, manyCalls(n, id));
+      const last = current(w).findLast((m) => m.role === "assistant");
+      return last?.role === "assistant" ? last.content.filter((c) => c.type === "toolCall").length : 0;
+    };
+    for (const n of [10, cap - 1, cap]) assert.equal(keptCalls(n), n, `${shape}：${n} 个调用全部写入（上限 ${cap}）`);
+    assert.equal(keptCalls(cap + 1), cap, `${shape}：${cap + 1} 个调用只留 ${cap} 个`);
+    assert.equal(keptCalls(cap * 3), cap, `${shape}：${cap * 3} 个也只留 ${cap} 个`);
+
     for (const W of WINDOWS) {
       const T = handoffThreshold(preset({ contextWindow: W }));
-      const w = worstReply(W, T - 1, 0, manyCalls(lo, id));
+      const w = worstReply(W, T - 1, 0, manyCalls(cap, id));
       toolDone(w, HUGE);
-      assertBound(w, `${shape}，窗口 ${W}，${lo} 个调用`, textOfLastFull(w));
+      assertBound(w, `${shape}，窗口 ${W}，${cap} 个调用`, textOfLastFull(w));
 
+      // 截断后写进去的那些调用，补上“未执行”的结果也放得进余量：这正是余量要留的东西。
       for (const stopReason of ["toolUse", "stop"] as const) {
-        const label = `${shape}，窗口 ${W}，${hi} 个调用，${stopReason}`;
+        const label = `${shape}，窗口 ${W}，${cap * 2} 个调用，${stopReason}`;
         const x = world(preset({ contextWindow: W }));
         feed(x, userInput("开始"));
-        const before = current(x);
-        reply(x, assistant({ usage: T - 1 + outputMax(x.p.preset), stopReason, calls: manyCalls(hi, id) }));
-        assert.deepEqual(x.p.phase, { tag: "idle", ended: { error: "一次回复的工具调用太多" } }, label);
-        assert.deepEqual(current(x), before, `${label}：被拒绝的回复没有写入`);
+        const before = current(x).length;
+        reply(x, assistant({ usage: T - 1 + outputMax(x.p.preset), stopReason, calls: manyCalls(cap * 2, id) }));
+        const seg = current(x);
+        const last = seg.findLast((m) => m.role === "assistant");
+        assert.ok(last?.role === "assistant", label);
+        assert.equal(last.content.filter((c) => c.type === "toolCall").length, cap, label);
+        assert.ok(seg.length > before, `${label}：回复写进去了`);
+        if (stopReason === "toolUse") assert.deepEqual(x.p.phase.tag, "awaitingTool", label);
+        else assert.deepEqual(x.p.phase, { tag: "idle", ended: "done" }, `${label}：stop 的调用补未执行，这一轮正常结束`);
       }
     }
   }

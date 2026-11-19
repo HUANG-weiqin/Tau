@@ -197,27 +197,31 @@ describe("shell", () => {
 
   test("wait 用完还没跑完：命令留在后台继续跑，立刻返回输出文件；之后能读到新输出和退出码", async () => {
     const id = "sh-j";
-    const out = await tool("shell", { command: "echo 第一行; sleep 3; echo 后来; exit 5", wait: 1 }, id);
+    const go = join(dir, `go-sh-${id}`).replace(/\\/g, "/");
+    const out = await tool("shell", { command: `echo 第一行; while [ ! -e "${go}" ]; do sleep 0.1; done; echo 后来; exit 5`, wait: 1 }, id);
     assert.equal(out.isError, false, out.text);
     assert.match(out.text, /等了 1 秒还没跑完：命令已经转到后台继续跑/);
     assert.match(out.text, /跑完会给你寄一封信/);
     const file = /输出写到 (.+?)（还在增长/.exec(out.text)?.[1];
     assert.ok(file !== undefined, out.text);
     assert.ok(readFileSync(file, "utf8").includes("第一行"), "已经写出来的输出在文件里");
-    // 内核照样也会按它的 300 秒兜底，这里只是工具自己先返回；命令没被结束。
-    await sleep(4000);
-    const text = readFileSync(file, "utf8");
-    assert.ok(text.includes("后来"), text);
+    // 命令留在后台继续跑，没被结束：放它走，它能写完剩下的输出和退出码。
+    writeFileSync(go, "");
+    for (let i = 0; i < 300 && !existsSync(`${file}.exit`); i++) await sleep(100);
+    assert.ok(readFileSync(file, "utf8").includes("后来"));
     assert.equal(readFileSync(`${file}.exit`, "utf8").trim(), "5");
   });
 
   test("转后台的命令跑完会寄信唤醒进程：信里有退出码和最后几行", async () => {
     const id = await start("你好");
     await untilIdle(id);
-    const r = await tool("shell", { command: "echo 一; sleep 2; echo 二; exit 4", wait: 1 }, id);
+    // 命令等一个文件才结束：不靠时间判断，机器慢也稳。
+    const go = join(dir, `go-wake-${id}`).replace(/\\/g, "/");
+    const r = await tool("shell", { command: `echo 一; while [ ! -e "${go}" ]; do sleep 0.1; done; echo 二; exit 4`, wait: 1 }, id);
     assert.equal(r.isError, false, r.text);
     assert.match(r.text, /转到后台继续跑/);
     assert.match(r.text, /可以接着做别的事，也可以直接结束这一轮等这封信/);
+    writeFileSync(go, "");
     let letter: string | undefined;
     for (let i = 0; i < 300 && letter === undefined; i++) {
       await sleep(100);
