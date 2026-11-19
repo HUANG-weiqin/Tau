@@ -6,6 +6,9 @@ import { ModelPicker, ThinkingBar, thinkingFor } from "./modelpicker.js";
 import { configured, findModel, keyActions, keyLabel, sortProviders } from "../lib/models.js";
 import { setKey, clearKey } from "../api.js";
 
+/** 外观的选项：界面数据 `theme` 的取值和按钮上的字。 */
+const THEMES = /** @type {const} */ ([["day", "亮"], ["night", "夜"], ["vscode", "VS Code"]]);
+
 /** @param {unknown} e */
 const reason = (e) => (e instanceof Error ? e.message : String(e));
 
@@ -130,7 +133,7 @@ export function SettingsDialog({ app, onClose }) {
   const titleModel = app.gui.titleModel ?? "";
   const pickTitleModel = (/** @type {string} */ ref) => quiet(app.setGui({ titleModel: ref }));
 
-  const night = app.gui.theme === "night";
+  const theme = app.gui.theme ?? "day";
 
   // 开关在点击的处理函数里申请许可：浏览器只认用户操作里的申请。
   const notifyOn = app.gui.notify === true;
@@ -161,8 +164,8 @@ export function SettingsDialog({ app, onClose }) {
       <div class="dlg-body">
         <${SecHead} n="01" title="外观" en="APPEARANCE" />
         <div class="cl-days soft">
-          <div class="toggles" role="group" aria-label="外观"><button type="button" class="toggle" aria-pressed=${!night} onClick=${() => night && quiet(app.setGui({ theme: "day" }))}>亮</button><button type="button" class="toggle" aria-pressed=${night} onClick=${() => !night && quiet(app.setGui({ theme: "night" }))}>夜</button></div>
-          <span>夜：台面和黄色都调暗，适合昏暗的环境。</span>
+          <div class="toggles" role="group" aria-label="外观">${THEMES.map(([k, l]) => html`<button type="button" class="toggle" aria-pressed=${theme === k} onClick=${() => theme !== k && quiet(app.setGui({ theme: k }))}>${l}</button>`)}</div>
+          <span>夜：台面和黄色都调暗，适合昏暗的环境。VS Code：深灰配蓝，和编辑器一个样。</span>
         </div>
 
         <${SecHead} n="02" title="默认模型" en="DEFAULT MODEL" right=${html`<span class="dnote" style="font-size:11px">新建预设时预填</span>`} />
@@ -188,7 +191,7 @@ export function SettingsDialog({ app, onClose }) {
         <div class="cl-days soft">
           <div class="toggles" role="group" aria-label="完成通知"><button type="button" class="toggle" aria-pressed=${notifyOn} onClick=${() => (!notifyOn || perm !== "granted") && setNotify(true)}>开</button><button type="button" class="toggle" aria-pressed=${!notifyOn} onClick=${() => notifyOn && setNotify(false)}>关</button></div>
           <span>人建的进程跑完一轮、或者任何进程出错，而页面不在前台时，弹一条系统通知。</span>
-          ${notifyWhy !== "" && html`<span class="dnote" style="color:var(--warn)">${notifyWhy}</span>`}
+          ${notifyWhy !== "" && html`<span class="dnote" style="color:var(--warn-t)">${notifyWhy}</span>`}
         </div>
 
         <${SecHead} n="05" title="标题用的模型" en="TITLE MODEL" right=${html`<span class="dnote" style="font-size:11px">需要桥在运行</span>`} />

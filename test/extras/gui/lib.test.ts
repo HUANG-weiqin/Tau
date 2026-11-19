@@ -1254,6 +1254,7 @@ test("state: notify 只在为 true 时保留", () => {
 
 test("state: theme 只在为 night 时保留，别的都是亮", () => {
   assert.equal(normalizeState({ theme: "night" }).theme, "night");
+  assert.equal(normalizeState({ theme: "vscode" }).theme, "vscode");
   for (const v of ["day", "", "dark", 1, null]) assert.equal("theme" in normalizeState({ theme: v }), false);
   assert.equal("theme" in normalizeState({}), false);
 });
@@ -1268,6 +1269,9 @@ test("theme: applyTheme 设置和去掉 data-theme，同步 theme-color", () => 
   applyTheme(undefined, doc);
   assert.equal(attrs.has("data-theme"), false);
   assert.equal(meta.content, "#0C0D0C");
+  applyTheme("vscode", doc);
+  assert.equal(attrs.get("data-theme"), "vscode");
+  assert.equal(meta.content, "#333333");
   applyTheme("night", doc);
   applyTheme("anything", doc);
   assert.equal(attrs.has("data-theme"), false);

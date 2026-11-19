@@ -17,12 +17,12 @@
 .df.hunk .df-t, .df.meta .df-t { position: sticky; left: 0; padding-left: 14px; }
 
 /* 增删的底色同时铺在行号槽上：槽是不透明的，底色叠在它上面 */
-.df.add { background: rgba(255, 230, 0, .08); }
-.df.add .df-g { background: linear-gradient(rgba(255, 230, 0, .08), rgba(255, 230, 0, .08)), var(--ink0); }
-.df.add .df-s { color: var(--acc); }
-.df.del { background: rgba(255, 90, 54, .09); }
-.df.del .df-g { background: linear-gradient(rgba(255, 90, 54, .09), rgba(255, 90, 54, .09)), var(--ink0); }
-.df.del .df-s { color: var(--warn); }
+.df.add { background: color-mix(in srgb, var(--acc) 8%, transparent); }
+.df.add .df-g { background: linear-gradient(color-mix(in srgb, var(--acc) 8%, transparent), color-mix(in srgb, var(--acc) 8%, transparent)), var(--ink0); }
+.df.add .df-s { color: var(--acc-t); }
+.df.del { background: color-mix(in srgb, var(--warn) 9%, transparent); }
+.df.del .df-g { background: linear-gradient(color-mix(in srgb, var(--warn) 9%, transparent), color-mix(in srgb, var(--warn) 9%, transparent)), var(--ink0); }
+.df.del .df-s { color: var(--warn-t); }
 .df.del .df-t { color: var(--fg2); }
 .df.add .df-n, .df.del .df-n { color: var(--fg2); }
 

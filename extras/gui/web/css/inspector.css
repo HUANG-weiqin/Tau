@@ -4,7 +4,7 @@
 .insp-head { position: relative; z-index: 1; display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 18px; background: var(--ink0); border-bottom: 1px solid var(--ink4); overflow: hidden; flex: none; }
 .insp-head h2 { position: relative; font-size: 15px; font-weight: 900; }
 .insp-head .label { position: relative; }
-.insp-sub { position: relative; margin-left: auto; font-size: var(--fs-xs); color: var(--acc); }
+.insp-sub { position: relative; margin-left: auto; font-size: var(--fs-xs); color: var(--acc-t); }
 .insp-body { position: relative; z-index: 1; flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; animation: tau-panel var(--t-mid) var(--ease-in); }
 .insp-body > .inote { margin: 18px; }
 .insp-tabs { position: relative; flex: none; width: 52px; background: linear-gradient(180deg, var(--ink1) 0%, var(--ink0) 100%); border-left: 1px solid var(--ink0); display: flex; flex-direction: column; }
@@ -12,15 +12,15 @@
 .itab:hover { background: var(--ink3); }
 .itab-t { font-size: var(--fs-sm); font-weight: 700; line-height: 1; }
 .itab-n { position: absolute; left: 6px; top: 5px; font-size: 9px; line-height: 1; color: var(--fg3); }
-.itab[aria-selected="true"] { background: var(--sel); color: var(--ink); box-shadow: inset -3px 0 0 var(--acc), inset 0 1px 0 rgba(255,255,255,.8); }
+.itab[aria-selected="true"] { background: var(--sel); color: var(--on-fill); box-shadow: inset -3px 0 0 var(--acc), inset 0 1px 0 rgba(255,255,255,.8); }
 .itab[aria-selected="true"] .itab-t { font-weight: 900; }
 .itab[aria-selected="true"] .itab-n { color: var(--ink-2); }
 .itab-c { display: flex; align-items: center; gap: 4px; font-stretch: 62%; font-weight: 800; font-size: 13px; line-height: 1; color: var(--fg2); }
 .itab-c i { width: 6px; height: 6px; background: var(--acc); }
 .itab[aria-selected="true"] .itab-c { color: var(--ink-2); }
-.itab[aria-selected="true"] .itab-c i { background: var(--ink); }
-.itab-c.hot { background: var(--acc); color: var(--ink); padding: 2px 5px 1px; }
-.itab[aria-selected="true"] .itab-c.hot { color: var(--ink); }
+.itab[aria-selected="true"] .itab-c i { background: var(--on-fill); }
+.itab-c.hot { background: var(--acc); color: var(--on-fill); padding: 2px 5px 1px; }
+.itab[aria-selected="true"] .itab-c.hot { color: var(--on-fill); }
 .itab-foot { position: relative; margin-top: auto; align-self: center; padding: 18px 0 14px; writing-mode: vertical-rl; color: var(--fg3); }
 
 /* 页 */
@@ -35,11 +35,11 @@
 /* 数字按格宽定字号：--n 是折算的字数（inspector.js 的 Stats 算），压窄的数字一个字约 .5em。短的停在 --big，长的缩小，不出格。 */
 .istat dd { --big: 42px; order: 1; display: flex; align-items: baseline; min-width: 0; overflow: hidden; font-stretch: 62%; font-weight: 800; font-size: min(var(--big), calc(100cqi / var(--n, 3) / .5)); line-height: .95; white-space: nowrap; }
 .istat dd .u { font-size: max(11px, .38em); color: var(--fg2); }
-.istat dd.warn { color: var(--warn); }
+.istat dd.warn { color: var(--warn-t); }
 /* 两个数上下两行（改动的增和删）：各占半高，合起来和旁边的大字一样高；下面那个用次要色。 */
 .istat dd.pair { flex-direction: column; align-items: flex-start; gap: 0; font-size: min(calc(var(--big) * .5), calc(100cqi / var(--n, 3) / .5)); line-height: .95; }
 .istat dd.pair > span + span { color: var(--fg2); }
-.istat.hot dd > span:first-child { background: var(--acc); color: var(--ink); padding: 1px 7px 0 5px; }
+.istat.hot dd > span:first-child { background: var(--acc); color: var(--on-fill); padding: 1px 7px 0 5px; }
 .ibody { flex: 1; display: flex; flex-direction: column; gap: 24px; padding: 20px 18px 64px; min-width: 0; }
 .ibody.wide { gap: 22px; padding: 18px 0 64px; }
 .ibody.wide > .inote, .ibody.wide > .isection:not(.flush), .ibody.wide > .ichips, .ibody.wide > .ibranches { margin-left: 18px; margin-right: 18px; }
@@ -90,8 +90,8 @@
 .tl { position: absolute; top: 0; bottom: auto; height: auto; width: 1px; background: var(--fg3); }
 .tl.h { top: 50%; width: 10px; height: 1px; }
 .tmark { width: 16px; height: 16px; flex: none; display: grid; place-items: center; font-family: var(--mono); font-size: 10px; font-weight: 700; line-height: 1; box-shadow: inset 0 0 0 1px var(--fg2); color: var(--fg); }
-.tmark.add { background: var(--acc); color: var(--ink); box-shadow: none; }
-.tmark.del { box-shadow: inset 0 0 0 1px var(--warn); color: var(--warn); }
+.tmark.add { background: var(--acc); color: var(--on-fill); box-shadow: none; }
+.tmark.del { box-shadow: inset 0 0 0 1px var(--warn); color: var(--warn-t); }
 .idelta { font-size: 11px; white-space: nowrap; }
 .idelta b { font-weight: 700; }
 .icommits { display: flex; flex-direction: column; gap: 7px; }
@@ -110,7 +110,7 @@
 
 /* 后台 */
 .iband { position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--ink0); overflow: hidden; font-size: 12.5px; font-weight: 700; }
-.iband .tx { background-image: repeating-linear-gradient(-45deg, rgba(255, 90, 54, .22) 0 1.5px, transparent 1.5px 6px); --m: linear-gradient(90deg, #000 0, transparent 60%); }
+.iband .tx { background-image: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--warn) 22%, transparent) 0 1.5px, transparent 1.5px 6px); --m: linear-gradient(90deg, #000 0, transparent 60%); }
 .iband i { position: relative; width: 10px; height: 10px; flex: none; background: var(--warn); }
 .iband span:last-child { position: relative; }
 .bglist { display: flex; flex-direction: column; gap: 8px; }
@@ -119,7 +119,7 @@
 .bgcard.ok .bgbar { background: var(--sel); }
 .bgcard.bad .bgbar { background: var(--warn); }
 .bg-h { display: flex; align-items: center; gap: 8px; padding: 10px 12px 0 16px; flex-wrap: wrap; }
-.bgtag { background: var(--acc); color: var(--ink); font-size: 11px; font-weight: 900; line-height: 1.5; padding: 1px 6px; white-space: nowrap; }
+.bgtag { background: var(--acc); color: var(--on-fill); font-size: 11px; font-weight: 900; line-height: 1.5; padding: 1px 6px; white-space: nowrap; }
 .bgcard.ok .bgtag { background: var(--sel); }
 .bgcard.bad .bgtag { background: var(--warn); }
 .bg-n { font-size: 13px; font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
@@ -137,5 +137,5 @@
   .istat dd { --big: 36px; }
 }
 
-.ilink { color: var(--acc); }
+.ilink { color: var(--acc-t); }
 .ilink:hover { text-decoration: underline; }

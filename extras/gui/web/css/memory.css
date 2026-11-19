@@ -18,7 +18,7 @@
 .mem-links { display: flex; flex-wrap: wrap; gap: 4px 14px; padding-top: 6px; border-top: 1px solid var(--ink4); }
 .mem-links .link { color: var(--fg2); transition: color var(--t-fast) var(--ease-in); }
 .mem-links .link:hover { color: var(--fg); text-decoration: none; }
-.mem-links .link:last-child:hover { color: var(--warn); }
+.mem-links .link:last-child:hover { color: var(--warn-t); }
 .mem-links .link[disabled] { opacity: .4; pointer-events: none; }
 .mem-acts, .mem-ask { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .mem-ask > span { flex: 1 1 160px; min-width: 0; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }

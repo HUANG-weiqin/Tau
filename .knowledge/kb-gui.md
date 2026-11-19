@@ -268,7 +268,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
 | `defaultModel` | 设置里的默认模型。空字符串或没有就是没设 |
 | `defaultThinking` | 设置里的默认思考强度。空字符串或没有就是不思考 |
 | `notify` | 完成通知开关。只在 `true` 时有，关就是没有这个键 |
-| `theme` | 外观。只在 `night` 时有，亮就是没有这个键（文件里可能写着 `day`，读的时候丢掉） |
+| `theme` | 外观。只在 `night`、`vscode` 时有，亮就是没有这个键（文件里可能写着 `day`，读的时候丢掉） |
 
 ### 页面
 
@@ -297,10 +297,11 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
   - 等 `app.ready` 和 `app.procsReady` 才开始比较，所以刚打开时已经在待你看的不通知。
   - favicon 是 canvas 画的 data: URL。CSP 的 `img-src` 本来就有 `data:`，没有改 CSP。
   - 开关在设置里，点击时调 `Notification.requestPermission()`：浏览器只认用户操作里的申请。
-- 外观（[设计稿的夜间配色](../docs/design/gui.md#夜间配色)）：`theme` 在界面数据里，`ui/notify.js` 的 `Notifier` 用 `lib/theme.js` 的 `applyTheme` 把它换成 `<html data-theme="night">`（亮就是没有这个属性）并同步 `theme-color`。设置里的开关改的是同一个键，不读也不写别处，没有第二份。
+- 外观（[设计稿的夜间配色](../docs/design/gui.md#夜间配色)）：`theme` 在界面数据里，`ui/notify.js` 的 `Notifier` 用 `lib/theme.js` 的 `applyTheme` 把它换成 `<html data-theme="night">` 或 `"vscode"`（亮就是没有这个属性）并同步 `theme-color`。设置里的开关改的是同一个键，不读也不写别处，没有第二份。
   - 样式只靠 `css/base.css` 开头的令牌换色：`:root` 是亮，`:root[data-theme="night"]` 只覆盖令牌，选择器不重写。
   - 台面上的文字和线用 `--tx`、`--tx2`、`--k`（线和纹理写成 `rgb(var(--k) / .2)`），台面和卡片用 `--stage`、`--card`、`--card-me`、`--line-l`。`--ink`、`--ink-2` 永远是墨黑：只压在黄、橙和选中行（`--sel`、`--sel-hi`）上，或做暗块的底。新写的台面样式别用它们。
   - 黄和橙的渐变高光（按钮上沿、悬停）是 `--acc-*`、`--warn-*`，选中行的高光是 `--sel-*`；外沿的投影不变色。
+  - VS Code 配色（[设计稿](../docs/design/gui.md#vs-code-配色)）也是令牌加一个 `css/vscode.css`。黄、橙压在上面的字写 `--on-fill`，暗面上写成字的黄、橙写 `--acc-t`、`--warn-t`，不直接写 `--ink`、`--acc`、`--warn`：亮和夜里它们相等，VS Code 里才分开。切角键的面和亮边是 `--key*`。`vscode.css` 只放令牌换不掉的（铭牌的结构、写死的色值、装饰），每条都以 `:root[data-theme="vscode"]` 开头；改铭牌、弹窗顶边这类结构样式时，顺手看一眼它有没有覆盖。
 - 进程归到哪个项目、常驻还是临时：看进程记录里的会话快照（`preset`），经 `/api/tau` 转发 `inspect` 读（`lib/derive.js` 的 `seenFromInspect` 取 `workdir`、`tools`、`memory`），存在页面内存里，不写界面数据。
   - 读全部之前页面不就绪；没读到快照的进程是 `unknown`，不归进任何项目。进程被删就丢掉它的快照。
   - 快照不是读一次就算：`reconfigure` 能改它，别的客户端也能改。重读的时机（`app.js` 的 `loadSnaps`、`lib/session.js` 的 `needsInspect`）：

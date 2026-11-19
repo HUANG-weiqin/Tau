@@ -176,7 +176,7 @@ export function CleanDialog({ app, onClose }) {
           <span>天的算旧的。</span>
           <span class="dnote">当前进程永远不清理。</span>
         </div>
-        ${!daysOk && html`<p class="dnote" style="color:var(--warn)">天数要写 1 到 ${MAX_DAYS} 的整数。</p>`}
+        ${!daysOk && html`<p class="dnote" style="color:var(--warn-t)">天数要写 1 到 ${MAX_DAYS} 的整数。</p>`}
         <div class="cl-stats">
           <${Stat} n=${plan.remove.length + plan.blocked.length} label=${`空闲超过 ${daysOk ? days : app.gui.cleanDays} 天`} />
           <${Stat} n=${plan.remove.length} label="这次删掉" tone="warn" />
@@ -218,7 +218,7 @@ export function CleanDialog({ app, onClose }) {
         html`<${Fragment}>
           ${refused.length > 0 && html`<p class="dnote">被拒的${refused.length}个，原因是服务给的，原样写在上面。过一阵再清一次，条件也许就变了。</p>`}
           ${sweep.s === "ok" && html`<p class="dnote">图片：清掉 ${sweep.n ?? 0} 张。</p>`}
-          ${sweep.s === "fail" && html`<p class="dnote" style="color:var(--warn)">清图片没成功：${sweep.msg}</p>`}
+          ${sweep.s === "fail" && html`<p class="dnote" style="color:var(--warn-t)">清图片没成功：${sweep.msg}</p>`}
           ${sweep.s === "skipped" && html`<p class="dnote">中途停下了，没有清图片。</p>`}
         </${Fragment}>`}
       </div>

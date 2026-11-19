@@ -49,8 +49,8 @@ export function OpenProjDialog({ app, onClose }) {
           <${Pill} label="选文件夹" onClick=${pick} />
         </div>
         ${recent.length > 0 && html`<div class="recent"><span>最近</span>${recent.map((r) => html`<button type="button" class=${pathKey(r) === key ? "on" : ""} title=${r} onClick=${() => setFolder(r)}>${r}</button>`)}</div>`}
-        ${path !== "" && !absOk && html`<p class="dnote" style="color:var(--warn)">要写完整的路径，例如 E:\\games\\cardGame。</p>`}
-        ${opened && html`<p class="dnote" style="color:var(--acc)">这个文件夹已经是一个项目了，点“打开”切到它。</p>`}
+        ${path !== "" && !absOk && html`<p class="dnote" style="color:var(--warn-t)">要写完整的路径，例如 E:\\games\\cardGame。</p>`}
+        ${opened && html`<p class="dnote" style="color:var(--acc-t)">这个文件夹已经是一个项目了，点“打开”切到它。</p>`}
       </div>
       <div class="dlg-foot">
         <span class="cmdline"></span>

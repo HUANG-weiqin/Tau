@@ -287,13 +287,13 @@ export function McpSection({ app, installed, onChanged }) {
         ${free.length === 0
           ? html`<span class="dnote">这个服务器没有能装的工具。</span>`
           : latest
-            ? html`<span class="dnote" style="color:var(--acc)">已是最新。</span>`
+            ? html`<span class="dnote" style="color:var(--acc-t)">已是最新。</span>`
             : html`<${Pill} kind="accent" label=${busy === "install" ? "正在装…" : mine.length > 0 ? "更新" : "安装"} disabled=${busy !== ""} onClick=${install} />`}
         <span class="dnote">写 <span class="mono">~/.tau/tools/${"<定义名>"}.json</span>。新出生的会话用新的，已有的会话在“改这个会话”里重读（换段时生效）。</span>
       </div>
     </${Fragment}>`}
 
-    ${note !== "" && html`<p class="dnote" style="margin-top:8px;color:var(--acc)">${note}</p>`}
+    ${note !== "" && html`<p class="dnote" style="margin-top:8px;color:var(--acc-t)">${note}</p>`}
     ${err !== "" && html`<${CheckStrip} ok=${false} text=${err} label="mcp" />`}
     <div class="mcp-relay">
       <span class="kicker">中转</span>

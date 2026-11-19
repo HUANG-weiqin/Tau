@@ -31,7 +31,7 @@
 .pv-head > span:first-child { padding-left: 12px; }
 .pv-n { padding: 0 !important; align-self: stretch; }
 .pv-pick { width: 100%; height: 100%; min-height: 48px; padding: 0 0 0 14px; border: 0; background: transparent; text-align: left; font-size: 19px; color: var(--tx2); }
-.pv-row.sel .pv-pick { color: var(--acc); }
+.pv-row.sel .pv-pick { color: var(--acc-t); }
 .pv-who { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
 .pv-name { border: 0; background: none; padding: 0; font-size: 14px; font-weight: 700; text-align: left; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pv-name:hover { text-decoration: underline; }

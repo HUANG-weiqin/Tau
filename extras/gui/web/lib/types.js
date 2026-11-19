@@ -82,7 +82,7 @@
  *   defaultThinking?: string,
  *   titleModel?: string,
  *   notify?: boolean,
- *   theme?: "night",
+ *   theme?: "night" | "vscode",
  * }} GuiState
  */
 

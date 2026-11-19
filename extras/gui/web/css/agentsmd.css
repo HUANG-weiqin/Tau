@@ -4,7 +4,7 @@
 .fl .tag.eff { font-family: var(--mono); }
 .ctx .ctx-cap { font-size: 11.5px; }
 .ctx-n { font-size: 11.5px; font-family: var(--mono); }
-.ctx-n.over { color: var(--warn); }
+.ctx-n.over { color: var(--warn-t); }
 .ctx textarea[aria-invalid="true"] { box-shadow: inset 0 0 0 2px var(--warn); }
 .agents-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
 .agents-row .toggle[disabled] { opacity: .4; pointer-events: none; }

@@ -267,7 +267,7 @@ export function PresetFields({ form, app, placeholder = "my-project", promptHint
       <button type="button" class="adv-h" aria-expanded=${form.advanced} onClick=${() => form.setAdvanced(!form.advanced)}><span class="kicker">高级</span><span class="dim" style="font-size:12px">options</span><span class="sep"></span><${Icon} name=${form.advanced ? "up" : "down"} size=${13} sw=${2.8} /></button>
       ${form.advanced && html`<label class="field" style="margin-top:10px"><span class="fl">options：一行 JSON，只收服务认的键${eff("options")}</span>
         <input class="input mono" type="text" value=${form.options} placeholder='{"temperature":0.2}' aria-invalid=${optErr !== ""} onInput=${(/** @type {any} */ e) => form.setOptions(e.currentTarget.value)} />
-        ${optErr !== "" && html`<span class="dnote" style="color:var(--warn);font-size:11.5px">${optErr}</span>`}
+        ${optErr !== "" && html`<span class="dnote" style="color:var(--warn-t);font-size:11.5px">${optErr}</span>`}
       </label>`}
     </div>
 </${Fragment}>`;
@@ -307,7 +307,7 @@ function ContextField({ form }) {
   return html`<div class="field ctx"><span class="fl">上下文文件${session && html`<${Eff} field="context" />`}<span class="dnote ctx-cap">每次换段重读，最多 24 KiB</span></span>
     <textarea class="input mono" rows="3" value=${ctx} aria-label="上下文文件，一行一个路径" aria-invalid=${!parsed.ok} placeholder=${"一行一个路径，最多 8 行\n相对路径按工作目录算"} onInput=${(/** @type {any} */ e) => form.setCtx(e.currentTarget.value)}></textarea>
     <span class=${`dnote ctx-n ${n > CONTEXT_MAX ? "over" : ""}`}>${n} / ${CONTEXT_MAX} 行</span>
-    ${!parsed.ok && html`<span class="dnote" style="color:var(--warn);font-size:11.5px">${parsed.error}</span>`}
+    ${!parsed.ok && html`<span class="dnote" style="color:var(--warn-t);font-size:11.5px">${parsed.error}</span>`}
     <div class="agents-row">
       <span class="toggles"><button type="button" class="toggle" aria-pressed=${agents} disabled=${locked} onClick=${() => form.setAgents(!agents)}>用项目的 AGENTS.md</button></span>
       <span class="dnote">${agentsInfo === null ? (form.workdir === "" ? "选好文件夹才能查" : "正在查…") : agentsInfo.bad ? "没查到这个目录" : exists ? formatBytes(agentsInfo.bytes) : "项目里没有 AGENTS.md"}</span>

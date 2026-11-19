@@ -18,7 +18,7 @@
 .dk-side > :not(.tx) { position: relative; }
 .dk-lbl { display: flex; align-items: center; gap: 8px; }
 .dk-letter { font-stretch: 125%; font-weight: 800; font-size: 10px; line-height: 1.2; letter-spacing: .32em; color: var(--fg3); transition: color var(--t-fast) var(--ease-in); }
-.dock:focus-within .dk-letter { color: var(--acc); }
+.dock:focus-within .dk-letter { color: var(--acc-t); }
 .dk-tick { flex: 1; height: 1px; min-width: 8px; background: var(--ink5); }
 .dk-who { display: flex; align-items: baseline; gap: 7px; min-width: 0; cursor: text; }
 .dk-to { flex: none; font-size: 11px; font-weight: 700; color: var(--fg2); }
@@ -31,8 +31,8 @@
 .dk-st .lamp i { width: 10px; height: 10px; }
 .dk-st b { font-weight: 800; overflow: hidden; text-overflow: ellipsis; }
 .dk-st .mono { font-size: 11px; color: var(--fg2); }
-.dock.k-run .dk-st .lamp { color: var(--acc); }
-.dock.k-err .dk-st .lamp { color: var(--warn); }
+.dock.k-run .dk-st .lamp { color: var(--acc-t); }
+.dock.k-err .dk-st .lamp { color: var(--warn-t); }
 
 /* 右：墨井。比底座深两格，带淡网格。焦点时四角上信号黄括号。 */
 .dk-well { position: relative; display: flex; flex-direction: column; min-width: 0; margin: 8px 12px 8px 14px; background: var(--ink0); box-shadow: inset 0 0 0 1px var(--ink4); transition: box-shadow var(--t-fast) var(--ease-in); }
@@ -82,8 +82,8 @@
 .dk-tok { flex: none; font-stretch: 62%; font-weight: 900; font-size: 26px; line-height: 1; letter-spacing: -.005em; color: var(--fg); }
 .dk-tcap { flex: none; font-size: 12px; font-weight: 900; color: var(--fg2); white-space: nowrap; }
 .dk-fate p { min-width: 0; font-size: 12px; font-weight: 800; line-height: 1.3; color: var(--fg); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
-.dock.k-run .dk-tok { color: var(--acc); }
-.dock.k-err .dk-tok { color: var(--warn); }
+.dock.k-run .dk-tok { color: var(--acc-t); }
+.dock.k-err .dk-tok { color: var(--warn-t); }
 
 .dk-hints { flex: none; display: none; align-items: center; gap: 12px; font-size: 11px; color: var(--fg3); }
 .dk-hints > span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }

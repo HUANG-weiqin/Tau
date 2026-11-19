@@ -70,7 +70,7 @@ function TreeRow({ id, who, depth, mark, tone = "dim" }) {
   return html`<li style=${`display:flex;gap:8px;align-items:baseline;padding:2px 0 2px ${depth * 16}px`}>
     <span class="dim" aria-hidden="true">${depth > 0 ? "↳" : "·"}</span>
     <span style="flex:1;min-width:0;overflow-wrap:anywhere;font-weight:${depth === 0 ? 900 : 700}">${who} <span class="mono dim" style="font-weight:400">${id}</span></span>
-    <span class=${tone === "warn" ? "" : tone} style=${tone === "warn" ? "color:var(--warn)" : ""}>${mark}</span>
+    <span class=${tone === "warn" ? "" : tone} style=${tone === "warn" ? "color:var(--warn-t)" : ""}>${mark}</span>
   </li>`;
 }
 

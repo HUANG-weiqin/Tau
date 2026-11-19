@@ -86,7 +86,7 @@ function ForYou({ app, close }) {
   return html`<div class="ch-for">
     <h3 class="ch-sec"><span>待你看</span><span class="label dim">FOR YOU</span><span class="sep" aria-hidden="true"></span><span class="mono dim" style="font-weight:400;font-size:11px">${String(list.length).padStart(2, "0")}</span></h3>
     ${list.length === 0
-      ? html`<p class="ch-none"><${Icon} name="check" size=${14} sw=${3} color="var(--acc)" />没有要你看的。出错的进程和做完了还没合并的分支会出现在这里。</p>`
+      ? html`<p class="ch-none"><${Icon} name="check" size=${14} sw=${3} color="var(--acc-t)" />没有要你看的。出错的进程和做完了还没合并的分支会出现在这里。</p>`
       : html`<ul class="ch-list">
           ${shown.map((a) => {
             const e = app.entryOf(a.id);

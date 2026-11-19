@@ -53,7 +53,7 @@ export function Rail({ app }) {
     <${Tex} kind="tx-hatch-d" mask="linear-gradient(transparent 55%, rgba(0,0,0,.65) 100%)" />
     <span class="rail-logo" aria-hidden="true">
       <${Tex} kind="tx-dots-y" mask="linear-gradient(135deg, rgba(0,0,0,.5) 0%, transparent 75%)" />
-      <${Icon} name="tau" size=${24} sw=${2.6} color="var(--ink)" />
+      <${Icon} name="tau" size=${24} sw=${2.6} color="var(--on-fill)" />
     </span>
     <div class="rail-scroll">
       ${pinned.map((p, i) => html`<${Tile} key=${p.key} app=${app} p=${p} n=${i + 1} />`)}

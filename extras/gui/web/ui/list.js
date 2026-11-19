@@ -239,7 +239,7 @@ export function ProcList({ app }) {
         </button>`}
         ${idleOpen && html`<${IdleBucket} app=${app} title="今天" list=${temps.idle.today} /><${IdleBucket} app=${app} title="7 天内" list=${temps.idle.week} />
           ${temps.idle.older.length > 0 && (searching ? html`<${IdleBucket} app=${app} title="更早" list=${temps.idle.older} />` : html`<div class="older"><span class="bars" aria-hidden="true"><i></i><i></i><i></i></span><span class="rmain"><b style="font-size:12.5px">更早的 ${temps.idle.older.length} 个</b><span class="dim" style="font-size:11px">都空闲超过 7 天</span></span><button type="button" class="gbtn" onClick=${(/** @type {Event} */ e) => app.openDialog("clean", /** @type {Element} */ (e.currentTarget))}><${Icon} name="trash" size=${14} sw=${2.4} />清理</button></div>`)}`}
-        ${view.hidden > 0 && html`<button type="button" class="hidden-n" onClick=${() => { app.setFilter("all"); app.setQuery(""); }}>筛选和搜索藏了 ${view.hidden} 个<span class="link" style="color:var(--acc)">显示全部</span></button>`}
+        ${view.hidden > 0 && html`<button type="button" class="hidden-n" onClick=${() => { app.setFilter("all"); app.setQuery(""); }}>筛选和搜索藏了 ${view.hidden} 个<span class="link" style="color:var(--acc-t)">显示全部</span></button>`}
       </div>
       <${Ruler} scrollRef=${scroll} sig=${sig} />
     </div>

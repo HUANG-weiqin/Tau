@@ -19,7 +19,7 @@
 .md strong { font-weight: 800; }
 .md del { opacity: .6; }
 .md a { color: var(--tx); text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 3px; text-decoration-color: rgb(var(--k) / .45); transition: text-decoration-color var(--t-fast) var(--ease-in), background-color var(--t-fast) var(--ease-in); }
-.md a:hover { color: var(--ink); text-decoration-color: var(--ink); background: var(--acc); }
+.md a:hover { color: var(--on-fill); text-decoration-color: var(--ink); background: var(--acc); }
 .md hr { border: 0; border-top: 1px solid var(--line-l); margin: 1.1em 0; }
 .md blockquote { margin: 0 0 .7em; padding: 2px 0 2px 14px; border-left: 3px solid var(--tx); color: var(--tx2); }
 .md blockquote > :last-child { margin-bottom: 0; }
@@ -44,7 +44,7 @@
   box-shadow: 0 1.5px 0 var(--ink0);
   transition: color var(--t-fast) var(--ease-in), background-color var(--t-fast) var(--ease-in), border-color var(--t-fast) var(--ease-in), transform 70ms var(--ease-in);
 }
-.md .md-copy:hover { border-color: var(--acc); background: var(--acc); color: var(--ink); }
+.md .md-copy:hover { border-color: var(--acc); background: var(--acc); color: var(--on-fill); }
 .md .md-copy:active { transform: translateY(1px); box-shadow: none; }
 .md pre { margin: 0; padding: 12px 14px; overflow-x: auto; font-family: var(--mono); font-size: var(--fs-base); line-height: 1.6; white-space: pre; tab-size: 2; }
 .md pre code { padding: 0; background: none; box-shadow: none; font-size: inherit; color: inherit; overflow-wrap: normal; }
@@ -60,7 +60,7 @@
 .ch-bot .md { font-size: 13.5px; line-height: 1.7; color: var(--fg); }
 .ch-bot .md h2 { border-bottom-color: var(--ink4); }
 .ch-bot .md a { color: var(--fg); text-decoration-color: var(--fg3); }
-.ch-bot .md a:hover { color: var(--ink); text-decoration-color: var(--ink); }
+.ch-bot .md a:hover { color: var(--on-fill); text-decoration-color: var(--ink); }
 .ch-bot .md li::marker { color: var(--fg2); }
 .ch-bot .md input[type="checkbox"] { accent-color: var(--acc); }
 .ch-bot .md hr { border-top-color: var(--ink5); }

@@ -3,7 +3,7 @@
 .svc.ask { box-shadow: inset 3px 0 0 var(--warn), 0 0 0 1px var(--warn); }
 /* 详情栏挪到下面以后（见 inspector.css），横幅改成贴底的一整条，不浮在按钮上。 */
 @media (max-width: 1179px) { .svc { left: 0; right: 0; bottom: 0; max-width: none; padding: 8px 16px; } }
-.svc .link { min-height: 26px; padding: 0 10px; background: var(--acc); color: var(--ink); font-weight: 900; --bk: var(--ink); }
+.svc .link { min-height: 26px; padding: 0 10px; background: var(--acc); color: var(--on-fill); font-weight: 900; --bk: var(--ink); }
 .svc .link:hover { text-decoration: none; filter: brightness(1.07); }
 .svc .link:active { filter: brightness(.9); }
-.conn .link { color: var(--ink); text-decoration: underline; font-weight: 900; }
+.conn .link { color: var(--on-fill); text-decoration: underline; font-weight: 900; }

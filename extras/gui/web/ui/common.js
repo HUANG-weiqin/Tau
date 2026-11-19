@@ -141,7 +141,7 @@ const CONTOURS = makeContours();
 
 /** 台面右下角的等高线。 */
 export function Contour() {
-  return html`<svg aria-hidden="true" width="760" height="560" viewBox="0 0 760 560" fill="none" stroke-width="1" style="stroke:rgb(var(--k) / .065);position:absolute;z-index:0;pointer-events:none;right:-150px;bottom:-190px">
+  return html`<svg aria-hidden="true" class="contour" width="760" height="560" viewBox="0 0 760 560" fill="none" stroke-width="1" style="stroke:rgb(var(--k) / .065);position:absolute;z-index:0;pointer-events:none;right:-150px;bottom:-190px">
     ${CONTOURS.map((d) => html`<path d=${d} />`)}
   </svg>`;
 }

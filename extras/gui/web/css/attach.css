@@ -4,10 +4,10 @@
 .att-pick[disabled] { opacity: .4; pointer-events: none; }
 .att-n { color: var(--fg3); }
 .att-note { min-width: 0; }
-.att-note.warn { color: var(--warn); }
+.att-note.warn { color: var(--warn-t); }
 .dk-well { transition: box-shadow var(--t-fast) var(--ease-in); }
 .dk-well.over, .ch-form.over { outline: 2px dashed var(--acc); outline-offset: -4px; }
-.dk-well.over::after, .ch-form.over::after { content: "松手，把图片放进来"; position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; background: color-mix(in srgb, var(--ink0) 82%, transparent); color: var(--acc); font-size: 13px; letter-spacing: .08em; pointer-events: none; }
+.dk-well.over::after, .ch-form.over::after { content: "松手，把图片放进来"; position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; background: color-mix(in srgb, var(--ink0) 82%, transparent); color: var(--acc-t); font-size: 13px; letter-spacing: .08em; pointer-events: none; }
 .dk-att { padding: 6px 16px 0; }
 .ch-thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
 .ch-thumbs .cthumb img { height: 48px; }

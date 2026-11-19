@@ -1,0 +1,73 @@
+/* VS Code 配色（深色+）。令牌在 base.css 的 [data-theme="vscode"]；这里只放令牌换不掉的：
+   写死的色值、大块的面（上方的铭牌）、装饰。形状（切角、台阶）不动。取值和理由见 docs/design/gui.md「VS Code 配色」。 */
+
+/* 键盘焦点：VS Code 的一圈细边，不用四角括号 */
+:root[data-theme="vscode"] button:focus-visible::after,
+:root[data-theme="vscode"] a:focus-visible::after,
+:root[data-theme="vscode"] .f:focus-visible::after { inset: 0; background: none; outline: 1px solid var(--bk, var(--acc)); outline-offset: -1px; }
+
+/* 装饰：网格、等高线、十字、描边大字、竖排小字都去掉 */
+:root[data-theme="vscode"] .tx,
+:root[data-theme="vscode"] .cross,
+:root[data-theme="vscode"] .contour,
+:root[data-theme="vscode"] .bignum,
+:root[data-theme="vscode"] .vlabel,
+:root[data-theme="vscode"] .dk-br { display: none; }
+
+/* 窄条：活动栏 */
+:root[data-theme="vscode"] .rail { background: #333333; border-right: 0; box-shadow: none; }
+:root[data-theme="vscode"] .rail-logo { background: transparent; border-bottom: 0; box-shadow: none; }
+:root[data-theme="vscode"] .chief-btn .tile-shell { background: linear-gradient(180deg, var(--key-top-hov) 0%, var(--ink0) 62%); }
+:root[data-theme="vscode"] .chief-btn .tile-face { background: var(--key); }
+:root[data-theme="vscode"] .chief-btn:hover .tile-face { background: var(--key-hov); }
+
+/* 上方的铭牌：编辑器标签页的样子。深灰底，顶上一道蓝线，下面一道细边；不再是整块的色。 */
+:root[data-theme="vscode"] .plate-wrap { background: var(--ink2); box-shadow: inset 0 2px 0 var(--acc), inset 0 -1px 0 var(--ink4); }
+:root[data-theme="vscode"] .plate-wrap.err { box-shadow: inset 0 2px 0 #BE1100, inset 0 -1px 0 var(--ink4); }
+:root[data-theme="vscode"] .plate { background: transparent; color: #FFFFFF; clip-path: none; }
+:root[data-theme="vscode"] .plate.err::before { background: #5A1D1D; }
+:root[data-theme="vscode"] .slash { display: none; }
+:root[data-theme="vscode"] .plate-tags dd { background: var(--ink4); box-shadow: none; }
+
+/* 按钮：主按钮 #0E639C，次按钮 #3A3D41，和 VS Code 一样 */
+:root[data-theme="vscode"] .pill { --b-top: #6B6B6B; --b-mid: #3A3D41; --b-ledge: #111111; --b-bg: #3A3D41; }
+:root[data-theme="vscode"] .pill:not([disabled]):hover { --b-top: #858585; --b-bg: #45494E; }
+:root[data-theme="vscode"] .pill.accent { --b-top: #3794FF; --b-mid: #0E639C; --b-ledge: #0A4A75; --b-bg: #0E639C; }
+:root[data-theme="vscode"] .pill.accent:not([disabled]):hover { --b-top: #5AA9FF; --b-bg: #1177BB; }
+
+/* 输入框：#3C3C3C 底，不凹进去 */
+:root[data-theme="vscode"] .input,
+:root[data-theme="vscode"] .sbox { background: #3C3C3C; border-color: #3C3C3C; box-shadow: none; }
+:root[data-theme="vscode"] .dk-well { background: #313131; }
+:root[data-theme="vscode"] .dock:focus-within .dk-well { box-shadow: inset 0 0 0 1px var(--acc); }
+
+/* 写信框的顶边：一道细线，写信时变蓝 */
+:root[data-theme="vscode"] .dk-edge { height: 2px; background: var(--ink4); }
+:root[data-theme="vscode"] .dk-edge::before { display: none; }
+:root[data-theme="vscode"] .dk-edge::after { height: 2px; }
+
+/* 弹窗顶边：细蓝线，不要斜纹 */
+:root[data-theme="vscode"] .dlg::before,
+:root[data-theme="vscode"] .dlg.chief::before,
+:root[data-theme="vscode"] .dlg.editpreset::before,
+:root[data-theme="vscode"] .dlg.settings::before { height: 2px; background: var(--acc); }
+:root[data-theme="vscode"] .eb-stripe { height: 2px; background: var(--warn); }
+
+/* 提示牌和菜单：编辑器小部件 #252526，边 #454545 */
+:root[data-theme="vscode"] .tip,
+:root[data-theme="vscode"] .menu { background: #252526; }
+:root[data-theme="vscode"] .tip::before { border-right-color: #252526; }
+
+/* 改动：增是绿，删是红 */
+:root[data-theme="vscode"] .df.add { background: rgba(155, 185, 85, .2); }
+:root[data-theme="vscode"] .df.add .df-g { background: linear-gradient(rgba(155, 185, 85, .2), rgba(155, 185, 85, .2)), var(--ink0); }
+:root[data-theme="vscode"] .df.add .df-s { color: #89D185; }
+:root[data-theme="vscode"] .df.del { background: rgba(255, 0, 0, .2); }
+:root[data-theme="vscode"] .df.del .df-g { background: linear-gradient(rgba(255, 0, 0, .2), rgba(255, 0, 0, .2)), var(--ink0); }
+:root[data-theme="vscode"] .tmark.add { background: #2E7D32; }
+
+/* 字：Segoe UI 和 Consolas，和 VS Code 一样。大数字仍用压窄的 Archivo，格子是按它的字宽排的。 */
+:root[data-theme="vscode"] .num { font-family: "Archivo Variable", var(--ui); }
+:root[data-theme="vscode"] .plate h1 { font-size: 26px; font-weight: 600; letter-spacing: 0; line-height: 1.2; }
+:root[data-theme="vscode"] .plate h1.small { font-size: 20px; }
+:root[data-theme="vscode"] .ctx-big { font-size: 40px; font-weight: 800; }
