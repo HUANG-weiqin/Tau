@@ -129,7 +129,7 @@ const PROFILES: Profile[] = [
   },
 ];
 
-const TOOL_NAMES = ["read", "write", "edit", "bash", "memory_get", "memory_set", "memory_delete", "self", "handoff", "handoff", "grep"];
+const TOOL_NAMES = ["read", "write", "edit", "bash", "memory_get", "memory_set", "memory_edit", "memory_delete", "self", "handoff", "handoff", "grep"];
 
 interface Stats {
   handoffOk: number;

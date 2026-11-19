@@ -106,6 +106,27 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
       if ("over" in r) return { content: textContent("超出上限，没有写入：" + overText(r.over, r.bytes)), isError: true };
       return conflict(key, r.current, "新建键不要带 version，去掉它再写一次。");
     }
+    case "memory_edit": {
+      const { old, new: replacement } = args;
+      if (typeof key !== "string" || typeof old !== "string" || typeof replacement !== "string") return bad("key、old 和 new 必须是字符串。");
+      if (old === "") return bad("old 不能为空。");
+      // 孤立的代理项会切开一个表情，写进库就变成替换字符。
+      if (!old.isWellFormed()) return bad("old 含不完整的 Unicode 字符。");
+      if (!isInt(version)) return bad("version 必须是整数。");
+      if (brief != null && typeof brief !== "string") return bad("brief 必须是字符串，或者省略。");
+      const cur = memory.get(ns, key);
+      if (!cur) return fail(`键 ${key} 不存在。要新建，用 memory_set。`);
+      if (cur.version !== version) return conflict(key, cur);
+      // 用 split/join 换，不用 String.replace：`new` 里的 `$&`、`$1` 会被当成替换模式。
+      const parts = cur.value.split(old);
+      if (parts.length === 1) return fail("没找到原文，没有写入。old 必须和值逐字一致，包括标点、空格和换行；先用 memory_get 看现在的值。");
+      if (parts.length > 2) return fail(`原文出现 ${parts.length - 1} 次，必须唯一，没有写入。把 old 写长一点，带上前后的字。`);
+      // 读、换、写在同一个事务里，版本号也用刚读到的那个：无竞态。
+      const r = memory.set(ns, key, { value: parts.join(replacement), brief: brief ?? cur.brief, now }, version);
+      if (r.ok) return ok(`已写入 ${key}，版本 ${r.version}。`);
+      if ("over" in r) return { content: textContent("超出上限，没有写入：" + overText(r.over, r.bytes)), isError: true };
+      return conflict(key, r.current);
+    }
     case "memory_delete": {
       if (typeof key !== "string" || !isInt(version)) return bad("key 必须是字符串，version 必须是整数。");
       const r = memory.delete(ns, key, version);
@@ -117,7 +138,7 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
 }
 
 /** 工具定义能在结果里声明的库内动作。不含 `handoff`、`self`：它们不是“动作”，或者只在模型调用时有意义。 */
-const DECLARABLE: readonly string[] = ["post", "spawn", "stop_process", "memory_get", "memory_set", "memory_delete"];
+const DECLARABLE: readonly string[] = ["post", "spawn", "stop_process", "memory_get", "memory_set", "memory_edit", "memory_delete"];
 
 /**
  * 执行工具结果声明的库内动作（D64 第 10 组），按顺序，复用 `runInStore`：发信人是这个进程，跳数、`replyTo`、`spawn` 的 ID 照常算，记忆是这个预设的库。

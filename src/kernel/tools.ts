@@ -74,6 +74,14 @@ const MEMORY: ToolSpec[] = [
     inStore: true,
   },
   {
+    name: "memory_edit",
+    description:
+      "把一个键的值里的一段原文精确替换成新文本，不用重发整个值。old 必须和值逐字一致，且在值里恰好出现一次；old 只取值的正文，不要带 memory_get 输出的前两行（键、版本、摘要）。version 是你读到的版本号（先 memory_get）；brief 不传则摘要不变，值的含义变了就一起改摘要。" +
+      "版本对不上或原文不唯一时不写入。",
+    parameters: object({ key: str("键"), old: str("要替换的原文"), new: str("新文本"), version: int("读到的版本号，必填"), brief: str("摘要，值的意思变了就一起改；不写就不变") }, ["key", "old", "new", "version"]),
+    inStore: true,
+  },
+  {
     name: "memory_delete",
     description: "删除一个键。version 必须是你读到的版本号，对不上时失败，结果里带最新值。",
     parameters: object({ key: str("键"), version: int("读到的版本号") }, ["key", "version"]),

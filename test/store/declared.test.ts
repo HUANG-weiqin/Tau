@@ -155,6 +155,17 @@ test("memory_delete 带版本号；版本不对就失败，整条 isError", (t) 
   assert.equal(memory.get("boss", "k")?.value, "v");
 });
 
+test("声明的 memory_edit：只换值里的一段，摘要不带就保持，版本加一", (t) => {
+  const db = tempDb(t);
+  const memory = fakeMemory();
+  const n = waiting(db, memory);
+  const v = (memory.set("boss", "k", { value: "甲 乙 丙", brief: "摘要", now: 0 }, null) as { version: number }).version;
+  const r = handleResult(db, memory, "boss", result(n, [call("memory_edit", { key: "k", old: "乙", new: "丁", version: v }), call("memory_edit", { key: "k", old: "甲", new: "子", version: v + 1, brief: "换过" })]));
+  assert.equal(r.isError, false);
+  assert.match(r.text, /^ok\n\n\[memory_edit\] 已写入 k，版本 \d+。\n\n\[memory_edit\] 已写入 k，版本 \d+。$/);
+  assert.deepEqual(memory.get("boss", "k"), { value: "子 丁 丙", brief: "换过", updated: 5, version: v + 2 });
+});
+
 test("不看 agents、memory：预设什么都没列，post、spawn、stop_process、memory_* 都能声明（见上面的各条）；handoff、self、别的名字这一项失败", (t) => {
   const db = tempDb(t);
   const memory = fakeMemory();
@@ -168,7 +179,7 @@ test("不看 agents、memory：预设什么都没列，post、spawn、stop_proce
     const n2 = waiting(db2, fakeMemory());
     const r2 = handleResult(db2, fakeMemory(), "boss", result(n2, [call(name)]));
     assert.equal(r2.isError, true, name);
-    assert.match(r2.text, new RegExp(`^ok\\n\\n\\[${name}\\] 不能在结果里声明这个动作。能声明的有：post、spawn、stop_process、memory_get、memory_set、memory_delete。$`));
+    assert.match(r2.text, new RegExp(`^ok\\n\\n\\[${name}\\] 不能在结果里声明这个动作。能声明的有：post、spawn、stop_process、memory_get、memory_set、memory_edit、memory_delete。$`));
   }
   assert.equal(loadProcess(db, "boss")!.phase.tag, "awaitingModel");
 });

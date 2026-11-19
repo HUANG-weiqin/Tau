@@ -230,6 +230,7 @@ test("记忆工具：读、写、冲突时带最新值、删除、参数错误",
     ["memory_set", { key: "k", value: "v" }],
     ["memory_set", { key: "k", value: "v", brief: "甲", version: 1.5 }],
     ["memory_delete", { key: "k" }],
+    ["memory_edit", { key: "k", old: "1", new: "2" }],
   ] as const) {
     assert.match(run(name, args).text, /^参数错误/, name);
   }

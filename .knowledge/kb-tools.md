@@ -48,7 +48,7 @@
 | `output` | 否 | `text` 或 `content`，默认 `text` |
 
 - 别的字段、不是 JSON 对象、不是合法的 JSON，都报错。
-- 名字不能和内置工具、工具组重名。名字表由 `toolsFor` 算出，不另写一份：`read`、`write`、`edit`、`bash`、`self`、`handoff`、`post`、`spawn`、`stop_process`、`memory_get`、`memory_set`、`memory_delete`，加 `memory`、`agents`。
+- 名字不能和内置工具、工具组重名。名字表由 `toolsFor` 算出，不另写一份：`read`、`write`、`edit`、`bash`、`self`、`handoff`、`post`、`spawn`、`stop_process`、`memory_get`、`memory_set`、`memory_edit`、`memory_delete`，加 `memory`、`agents`。
 - 大小上限，按 UTF-8 字节：一个定义的 `JSON.stringify({ description, parameters })` 不超过 `TOOL_DEF_MAX_BYTES`（16 KiB）；一个预设用到的全部定义，各自 `JSON.stringify(ToolDef)` 相加（含 `name`、`command` 和默认值）不超过 `TOOL_DEFS_MAX_BYTES`（64 KiB）。原因：定义存在 `state_json` 里，每条输入整行重写，`self` 和 `ps` 也要解析它；定义还占每次请求的上下文，启动检查要算上它（[kb-kernel](kb-kernel.md#启动检查和交接以后的检查)）。
 - 函数：`loadToolDef(dir, name)` 读一个，`loadToolDefs(dir, names)` 按顺序读一组并查总大小，`toolsDir()` 是 `~/.tau/tools`。读不出一律抛错，错误信息是原因。
 - 读取在 `loadPreset` 里：预设 `tools` 里不是内置工具和工具组的名字，都按工具定义读，读出的 `ToolDef` 存进会话快照的 `toolDefs`（[D43](kb-decisions.md#d43-第-7-步前一半工具定义的格式读取和冻结)）。之后不再读文件：改了定义文件，新出生的会话才用新的；已经在跑的会话要 `reconfigure` 带结构性字段（重新保存一次工具列表，手动刷新），在开段采用新快照时才变（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。读不出：`start` 回 `error`，`spawn` 是错误结果 `预设 <preset> 读不出：<原因>`，都什么都不建。

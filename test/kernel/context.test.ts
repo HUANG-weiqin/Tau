@@ -37,8 +37,8 @@ test("工具按预设的 tools 选出，self 和 handoff 总在", () => {
   assert.deepEqual(names(proc([])), ["handoff", "self"]);
   assert.deepEqual(names(proc(["read"])), ["handoff", "read", "self"]);
   assert.deepEqual(names(proc(["bash", "edit", "read", "write"])), ["bash", "edit", "handoff", "read", "self", "write"]);
-  assert.deepEqual(names(proc(["memory"])), ["handoff", "memory_delete", "memory_get", "memory_set", "self"]);
-  assert.deepEqual(names(proc(["read", "write", "edit", "bash", "memory"])), ["bash", "edit", "handoff", "memory_delete", "memory_get", "memory_set", "read", "self", "write"]);
+  assert.deepEqual(names(proc(["memory"])), ["handoff", "memory_delete", "memory_edit", "memory_get", "memory_set", "self"]);
+  assert.deepEqual(names(proc(["read", "write", "edit", "bash", "memory"])), ["bash", "edit", "handoff", "memory_delete", "memory_edit", "memory_get", "memory_set", "read", "self", "write"]);
   for (const t of buildContext(proc(["read", "memory"]), seg).tools ?? []) {
     assert.deepEqual(Object.keys(t).sort(), ["description", "name", "parameters"], "请求里只放 pi-ai 的工具定义");
   }
@@ -53,6 +53,7 @@ test("工具描述标明库内还是库外：记忆工具、self 和 handoff 在
     bash: false,
     memory_get: true,
     memory_set: true,
+    memory_edit: true,
     memory_delete: true,
     self: true,
     handoff: true,
@@ -153,7 +154,7 @@ const DEF = (name: string, description = `工具 ${name}`): ToolDef => ({ name, 
 test("工具定义排在内置工具之后，按预设 tools 里的顺序；都是库外工具", () => {
   const p = preset({ tools: ["agents", "read", "memory"], toolDefs: [DEF("zeta"), DEF("alpha")] });
   const order = toolsFor(p).map((t) => t.name);
-  assert.deepEqual(order, ["read", "memory_get", "memory_set", "memory_delete", "post", "spawn", "stop_process", "self", "handoff", "zeta", "alpha"]);
+  assert.deepEqual(order, ["read", "memory_get", "memory_set", "memory_edit", "memory_delete", "post", "spawn", "stop_process", "self", "handoff", "zeta", "alpha"]);
   assert.deepEqual(toolsFor(p).slice(-2).map((t) => t.inStore), [false, false]);
   assert.equal(findTool(p, "zeta")?.inStore, false);
   assert.equal(findTool(preset({ tools: ["read"] }), "zeta"), undefined, "没写进预设的定义不存在");

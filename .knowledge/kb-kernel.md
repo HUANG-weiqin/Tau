@@ -192,6 +192,7 @@ interface Env { now: Instant; memoryView: string; fresh?: { memoryView: string; 
 | `bash` | `command`、`timeout?` | 否 | `tools` 含 `bash` |
 | `memory_get` | `key` | 是 | `tools` 含 `memory` |
 | `memory_set` | `key`、`value`、`brief`、`version?` | 是 | `tools` 含 `memory` |
+| `memory_edit` | `key`、`old`、`new`、`version`、`brief?` | 是 | `tools` 含 `memory` |
 | `memory_delete` | `key`、`version` | 是 | `tools` 含 `memory` |
 | `post` | `to`、`text`、`reply?` | 是 | `tools` 含 `agents` |
 | `spawn` | `preset`、`text` | 是 | `tools` 含 `agents` |

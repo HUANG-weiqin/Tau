@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { loadToolDef } from "../../../src/presets/tooldefs.ts";
-import { clampTimeout, commandFor, DEF_MAX_BYTES, generateTools, LIB_DIR, normalizeSchema, parseCommand, toolDescription, toolNames } from "../../../extras/mcp/gen.ts";
+import { toolsFor } from "../../../src/kernel/tools.ts";
+import { clampTimeout, commandFor, DEF_MAX_BYTES, generateTools, LIB_DIR, normalizeSchema, parseCommand, RESERVED, toolDescription, toolNames } from "../../../extras/mcp/gen.ts";
 import type { McpTool } from "../../../extras/mcp/gen.ts";
 
 const NAME_OK = /^[A-Za-z0-9_-]{1,64}$/;
@@ -257,6 +258,11 @@ describe("整个流程", () => {
     const plain = generateTools(work, "plain", { instructions: undefined, tools: [tool("t")] });
     assert.equal(plain.tools[0]!.definition!["timeout"], 120);
     assert.equal(plain.totalBytes, plain.tools[0]!.bytes);
+  });
+
+  test("保留名单盖住内核的全部内置工具和工具组：内核加一个内置工具，这里就红", () => {
+    const builtin = toolsFor({ tools: ["read", "write", "edit", "bash", "memory", "agents"], toolDefs: [] }).map((t) => t.name);
+    for (const name of [...builtin, "memory", "agents"]) assert.ok(RESERVED.has(name), `保留名单漏了 ${name}`);
   });
 
   test("名字不撞：一个服务器的定义名互不相同", () => {

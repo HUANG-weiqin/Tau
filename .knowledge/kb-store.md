@@ -366,7 +366,7 @@ CREATE TABLE blobs (
 |---|---|
 | `self` | 总有 |
 | `handoff` | 总有 |
-| `memory_get`、`memory_set`、`memory_delete` | 预设 `tools` 含 `memory` 时 |
+| `memory_get`、`memory_set`、`memory_edit`、`memory_delete` | 预设 `tools` 含 `memory` 时 |
 | `post`、`spawn`、`stop_process` | 预设 `tools` 含 `agents` 时 |
 
 共同规则（`src/store/instore.ts` 的 `runInStore`）：
@@ -381,6 +381,7 @@ CREATE TABLE blobs (
 |---|---|---|
 | `memory_get` | `key` 字符串 | `<key>（版本 <v>，更新 <日期>）：` 换行接 `摘要：<brief>`，换行接值。日期是 UTC 的 `YYYY-MM-DD`。键不存在时是 `键 <key> 不存在。`，不算错误 |
 | `memory_set` | `key`、`value`、`brief` 字符串，都必填；`version` 整数、`null` 或省略 | `已写入 <key>，版本 <v>。` |
+| `memory_edit` | `key`、`old`、`new` 字符串，必填；`version` 整数，必填；`brief` 字符串，可选 | `已写入 <key>，版本 <v>。` |
 | `memory_delete` | `key` 字符串；`version` 整数，必填 | `已删除 <key>。` |
 
 - `version` 省略、为 `null`、为 0 或负数：这个键现在必须不存在。版本号从 1 起，0 和负数不可能是读到的版本；模型常给新键填 0，旧文案只说“键不存在”、没说怎么改，模型会一直重发，所以当作没带。只在 `memory_set` 这样；`Memory.set` 和线协议的 `expected` 不变（`null` 或正整数），`memory_delete` 的 `version` 仍必填。已有的键带 0 照样冲突，不覆盖。
@@ -397,6 +398,15 @@ CREATE TABLE blobs (
 | `view` | `写入后记忆视图有 N 字节，上限 32768 字节。先删掉不需要的键，或缩短键和摘要。` |
 
 - 超出上限和版本冲突同时发生时报哪个，见 [kb-memory.md 的检查顺序](kb-memory.md#set-的检查顺序)。`memory_set` 的描述引用这四个上限（[kb-kernel.md](kb-kernel.md#工具描述)）。
+- `memory_edit`（[D89](kb-decisions.md#d89-memory_edit记忆工具的另一半只换一段不重发整个值)）：把值里的一段原文换成新文本，不用重发整个值。`old` 在值里必须恰好出现一次，没有 `replaceAll`。`version` 必填，是读到的版本号。`brief` 不传就不动摘要。
+  - 只是“恰好出现一次”，和文件 `edit` 工具比少两样：没有 CRLF 兜底（那是文件 `edit` 才有的，值里就是原文），`old` 按字面子串匹配。重叠出现按不重叠计数：`old` 是 `aba` 而值是 `ababa` 时算一次（`split` 的语义）。
+  - `old` 含孤立的代理项（例如 `\ud83d`，会切开一个表情）时报 `old 含不完整的 Unicode 字符。`：先换好再比，写进库才不会变成替换字符。
+  - 参数不对：`key`、`old`、`new` 必须是字符串；`old` 是空串时报 `old 不能为空。`；`version` 必须是整数，缺省、`null`、`1.5` 都算参数错误（不像 `memory_set` 那样当作没带）；`brief` 给了就必须是字符串。
+  - 键不存在：`键 <key> 不存在。要新建，用 memory_set。`，`isError` 为 `true`。
+  - 版本对不上：和 `memory_set` 同一句冲突文字，带最新值，不写入。
+  - `old` 一次都没找到：`没找到原文，没有写入。old 必须和值逐字一致，包括标点、空格和换行；先用 memory_get 看现在的值。`。出现 N 次：`原文出现 N 次，必须唯一，没有写入。把 old 写长一点，带上前后的字。`。都是 `isError`，不写入。
+  - 替换后的值或摘要超出上限：和 `memory_set` 同一套 over 文字，不写入，原值不变。
+  - 读、换、写都在处理这条输入的那个事务里，写入带刚读到的版本号，所以没有竞态。替换用 `split`/`join`：`new` 里的 `$&`、`$1` 原样写入（`String.replace` 的字符串形式会把它们当替换模式）。
 - 这一节的文字由 `instore.ts` 写。`Memory` 只返回结构化的失败，不带文字。
 
 ### `self`
@@ -505,7 +515,7 @@ CREATE TABLE blobs (
 执行：
 
 - 复用 `runInStore`，对旧记录和当前段，按顺序。发信人是这个进程；跳数、`replyTo`、`spawn` 的 ID 都照常算。同一批的几个 `spawn`，靠尝试次数得到不同的 ID（`spawnId(父进程 ID, 这次的副作用编号, 尝试次数)`）。记忆写的是这个预设的库，预设没有 `memory` 时，记忆视图照旧不进提示词。
-- 能声明的名单：`post`、`spawn`、`stop_process`、`memory_get`、`memory_set`、`memory_delete`。不看预设有没有 `agents`、`memory`：工具定义是预设作者列的，列了就是授权。这是接口的范围，不是权限边界。声明的是 `handoff`、`self` 或别的名字，这一项失败，说明里列出能声明的名字。以后内核每加一个库内动作，就把它加进这个名单（`DECLARABLE`，`src/store/instore.ts`）。
+- 能声明的名单：`post`、`spawn`、`stop_process`、`memory_get`、`memory_set`、`memory_edit`、`memory_delete`。不看预设有没有 `agents`、`memory`：工具定义是预设作者列的，列了就是授权。这是接口的范围，不是权限边界。声明的是 `handoff`、`self` 或别的名字，这一项失败，说明里列出能声明的名字。以后内核每加一个库内动作，就把它加进这个名单（`DECLARABLE`，`src/store/instore.ts`）。
 - 第一个失败的那项什么都不写，其余写 `未执行。`；前面成功的不回滚。
 - 每项写成以 `[<name>] ` 开头的一段，后面是 `runInStore` 的结果文字（可以多行）；段之间空一行。整串接在工具自己的最后一个文本块后面，中间空一行；工具没有文本块时，新建一个文本块放在最前面，图片块留在后面。
 - 任何一项失败，整条结果的 `isError` 为 true；都成功时是工具自己的值。

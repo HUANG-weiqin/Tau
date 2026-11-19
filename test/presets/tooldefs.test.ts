@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { toolsFor } from "../../src/kernel/tools.ts";
 import { loadToolDef, loadToolDefs, TOOL_DEF_MAX_BYTES, TOOL_DEFS_MAX_BYTES } from "../../src/presets/tooldefs.ts";
 
 let dir = "";
@@ -63,11 +64,18 @@ test("名字按目录项精确匹配：大小写不同、没有文件都找不�
 });
 
 test("不能和内置工具、工具组重名", () => {
-  for (const name of ["read", "write", "edit", "bash", "self", "handoff", "post", "spawn", "stop_process", "memory_get", "memory_set", "memory_delete", "memory", "agents"]) {
+  for (const name of ["read", "write", "edit", "bash", "self", "handoff", "post", "spawn", "stop_process", "memory_get", "memory_set", "memory_edit", "memory_delete", "memory", "agents"]) {
     put(name, GOOD);
     assert.throws(() => loadToolDef(dir, name), /重名/, name);
   }
   assert.equal(load("memory_x", GOOD).def?.name, "memory_x", "只是前缀相同不算重名");
+  // 保留名单由 toolsFor 算出，不另写一份：内核加一个内置工具，这里不用改，定义也不能叫那个名字（D89 的 memory_edit）。
+  const builtin = toolsFor({ tools: ["read", "write", "edit", "bash", "memory", "agents"], toolDefs: [] }).map((t) => t.name);
+  assert.ok(builtin.includes("memory_edit"), builtin.join("、"));
+  for (const name of builtin) {
+    put(name, GOOD);
+    assert.throws(() => loadToolDef(dir, name), /重名/, name);
+  }
 });
 
 test("JSON 读不出、不是对象，都报错", () => {

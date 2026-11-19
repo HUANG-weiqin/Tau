@@ -307,7 +307,7 @@ test("用 CLI 同时运行两个进程：带记忆的写入又读回记忆，不
   assert.deepEqual(more, []);
 
   // 工具列表取自 faux 收到的请求。
-  for (const name of ["memory_get", "memory_set", "memory_delete"]) assert.ok(memTools.includes(name), `带记忆的请求里没有 ${name}：${memTools.join(", ")}`);
+  for (const name of ["memory_get", "memory_set", "memory_edit", "memory_delete"]) assert.ok(memTools.includes(name), `带记忆的请求里没有 ${name}：${memTools.join(", ")}`);
   assert.deepEqual(plainTools.filter((n) => n.startsWith("memory")), [], `不带记忆的请求里有记忆工具：${plainTools.join(", ")}`);
   assert.ok(plainTools.includes("read") && plainTools.includes("self"), plainTools.join(", "));
 

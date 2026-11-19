@@ -18,7 +18,7 @@
 它不负责：
 
 - `memory` 表的结构和 `AUTOINCREMENT`：[kb-store.md](kb-store.md#表)。
-- `memory_get`、`memory_set`、`memory_delete` 的参数、结果和文字，包括超出上限时的文字：[kb-store.md](kb-store.md#记忆工具)。
+- `memory_get`、`memory_set`、`memory_edit`、`memory_delete` 的参数、结果和文字，包括超出上限时的文字：[kb-store.md](kb-store.md#记忆工具)。
 - 什么时候读视图、在哪个事务里执行：[kb-store.md](kb-store.md#处理一条输入读什么)。
 - 视图怎样进系统提示词、开段时的快照 `segment.memoryView`：[kb-kernel.md](kb-kernel.md#函数)。预设文件声明的上下文文件，也在开段时读成快照 `segment.contextView`，放在记忆前面，不属于记忆库：[kb-store.md](kb-store.md#上下文文件视图)。
 - 视图在换段阈值里占多少：[kb-kernel.md](kb-kernel.md#换段阈值)。
@@ -70,8 +70,8 @@ interface Memory {
 
 ### 谁有记忆库
 
-- 预设 `tools` 含 `memory` 的进程有记忆库，`ns` 等于预设 ID。它有三个记忆工具。
-- 不含 `memory` 时，模型没有记忆工具，`Env.memoryView` 为空，提示词里不挂记忆。但工具定义仍能在结果里声明 `memory_get`、`memory_set`、`memory_delete`，在处理这条结果的事务里读写 `ns` 等于预设 ID 的库，不看预设有没有 `memory`（[kb-store](kb-store.md#声明的库内动作)，[D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)）。
+- 预设 `tools` 含 `memory` 的进程有记忆库，`ns` 等于预设 ID。它有四个记忆工具：读、整条写、换一段（`memory_edit`，[D89](kb-decisions.md#d89-memory_edit记忆工具的另一半只换一段不重发整个值)）、删。
+- 不含 `memory` 时，模型没有记忆工具，`Env.memoryView` 为空，提示词里不挂记忆。但工具定义仍能在结果里声明 `memory_get`、`memory_set`、`memory_edit`、`memory_delete`，在处理这条结果的事务里读写 `ns` 等于预设 ID 的库，不看预设有没有 `memory`（[kb-store](kb-store.md#声明的库内动作)，[D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)）。
 - 同一个预设的进程共用一个库。并行写同一个键，靠版本号发现冲突。
 - 视图是开段时的索引快照。要看一个值，或者拿到现在的版本号，用 `memory_get`。
 - 记忆变化不通知兄弟进程。
@@ -231,7 +231,7 @@ interface Memory {
 
 - 记忆不进 `observe` 的投影。`self` 不显示记忆统计（设计稿的 [MVP 不做](../docs/design/mvp.md#mvp-不做)）。
 - 记忆不加 CLI 命令。协议的 `memory`、`memory_write` 给上层用。
-- Agent 用 `memory_get`、`memory_set`、`memory_delete` 访问记忆（[kb-store](kb-store.md#记忆工具)）。
+- Agent 用 `memory_get`、`memory_set`、`memory_edit`、`memory_delete` 访问记忆（[kb-store](kb-store.md#记忆工具)）。
 - Agent 在系统提示词里看到开段时的视图（[kb-kernel](kb-kernel.md#函数)）。
 
 ## 入口

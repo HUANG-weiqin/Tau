@@ -17,8 +17,8 @@ const TIMEOUT_MIN = 1;
 const TIMEOUT_MAX = 600;
 const NAME_MAX = 64;
 const NAME_OK = /^[A-Za-z0-9_-]+$/;
-/** 内置工具和工具组：工具定义不能和它们重名（kb-tools 的“工具定义”）。 */
-const RESERVED = new Set(["read", "write", "edit", "bash", "self", "handoff", "post", "spawn", "stop_process", "memory_get", "memory_set", "memory_delete", "memory", "agents"]);
+/** 内置工具和工具组：工具定义不能和它们重名（kb-tools 的“工具定义”）。extras 不能导入 `src/`，所以这份是手抄的：内核加内置工具时跟着改，`test/extras/mcp/gen.test.ts` 会红。 */
+export const RESERVED = new Set(["read", "write", "edit", "bash", "self", "handoff", "post", "spawn", "stop_process", "memory_get", "memory_set", "memory_edit", "memory_delete", "memory", "agents"]);
 /** `$ref` 展开的最大深度：再深就换成 `{}`，递归的 schema 不会无限展开。 */
 const REF_DEPTH = 8;
 const NOTE_CUT = "…（说明太长，已截断）";

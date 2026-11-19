@@ -44,7 +44,7 @@
 10. 内核不自己删数据。旧段、进程、图片只经三个删除原语删，由上层调用（[D59](kb-decisions.md#d59-删除原语旧段和空闲进程)）。删除原语不碰记忆：记忆的键只经 `Memory` 接口的 `delete` 删，入口是库内工具 `memory_delete`（模型调用或工具定义声明）和协议的 `memory_write`（[D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)）。
 11. 服务只在命名管道上监听。
 
-另外不变的规矩：`src/` 的依赖白名单（`extras/` 的依赖不在其中，见 [D63](kb-decisions.md#d63-上层的依赖随便加)）；代码量预算 3640 行（D64 从 3000 放宽，D87、D88 各加一次；都在 [AGENTS.md](../AGENTS.md#小而硬规矩)）。
+另外不变的规矩：`src/` 的依赖白名单（`extras/` 的依赖不在其中，见 [D63](kb-decisions.md#d63-上层的依赖随便加)）；代码量预算 3670 行（D64 从 3000 放宽，D87、D88、D89 各加一次；都在 [AGENTS.md](../AGENTS.md#小而硬规矩)）。
 
 ### 原语和它在内核的理由
 
@@ -191,7 +191,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 - v2 的来由、六个缺口：[D47](kb-decisions.md#d47-v2-的来由六个缺口和-v1v2-的对照)；文档估算和需求来源：[D48](kb-decisions.md#d48-量-image_tokens-的文档估算和思考级别重试的需求来源)。
 - 为什么冻结，以及冻结的判据是推导测试：[D26](kb-decisions.md#d26-内核-v2-的方向和准入原则)、[D28](kb-decisions.md#d28-v2-的原语)。
 - 推导测试的记录：[D55](kb-decisions.md#d55-推导测试第一次)、[D56](kb-decisions.md#d56-推导测试第二次)没通过，[D57](kb-decisions.md#d57-推导测试第三次)通过，契约从那里起冻结。为 D59 改契约做的：[D60](kb-decisions.md#d60-推导测试第四次)、[D61](kb-decisions.md#d61-推导测试第五次)、[D62](kb-decisions.md#d62-推导测试第六次)没通过，用户决定不等通过就合并（D59 的破例）。为 D64 改契约做的：[D65](kb-decisions.md#d65-推导测试第七次)、[D66](kb-decisions.md#d66-推导测试第八次)没通过，[D67](kb-decisions.md#d67-推导测试第九次)通过。
-- 删除原语是冻结以后第一次改契约，见 [D59](kb-decisions.md#d59-删除原语旧段和空闲进程)。第二次是内核的四类自由度，见 [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)，它也改了目标 4。第三次是会话配置、上下文文件和 `backup`，见 [D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)、[D72](kb-decisions.md#d72-上下文文件开段重读)、[D73](kb-decisions.md#d73-backup-请求)，它改了不变量 6，给不变量 9 加了一个例外；推导测试见 D75。迁移的规矩是 [D74](kb-decisions.md#d74-迁移的规矩)，不改契约。第四次是记忆视图改成索引，见 [D81](kb-decisions.md#d81-记忆视图改成索引键更新日期字节数摘要)（第一次真迁移），它改了表结构和视图格式；推导测试的受试者换成 deepseek-v4.1-flash，通过，有一处保留，记在 D81 末尾。
+- 删除原语是冻结以后第一次改契约，见 [D59](kb-decisions.md#d59-删除原语旧段和空闲进程)。第二次是内核的四类自由度，见 [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)，它也改了目标 4。第三次是会话配置、上下文文件和 `backup`，见 [D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)、[D72](kb-decisions.md#d72-上下文文件开段重读)、[D73](kb-decisions.md#d73-backup-请求)，它改了不变量 6，给不变量 9 加了一个例外；推导测试见 D75。迁移的规矩是 [D74](kb-decisions.md#d74-迁移的规矩)，不改契约。第四次是记忆视图改成索引，见 [D81](kb-decisions.md#d81-记忆视图改成索引键更新日期字节数摘要)（第一次真迁移），它改了表结构和视图格式；推导测试的受试者换成 deepseek-v4.1-flash，通过，有一处保留，记在 D81 末尾。第五次是加内置工具 `memory_edit`，见 [D89](kb-decisions.md#d89-memory_edit记忆工具的另一半只换一段不重发整个值)：它给内置工具的名单加一个，`Memory` 接口、表、线协议都不变。
 - 常量的状态（已定、暂定）只写在 [kb-kernel 的常量](kb-kernel.md#常量)的表里，这里不重复。
 - 常量的出处：`IMAGE_TOKENS` 见 [D42](kb-decisions.md#d42-第-6-步量-image_tokens核实收图片)；图片的其余常量和 `HOPS_MAX` 见 [kb-kernel 的常量](kb-kernel.md#常量)和 [kb-service 的图片](kb-service.md#图片)；`MESSAGE_MAX_BYTES` 见 [D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)；工具定义的两个上限见 [kb-tools 的工具定义](kb-tools.md#工具定义)。
 - `WATCH_BUFFER_MAX`、`MODEL_RETRIES` 和 OAuth 订阅（[D83](kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)，凭据文件不在契约清单里）：[未确认的默认值](kb-decisions.md#未确认的默认值)。
@@ -248,7 +248,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | 工具定义的 schema 内层不合法，进程第一次调用模型就失败 | 改文件，`start` 新进程。上层的中转生成定义时负责规整 schema |
 | 工具定义存在每个 `state_json` 里，`self` 和 `ps` 变慢 | 定义有大小上限；真的变慢时加表达式索引 |
 | `tau.cmd` 把正文里的 `&` 当成命令 | 外部程序直接连管道；bash 里用 `tau` 脚本；计划任务直接运行 node |
-| 代码量超出预期 | 每步完成时校准；超出 3640 行（D64、D87、D88）先停下来复查设计 |
+| 代码量超出预期 | 每步完成时校准；超出 3670 行（D64、D87、D88、D89）先停下来复查设计 |
 
 ## 关联模块
 
