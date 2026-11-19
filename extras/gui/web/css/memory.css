@@ -8,6 +8,8 @@
 .mem-k { flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
 .mem-v { flex: none; font-size: 11px; }
 .mem-key { flex: 1 1 auto; min-width: 0; width: auto; min-height: 40px; box-shadow: inset 0 0 0 1px var(--acc); border: 0; font-weight: 700; }
+.mem-brief { font-size: 13px; line-height: 1.6; color: var(--fg); overflow-wrap: anywhere; }
+.mem-brief-in { min-height: 40px; box-shadow: inset 0 0 0 1px var(--acc); border: 0; }
 .mem-fold { font-size: 13px; line-height: 1.6; color: var(--fg); overflow-wrap: anywhere; }
 .mem-pre { margin: 0; max-height: 280px; overflow: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; scrollbar-width: thin; scrollbar-color: var(--fg3) transparent; }
 .mem-ta { min-height: 110px; resize: vertical; }
