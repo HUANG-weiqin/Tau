@@ -222,7 +222,12 @@ git -C $REPO branch -d wt/<名字>
 - 它写的文件只在 worktree，主树 `git status` 为空。
 - `merge-tree` 退出码 0；清理后 `git worktree list` 只剩主树，主树的依赖目录条目数不变。
 
-没试过：真的 `merge`，主树脏时的 `merge`，先 `worktree remove` 再删 junction，`spawn` 带 `workdir` 经真模型走一遍（单元和服务测试覆盖了它，见 D77）。
+又实测过（2026-11-19，服务已加载 D77）：
+
+- `spawn` 带 `workdir` 经真模型走一遍：队友的 `pwd`、`git rev-parse --show-toplevel`、分支都在 worktree。
+- 真的 `merge`（主树干净，无冲突），再先删 junction、后 `worktree remove`、`branch -d`：主树的依赖目录条目数不变。
+
+没试过：主树脏时的 `merge`，先 `worktree remove` 再删 junction（不要试，可能删到主树的依赖）。
 
 ### 工具库
 
