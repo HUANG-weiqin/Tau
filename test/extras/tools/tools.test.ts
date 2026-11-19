@@ -195,16 +195,64 @@ describe("shell", () => {
     assert.equal(existsSync(fresh), true);
   });
 
+  test("wait 用完还没跑完：命令留在后台继续跑，立刻返回输出文件；之后能读到新输出和退出码", async () => {
+    const id = "sh-j";
+    const out = await tool("shell", { command: "echo 第一行; sleep 3; echo 后来; exit 5", wait: 1 }, id);
+    assert.equal(out.isError, false, out.text);
+    assert.match(out.text, /等了 1 秒还没跑完：命令已经转到后台继续跑/);
+    assert.match(out.text, /跑完会给你寄一封信/);
+    const file = /输出写到 (.+?)（还在增长/.exec(out.text)?.[1];
+    assert.ok(file !== undefined, out.text);
+    assert.ok(readFileSync(file, "utf8").includes("第一行"), "已经写出来的输出在文件里");
+    // 内核照样也会按它的 300 秒兜底，这里只是工具自己先返回；命令没被结束。
+    await sleep(4000);
+    const text = readFileSync(file, "utf8");
+    assert.ok(text.includes("后来"), text);
+    assert.equal(readFileSync(`${file}.exit`, "utf8").trim(), "5");
+  });
+
+  test("转后台的命令跑完会寄信唤醒进程：信里有退出码和最后几行", async () => {
+    const id = await start("你好");
+    await untilIdle(id);
+    const r = await tool("shell", { command: "echo 一; sleep 2; echo 二; exit 4", wait: 1 }, id);
+    assert.equal(r.isError, false, r.text);
+    assert.match(r.text, /转到后台继续跑/);
+    assert.match(r.text, /可以接着做别的事，也可以直接结束这一轮等这封信/);
+    let letter: string | undefined;
+    for (let i = 0; i < 300 && letter === undefined; i++) {
+      await sleep(100);
+      letter = (await messages(id)).find((m) => m.includes("[后台任务") && m.includes("退出码 4"));
+    }
+    assert.ok(letter !== undefined, "没有收到唤醒的信");
+    assert.ok(letter.includes("二"), letter);
+  });
+
+  test("wait 里跑完：和以前一样返回输出和退出码，不留输出文件", async () => {
+    const r = await tool("shell", { command: "echo 快; exit 7", wait: 20 }, "sh-k");
+    assert.deepEqual(r, { text: "快\n[退出码 7]", isError: true });
+    const files = existsSync(extras("shell", "sh-k")) ? readdirSync(extras("shell", "sh-k")) : [];
+    assert.deepEqual(files, [], "输出文件、.exit、.wait 都清掉");
+  });
+
+  test("wait 的值不对：清楚的错误，不跑命令", async () => {
+    for (const wait of [-1, 301, 1.5, "60"]) {
+      const r = await tool("shell", { command: "echo x", wait }, "sh-l");
+      assert.equal(r.isError, true, String(wait));
+      assert.match(r.text, /wait 是 0 到 300 的整数/, String(wait));
+    }
+  });
+
   test("超时：内核按进程组结束命令，不挂着", async () => {
     const t = Date.now();
     const r = await tool("shell", { command: "sleep 60; echo late" }, "sh-g", { timeout: 2 });
     assert.equal(r.isError, true);
     assert.ok(Date.now() - t < 20_000, `用了 ${Date.now() - t} 毫秒`);
     assert.ok(!r.text.includes("late"));
-    // 超时时结果里没有输出，描述必须告诉模型去哪找。
-    assert.ok(CATALOG[0]!.description.includes("~/.tau/extras/shell/<进程 ID>/ 下最新的文件"));
+    // 超时时结果里没有输出，描述必须告诉模型去哪个目录找。
+    assert.ok(CATALOG[0]!.description.includes("~/.tau/extras/shell/<进程 ID>/"), CATALOG[0]!.description);
+    // 超时留下的文件：输出文件加 <输出文件>.wait（模板读的秒数）。
     const files = readdirSync(extras("shell", "sh-g"));
-    assert.equal(files.length, 1, "超时留下的输出文件");
+    assert.deepEqual(files.filter((f) => !/\.(wait|sync|exit)$/.test(f)).length, 1, "超时留下的输出文件");
   });
 
   test("超时：命令里启动的后台进程也被结束，不会在超时以后继续写文件", async () => {
@@ -548,13 +596,14 @@ describe("桥：工具定义", () => {
     const written = JSON.parse(readFileSync(file, "utf8"));
     assert.deepEqual(Object.keys(written).sort(), ["command", "description", "output", "parameters", "timeout"]);
     assert.ok(written.command.includes(`${LIB}/shell.ts`), written.command);
-    assert.equal(written.timeout, 300);
+    assert.equal(written.timeout, 90, "shell 先等 60 秒：工具自己的超时要更大");
+    assert.deepEqual(Object.keys(written.parameters.properties).sort(), ["command", "wait"]);
     assert.deepEqual(readdirSync(join(bhome, "tools")).sort(), ["bg_run.json", "history_read.json", "history_search.json", "peek.json", "shell.json", "wait.json", "web_search.json"]);
 
     l = await list();
     assert.deepEqual(l.library.map((x: any) => x.status), ["installed", "installed", "installed", "installed", "installed", "installed", "installed"]);
     const shell = l.installed.find((x: any) => x.name === "shell");
-    assert.deepEqual([shell.params, shell.timeout, shell.output, shell.usedBy], [["command"], 300, "text", []]);
+    assert.deepEqual([shell.params, shell.timeout, shell.output, shell.usedBy], [["command", "wait"], 90, "text", []]);
     assert.equal((await post(port, "/api/tools/install", { name: "shell" })).status, 200, "内容一样：再装不报错");
 
     // 用户改过：状态变成“不同”，不带 replace 就拒绝，文件不动。
@@ -566,7 +615,7 @@ describe("桥：工具定义", () => {
     assert.match(refused.json.error, /内容和工具库里的不同/);
     assert.equal(JSON.parse(readFileSync(file, "utf8")).timeout, 5);
     assert.equal((await post(port, "/api/tools/install", { name: "shell", replace: true })).status, 200);
-    assert.equal(JSON.parse(readFileSync(file, "utf8")).timeout, 300);
+    assert.equal(JSON.parse(readFileSync(file, "utf8")).timeout, 90);
     assert.ok(!existsSync(`${file}.tmp`));
 
     // 读不出的定义列出来，带原因。

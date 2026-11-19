@@ -25,19 +25,26 @@ export const CATALOG: ToolEntry[] = [
     script: "shell.ts",
     description:
       "运行一条 shell 命令（Git Bash）。和内置的 bash 二选一：一个预设里只开一个。" +
-      "输出太长时只回开头和结尾，完整输出存成文件，结果里给出路径，用 read 读。" +
-      "命令跑满 300 秒会被结束，这时结果里没有输出，完整输出在 ~/.tau/extras/shell/<进程 ID>/ 下最新的文件里。长命令用 bg_run；想更早结束，在命令前加 timeout N。退出码不是 0 算错误。",
+      "先等 wait 秒（默认 60）：在这么久里跑完了，结果就是输出和退出码，输出太长时只回开头和结尾，完整输出存成文件。" +
+      "没跑完就把命令留在后台、立刻返回，写明输出文件，用 read 读（可以隔一会儿再看）；想收到跑完的通知，用 bg_run。" +
+      "输出在 ~/.tau/extras/shell/<进程 ID>/ 下。想更早结束，在命令前加 timeout N。退出码不是 0 算错误。",
     parameters: {
       type: "object",
-      properties: { command: { type: "string", description: "要运行的命令" } },
+      properties: {
+        command: { type: "string", description: "要运行的命令" },
+        wait: { type: "integer", description: "先等几秒（0 到 300）。0 是一路等到命令结束。省略是 60", minimum: 0, maximum: 300 },
+      },
       required: ["command"],
       additionalProperties: false,
     },
-    timeout: 300,
+    // 要大于默认的 wait（60）：留出启动和收尾的余量。
+    timeout: 90,
     output: "text",
     // 用户的命令在这个 bash 里 eval，不另起 bash：内核超时和停止时按进程组结束它。
-    // node 只管取参数（start）和截断输出（report）。输出全进文件，命令的标准输入是空设备。
-    command: (s) => `out=$(node "${s}" start) || exit 1; o=\${out%%${NL}*}; c=\${out#*${NL}}; (eval "$c") >"$o" 2>&1 </dev/null; code=$?; node "${s}" report "$o"; exit $code`,
+    // 输出全进文件，命令的标准输入是空设备。<输出文件>.wait 是等多少秒，.exit 在跑完时写退出码。
+    // wait 大于 0：命令放后台，先问 hold；等到了就出结果（和以前一样），没等到就留在后台、把话回给模型。
+    command: (s) =>
+      `out=$(node "${s}" start) || exit 1; o=\${out%%${NL}*}; c=\${out#*${NL}}; w=$(cat "$o.wait" 2>/dev/null || echo 0); if [ "$w" -gt 0 ]; then ( (eval "$c") >"$o" 2>&1 </dev/null; code=$?; node "${s}" done "$o" $code; node "${s}" notify "$o" $code ) & if node "${s}" hold "$o" "$w"; then node "${s}" report "$o"; exit $?; fi; echo "等了 $w 秒还没跑完：命令已经转到后台继续跑，不会被结束。输出写到 $o（还在增长，用 read 读，可以带 offset 和 limit）。跑完会给你寄一封信，等于唤醒你：信里有退出码和最后几行。你可以接着做别的事，也可以直接结束这一轮等这封信。"; else (eval "$c") >"$o" 2>&1 </dev/null; code=$?; node "${s}" report "$o"; exit $code; fi`,
   },
   {
     name: "bg_run",

@@ -72,7 +72,7 @@ async function start(dflt: string | undefined): Promise<void> {
 }
 
 async function finish(log: string | undefined, code: string | undefined): Promise<void> {
-  const { proc, pipe } = tauEnv();
+  const { proc } = tauEnv();
   if (log === undefined || code === undefined || !/^-?\d+$/.test(code)) throw new Fail("用法：bg_run.ts finish <log> <退出码>");
   const base = path.basename(log, ".log");
   if (!base.startsWith(`${proc}-`)) throw new Fail(`log 不属于这个进程：${log}`);
@@ -85,12 +85,21 @@ async function finish(log: string | undefined, code: string | undefined): Promis
   }
   const lines = tail.split(/\r?\n/);
   if (lines.at(-1) === "") lines.pop();
-  let shown = lines.slice(-TAIL_LINES).join("\n");
-  if (shown.length > TAIL_CHARS) shown = `…${shown.slice(-TAIL_CHARS)}`;
   // 先写退出码行：寄信失败时，log 里还有它。命令的输出不以换行结尾时先补一个，退出码行要独占一行才认得出。
   writeSync(1, `${tail === "" || tail.endsWith("\n") ? "" : "\n"}${exitLine(name, code)}\n`);
   // 等到了结果、已经同步返回的那次调用：结果已经在工具结果里了，不再寄信。
   if (existsSync(`${log}.sync`)) return;
+  await notify(name, log, String(code), lines);
+}
+
+/**
+ * 寄“完成了”的信：`shell` 转后台的命令也用它（两个工具寄同一句话，界面和模型看到的形状一样）。
+ * `log` 是输出文件，`lines` 是它最后几行（已经切好，调用方要截断就截断）。
+ */
+export async function notify(name: string, log: string, code: string, lines: string[]): Promise<void> {
+  const { proc, pipe } = tauEnv();
+  let shown = lines.slice(-TAIL_LINES).join("\n");
+  if (shown.length > TAIL_CHARS) shown = `…${shown.slice(-TAIL_CHARS)}`;
   const text = `[后台任务 ${name}] 完成，退出码 ${code}\n${shown === "" ? "（log 是空的）" : `log 最后 ${Math.min(lines.length, TAIL_LINES)} 行：\n${shown}`}\n完整 log：${winPath(log)}`;
   for (let i = 0; i < RETRIES; i++) {
     try {
