@@ -143,13 +143,14 @@ test("memory: 经桥读写真的服务：新键、改、冲突不覆盖、删；
   // 空库。
   assert.deepEqual(await read(), []);
   // 新键。
-  const made = interpretWrite(await write(setOp("proj", { ...newEdit(), key: "城市", draft: "上海" })));
+  const made = interpretWrite(await write(setOp("proj", { ...newEdit(), key: "城市", draft: "上海", brief: "住在哪" })));
   assert.equal(made.kind, "ok");
   const [first] = await read();
-  assert.deepEqual({ key: first!.key, value: first!.value }, { key: "城市", value: "上海" });
+  assert.deepEqual({ key: first!.key, value: first!.value, brief: first!.brief }, { key: "城市", value: "上海", brief: "住在哪" });
+  assert.ok(first!.updated > 1_700_000_000_000, "updated 是服务写入时的毫秒数");
   // 我开始改（版本 v1），兄弟进程先写了。
   const mine = { ...editOf(first!), draft: "北京" };
-  const sibling = interpretWrite(await write(setOp("proj", { ...editOf(first!), draft: "深圳" })));
+  const sibling = interpretWrite(await write(setOp("proj", { ...editOf(first!), draft: "深圳", brief: "搬家了" })));
   assert.equal(sibling.kind, "ok");
   const clash = interpretWrite(await write(setOp("proj", mine)));
   assert.equal(clash.kind, "conflict");
@@ -158,20 +159,34 @@ test("memory: 经桥读写真的服务：新键、改、冲突不覆盖、删；
   // 带着别处现在的版本再存，才写进去。
   const again = afterConflict(mine, clash.current);
   assert.equal(again.draft, "北京");
-  assert.deepEqual(again.other, { value: "深圳" });
+  assert.deepEqual(again.other, { value: "深圳", brief: "搬家了" });
   assert.equal(interpretWrite(await write(setOp("proj", again))).kind, "ok");
   const [now] = await read();
   assert.equal(now!.value, "北京");
+  assert.equal(now!.brief, "住在哪", "用户没动摘要，存的是他自己的，不是别处的");
   // 删：版本旧了冲突，现在的版本才删得掉；已经没有的键，冲突带 null。
   assert.equal(interpretWrite(await write(deleteOp("proj", first!))).kind, "conflict");
   assert.equal(interpretWrite(await write(deleteOp("proj", now!))).kind, "ok");
   assert.deepEqual(await read(), []);
   assert.deepEqual(interpretWrite(await write(deleteOp("proj", now!))), { kind: "conflict", current: null });
   // 新键撞上别人刚建的同名键：冲突。
-  await write(setOp("proj", { ...newEdit(), key: "k", draft: "a" }));
-  assert.equal(interpretWrite(await write(setOp("proj", { ...newEdit(), key: "k", draft: "b" }))).kind, "conflict");
+  await write(setOp("proj", { ...newEdit(), key: "k", draft: "a", brief: "甲" }));
+  assert.equal(interpretWrite(await write(setOp("proj", { ...newEdit(), key: "k", draft: "b", brief: "乙" }))).kind, "conflict");
+  // 只改值：摘要还是原来那句，不会退回值的前缀。
+  const [k] = await read();
+  assert.equal(interpretWrite(await write(setOp("proj", { ...editOf(k!), draft: "a2" }))).kind, "ok");
+  const [k2] = await read();
+  assert.deepEqual({ value: k2!.value, brief: k2!.brief }, { value: "a2", brief: "甲" });
+  // 只改摘要：值不变。
+  assert.equal(interpretWrite(await write(setOp("proj", { ...editOf(k2!), brief: "丙" }))).kind, "ok");
+  const [k3] = await read();
+  assert.deepEqual({ value: k3!.value, brief: k3!.brief }, { value: "a2", brief: "丙" });
   // 超限。
-  const big = interpretWrite(await write(setOp("proj", { ...newEdit(), key: "big", draft: "字".repeat(2000) })));
+  const big = interpretWrite(await write(setOp("proj", { ...newEdit(), key: "big", draft: "字".repeat(2000), brief: "x" })));
   assert.equal(big.kind, "over");
   if (big.kind === "over") assert.equal(big.over, "value");
+  // 摘要超限：70 个汉字 210 字节，上限 200。
+  const longBrief = interpretWrite(await write(setOp("proj", { ...newEdit(), key: "big", draft: "x", brief: "字".repeat(70) })));
+  assert.deepEqual(longBrief, { kind: "over", over: "brief", bytes: 210 });
+  assert.match(overText("brief", 210), /摘要太长.*210/);
 });

@@ -191,10 +191,10 @@
 
 内核 `src/` 的记忆改成索引（[D81](../../.knowledge/kb-decisions.md#d81-记忆视图改成索引键更新日期字节数摘要)）：每个键有摘要和更新时间。桥和接口不动。界面照[设计稿 7.13](../design/gui.md#713-记忆)改。
 
-- [ ] 纯逻辑：`lib/memory.js` 的 `Entry` 加 `brief`、`updated`；`Edit` 加 `brief`、`origBrief`，`other` 带别处的摘要；`editOf`、`newEdit`、`editDirty`（摘要也算改了）、`editError`（新键的摘要不能为空）、`setOp`（总是带 `brief`）、`interpretWrite`（认 `over` 为 `brief`）、`afterConflict`、`overText`。
-- [ ] 测试：以上每一项；改值不改摘要时 `setOp` 仍带原摘要。
-- [ ] 记忆页：每行显示更新日期和摘要；编辑框加摘要一栏和字节数；冲突对照里写别处的摘要；顶部那行说明按设计稿改。`api.js` 的 `memoryRead` 的类型加两个字段。
-- [ ] 经桥对着真服务的测试：新键带摘要、改值不丢摘要、摘要超限的提示。
-- [ ] 文档：kb-gui 的记忆页和测试表（已改）；这一步勾完。
+- [x] 纯逻辑：`lib/memory.js` 的 `Entry` 加 `brief`、`updated`；`Edit` 加 `brief`、`origBrief`，`other` 带别处的摘要；`editOf`、`newEdit`、`editDirty`（摘要也算改了）、`editError`（新键的摘要不能为空）、`setOp`（总是带 `brief`）、`interpretWrite`（认 `over` 为 `brief`）、`afterConflict`、`overText`。
+- [x] 测试：以上每一项；改值不改摘要时 `setOp` 仍带原摘要。
+- [x] 记忆页：每行显示更新日期和摘要；编辑框加摘要一栏和字节数；冲突对照里写别处的摘要；顶部那行说明按设计稿改。`api.js` 的 `memoryRead` 的类型加两个字段。
+- [x] 经桥对着真服务的测试：新键带摘要、改值不丢摘要、摘要超限的提示。
+- [x] 文档：kb-gui 的记忆页和测试表（已改）；这一步勾完。
 
 **验收**：在测试服务上打开记忆页：每个键看得到摘要和日期；改一个键的值，保存后摘要还是模型写的那句；新键不写摘要保存不了。
