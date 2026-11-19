@@ -74,13 +74,11 @@
  *   mine: string[],
  *   forkedFrom: Record<string, string>,
  *   titles: Record<string, string>,
- *   titled: string[],
  *   collapsed: Record<string, boolean>,
  *   cleanDays: number,
  *   recentModels: string[],
  *   defaultModel?: string,
  *   defaultThinking?: string,
- *   titleModel?: string,
  *   notify?: boolean,
  *   theme?: "night" | "vscode",
  * }} GuiState

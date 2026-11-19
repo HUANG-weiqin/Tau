@@ -12,7 +12,6 @@ import type { GitRunner } from "./git.ts";
 import { pickFolder as realPick } from "./pick.ts";
 import type { PickFolder } from "./pick.ts";
 import { fileCredentials } from "../../auth/store.ts";
-import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { clearKey, setKey } from "./keys.ts";
 import { buildCatalog, readKeys } from "./models.ts";
 import type { CatalogProvider } from "./models.ts";
@@ -20,13 +19,11 @@ import { agentsMdInfo } from "./agentsmd.ts";
 import { createPreset, deletePreset, listPresets, presetWorkdirs, updatePreset } from "./presets.ts";
 import { createServiceControl } from "./service.ts";
 import type { ServiceOps } from "./service.ts";
-import { generateTitle } from "./title.ts";
 import { contentType, readStatic, routeStatic } from "./static.ts";
 import { installTool, listTools, removeTool } from "./tools.ts";
 import { checkDir, installTools, relayStatus, serverList, toolList } from "./mcp.ts";
 import { createStateStore } from "./state.ts";
 import { HttpError, isObject } from "./util.ts";
-import type { Models } from "@earendil-works/pi-ai";
 
 const API_BODY_MAX = 1024 * 1024;
 /** 图片是 base64，单张上限 1.5 MiB，允许带几张。 */
@@ -46,10 +43,8 @@ export interface BridgeOptions {
   /** 测试注入。 */
   git?: GitRunner;
   pickFolder?: PickFolder;
-  /** tau 的凭据文件（D83）：读 key 状态，填、清 key，取标题时刷新令牌。默认 <home>/auth.json。 */
+  /** tau 的凭据文件（D83）：读 key 状态，填、清 key。默认 <home>/auth.json。 */
   authFile?: string;
-  /** 自动标题用的模型集合。默认是内置的全部供应商，凭据读 authFile。测试注入假的。 */
-  titleModels?: Models;
   /** 查服务进程、起重启脚本。测试注入假的，不真的起停进程。 */
   serviceOps?: ServiceOps;
   /** 重启桥时原样带给新桥的命令行参数。默认是本进程的。 */
@@ -113,7 +108,6 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
   const authFile = opts.authFile ?? path.join(home, "auth.json");
   const credentials = fileCredentials(authFile);
   let catalog: CatalogProvider[] | null = null;
-  let titleModels: Models | null = opts.titleModels ?? null;
   const control = createServiceControl({ pipe, repo: opts.repo ?? DEFAULT_REPO, ...(opts.serviceOps ? { ops: opts.serviceOps } : {}), ...(opts.bridgeStartedAt === undefined ? {} : { bridgeStartedAt: opts.bridgeStartedAt }) });
   const bridgeArgs = opts.bridgeArgs ?? process.argv.slice(2);
   const pick = opts.pickFolder ?? realPick;
@@ -180,12 +174,6 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
         const r = await control.restart({ service: body.service === true, bridge: body.bridge === true, force: body.force === true, bridgeArgs });
         if (!r.ok) return json(res, 409, { error: `有 ${r.running} 个进程在跑，重启服务会中断它们`, running: r.running });
         return json(res, 202, { ok: true });
-      }
-      case "title": {
-        if (typeof body.process !== "string" || body.process === "" || /[\\/:\0]/.test(body.process)) throw new HttpError(400, "process 必须是进程 ID");
-        if (typeof body.model !== "string" || body.model === "") throw new HttpError(400, "model 必须是 供应商/模型");
-        titleModels ??= builtinModels({ credentials });
-        return json(res, 200, { title: await generateTitle({ pipe, models: titleModels, process: body.process, model: body.model }) });
       }
       case "agents-md":
         return json(res, 200, agentsMdInfo(body));

@@ -1,5 +1,5 @@
 // 删进程之前先把它的标题缓存下来：删了以后第 1 段就没了，分叉出来的进程还要沿用这个标题（设计稿 7.7）。
-import { tauStream, makeTitle } from "../api.js";
+import { tauStream } from "../api.js";
 import { extractTitle } from "../lib/titles.js";
 
 /**
@@ -48,30 +48,4 @@ export async function cacheTitles(app, ids) {
   } catch {
     // 提示已经弹了。
   }
-}
-
-/** 已经试过自动起标题的进程。同一个进程只试一次，失败就算了，照旧显示第一行。 */
-const tried = new Set();
-/** 一个一个来，不并发调模型。 */
-let chain = Promise.resolve();
-
-/**
- * 让桥给这个人建的根进程起标题，存进界面数据的 `titles`，并记进 `titled`。
- * 模型：设置里的标题模型，没有就是默认模型，再没有就是这个进程自己的模型。
- * @param {import("../app.js").App} app
- * @param {{ id: string, self: { model: string } }} e
- */
-export function autoTitle(app, e) {
-  if (tried.has(e.id)) return;
-  tried.add(e.id);
-  const model = app.gui.titleModel ?? app.gui.defaultModel ?? e.self.model;
-  const id = e.id;
-  chain = chain.then(async () => {
-    try {
-      const title = await makeTitle(id, model);
-      await app.setGui((g) => (g.titled.includes(id) ? {} : { titles: { ...g.titles, [id]: title }, titled: [...g.titled, id] }));
-    } catch {
-      // 失败就算了。
-    }
-  });
 }

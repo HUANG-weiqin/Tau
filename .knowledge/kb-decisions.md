@@ -2111,6 +2111,17 @@ fork 原来在这张表里，已进内核，见 [D49](#d49-fork-进内核)。
 - 要用户做：合并后主树 `npm ci`（根目录和 `extras/`），然后重启服务和桥，新目录才生效。
 - 写在这里的页：[kb-executor 的升级 pi-ai](kb-executor.md#升级-pi-ai)、[AGENTS.md 的小而硬规矩](../AGENTS.md#小而硬规矩)、[kb-extras 的依赖规则](kb-extras.md#依赖规则)。
 
+### D85 删掉自动标题
+
+- 状态：已确认（2026-11-19）。用户：main 上不需要专门对标题做处理。设置里第 05 节“标题用的模型”一起去掉。
+- 删掉：桥的 `/api/title` 和 `bridge/title.ts`、页面自动起标题的 effect（`ui/titlecache.js` 的 `autoTitle`）、`lib/titles.js` 里判断该不该起标题的 `wantsAutoTitle`、界面数据的 `titled` 和 `titleModel`、设置第 05 节（后面的小节编号往前挪一位）。桥里的 `builtinModels` 和 `Models` 只服务这一条，一起不用了。
+- 留着：进程栏照旧显示第一封信正文的第一行（`extractTitle`），删进程前缓存、分叉沿用（`titles`、`forkedFrom`）。这些不调模型，不花代价。
+- 代价：人建的临时进程不再有概括出来的短名，列表里显示第一封信的第一行，`clipText` 截 80 字，长信的第一行会比较长。第一封信是寒暄时，名字就是寒暄。
+- 旧 `state.json` 里的 `titled`、`titleModel` 不读，原样留着，不迁移（不写兼容代码，[D74](#d74-迁移的规矩)）。
+- 不改契约：内核、线协议、预设和工具定义的格式都没动。桥的 `/api/title` 是上层的接口，删掉不影响别的。
+- 验证：`npm run typecheck`、`git diff --check` 通过。`test/extras/gui/service.test.ts`（14 条）、`test/extras/gui/mcp.test.ts`（15 条）单独跑全绿。全量 `npm test` 有两条红，和这次无关：`test/server/credentials.test.ts` 的“别人在写的时候读”卡在改名 EPERM 重试耗尽，`service.test.ts` 的 launchArgv 孙进程没写出文件。把改动 stash 掉再跑，照样红，是这台机器上 Windows 文件占用的问题。
+- 写在这里的页：[kb-gui 的 POST 接口](kb-gui.md#post-接口)、[kb-gui 的界面数据](kb-gui.md#界面数据)、[gui.md 的设置](../../docs/design/gui.md#711-设置)。
+
 ## 未确认的默认值
 
 这些都不影响开工，写代码时可以随时改：

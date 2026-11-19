@@ -1,4 +1,4 @@
-// 界面的重启、旧代码提示、自动标题（extras/gui）。全部用临时目录、临时管道和假的 runner，不起停真的进程。
+// 界面的重启、旧代码提示（extras/gui）。全部用临时目录、临时管道和假的 runner，不起停真的进程。
 import { test } from "node:test";
 import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
@@ -8,15 +8,11 @@ import http from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createModels, fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
-import { sqliteMemory } from "../../../src/memory/kv.ts";
-import { serve } from "../../../src/server/serve.ts";
 import { createBridge } from "../../../extras/gui/bridge/server.ts";
 import { createServiceControl, launchArgv, newestMtime, restartCommand } from "../../../extras/gui/bridge/service.ts";
 import type { ServiceOps } from "../../../extras/gui/bridge/service.ts";
-import { cleanTitle, TITLE_SYSTEM } from "../../../extras/gui/bridge/title.ts";
 import { confirmText, staleOf } from "../../../extras/gui/web/lib/service.js";
-import { firstLetterText, wantsAutoTitle } from "../../../extras/gui/web/lib/titles.js";
+import { firstLetterText } from "../../../extras/gui/web/lib/titles.js";
 import { plainFirstLine, plainLine } from "../../../extras/gui/web/lib/plain.js";
 import { describeNow } from "../../../extras/gui/web/lib/messages.js";
 import { firstLine } from "../../../extras/gui/web/lib/notify.js";
@@ -255,114 +251,17 @@ test("页面的横幅文字：确认框写明会中断几个进程和“被中�
   assert.deepEqual(staleOf({ service: { up: false, stale: true }, bridge: { stale: false } }), { service: false, bridge: false });
 });
 
-test("cleanTitle：取第一个非空行，去引号和结尾标点，截到 16 个字，空的是 null", () => {
-  assert.equal(cleanTitle("\n  “修登录页的 bug。”\n多余的解释"), "修登录页的 bug");
-  assert.equal(cleanTitle("`标题`"), "标题");
-  assert.equal(cleanTitle("一二三四五六七八九十一二三四五六七八九十"), "一二三四五六七八九十一二三四五六");
-  assert.equal(cleanTitle("  \n "), null);
-  assert.equal(cleanTitle("“”"), null);
-  assert.match(TITLE_SYSTEM, /16/);
-});
-
-async function titleSetup(t: TestContext) {
-  const dir = mkdtempSync(join(tmpdir(), "tau-gui-title-"));
-  const home = join(dir, "home");
-  const work = join(dir, "work");
-  const presetsDir = join(home, "presets");
-  mkdirSync(presetsDir, { recursive: true });
-  mkdirSync(work);
-  const faux = fauxProvider({ models: [{ id: "m", contextWindow: 200_000 }] });
-  const models = createModels();
-  models.setProvider(faux.provider);
-  const ref = `${faux.getModel().provider}/m`;
-  writeFileSync(join(presetsDir, "p.md"), `---\nworkdir: ${work}\nmodel: ${ref}\ntools: read\n---\n你是测试助手。\n`);
-  const pipe = pipeName();
-  const svc = await serve({ pipe, dbPath: join(dir, "tau.db"), presetsDir, toolsDir: join(dir, "tools"), models, memory: sqliteMemory });
-  const bridge = await createBridge({ port: 0, home, pipe, titleModels: models });
-  t.after(async () => {
-    await bridge.close();
-    await svc.close();
-    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  });
-  return { faux, port: bridge.port, ref, pipe };
-}
-
-async function startProcess(pipe: string, text: string): Promise<string> {
-  const { pipeRequest } = await import("../../../extras/gui/bridge/pipe.ts");
-  let id = "";
-  await pipeRequest(pipe, { op: "start", preset: "p", text }, (r) => {
-    if (r.type === "receipt") id = r.process;
-    return r.type === "final" || r.type === "error";
-  });
-  return id;
-}
-
-test("/api/title：读第一封信，调一次模型，思考关掉、输出上限小、提示词是约定的；回整理过的标题", async (t) => {
-  const s = await titleSetup(t);
-  s.faux.setResponses([fauxAssistantMessage(fauxText("好的"))]);
-  const id = await startProcess(s.pipe, "帮我把登录页的报错提示改成中文\n再检查一下表单");
-  let seen: any = null;
-  s.faux.setResponses([
-    (ctx, opts, _state, model) => {
-      seen = { ctx, opts, model };
-      return fauxAssistantMessage(fauxText("“修改登录页报错提示。”\n解释"));
-    },
-  ]);
-  const r = await call(s.port, "/api/title", { process: id, model: s.ref });
-  assert.equal(r.status, 200, JSON.stringify(r.json));
-  assert.equal(r.json.title, "修改登录页报错提示");
-  const sent = JSON.stringify(seen.ctx.messages);
-  assert.ok(sent.includes(TITLE_SYSTEM));
-  assert.ok(sent.includes("帮我把登录页的报错提示改成中文"));
-  assert.equal(seen.opts?.reasoning, undefined);
-  assert.equal(seen.model.maxTokens, 100);
-});
-
-test("/api/title：参数不对 400，没有这个进程 404，模型不在目录 422，模型出错 502，服务不在 503", async (t) => {
-  const s = await titleSetup(t);
-  s.faux.setResponses([fauxAssistantMessage(fauxText("好的"))]);
-  const id = await startProcess(s.pipe, "做点事");
-  assert.equal((await call(s.port, "/api/title", { model: s.ref })).status, 400);
-  assert.equal((await call(s.port, "/api/title", { process: "a/b", model: s.ref })).status, 400);
-  assert.equal((await call(s.port, "/api/title", { process: id })).status, 400);
-  assert.equal((await call(s.port, "/api/title", { process: id, model: "没有斜杠" })).status, 400);
-  assert.equal((await call(s.port, "/api/title", { process: "nope", model: s.ref })).status, 404);
-  assert.equal((await call(s.port, "/api/title", { process: id, model: "faux/none" })).status, 422);
-  s.faux.setResponses([fauxAssistantMessage(fauxText("   "))]);
-  assert.equal((await call(s.port, "/api/title", { process: id, model: s.ref })).status, 502);
-
-  const home = mkdtempSync(join(tmpdir(), "tau-gui-home-"));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
-  const models = createModels();
-  models.setProvider(s.faux.provider);
-  const b = await createBridge({ port: 0, home, pipe: pipeName(), titleModels: models });
-  t.after(() => b.close());
-  assert.equal((await call(b.port, "/api/title", { process: id, model: s.ref })).status, 503);
-});
-
-test("自动标题的条件：人建的根进程、第一封信在了、没生成过；预设进程和子进程不要", () => {
-  const e = (o: any = {}) => ({ id: "a", kind: "temp", self: { messages: 1, ...o } });
-  const st = { titled: [] as string[] };
-  assert.equal(wantsAutoTitle(e(), st), true);
-  assert.equal(wantsAutoTitle(e({ messages: 0 }), st), false);
-  assert.equal(wantsAutoTitle(e({ parent: "x" }), st), false);
-  assert.equal(wantsAutoTitle({ ...e(), kind: "team" }, st), false);
-  assert.equal(wantsAutoTitle(e(), { titled: ["a"] }), false);
-});
-
 test("第一封信的正文：纯文本和带信头的用户消息都能取，不是用户消息是空串", () => {
   assert.equal(firstLetterText({ role: "user", content: "你好\n第二行", timestamp: 1 }), "你好\n第二行");
   assert.equal(firstLetterText({ role: "assistant", content: [], timestamp: 1 }), "");
   assert.equal(firstLetterText(null), "");
 });
 
-test("界面数据：titled 和 titleModel 读得出，坏的当没有；进程被清掉后 titled 里它的 ID 也清掉", () => {
-  const g = normalizeState({ titled: ["a", 3, "b"], titleModel: "x/y" });
-  assert.deepEqual(g.titled, ["a", "b"]);
-  assert.equal(g.titleModel, "x/y");
-  assert.equal("titleModel" in normalizeState({ titleModel: "" }), false);
-  assert.deepEqual(normalizeState({}).titled, []);
-  assert.deepEqual(prunePatch(g, (id) => id === "a"), { titled: ["b"] });
+test("界面数据：标题和来源读得出；进程被清掉后它名下的记录也清掉", () => {
+  const g = normalizeState({ titles: { a: "甲", b: "乙" }, forkedFrom: { b: "a" }, mine: ["a", "b"], current: { x: "a" } });
+  assert.deepEqual(g.titles, { a: "甲", b: "乙" });
+  assert.deepEqual(normalizeState({}).titles, {});
+  assert.deepEqual(prunePatch(g, (id) => id === "a"), { mine: ["b"], current: {} });
 });
 
 test("Markdown 小修：去掉行首的标题、列表、引用标记和行内的 ** 与反引号", () => {

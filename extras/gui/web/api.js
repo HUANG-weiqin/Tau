@@ -246,5 +246,3 @@ export const agentsMd = (workdir) => post("/api/agents-md", { workdir });
 export const serviceStatus = () => post("/api/service", {});
 /** 重启服务和（或）桥。有进程在跑又没带 force，桥回 409（抛的 ApiError 的 status 是 409）。 */
 export const restartService = (/** @type {{ service?: boolean, bridge?: boolean, force?: boolean }} */ o) => post("/api/service/restart", o);
-/** 让桥给进程起标题。model 是 供应商/模型。 */
-export const makeTitle = (/** @type {string} */ process, /** @type {string} */ model) => post("/api/title", { process, model }).then((r) => /** @type {string} */ (r.title));

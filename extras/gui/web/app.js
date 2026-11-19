@@ -7,7 +7,7 @@ import { emptyStore, reduce, streamingText, streamingLive, childCounts } from ".
 import { emptyHistory, segmentMessages, lastTimestamp, applyPushed } from "./lib/history.js";
 import { buildEntries, buildProjects, railSections, projectView, currentOf, attention, seenFromInspect } from "./lib/derive.js";
 import { describeNow, phaseStartedAt, HANDOFF_LETTER } from "./lib/messages.js";
-import { processTitle, wantsAutoTitle } from "./lib/titles.js";
+import { processTitle } from "./lib/titles.js";
 import { needsInspect } from "./lib/session.js";
 import { stopOrder } from "./lib/order.js";
 import { formatDuration } from "./lib/format.js";
@@ -34,7 +34,6 @@ import { Notifier } from "./ui/notify.js";
 import { pushRecent } from "./lib/models.js";
 import { ConfirmLayer, confirmOpen } from "./ui/remove.js";
 import { ServiceBanner, StartServiceButton } from "./ui/banner.js";
-import { autoTitle } from "./ui/titlecache.js";
 
 /**
  * 页面上所有模块拿到的唯一对象 `app`。每次渲染重新生成，只读；改东西调用下面的动作。
@@ -283,8 +282,7 @@ function noteTitle(id, title) {
     titleTimer = 0;
     const batch = pendingTitles;
     pendingTitles = {};
-    // 已经自动起过标题的，不拿第一行盖掉。
-    setGui((g) => ({ titles: { ...g.titles, ...Object.fromEntries(Object.entries(batch).filter(([id]) => !g.titled.includes(id))) } }));
+    setGui((g) => ({ titles: { ...g.titles, ...batch } }));
   }, 400);
 }
 
@@ -932,11 +930,6 @@ function Root() {
   useEffect(() => {
     if (!app.ready) return;
     for (const e of entries) if (e.kind === "temp" && S.gui.titles[e.id] === undefined) peeker.wantTitle(e.id);
-  });
-  // 人建的根进程：第一封信到了，让桥起一个标题。每个进程只试一次。
-  useEffect(() => {
-    if (!app.ready || app.status !== "online") return;
-    for (const e of entries) if (wantsAutoTitle(e, S.gui)) autoTitle(app, e);
   });
   // 聚焦的进程要读全。
   useEffect(() => {

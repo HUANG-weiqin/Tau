@@ -30,7 +30,7 @@
 | `extras/package.json` | 上层的依赖，精确锁定（[D63](kb-decisions.md#d63-上层的依赖随便加)）。`@earendil-works/pi-ai` 和根目录同一个版本，桥只用它的公开函数读模型目录 |
 | `extras/gui/bridge/main.ts` | 桥的入口，Node 直接运行 |
 | `extras/gui/bridge/server.ts` | `createBridge`：检查和路由。测试用它在进程里起桥，可以换掉 git 和选文件夹 |
-| `extras/gui/bridge/*.ts` | 其余各部分：`forward.ts` 转发，`static.ts` 静态文件，`presets.ts`（经 `check` 列预设，写、改和删预设文件）、`models.ts`（模型目录和 key 状态）、`git.ts`、`bg.ts`、`tools.ts`（列、装、删工具定义）、`state.ts`、`pick.ts`，`pipe.ts`（一次性的管道请求、管道在不在）、`service.ts`（服务和桥的状态、旧代码的判断、起重启脚本）、`title.ts`（自动标题）、`mcp.ts`（MCP 的服务器、工具定义和 relay 状态）、`keys.ts`（填和清 api_key，登出 OAuth，经凭据库 `extras/auth/store.ts` 写，[D69](kb-decisions.md#d69-界面可以填写和清除-api_key)、[D83](kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)），`util.ts` 放公用的小函数 |
+| `extras/gui/bridge/*.ts` | 其余各部分：`forward.ts` 转发，`static.ts` 静态文件，`presets.ts`（经 `check` 列预设，写、改和删预设文件）、`models.ts`（模型目录和 key 状态）、`git.ts`、`bg.ts`、`tools.ts`（列、装、删工具定义）、`state.ts`、`pick.ts`，`pipe.ts`（一次性的管道请求、管道在不在）、`service.ts`（服务和桥的状态、旧代码的判断、起重启脚本）、`mcp.ts`（MCP 的服务器、工具定义和 relay 状态）、`keys.ts`（填和清 api_key，登出 OAuth，经凭据库 `extras/auth/store.ts` 写，[D69](kb-decisions.md#d69-界面可以填写和清除-api_key)、[D83](kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)），`util.ts` 放公用的小函数 |
 | `extras/gui/web/index.html` | 页面 |
 | `extras/gui/web/lib/*.js` | 页面的纯逻辑。不碰 DOM，不发请求。文件头写 `// @ts-check`，类型用 JSDoc |
 | `extras/gui/web/ui/*.js` | 组件 |
@@ -112,7 +112,6 @@
 | `/api/mcp/status` | `{}` | `{ running: false }`，或 relay 的 `{ running: true, pid, instances }` |
 | `/api/service` | `{}` | 见下“重启和旧代码” |
 | `/api/service/restart` | `{ service?, bridge?, force? }` | 202 `{ ok: true }`，或 409，见下 |
-| `/api/title` | `{ process, model }` | `{ title }`，见下“自动标题” |
 | `/api/state` | `{ set? }` | `{ state }`。`set` 的每个顶层键覆盖进文件，再回整个文件 |
 | `/api/pick-folder` | `{}` | `{ path }`，取消时是 `null`。同时只开一个对话框，第二个请求回 409 |
 
@@ -208,14 +207,6 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
 - 工具标签（`ui/inspector.js` 的 `ToolTags`）：项目概况的预设行和聚焦进程的概况用 `foldTools(tools, app.defs)` 折，同一个服务器一个标签 `服务器名 · n`（只勾一部分写 `k/n`），`title` 是全部工具名。`app.defs` 是 `/api/tools` 的 `installed`，整页读一次（`app.reloadDefs`，挂载时读；工具定义弹窗装完、删完再读）；读不到就不折，原样一个一个写。
 - 纯逻辑在 `extras/gui/web/lib/mcp.js`（`installable`、`sizeOf`、`foldTools`、`groupByServer`、`withGroup`、`idleText`、`LIMIT`），测试 `test/extras/gui/mcp-lib.test.ts`。
 
-自动标题（`bridge/title.ts`）：
-
-- 对象：页面里没有 `parent`、`kind` 是临时的进程。桥通过管道读第 1 段第一条用户消息（`history`），取第一封信的正文，截到 2000 字。
-- 用 pi-ai 的 `completeSimple` 调一次模型：不传 `reasoning`（思考关掉），`maxTokens` 是 100，超时 30 秒，`maxRetries` 是 1。`model` 是请求里的 `<供应商>/<模型 ID>`，页面按“标题用的模型、默认模型、进程自己的模型”的顺序填。
-- 凭据：`extras/auth/store.ts` 的凭据库（`src/server/credentials.ts` 的拷贝，[D83](kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)），和键的写入共用。标题模型是 OAuth 供应商时，令牌快过期会在这里刷新、写回。
-- 回 `{ title }`：模型的第一个非空行，去掉两头的引号和结尾标点，最多 16 个字。参数不对 400，没有这个进程 404，模型不在目录 422，模型出错或给不出标题 502，服务不在 503。
-- 桥不写界面数据：标题由页面存进 `titles`，并把进程 ID 记进 `titled`。写入只有页面一个来源，不和页面自己的写入抢。
-
 ### 上下文文件
 
 [D72](kb-decisions.md#d72-上下文文件开段重读)：项目的上下文由内核在每次开段重读（D58 原来由上层把 AGENTS.md 拼进提示词，已改）。预设写 `context: AGENTS.md`，内核读 `<工作目录>/AGENTS.md`，放进系统提示词（[kb-store](kb-store.md#上下文文件视图)）。界面只认 `AGENTS.md` 这个文件名，不认 CLAUDE.md。
@@ -260,8 +251,6 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
 | `mine` | 界面建的进程 ID |
 | `forkedFrom` | 界面分叉出的进程 ID → 源进程 ID |
 | `titles` | 进程 ID → 标题 |
-| `titled` | 已经自动起过标题的进程 ID |
-| `titleModel` | 设置里的标题用的模型。空字符串或没有就是跟默认模型一样 |
 | `collapsed` | 折叠状态 |
 | `cleanDays` | 清理的天数，默认 7 |
 | `recentModels` | 最近用过的模型（`<供应商>/<模型 ID>`），最新在前，最多 6 个 |
@@ -336,7 +325,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
   - 写冲突时服务回的 `current`（别处现在的值和版本号，或键已被删的 `null`）就是新的 `base`：用户写的字留着，别处的值列在文本框下，再按保存才覆盖。删除冲突不重试，只重读。
   - 一次只开一个编辑；编辑开着时其它行的“改”“删”不可用。
   - 页面不显示给模型看的视图，只显示库里的键值。
-- 设置：`ui/settings.js`。外观、默认模型、默认思考强度、完成通知、标题用的模型改一项记一项。清理的天数不在这里，只在清理弹窗里改（`cleanDays` 还是同一个键）。供应商一行（`ProviderRow`）右边是填、换、清的动作，哪些可用由 `lib/models.js` 的 `keyActions` 定（`auth.json` 读不出时都没有；OAuth 登录的只有“登出”，没有填 key）；填 key 的密码框（`KeyEdit`）输入只留在组件里，收起就丢，保存成功后 `app.reloadModels()`；清掉（OAuth 登录的叫登出）点两次，失焦还原。设置页的说明里写着终端登录的命令。接口 `api.js` 的 `setKey`、`clearKey`。
+- 设置：`ui/settings.js`。外观、默认模型、默认思考强度、完成通知改一项记一项。清理的天数不在这里，只在清理弹窗里改（`cleanDays` 还是同一个键）。供应商一行（`ProviderRow`）右边是填、换、清的动作，哪些可用由 `lib/models.js` 的 `keyActions` 定（`auth.json` 读不出时都没有；OAuth 登录的只有“登出”，没有填 key）；填 key 的密码框（`KeyEdit`）输入只留在组件里，收起就丢，保存成功后 `app.reloadModels()`；清掉（OAuth 登录的叫登出）点两次，失焦还原。设置页的说明里写着终端登录的命令。接口 `api.js` 的 `setKey`、`clearKey`。
 - 界面数据写失败以后 30 秒内不再自动写（清理旧键），不会反复重试。
 - 信的来历读段里消息的 `tau`（`lib/messages.js` 的 `parseUser`），不解析文字：
   - 一封信的发送者、跳数、`replyTo`（写信时它在等回信）、回信的结束原因来自 `tau.letters`；正文是消息文本里 `at` 指的那段。
@@ -360,7 +349,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
 |---|---|
 | `test/extras/gui/bridge.test.ts` | 每条检查的反例；GET 不出目录；转发对着测试服务（临时目录、测试管道、faux 模型），含 `watch` 分块推送和浏览器断开；预设经 `check` 读（带 `options` 的读得出、读不出和装不下的错误文字和 `start` 一字不差、服务不在回 503）、新建不覆盖和删除；`inspect` 转发读到会话快照；换段信真的换段、信带进新段；`reconfigure` 经桥转发，回执 `reconfigured` 原样返回；git 带 `--no-optional-locks`、工作目录不对时拒绝；界面数据改名写入；模型目录和 pi-ai 一致、key 状态四种（含已登录）且值不进回复；填 key 遇 OAuth 拒绝，清掉就是登出，不认识的条目可换可删、auth.json 坏了或不存在、改了不用重启；改预设只换收到的字段（顺序、CRLF、BOM、正文原样，`null` 删行）、读不出或起不来改回旧文件、服务不在改回去、请求不合法；新建带 `handoff`、`options`、`context`，`context` 给 `null` 删行 |
 | `test/extras/tools/tools.test.ts` | 工具库：`shell`、`bg_run`、`peek`、`wait` 的脚本在真的服务和 Git Bash 里跑（截断和存文件、退出码、超时结束整个进程组、7 天清理；后台立刻返回、跑完寄信、同名拒绝；peek 的输出；wait 等到结束、超时、停止）；桥的列、装、改过后拒绝覆盖、更新、预设用到时拒删；库里全部的定义装好以后内核 `check` 读得出。历史检索的两个脚本和 `web_search` 不在这里，见 [kb-extras 的工具库](kb-extras.md#工具库) |
-| `test/extras/gui/service.test.ts` | 旧代码的判断（修改时间对比、服务不在、缓存和作废）；重启接口（有进程在跑回 409 且不动、`force`、只重启桥、参数不对）用假的 runner 和假的 `ps`，另有生成的重启命令行和真跑一次 powershell 的“父进程退出后孙进程还在”；`/web/` 的缓存头；自动标题（假模型：提示词、输出上限、思考关掉、整理标题、各种错误码）；只读凭据库；标题的条件和 `titled`；助手文字第一行去标记 |
+| `test/extras/gui/service.test.ts` | 旧代码的判断（修改时间对比、服务不在、缓存和作废）；重启接口（有进程在跑回 409 且不动、`force`、只重启桥、参数不对）用假的 runner 和假的 `ps`，另有生成的重启命令行和真跑一次 powershell 的“父进程退出后孙进程还在”；`/web/` 的缓存头；只读凭据库；界面数据的字段和进程被清掉后的清理；助手文字第一行去标记 |
 | `test/extras/gui/agentsmd.test.ts` | 上下文文件和旧的拼接块：认出和去掉旧块（CRLF、BOM、手写的末尾空行字节不变）、给了 prompt 块留着、没有结束标记当没有块；接口：`/api/agents-md`、新建勾选写 `context: AGENTS.md` 而不拼块、CLAUDE.md 不认、列表里 `agentsMd` 只有 `none` 和 `legacy`、`agentsMd: false` 去块、`true` 回 400、转成上下文文件（去块加 `context`，已有不重复）、`context` 加上以后装不下窗口改回旧文件 |
 | `test/extras/gui/memory.test.ts` | 记忆页的纯逻辑（字节序排序、折叠、编辑状态、写回复的判读、冲突后字和版本的处理、摘要）；经桥对着真的服务：新键带摘要、改值不丢摘要、兄弟先写造成的冲突不覆盖、删、已删键的冲突、超限（含摘要超限） |
 | `test/extras/gui/image.test.ts` | 图片常量和 `src/` 的真常量一致；缩放尺寸、原样发的条件、压缩尝试的顺序、张数；快照多带的输入类型和阈值、不收图片的判断；段尺比例和九成警告；排队的信、谁在等谁、后台任务的通知标成后台任务 |

@@ -130,9 +130,6 @@ export function SettingsDialog({ app, onClose }) {
     setNote("");
     quiet(app.setGui({ defaultThinking: v ?? "" }));
   };
-  const titleModel = app.gui.titleModel ?? "";
-  const pickTitleModel = (/** @type {string} */ ref) => quiet(app.setGui({ titleModel: ref }));
-
   const theme = app.gui.theme ?? "day";
 
   // 开关在点击的处理函数里申请许可：浏览器只认用户操作里的申请。
@@ -194,14 +191,7 @@ export function SettingsDialog({ app, onClose }) {
           ${notifyWhy !== "" && html`<span class="dnote" style="color:var(--warn-t)">${notifyWhy}</span>`}
         </div>
 
-        <${SecHead} n="05" title="标题用的模型" en="TITLE MODEL" right=${html`<span class="dnote" style="font-size:11px">需要桥在运行</span>`} />
-        <${ModelPicker} app=${app} value=${titleModel !== "" ? titleModel : model} onPick=${pickTitleModel} label="标题用的模型" />
-        <div class="ep-keep">
-          ${titleModel === "" ? html`<span>没单独设：跟默认模型一样；默认模型也没设，就用进程自己的模型。</span>` : html`<button type="button" class="link" onClick=${() => quiet(app.setGui({ titleModel: "" }))}>跟默认模型一样</button><span>已记住。</span>`}
-        </div>
-        <p class="dnote">人建的进程收到第一封信后，用这个模型调一次，把信概括成不超过 16 个字的标题。每个进程只调一次，失败就照旧显示第一行。</p>
-
-        <${SecHead} n="06" title="工具定义" en="TOOLS" />
+        <${SecHead} n="05" title="工具定义" en="TOOLS" />
         <div class="cl-days soft">
           <${Pill} label="打开工具定义" onClick=${(/** @type {Event} */ e) => app.openDialog("tools", /** @type {Element} */ (e.currentTarget))} />
           <span>~/.tau/tools 里已装的定义，和能一键装的工具库。</span>

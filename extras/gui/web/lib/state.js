@@ -36,12 +36,10 @@ export function normalizeState(raw) {
     mine: strings(r["mine"]),
     forkedFrom: rec(r["forkedFrom"], (x) => typeof x === "string"),
     titles: rec(r["titles"], (x) => typeof x === "string"),
-    titled: strings(r["titled"]),
     collapsed: rec(r["collapsed"], (x) => typeof x === "boolean"),
     recentModels: strings(r["recentModels"]),
     ...(typeof r["defaultModel"] === "string" && r["defaultModel"] !== "" ? { defaultModel: r["defaultModel"] } : {}),
     ...(typeof r["defaultThinking"] === "string" && LEVELS.includes(r["defaultThinking"]) ? { defaultThinking: r["defaultThinking"] } : {}),
-    ...(typeof r["titleModel"] === "string" && r["titleModel"] !== "" ? { titleModel: r["titleModel"] } : {}),
     ...(r["notify"] === true ? { notify: true } : {}),
     ...(r["theme"] === "night" || r["theme"] === "vscode" ? { theme: r["theme"] } : {}),
     cleanDays: typeof days === "number" && Number.isFinite(days) && days >= 1 ? Math.floor(days) : DEFAULT_CLEAN_DAYS,
@@ -118,7 +116,6 @@ export function prunePatch(g, stale) {
   const used = new Set(Object.entries(g.forkedFrom).flatMap(([k, v]) => (stale(k) ? [] : [v])));
   if (Object.keys(g.forkedFrom).some(stale)) patch["forkedFrom"] = filt(g.forkedFrom, (k) => stale(k));
   if (Object.keys(g.titles).some((k) => stale(k) && !used.has(k))) patch["titles"] = filt(g.titles, (k) => stale(k) && !used.has(k));
-  if (g.titled.some(stale)) patch["titled"] = g.titled.filter((x) => !stale(x));
   if (g.mine.some(stale)) patch["mine"] = g.mine.filter((x) => !stale(x));
   if (Object.values(g.current).some(stale)) patch["current"] = filt(g.current, (_k, v) => stale(v));
   return patch;
