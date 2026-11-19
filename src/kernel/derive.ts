@@ -1,6 +1,6 @@
 // 能从工作段算出来的值都在这里算，不存（见 .knowledge/kb-kernel.md）。
 import { CONTEXT_HEADING, contextSection, fixedPrompt, MEMORY_HEADING, memorySection, systemPrompt, toolDescriptions } from "./context.ts";
-import { CONTEXT_VIEW_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "./tools.ts";
+import { CONTEXT_VIEW_MAX_BYTES, MEMORY_BRIEF_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "./tools.ts";
 import { unreachable } from "./types.ts";
 import type { AssistantMessage, Ended, Instant, Message, PresetSnapshot, Process, ToolCall } from "./types.ts";
 
@@ -119,6 +119,20 @@ export function utf8Bytes(s: string): number {
     } else n += width(c);
   }
   return n;
+}
+
+/** 摘要：值的 UTF-8 字节数不超过上限时原样返回，否则取前 `MEMORY_BRIEF_MAX_BYTES` 字节，按码点累加，不切断字符和代理对。 */
+export function briefOf(value: string): string {
+  if (utf8Bytes(value) <= MEMORY_BRIEF_MAX_BYTES) return value;
+  let bytes = 0;
+  let out = "";
+  for (const ch of value) {
+    const w = utf8Bytes(ch);
+    if (bytes + w > MEMORY_BRIEF_MAX_BYTES) break;
+    bytes += w;
+    out += ch;
+  }
+  return out;
 }
 
 export function usageOf(m: AssistantMessage): number {

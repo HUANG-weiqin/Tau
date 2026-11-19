@@ -166,6 +166,8 @@ export type ModelRequest = Context;
 
 export interface Versioned {
   value: string;
+  brief: string;
+  updated: Instant;
   version: number;
 }
 
@@ -177,21 +179,21 @@ export interface Memory {
   /** 有键的全部 ns，按 UTF-8 字节序排。 */
   namespaces(): string[];
   get(ns: string, key: string): Versioned | null;
-  /** `expected: null` 表示这个键现在必须不存在。按键、值、版本、视图的顺序检查；`bytes` 是超出的那一项的字节数。 */
+  /** `expected: null` 表示这个键现在必须不存在。按键、值、摘要、版本、视图的顺序检查；`bytes` 是超出的那一项的字节数。`put.now` 记成这一行的更新时间。 */
   set(
     ns: string,
     key: string,
-    value: string,
+    put: { value: string; brief: string; now: Instant },
     expected: number | null,
-  ): { ok: true; version: number } | { ok: false; current: Versioned | null } | { ok: false; over: "key" | "value" | "view"; bytes: number };
+  ): { ok: true; version: number } | { ok: false; current: Versioned | null } | { ok: false; over: "key" | "value" | "brief" | "view"; bytes: number };
   delete(ns: string, key: string, expected: number): { ok: true } | { ok: false; current: Versioned | null };
 }
 
 /** `Memory` 的写入失败形状：版本冲突（带最新值），或超出上限。 */
 export type MemoryFailure = Extract<ReturnType<Memory["set"]>, { ok: false }>;
 
-/** 协议的一项记忆写入（见 .knowledge/kb-memory.md）。 */
-export type MemoryOp = { kind: "set"; ns: string; key: string; value: string; expected: number | null } | { kind: "delete"; ns: string; key: string; expected: number };
+/** 协议的一项记忆写入（见 .knowledge/kb-memory.md）。`set` 的 `brief` 可以没有，没有时用 `briefOf(value)`。 */
+export type MemoryOp = { kind: "set"; ns: string; key: string; value: string; brief?: string; expected: number | null } | { kind: "delete"; ns: string; key: string; expected: number };
 
 /** CLI 寄来的信：用户的信，一个文本块，跳数 0，不要回信。 */
 export function userLetter(text: string): Extract<Input, { kind: "letter" }> {

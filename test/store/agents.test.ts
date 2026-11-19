@@ -93,8 +93,8 @@ test("stop_process：往目标的信箱放一个 stop", (t) => {
 test("spawn：建一个 parent 是自己的新进程，第一封信带 replyTo，跳数加一；记忆视图是子进程的", (t) => {
   const db = tempDb(t);
   const memory = fakeMemory();
-  memory.set("kid", "who", "孩子的记忆", null);
-  memory.set("boss", "who", "父亲的记忆", null);
+  memory.set("kid", "who", { value: "孩子的记忆", brief: "孩子", now: 0 }, null);
+  memory.set("boss", "who", { value: "父亲的记忆", brief: "父亲", now: 0 }, null);
   const p = asking(db, memory, { hops: 2, n: 7 });
   const id = spawnId("a", 7, 0);
   assert.match(id, /^[0-9a-f]{8}$/);

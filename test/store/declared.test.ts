@@ -124,20 +124,31 @@ test("memory_set、memory_get、memory_delete：写这个预设的库；预设�
   const db = tempDb(t);
   const memory = fakeMemory();
   const n = waiting(db, memory);
-  const r1 = handleResult(db, memory, "boss", result(n, [call("memory_set", { key: "k", value: "v" }), call("memory_get", { key: "k" })]));
+  const r1 = handleResult(db, memory, "boss", result(n, [call("memory_set", { key: "k", value: "v", brief: "摘要" }), call("memory_get", { key: "k" })]));
   assert.equal(r1.isError, false);
   const got = memory.get("boss", "k")!;
   assert.equal(got.value, "v");
-  assert.match(r1.text, new RegExp(`\\[memory_set\\] 已写入 k，版本 ${got.version}。\\n\\n\\[memory_get\\] k（版本 ${got.version}）：\\nv$`));
+  assert.match(r1.text, new RegExp(`\\[memory_set\\] 已写入 k，版本 ${got.version}。\\n\\n\\[memory_get\\] k（版本 ${got.version}，更新 1970-01-01）：\\n摘要：摘要\\nv$`));
   // 提示词里不挂记忆视图：预设没有 memory。
   assert.equal(JSON.stringify(allMessages(db, "boss")).includes("k: v"), false);
+});
+
+test("声明的 memory_set 缺 brief：参数错误，库不变", (t) => {
+  const db = tempDb(t);
+  const memory = fakeMemory();
+  const n = waiting(db, memory);
+  const r = handleResult(db, memory, "boss", result(n, [call("memory_set", { key: "k", value: "v" })]));
+  assert.equal(r.isError, true);
+  assert.match(r.text, /^ok\n\n\[memory_set\] 参数错误：key、value 和 brief 必须是字符串。$/);
+  assert.equal(memory.get("boss", "k"), null);
+  assert.deepEqual(memory.calls.filter((c) => c === "set"), []);
 });
 
 test("memory_delete 带版本号；版本不对就失败，整条 isError", (t) => {
   const db = tempDb(t);
   const memory = fakeMemory();
   const n = waiting(db, memory);
-  const v = (memory.set("boss", "k", "v", null) as { version: number }).version;
+  const v = (memory.set("boss", "k", { value: "v", brief: "摘要", now: 0 }, null) as { version: number }).version;
   const r = handleResult(db, memory, "boss", result(n, [call("memory_delete", { key: "k", version: v + 1 })]));
   assert.equal(r.isError, true);
   assert.match(r.text, /^ok\n\n\[memory_delete\] 版本冲突，没有写入。/);
@@ -166,7 +177,7 @@ test("第一个失败后其余写“未执行”：失败的什么都不写，�
   const db = tempDb(t);
   const memory = fakeMemory();
   const n = waiting(db, memory);
-  const r = handleResult(db, memory, "boss", result(n, [call("memory_set", { key: "a", value: "1" }), call("post", { to: "zz", text: "x" }), call("memory_set", { key: "b", value: "2" }), call("nope")]));
+  const r = handleResult(db, memory, "boss", result(n, [call("memory_set", { key: "a", value: "1", brief: "甲" }), call("post", { to: "zz", text: "x" }), call("memory_set", { key: "b", value: "2", brief: "乙" }), call("nope")]));
   assert.equal(r.isError, true);
   assert.match(r.text, /^ok\n\n\[memory_set\] 已写入 a，版本 \d+。\n\n\[post\] 没有进程 zz。\n\n\[memory_set\] 未执行。\n\n\[nope\] 未执行。$/);
   assert.equal(memory.get("boss", "a")?.value, "1");
@@ -200,7 +211,7 @@ test("过时的结果不执行：先 stop，再来的同一编号的结果", (t)
   db.exec("DELETE FROM mailbox");
   const n = waiting(db, memory);
   send(db, "boss", { kind: "stop" });
-  putMail(db, "boss", result(n, [call("post", { to: "b", text: "x" }), call("memory_set", { key: "k", value: "v" })]));
+  putMail(db, "boss", result(n, [call("post", { to: "b", text: "x" }), call("memory_set", { key: "k", value: "v", brief: "摘要" })]));
   handleNext(db, memory, 5, readPreset); // stop：补一个“被停止”的工具结果，回到空闲
   assert.equal(loadProcess(db, "boss")!.phase.tag, "idle");
   const before = JSON.stringify(allMessages(db, "boss"));
@@ -215,7 +226,7 @@ test("编号对不上的结果不执行", (t) => {
   const db = tempDb(t);
   const memory = fakeMemory();
   const n = waiting(db, memory);
-  putMail(db, "boss", result(n + 7, [call("memory_set", { key: "k", value: "v" })]));
+  putMail(db, "boss", result(n + 7, [call("memory_set", { key: "k", value: "v", brief: "摘要" })]));
   handleNext(db, memory, 5, readPreset);
   assert.equal(memory.get("boss", "k"), null);
 });
@@ -257,7 +268,7 @@ test("声明的 post 的目标被 remove：先删，声明失败；先寄，目�
 test("执行器原样转交 calls：结果的输入带着它，内容里没有", async (t) => {
   const db = tempDb(t);
   const memory = fakeMemory();
-  const calls = [call("memory_set", { key: "k", value: "v" })];
+  const calls = [call("memory_set", { key: "k", value: "v", brief: "摘要" })];
   const actions: Actions = {
     callModel: async () => use(toolCall("c1", "decl")),
     runTool: async () => ({ content: textContent("好"), isError: false, calls }),
@@ -288,7 +299,7 @@ test("崩溃：结果提交之后、handleNext 之前杀掉；重启后声明恰
   db.exec("DELETE FROM mailbox");
   db.exec("DELETE FROM effects");
   db.prepare("UPDATE processes SET state_json = json_set(state_json, '$.phase', json('{\"tag\":\"idle\"}')) WHERE id = 'b'").run();
-  const calls = [call("post", { to: "b", text: "一次" }), call("memory_set", { key: "k", value: "v" })];
+  const calls = [call("post", { to: "b", text: "一次" }), call("memory_set", { key: "k", value: "v", brief: "摘要" })];
   const actions: Actions = { callModel: async () => use(toolCall("c1", "decl")), runTool: async () => ({ content: textContent("好"), isError: false, calls }) };
   let exec = createExecutor(db, actions);
   startProcess(db, memory, "boss", DECL, "开始", 0);

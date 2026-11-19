@@ -51,6 +51,7 @@ const BASH: ToolSpec = {
 /** 记忆的上限，按 UTF-8 字节算。由记忆的实现检查；视图按渲染后的文本算。 */
 export const MEMORY_KEY_MAX_BYTES = 128;
 export const MEMORY_VALUE_MAX_BYTES = 4096;
+export const MEMORY_BRIEF_MAX_BYTES = 200;
 export const MEMORY_VIEW_MAX_BYTES = 32 * 1024;
 /** 上下文文件视图的上界（D72），按 UTF-8 字节算，整个视图都计入：标题行、段间空行和各种说明。参与启动检查，改它要先重算（见 kb-contract）。 */
 export const CONTEXT_VIEW_MAX_BYTES = 24 * 1024;
@@ -58,7 +59,7 @@ export const CONTEXT_VIEW_MAX_BYTES = 24 * 1024;
 const MEMORY: ToolSpec[] = [
   {
     name: "memory_get",
-    description: "读取记忆库里一个键现在的值和版本号。系统提示词里的记忆是开段时的快照，要拿到最新值用这个工具。",
+    description: "读取记忆库里一个键现在的值、摘要、更新日期和版本号。系统提示词里的记忆索引是开段时的快照，每行只有摘要；要看值，或拿到最新版本号，用这个工具。",
     parameters: object({ key: str("键") }, ["key"]),
     inStore: true,
   },
@@ -66,8 +67,10 @@ const MEMORY: ToolSpec[] = [
     name: "memory_set",
     description:
       "写入一个键。version 是你读到的版本号；省略 version 表示这个键现在必须不存在。版本对不上时写入失败，结果里带最新值。" +
-      `键最多 ${MEMORY_KEY_MAX_BYTES} 字节，值最多 ${MEMORY_VALUE_MAX_BYTES} 字节，整个记忆视图最多 ${MEMORY_VIEW_MAX_BYTES} 字节（按 UTF-8 算）；超出时不写入。`,
-    parameters: object({ key: str("键"), value: str("值"), version: int("读到的版本号") }, ["key", "value"]),
+      `键最多 ${MEMORY_KEY_MAX_BYTES} 字节，值最多 ${MEMORY_VALUE_MAX_BYTES} 字节，摘要最多 ${MEMORY_BRIEF_MAX_BYTES} 字节，整个记忆视图最多 ${MEMORY_VIEW_MAX_BYTES} 字节（按 UTF-8 算）；超出时不写入。` +
+      "摘要显示在每次开段的记忆索引里，值改了就一起改摘要。" +
+      "临时的内容（只对眼下这件事有用），键用 tmp. 开头，用完自己 memory_delete，索引里的更新日期能看出哪些过期了；长期的知识不用这个前缀。",
+    parameters: object({ key: str("键"), value: str("值"), brief: str("摘要，一句话说清这个值是什么、什么时候该读它"), version: int("读到的版本号") }, ["key", "value", "brief"]),
     inStore: true,
   },
   {

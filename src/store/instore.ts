@@ -4,8 +4,9 @@ import { createHash } from "node:crypto";
 import { start } from "../kernel/decide.ts";
 import { endedText, HOPS_MAX, startError } from "../kernel/derive.ts";
 import { observe } from "../kernel/observe.ts";
-import { MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
+import { MEMORY_BRIEF_MAX_BYTES, MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
 import { textContent, unreachable } from "../kernel/types.ts";
+import { utcDate } from "../memory/kv.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { PhaseView, Projection } from "../kernel/observe.ts";
 import type { DeclaredCall, Env, Input, Instant, Memory, Message, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Versioned } from "../kernel/types.ts";
@@ -41,7 +42,7 @@ export function spawnId(parent: ProcessId, n: number, attempt: number): ProcessI
 export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment: readonly Message[], call: ToolCall, now: Instant, readPreset: ReadPreset = noPresets): ToolResultContent {
   // 参数来自模型：pi-ai 把流式 JSON 'null' 解析成 null，所以不能直接解构。
   const args: Record<string, unknown> = typeof call.arguments === "object" && call.arguments !== null ? call.arguments : {};
-  const { key, value, version } = args;
+  const { key, value, brief, version } = args;
   const ns = p.preset.id;
   switch (call.name) {
     case "self":
@@ -97,9 +98,9 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
       return ok(cur ? show(key, cur) : `键 ${key} 不存在。`);
     }
     case "memory_set": {
-      if (typeof key !== "string" || typeof value !== "string") return bad("key 和 value 必须是字符串。");
+      if (typeof key !== "string" || typeof value !== "string" || typeof brief !== "string") return bad("key、value 和 brief 必须是字符串。");
       if (version != null && !isInt(version)) return bad("version 必须是整数，或者省略。");
-      const r = memory.set(ns, key, value, isInt(version) ? version : null);
+      const r = memory.set(ns, key, { value, brief, now }, isInt(version) ? version : null);
       if (r.ok) return ok(`已写入 ${key}，版本 ${r.version}。`);
       if ("over" in r) return { content: textContent("超出上限，没有写入：" + overText(r.over, r.bytes)), isError: true };
       return conflict(key, r.current);
@@ -183,17 +184,19 @@ function bad(text: string): ToolResultContent {
 }
 
 function show(key: string, v: Versioned): string {
-  return `${key}（版本 ${v.version}）：\n${v.value}`;
+  return `${key}（版本 ${v.version}，更新 ${utcDate(v.updated)}）：\n摘要：${v.brief}\n${v.value}`;
 }
 
-function overText(over: "key" | "value" | "view", bytes: number): string {
+function overText(over: "key" | "value" | "brief" | "view", bytes: number): string {
   switch (over) {
     case "key":
       return `键有 ${bytes} 字节，上限 ${MEMORY_KEY_MAX_BYTES} 字节。`;
     case "value":
       return `值有 ${bytes} 字节，上限 ${MEMORY_VALUE_MAX_BYTES} 字节。`;
+    case "brief":
+      return `摘要有 ${bytes} 字节，上限 ${MEMORY_BRIEF_MAX_BYTES} 字节。`;
     case "view":
-      return `写入后记忆视图有 ${bytes} 字节，上限 ${MEMORY_VIEW_MAX_BYTES} 字节。先删掉或缩短不需要的键。`;
+      return `写入后记忆视图有 ${bytes} 字节，上限 ${MEMORY_VIEW_MAX_BYTES} 字节。先删掉不需要的键，或缩短键和摘要。`;
     default:
       return unreachable(over);
   }
