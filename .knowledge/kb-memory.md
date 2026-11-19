@@ -125,7 +125,7 @@ interface Memory {
 ```
 
 - 每行一个键：`` `${JSON.stringify(key)} | ${utcDate(updated)} | ${bytes} B | ${JSON.stringify(brief)}` ``。
-- `utcDate` 是 UTC 的 `YYYY-MM-DD`：`new Date(updated).toISOString().slice(0, 10)`。工具结果里也用它，在 `src/kernel/derive.ts`。
+- `utcDate` 是 UTC 的 `YYYY-MM-DD`：`new Date(updated).toISOString().slice(0, 10)`。工具结果里也用它，在 `src/memory/kv.ts`：纯函数层不许建 `Date`，而内核里没有地方用它。
 - `bytes` 是值的 UTF-8 字节数。从值算出来，不存：`kv.ts` 用 `length(CAST(value AS BLOB))` 读，不读值本体。
 - 行之间用 `"\n"` 连接，末尾没有换行。
 - 按键的 UTF-8 字节序排列：SQLite 的 `BINARY` 排序（`ORDER BY memory.key`）。
@@ -238,10 +238,10 @@ interface Memory {
 
 | 文件 | 内容 |
 |---|---|
-| `src/memory/kv.ts` | `sqliteMemory`：`render`、按 `BLOB` 读、`set` 的检查 |
+| `src/memory/kv.ts` | `sqliteMemory`：`render`、按 `BLOB` 读、`set` 的检查；`utcDate` |
 | `src/kernel/types.ts` | `Memory`、`Versioned`，契约的注释 |
 | `src/kernel/tools.ts` | 四个上限常量；`memory_set` 的描述引用它们 |
-| `src/kernel/derive.ts` | `utf8Bytes`、`briefOf`、`utcDate` |
+| `src/kernel/derive.ts` | `utf8Bytes`、`briefOf` |
 | `src/store/instore.ts` | 记忆工具：把 `Memory` 的结果翻译成文字（[kb-store](kb-store.md#记忆工具)） |
 | `src/store/inputs.ts` | `writeMemory`：整批一个事务（[kb-store](kb-store.md#存储事务)） |
 | `test/memory/kv.test.ts` | 真库上的实现，见下 |
