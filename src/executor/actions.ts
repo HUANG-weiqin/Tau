@@ -1,3 +1,4 @@
+import { StringDecoder } from "node:string_decoder";
 // 真正的动作：调用模型、运行库外工具（见 .knowledge/kb-executor.md、.knowledge/kb-tools.md）。
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import type { Models, SimpleStreamOptions } from "@earendil-works/pi-ai";
@@ -7,15 +8,28 @@ import { textContent } from "../kernel/types.ts";
 import type { ProcessId } from "../kernel/types.ts";
 import { resolveImages } from "../store/blobs.ts";
 import { bash } from "../tools/bash.ts";
+import type { BashContext } from "../tools/bash.ts";
 import { edit, read, write } from "../tools/files.ts";
 import { runToolDef } from "../tools/tooldef.ts";
-import type { Actions } from "./executor.ts";
+import type { Actions, Job } from "./executor.ts";
 
 /** 模型请求在拿到成功的响应之前的重试次数，交给 pi-ai（设计稿 5.7）。 */
 export const MODEL_RETRIES = 5;
 
 /** `onText` 收到模型的流式文本和产生它的副作用编号；思考和工具调用参数的流带 `kind`，正文不带；它只是预览，不进库。`pipe` 是服务实际监听的管道名，bash 工具把它交给命令（TAU_PIPE）。`readBlob` 读 blobs 表：调用模型之前，请求里的 `blob:<hash>` 换成真数据。 */
-export function createActions(models: Models, onText: (id: ProcessId, n: number, delta: string, kind?: "thinking" | "toolCall") => void, pipe: string, readBlob: (hash: string) => Buffer | undefined): Actions {
+export function createActions(models: Models, onText: (id: ProcessId, n: number, delta: string, kind?: "thinking" | "toolCall") => void, pipe: string, readBlob: (hash: string) => Buffer | undefined, onOutput: (id: ProcessId, n: number, delta: string) => void = () => {}): Actions {
+  /** 命令边跑边写出来的输出（D88）：`StringDecoder` 让跨块的半个汉字不会变成替换符。 */
+  const live = (job: Job): BashContext => {
+    const decoder = new StringDecoder("utf8");
+    return {
+      process: job.process.id,
+      pipe,
+      onData: (chunk) => {
+        const delta = decoder.write(chunk);
+        if (delta !== "") onOutput(job.process.id, job.effect.n, delta);
+      },
+    };
+  };
   return {
     async callModel(job, signal) {
       const name = job.process.preset.model;
@@ -58,11 +72,11 @@ export function createActions(models: Models, onText: (id: ProcessId, n: number,
         case "edit":
           return edit(args, workdir);
         case "bash":
-          return bash(args, workdir, signal, { process: job.process.id, pipe });
+          return bash(args, workdir, signal, live(job));
         default: {
           const def = job.process.preset.toolDefs.find((d) => d.name === call.name);
           if (!def) return { content: textContent(`工具 ${call.name} 不由执行器运行。`), isError: true };
-          return runToolDef(def, args, workdir, signal, { process: job.process.id, pipe }, accepts);
+          return runToolDef(def, args, workdir, signal, live(job), accepts);
         }
       }
     },

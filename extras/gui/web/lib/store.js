@@ -59,7 +59,8 @@ export function reduce(store, reply, clientNow) {
     }
     case "update": {
       const procs = { ...store.procs, [reply.self.id]: record(reply.self, clientNow) };
-      const text = store.text[reply.self.id] && reply.self.phase.tag !== "awaitingModel" ? omit(store.text, reply.self.id) : store.text;
+      // 等模型时留正文和思考，等工具时留命令的实时输出；回到空闲才清。
+      const text = store.text[reply.self.id] && reply.self.phase.tag === "idle" ? omit(store.text, reply.self.id) : store.text;
       return { procs, text };
     }
     case "removed": {
@@ -91,7 +92,7 @@ export function streamingText(store, id) {
 }
 
 /**
- * 正在流式输出的全部三种内容：正文、思考、工具调用参数。进程不在等模型时是 null。
+ * 正在流式输出的全部内容：正文、思考、工具调用参数、命令的实时输出（D88）。进程不在等模型时是 null。
  * @param {Store} store
  * @param {string} id
  * @returns {Live | null}
@@ -130,4 +131,16 @@ export function childCounts(store) {
     if (self.parent !== undefined) out[self.parent] = (out[self.parent] ?? 0) + 1;
   }
   return out;
+}
+
+/**
+ * 命令边跑边写的输出（D88）。进程不在等工具时是空串。
+ * @param {Store} store
+ * @param {string} id
+ * @returns {string}
+ */
+export function streamingOutput(store, id) {
+  const p = store.procs[id];
+  if (!p || p.self.phase.tag !== "awaitingTool") return "";
+  return store.text[id]?.output ?? "";
 }

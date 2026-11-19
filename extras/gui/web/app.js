@@ -3,7 +3,7 @@ import { render } from "preact";
 import { html, Pill, useEffect, useState, TipLayer, MenuLayer } from "./ui/common.js";
 import * as api from "./api.js";
 import { createConn, createHistoryReader, createPeeker } from "./conn.js";
-import { emptyStore, reduce, streamingText, streamingLive, childCounts } from "./lib/store.js";
+import { emptyStore, reduce, streamingText, streamingLive, streamingOutput, childCounts } from "./lib/store.js";
 import { emptyHistory, segmentMessages, lastTimestamp, applyPushed } from "./lib/history.js";
 import { buildEntries, buildProjects, railSections, projectView, currentOf, attention, seenFromInspect } from "./lib/derive.js";
 import { describeNow, phaseStartedAt, HANDOFF_LETTER } from "./lib/messages.js";
@@ -85,6 +85,7 @@ import { ServiceBanner, StartServiceButton } from "./ui/banner.js";
  * @property {(id: string) => readonly Message[]} messages 这个进程当前段的消息。被 `follow` 的是整段；其它的只有末尾几条。
  * @property {(id: string) => string} streamText 模型正在写的文字（只在等模型时有）。
  * @property {(id: string) => import("./lib/stream.js").Live | null} streamLive 这一次调用流式推来的正文、思考、工具调用参数（只在等模型时有）。
+ * @property {(id: string) => string} streamOutput 命令边跑边写的输出（只在等工具时有，D88）。
  * @property {(id: string) => { title: string, note?: string, known: boolean }} titleOf 进程的标题。
  * @property {(e: Entry) => { label: string, tool: string, since: number | null, dur: string, doing: string, endedText: string }} describe 进程此刻在做什么：阶段名（空闲时是上一轮的结束原因）、等工具时的工具名、阶段开始的时刻、已经多久、最后一步的摘要。
  * @property {(id: string) => Entry | null} entryOf
@@ -549,6 +550,7 @@ function compute() {
     messages: messagesOf,
     streamText: (id) => streamingText(S.store, id),
     streamLive: (id) => streamingLive(S.store, id),
+    streamOutput: (id) => streamingOutput(S.store, id),
     titleOf,
     describe: (e) => {
       const msgs = messagesOf(e.id);

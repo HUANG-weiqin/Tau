@@ -71,6 +71,10 @@ export async function serve(opts: ServeOptions): Promise<Service> {
       },
       opts.pipe,
       (hash) => readBlob(db, hash),
+      (id, n, delta) => {
+        // 命令边跑边写的输出（D88）：和带 kind 的模型预览一样，只推给带 messages 的订阅，不进库。
+        push(id, { type: "text", process: id, n, delta, kind: "output" }, true);
+      },
     ),
   );
 

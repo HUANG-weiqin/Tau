@@ -85,7 +85,7 @@ export function HandoffRow({ app, item, segment }) {
 const Scan = () => html`<span class="scan" aria-hidden="true"></span>`;
 
 /** 一次工具调用：暗色条。`since` 是发出这批调用的助手消息的时间戳。 */
-function CallStrip({ call, running, app, since }) {
+function CallStrip({ call, running, app, since, out = "" }) {
   const [open, setOpen] = useState(false);
   const r = call.result;
   const can = !!r && (r.text.trim() !== "" || r.images.length > 0);
@@ -107,6 +107,7 @@ function CallStrip({ call, running, app, since }) {
       ${r.images.length > 0 && html`<div class="thumbs" style="padding:8px 14px 0 14px">${r.images.map((im) => html`<${Thumb} hash=${im.hash} fetchBlob=${app.blob} />`)}</div>`}
       <pre>${r.text.length > 20000 ? r.text.slice(0, 20000) + `\n…（还有 ${formatBytes(r.text.length - 20000)}）` : r.text}</pre>
     </div>`}
+    ${live && out !== "" && html`<div class="cout live"><pre class="cls-out">${tailLines(out, 24).text}${tailLines(out, 24).hidden > 0 ? `\n…（上面还有 ${tailLines(out, 24).hidden} 行）` : ""}</pre><p class="cls-note">命令还在跑，这是它现在的输出，只是预览（跑完以工具结果为准）。</p></div>`}
     ${live && html`<${Scan} />`}
   </li>`;
 }
@@ -125,7 +126,7 @@ const Working = ({ text, secs }) => html`<span class="wk-l">MODEL</span>
  * 吐字期间是纯文字；追平以后（或本来就没有记录）换成 Markdown 渲染的结果。
  * @param {{ app: any, item: any, running: boolean, slot?: string }} p
  */
-export function AssistantRow({ app, item, running, slot = "" }) {
+export function AssistantRow({ app, item, running, slot = "", out = "" }) {
   const hasText = item.text.trim() !== "";
   const [claimed] = useState(() => (slot !== "" ? claim(slot, item.text) : null));
   const [ghost] = useState(() => claimed !== null && claimed.bar);
@@ -138,7 +139,7 @@ export function AssistantRow({ app, item, running, slot = "" }) {
   }, []);
   const hasBody = hasText || item.calls.length > 0 || item.thinking.trim() !== "" || item.errorMessage;
   if (!hasBody) return null;
-  const calls = item.calls.length > 0 && html`<ul class="calls">${item.calls.map((c, i) => html`<${CallStrip} key=${c.id + ":" + i} call=${c} running=${running} app=${app} since=${item.ts} />`)}</ul>`;
+  const calls = item.calls.length > 0 && html`<ul class="calls">${item.calls.map((c, i) => html`<${CallStrip} key=${c.id + ":" + i} call=${c} running=${running} app=${app} since=${item.ts} out=${out} />`)}</ul>`;
   return html`<${Ts} ts=${item.ts} app=${app} pad=${4} />
     <div class="abox">
       ${item.thinking.trim() !== "" && html`<details class="think"><summary>思考 · ${Array.from(item.thinking).length} 字</summary><p>${item.thinking}</p></details>`}

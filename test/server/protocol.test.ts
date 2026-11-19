@@ -1558,6 +1558,43 @@ test("watch messages：fork 只推新进程的 update，不推复制来的消息
   w.socket.destroy();
 });
 
+test("命令边跑边写的输出（D88）：kind 是 output，只推给带 messages 的订阅，不进库；跑完的结果照旧只在工具结果里", async (t) => {
+  const e = await setup(t);
+  // 预设带 bash：每行之间停一下，输出一定是分块来的。
+  writeFileSync(join(e.presetsDir, "sh.md"), `---
+workdir: ${e.work}
+model: ${e.faux.getModel().provider}/m
+tools: read, bash
+---
+你是测试助手。
+`);
+  const r = await collect(e.pipe, { op: "start", preset: "sh", text: "你好" });
+  const id = r.find((x) => x.type === "receipt")?.process;
+  assert.equal(typeof id, "string");
+  const plain = open(e.pipe, { op: "watch", process: id });
+  const sub = open(e.pipe, { op: "watch", process: id, messages: true });
+  await until(() => plain.replies.length === 1 && sub.replies.length === 1, "快照");
+  e.faux.appendResponses([
+    fauxAssistantMessage([fauxToolCall("bash", { command: "echo 第一行; sleep 0.4; echo 第二行" })], { stopReason: "toolUse" }),
+    fauxAssistantMessage(fauxText("好了。")),
+  ]);
+  await collect(e.pipe, { op: "send", process: id!, text: "跑一下" });
+  await until(() => sub.replies.some((x: any) => x.type === "message" && x.message.role === "toolResult"), "工具结果进段");
+  const out = sub.replies.filter((x: any) => x.type === "text" && x.kind === "output");
+  assert.ok(out.length >= 2, `分批推来的：${JSON.stringify(out.map((x: any) => String(x.delta)))}`);
+  assert.equal(out.map((x: any) => String(x.delta)).join(""), "第一行\n第二行\n");
+  assert.ok(out.every((x: any) => typeof x.n === "number"));
+  // 结果里的输出和推来的内容一致；旧订阅收不到带 kind 的流。
+  const result = sub.replies.find((x) => x.type === "message" && x.message.role === "toolResult");
+  assert.match(JSON.stringify(result?.type === "message" ? result.message.content : ""), /第一行\\n第二行/);
+  assert.equal(plain.replies.filter((x: any) => x.type === "text" && x.kind !== undefined).length, 0, "不带 messages 的订阅收不到");
+  // 预览不进库：段里就是两条信、一次调用、一份结果、一条正文。
+  const hist = await collect(e.pipe, { op: "history", process: id!, segment: 1, from: 0 });
+  assert.equal(hist.filter((x) => x.type === "message").length, 5);
+  plain.socket.destroy();
+  sub.socket.destroy();
+});
+
 test("text 的 kind：思考和工具调用的流只推给带 messages 的订阅；start、send 的连接和普通订阅只收正文，不带 kind", async (t) => {
   const e = await setup(t);
   const a = await startIdle(e);

@@ -1,21 +1,24 @@
 // @ts-check
-// 流式预览：一次模型调用边写边推来的三种片段，按 `kind` 分开存。纯函数，不碰 DOM，不读时钟。
+// 流式预览：一次模型调用、一次命令运行边跑边推来的片段，按 `kind` 分开存。纯函数，不碰 DOM，不读时钟。
 // 正文（没有 `kind`）是最终回答的文字，走吐字；`thinking` 是思考，直接追加；`toolCall` 是工具调用参数的 JSON 片段，
-// 同一次调用里多个工具的参数接在一起，片段里没有工具名。不认识的 `kind` 丢掉，不当成正文。
+// 同一次调用里多个工具的参数接在一起，片段里没有工具名；`output` 是命令边跑边写的输出（D88），只留最后一段。
+// 不认识的 `kind` 丢掉，不当成正文。
 
 /** 思考最多存这么多字，超出丢开头。 */
 export const THINK_KEEP = 100000;
 /** 参数只存最后这么多字；总字数另记。 */
 export const ARGS_KEEP = 2000;
+/** 命令输出只留最后这么多字。 */
+export const OUTPUT_KEEP = 20000;
 
-/** @typedef {{ n: number, text: string, thinking: string, args: string, argsLen: number }} Live */
+/** @typedef {{ n: number, text: string, thinking: string, args: string, argsLen: number, output: string }} Live */
 
 /**
  * @param {number} n
  * @returns {Live}
  */
 export function emptyLive(n) {
-  return { n, text: "", thinking: "", args: "", argsLen: 0 };
+  return { n, text: "", thinking: "", args: "", argsLen: 0, output: "" };
 }
 
 /**
@@ -26,9 +29,13 @@ export function emptyLive(n) {
  */
 export function appendDelta(cur, r) {
   if (cur && r.n < cur.n) return cur;
-  if (r.kind !== undefined && r.kind !== "thinking" && r.kind !== "toolCall") return cur;
+  if (r.kind !== undefined && r.kind !== "thinking" && r.kind !== "toolCall" && r.kind !== "output") return cur;
   const base = cur && cur.n === r.n ? cur : emptyLive(r.n);
   if (r.kind === undefined) return { ...base, text: base.text + r.delta };
+  if (r.kind === "output") {
+    const o = base.output + r.delta;
+    return { ...base, output: o.length > OUTPUT_KEEP ? o.slice(o.length - OUTPUT_KEEP) : o };
+  }
   if (r.kind === "thinking") {
     const t = base.thinking + r.delta;
     return { ...base, thinking: t.length > THINK_KEEP ? t.slice(t.length - THINK_KEEP) : t };

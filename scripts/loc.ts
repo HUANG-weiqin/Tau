@@ -2,7 +2,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const BUDGET = 3610;
+const BUDGET = 3640;
 const root = join(import.meta.dirname, "..", "src");
 
 let total = 0;

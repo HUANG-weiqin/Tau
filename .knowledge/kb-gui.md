@@ -268,6 +268,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
   - `applyPushed` 只收正好接在缓存末尾后面的一条：已有的丢掉，跳号的丢掉，没读过的段丢掉；换段时先 `noteSelf`，新段从 0 起。
   - `history` 只补缺：缓存比 `self.messages` 少就读。收到 `update` 以后先等 `PUSH_GRACE`（250ms）再决定读不读，推来的消息接得上就一次都不读（`createHistoryReader` 和 `createPeeker` 的 `grace`）。`ps`（首次和重连）、`follow` 切进程不等。
   - 读 `history` 的同时推送也在往同一份缓存里追加：读的每一行都从缓存里取最新的再并，不用手里的旧副本盖掉。
+- 命令边跑边写的输出（D88）也在 `Live` 里（`output`，只留最后 20000 字），等工具时接在正在跑的那条调用下面，跑完以工具结果为准；等工具时不清 `Live`，回到空闲才清。
 - 流式文本按进程存成 `Live`：`n`、正文、思考、工具调用参数（`lib/stream.js` 的 `appendDelta` 按 `kind` 分开；不认识的 `kind` 丢掉，不当正文）。`n` 变了三样一起清掉重来，进程离开 `awaitingModel` 也清。参数只存最后 2000 字，总字数另记。
 - 思考和参数（`ui/messages.js`）：`LiveRow` 在正文上面画思考块 `ThinkLive`，下面画参数块 `ArgsLive`。思考不走 `Typer`，直接追加。一步写完、消息还没读到时，`HeldRow` 用模块里留的思考画收起的样子，10 秒后清掉。正文的吐字衔接不变。
 - 吐字（设计稿第 5.1 节）：

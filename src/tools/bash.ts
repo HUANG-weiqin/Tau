@@ -85,6 +85,8 @@ async function killAll(exe: string, pid: number | undefined, pgidFile: string): 
 export interface BashContext {
   process: string;
   pipe: string;
+  /** 边跑边把输出推出去，只是预览、不进库（D88）。 */
+  onData?: (chunk: Buffer) => void;
 }
 
 // MSYS_NO_PATHCONV 是 tau 脚本为 exec node 设的，会留在服务的环境里（kb-service 坑点）。命令要照常转换路径，所以去掉。
@@ -159,8 +161,12 @@ export async function runCommand(spec: CommandSpec, workdir: string, signal: Abo
     child.stdout.on("data", (chunk: Buffer) => {
       out.push(chunk);
       if (spec.split) stdoutOnly.push(chunk);
+      ctx.onData?.(chunk);
     });
-    child.stderr.on("data", out.push);
+    child.stderr.on("data", (chunk: Buffer) => {
+      out.push(chunk);
+      ctx.onData?.(chunk);
+    });
     child.on("error", (e) => finish(fail(`无法启动 bash（工作目录 ${workdir}）：${e.message}`)));
     child.on("exit", (c) => {
       code = c;

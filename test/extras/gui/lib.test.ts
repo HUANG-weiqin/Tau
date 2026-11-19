@@ -7,9 +7,9 @@ import { canHandoff, CARRY_HEADER, describeNow, describeStart, foldMiddle, forkP
 import { cleanPlan, stopOrder } from "../../../extras/gui/web/lib/order.js";
 import { removePlan, skippedFor } from "../../../extras/gui/web/lib/remove.js";
 import { addFork, movePinned, normalizeState, pathKey, pinFolder, prunePatch, setCurrent } from "../../../extras/gui/web/lib/state.js";
-import { allProcs, childCounts, emptyStore, reduce, streamingLive, streamingText } from "../../../extras/gui/web/lib/store.js";
+import { allProcs, childCounts, emptyStore, reduce, streamingLive, streamingOutput, streamingText } from "../../../extras/gui/web/lib/store.js";
 import { extractTitle, processTitle } from "../../../extras/gui/web/lib/titles.js";
-import { appendDelta, argsPreview, ARGS_KEEP, tailLines } from "../../../extras/gui/web/lib/stream.js";
+import { appendDelta, argsPreview, ARGS_KEEP, OUTPUT_KEEP, tailLines } from "../../../extras/gui/web/lib/stream.js";
 import { newPace, paceArrive, paceStep } from "../../../extras/gui/web/lib/pace.js";
 import { buildCreate, buildUpdate, contextText, CONTEXT_MAX, convertGate, convertPatch, defaultModelRef, filterCatalog, findModel, formatWindow, hasAgents, keyActions, keyHint, keyLabel, modelPatch, nearestLevel, parseContext, parseOptions, pushRecent, recentEntries, sortProviders, splitModel, suggestId, moreSummary, withAgents } from "../../../extras/gui/web/lib/models.js";
 import { markdownToHtml, safeHref } from "../../../extras/gui/web/lib/markdown.js";
@@ -92,8 +92,11 @@ test("store: 流式文本按 n 重来，过时的丢掉，离开等模型就清�
   assert.equal(streamingText(s, "a"), "新");
   s = reduce(s, { type: "text", process: "a", n: 3, delta: "旧" }, NOW);
   assert.equal(streamingText(s, "a"), "新");
+  // 等工具时正文不显示，但流式数据留着（命令的实时输出也在这份里，D88）；回到空闲才清。
   s = reduce(s, { type: "update", self: self("a", { phase: { tag: "awaitingTool", steps: 1, queued: 0 } }) }, NOW);
   assert.equal(streamingText(s, "a"), "");
+  assert.notEqual(s.text["a"], undefined);
+  s = reduce(s, { type: "update", self: self("a", { phase: { tag: "idle", ended: "done" } }) }, NOW);
   assert.equal(s.text["a"], undefined);
   // 不在等模型时到的文字也不显示。
   s = reduce(s, { type: "text", process: "a", n: 6, delta: "x" }, NOW);
@@ -1321,19 +1324,39 @@ test("stream: 按 kind 分开存，正文照旧，编号的规则不变", () => 
   s = reduce(s, { type: "text", process: "a", n: 4, delta: "，先看看", kind: "thinking" }, NOW);
   s = reduce(s, { type: "text", process: "a", n: 4, delta: "你好" }, NOW);
   s = reduce(s, { type: "text", process: "a", n: 4, delta: '{"command":', kind: "toolCall" }, NOW);
-  assert.deepEqual(streamingLive(s, "a"), { n: 4, text: "你好", thinking: "嗯，先看看", args: '{"command":', argsLen: 11 });
+  assert.deepEqual(streamingLive(s, "a"), { n: 4, text: "你好", thinking: "嗯，先看看", args: '{"command":', argsLen: 11, output: "" });
   assert.equal(streamingText(s, "a"), "你好");
   // 新编号：三样一起从头来；旧编号的思考丢掉。
   s = reduce(s, { type: "text", process: "a", n: 5, delta: "新", kind: "thinking" }, NOW);
-  assert.deepEqual(streamingLive(s, "a"), { n: 5, text: "", thinking: "新", args: "", argsLen: 0 });
+  assert.deepEqual(streamingLive(s, "a"), { n: 5, text: "", thinking: "新", args: "", argsLen: 0, output: "" });
   assert.equal(reduce(s, { type: "text", process: "a", n: 4, delta: "旧", kind: "thinking" }, NOW), s);
   // 不认识的 kind 不当成正文。
   assert.equal(appendDelta(undefined, { n: 1, delta: "x", kind: "other" }), undefined);
   assert.equal(appendDelta(streamingLive(s, "a")!, { n: 5, delta: "x", kind: "other" })!.text, "");
-  // 离开等模型：全清。
+  // 离开等模型：不显示；等工具时数据留着（命令的实时输出也在这份里，D88），回到空闲才清。
   s = reduce(s, { type: "update", self: self("a", { phase: { tag: "awaitingTool", steps: 1, queued: 0 } as Self["phase"] }) }, NOW);
   assert.equal(streamingLive(s, "a"), null);
+  assert.notEqual(s.text["a"], undefined);
+  s = reduce(s, { type: "update", self: self("a", { phase: { tag: "idle", ended: "done" } as Self["phase"] }) }, NOW);
   assert.equal(s.text["a"], undefined);
+});
+
+test("stream: 命令边跑边写的输出（D88）单独存，只留最后一段；等工具时能读出来，回到空闲才清", () => {
+  const tool = { tag: "awaitingTool", steps: 1, queued: 0 } as Self["phase"];
+  let s = reduce(emptyStore(), { type: "ps", processes: [proj(self("a", { phase: tool }))] }, NOW);
+  s = reduce(s, { type: "text", process: "a", n: 7, delta: "第一行\n", kind: "output" }, NOW);
+  s = reduce(s, { type: "text", process: "a", n: 7, delta: "第二行\n", kind: "output" }, NOW);
+  assert.equal(streamingOutput(s, "a"), "第一行\n第二行\n");
+  assert.equal(streamingText(s, "a"), "", "命令输出不算正文");
+  // 只留最后 OUTPUT_KEEP 字。
+  const long = appendDelta(undefined, { n: 1, delta: "x".repeat(OUTPUT_KEEP), kind: "output" })!;
+  assert.equal(appendDelta(long, { n: 1, delta: "yy", kind: "output" })!.output.length, OUTPUT_KEEP);
+  // 下一个副作用编号：从头来。
+  s = reduce(s, { type: "text", process: "a", n: 8, delta: "新的", kind: "output" }, NOW);
+  assert.equal(streamingOutput(s, "a"), "新的");
+  // 回到空闲：清掉。
+  s = reduce(s, { type: "update", self: self("a", { phase: { tag: "idle", ended: "done" } }) }, NOW);
+  assert.equal(streamingOutput(s, "a"), "");
 });
 
 test("stream: 参数只存尾巴，总字数另记；预览压成一行", () => {

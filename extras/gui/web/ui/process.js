@@ -240,7 +240,7 @@ function renderItems(app, e, items, seg, running, onFork) {
   for (const it of items) {
     if (it.kind === "user") out.push(html`<${UserRow} key=${`u${e.id}:${seg}:${it.seq}`} app=${app} item=${it} onFork=${onFork} />`);
     else if (it.kind === "handoff") out.push(html`<${HandoffRow} key=${`h${e.id}:${seg}:${it.seq}`} app=${app} item=${it} segment=${seg} />`);
-    else if (it.kind === "assistant") out.push(html`<${AssistantRow} key=${`a${e.id}:${seg}:${it.seq}`} app=${app} item=${it} running=${running && e.self.phase.tag === "awaitingTool"} slot=${slotKey(e.id, seg, it.seq)} />`);
+    else if (it.kind === "assistant") out.push(html`<${AssistantRow} key=${`a${e.id}:${seg}:${it.seq}`} app=${app} item=${it} running=${running && e.self.phase.tag === "awaitingTool"} slot=${slotKey(e.id, seg, it.seq)} out=${app.streamOutput(e.id)} />`);
     else if (it.kind === "orphanResult") out.push(html`<${OrphanRow} key=${`o${e.id}:${seg}:${it.seq}`} app=${app} item=${it} />`);
   }
   return out;

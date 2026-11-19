@@ -374,7 +374,7 @@ type Reply =
 
 - 执行器把模型的 `text_delta` 交给服务（[kb-executor.md](kb-executor.md#调用模型actionsts)）。服务转发给这个进程此刻的全部观察者和订阅（订阅它或订阅全部的 `watch`），一段一行 `text`，带进程 ID 和副作用编号 `n`。客户端用编号丢掉过时的文本。
 - 不进库，不进投影。`ps`、`stop`、`history` 的连接收不到。
-- `kind`（D64 第 5 组）：思考（`thinking_delta`）和工具调用参数的 JSON 片段（`toolcall_delta`）也转发，`text` 带 `kind: "thinking"` 或 `"toolCall"`；正文不带 `kind`。带 `kind` 的只推给带 `messages: true` 的订阅，不推给观察者和普通订阅：`start`、`send` 的连接和旧客户端的 `watch` 只收正文，CLI 的输出和 GUI 不变。
+- `kind`（D64 第 5 组）：思考（`thinking_delta`）和工具调用参数的 JSON 片段（`toolcall_delta`）也转发，`text` 带 `kind: "thinking"` 或 `"toolCall"`；正文不带 `kind`。带 `kind` 的只推给带 `messages: true` 的订阅，不推给观察者和普通订阅：`start`、`send` 的连接和旧客户端的 `watch` 只收正文，CLI 的输出和 GUI 不变。 第三种 `kind` 是 `output`（D88）：命令边跑边写的输出，`bash` 和工具定义都有，`n` 是这次副作用编号。
 - 观察者从登记那一刻起收，直到最终回复；订阅从订阅那一刻起收，直到断开。中途加入的连接从半句开始收。
 - 转发不看用途：交接调用写的交接说明，以及之后被丢弃的回复（`length`、`error`）的文字，都会发出去。
 

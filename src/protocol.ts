@@ -58,8 +58,8 @@ export type Request =
 export type Reply =
   /** 命令写进库的事务提交之后才发。 */
   | { type: "receipt"; process: string }
-  /** 流式文本，只是预览。n 是产生它的副作用编号，客户端用它丢掉过时的文本。`kind` 没有就是正文；带 kind 的（思考、工具调用的参数）只推给 watch 的订阅。 */
-  | { type: "text"; process: string; n: number; delta: string; kind?: "thinking" | "toolCall" }
+  /** 流式文本，只是预览。n 是产生它的副作用编号，客户端用它丢掉过时的文本。`kind` 没有就是正文；带 kind 的（思考、工具调用的参数、命令边跑边写的输出 `output`）只推给 watch 的订阅。 */
+  | { type: "text"; process: string; n: number; delta: string; kind?: "thinking" | "toolCall" | "output" }
   /** 进程回到 idle 后，从库里取出的最终回复和结束原因。 */
   | { type: "final"; reply: string; ended: Ended | null }
   | { type: "ps"; processes: Projection[] }
