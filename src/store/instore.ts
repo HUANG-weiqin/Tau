@@ -103,7 +103,7 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
       const r = memory.set(ns, key, { value, brief, now }, isInt(version) ? version : null);
       if (r.ok) return ok(`已写入 ${key}，版本 ${r.version}。`);
       if ("over" in r) return { content: textContent("超出上限，没有写入：" + overText(r.over, r.bytes)), isError: true };
-      return conflict(key, r.current);
+      return conflict(key, r.current, "新建键不要带 version，去掉它再写一次。");
     }
     case "memory_delete": {
       if (typeof key !== "string" || !isInt(version)) return bad("key 必须是字符串，version 必须是整数。");
@@ -202,8 +202,8 @@ function overText(over: "key" | "value" | "brief" | "view", bytes: number): stri
   }
 }
 
-function conflict(key: string, current: Versioned | null): ToolResultContent {
-  return { content: textContent(`版本冲突，没有写入。${current ? `现在的值是 ${show(key, current)}` : `键 ${key} 现在不存在。`}`), isError: true };
+function conflict(key: string, current: Versioned | null, ifGone = ""): ToolResultContent {
+  return { content: textContent(`版本冲突，没有写入。${current ? `现在的值是 ${show(key, current)}` : `键 ${key} 现在不存在。${ifGone}`}`), isError: true };
 }
 
 /** 本地时间和时区在内核外格式化（见 .knowledge/kb-kernel.md）。 */
