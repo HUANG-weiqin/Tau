@@ -1,7 +1,8 @@
-// 模型目录和 key 状态。目录来自 pi-ai 的公开函数，进程启动时算一次；key 状态每次现读 tau 的 auth.json（D83）。
-// 只看每个条目的 provider 名、`type`，以及 key 能不能被 tau 读：key 的值不出这个文件。
+// 模型目录和 key 状态。目录来自 pi-ai 的公开函数，进程启动时算一次；key 状态和账号的可用清单每次现读 tau 的 auth.json（D83）。
+// key 的值不出这个文件：回复里只有 provider 名、`type`、key 能不能被 tau 读。条目本身只交给 pi-ai 的 `filterModels`。
 import { readFileSync } from "node:fs";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import type { Credential } from "@earendil-works/pi-ai";
 import { builtinProviders, getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { isObject } from "./util.ts";
 
@@ -37,6 +38,21 @@ export function buildCatalog(): CatalogProvider[] {
   return out;
 }
 
+/**
+ * 账号真能用的模型。目录是 pi-ai 包里的全部；provider 可以自带过滤（`filterModels`，现在只有 GitHub Copilot：
+ * 登录和刷新令牌时记下账号的可用清单，不在清单里的模型这个账号用不了）。没有过滤、没登录、条目里没有清单，都是目录的全部。
+ * 服务不按它挡预设：预设写了目录里有的模型就收，用不了由调用时的错误说。
+ */
+export function accountModels(catalog: CatalogProvider[], creds: Map<string, Credential>): CatalogProvider[] {
+  const providers = new Map(builtinProviders().map((p) => [p.id, p]));
+  return catalog.map((c) => {
+    const p = providers.get(c.id);
+    if (!p?.filterModels) return c;
+    const ok = new Set(p.filterModels(p.getModels(), creds.get(c.id)).map((m) => m.id));
+    return { ...c, models: c.models.filter((m) => ok.has(m.id)) };
+  });
+}
+
 /** 和凭据库 `read` 的检查一致（src/server/credentials.ts）：OAuth 缺字段、key 不是字符串、`!` 开头或含 `$` 的 key，tau 读不了。只有 `env` 没有 `key` 的条目（例如 cloudflare 的账号 ID）pi-ai 读得了。 */
 function keyStatus(c: unknown): KeyStatus {
   if (!isObject(c)) return "none";
@@ -48,23 +64,28 @@ function keyStatus(c: unknown): KeyStatus {
   return key.startsWith("!") || key.includes("$") ? "unreadable" : "key";
 }
 
-/** 每个供应商的 key 状态，加文件本身读不读得出。出错的原因不带文件内容。 */
-export function readKeys(file: string): { keys: Map<string, KeyStatus>; auth: { ok: true } | { ok: false; error: string } } {
+/** 每个供应商的 key 状态，加文件本身读不读得出，加 tau 读得了的条目（给 `accountModels`，不进回复）。出错的原因不带文件内容。 */
+export function readKeys(file: string): { keys: Map<string, KeyStatus>; creds: Map<string, Credential>; auth: { ok: true } | { ok: false; error: string } } {
   const keys = new Map<string, KeyStatus>();
+  const creds = new Map<string, Credential>();
   let text: string;
   try {
     text = readFileSync(file, "utf8");
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return { keys, auth: { ok: true } };
-    return { keys, auth: { ok: false, error: "读不了 auth.json" } };
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return { keys, creds, auth: { ok: true } };
+    return { keys, creds, auth: { ok: false, error: "读不了 auth.json" } };
   }
   let raw: unknown;
   try {
     raw = JSON.parse(text);
   } catch {
-    return { keys, auth: { ok: false, error: "auth.json 不是合法的 JSON" } };
+    return { keys, creds, auth: { ok: false, error: "auth.json 不是合法的 JSON" } };
   }
-  if (!isObject(raw)) return { keys, auth: { ok: false, error: "auth.json 的顶层不是 JSON 对象" } };
-  for (const [id, c] of Object.entries(raw)) keys.set(id, keyStatus(c));
-  return { keys, auth: { ok: true } };
+  if (!isObject(raw)) return { keys, creds, auth: { ok: false, error: "auth.json 的顶层不是 JSON 对象" } };
+  for (const [id, c] of Object.entries(raw)) {
+    const k = keyStatus(c);
+    keys.set(id, k);
+    if (k === "key" || k === "oauth") creds.set(id, c as Credential);
+  }
+  return { keys, creds, auth: { ok: true } };
 }

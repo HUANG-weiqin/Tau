@@ -957,6 +957,41 @@ test("模型目录：供应商、模型、窗口、能不能收图、思考级�
   assert.equal((await raw(e.port, "/api/models")).status, 405, "GET");
 });
 
+test("模型目录：GitHub Copilot 登录后只列账号的可用清单（pi-ai 的 filterModels）；没清单、没登录、api_key 都列全部；别家不受影响；清单不进回复；改了不用重启", async (t) => {
+  const { getBuiltinModels } = await import("@earendil-works/pi-ai/providers/all");
+  const dir = mkdtempSync(join(tmpdir(), "tau-gui-avail-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const authFile = join(dir, "auth.json");
+  const e = await setupBridge(t, { authFile });
+  const all = getBuiltinModels("github-copilot").map((m) => m.id);
+  assert.ok(all.length > 3);
+  const copilot = async () => (await post(e.port, "/api/models", {})).json.providers.find((p: any) => p.id === "github-copilot");
+  const write = (c: unknown) => writeFileSync(authFile, JSON.stringify({ "github-copilot": c, anthropic: { type: "api_key", key: "sk-ant-X" } }));
+  const oauth = { type: "oauth", access: "A-SECRET", refresh: "R-SECRET", expires: 1 };
+
+  assert.deepEqual((await copilot()).models.map((m: any) => m.id), all, "没登录：全部");
+  write({ ...oauth, availableModelIds: [all[2], "no-such-model", all[0]] });
+  const some = await copilot();
+  assert.deepEqual(some.models.map((m: any) => m.id), [all[0], all[2]], "按目录的顺序，清单里目录没有的忽略");
+  assert.equal(some.key, "oauth");
+  write({ ...oauth, availableModelIds: [] });
+  const none = await copilot();
+  assert.deepEqual(none.models, [], "清单是空的：这个账号什么都用不了，供应商还在，设置页还能登出");
+  assert.equal(none.key, "oauth");
+  write(oauth);
+  assert.deepEqual((await copilot()).models.map((m: any) => m.id), all, "登录了但没有清单：全部");
+  write({ ...oauth, availableModelIds: "oops" });
+  assert.deepEqual((await copilot()).models.map((m: any) => m.id), all, "清单形状不对：全部");
+  write({ type: "api_key", key: "ghu_X", availableModelIds: [all[0]] });
+  assert.deepEqual((await copilot()).models.map((m: any) => m.id), all, "api_key 不过滤");
+
+  // 别家不受影响；回复里没有清单和令牌。
+  write({ ...oauth, availableModelIds: [all[0]] });
+  const r = await post(e.port, "/api/models", {});
+  assert.equal(r.json.providers.find((p: any) => p.id === "anthropic").models.length, getBuiltinModels("anthropic").length);
+  assert.doesNotMatch(r.text, /availableModelIds|SECRET|sk-ant-X/);
+});
+
 // 填写和清除 api_key，登出 OAuth（D69、D83）
 
 async function keysEnv(t: TestContext, name = "auth.json") {

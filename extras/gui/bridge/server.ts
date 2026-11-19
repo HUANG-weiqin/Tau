@@ -14,7 +14,7 @@ import type { PickFolder } from "./pick.ts";
 import { fileCredentials } from "../../auth/store.ts";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { clearKey, setKey } from "./keys.ts";
-import { buildCatalog, readKeys } from "./models.ts";
+import { accountModels, buildCatalog, readKeys } from "./models.ts";
 import type { CatalogProvider } from "./models.ts";
 import { agentsMdInfo } from "./agentsmd.ts";
 import { createPreset, deletePreset, listPresets, presetWorkdirs, updatePreset } from "./presets.ts";
@@ -157,10 +157,10 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
       case "presets/update":
         return json(res, 200, { ok: true, preset: await updatePreset(home, pipe, body) });
       case "models": {
-        // 目录算一次；key 状态每次现读，登录脚本里改了不用重启。
+        // 目录算一次；key 状态和账号的可用清单每次现读，登录脚本里改了不用重启。
         catalog ??= buildCatalog();
-        const { keys, auth } = readKeys(authFile);
-        return json(res, 200, { providers: catalog.map((p) => ({ ...p, key: keys.get(p.id) ?? "none" })), auth });
+        const { keys, creds, auth } = readKeys(authFile);
+        return json(res, 200, { providers: accountModels(catalog, creds).map((p) => ({ ...p, key: keys.get(p.id) ?? "none" })), auth });
       }
       case "keys/set":
       case "keys/clear": {
