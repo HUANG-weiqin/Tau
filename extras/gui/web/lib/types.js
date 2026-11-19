@@ -46,7 +46,7 @@
  * @typedef {{ type: "ps", processes: Projection[] }
  *   | { type: "update", self: Self }
  *   | { type: "removed", process: string }
- *   | { type: "text", process: string, n: number, delta: string, kind?: "thinking" | "toolCall" }
+ *   | { type: "text", process: string, n: number, delta: string, kind?: "thinking" | "toolCall" | "output" }
  *   | { type: "message", process?: string, segment: number, seq: number, message: Message }
  *   | { type: "end", segment: number, messages: number }
  *   | { type: "receipt", process: string }
