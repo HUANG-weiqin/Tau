@@ -100,7 +100,8 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
     case "memory_set": {
       if (typeof key !== "string" || typeof value !== "string" || typeof brief !== "string") return bad("key、value 和 brief 必须是字符串。");
       if (version != null && !isInt(version)) return bad("version 必须是整数，或者省略。");
-      const r = memory.set(ns, key, { value, brief, now }, isInt(version) ? version : null);
+      // 版本号从 1 起，0 和负数不可能是读到的版本：模型常给新键这么填，当作没带。
+      const r = memory.set(ns, key, { value, brief, now }, isInt(version) && version > 0 ? version : null);
       if (r.ok) return ok(`已写入 ${key}，版本 ${r.version}。`);
       if ("over" in r) return { content: textContent("超出上限，没有写入：" + overText(r.over, r.bytes)), isError: true };
       return conflict(key, r.current, "新建键不要带 version，去掉它再写一次。");

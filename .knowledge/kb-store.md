@@ -383,10 +383,10 @@ CREATE TABLE blobs (
 | `memory_set` | `key`、`value`、`brief` 字符串，都必填；`version` 整数、`null` 或省略 | `已写入 <key>，版本 <v>。` |
 | `memory_delete` | `key` 字符串；`version` 整数，必填 | `已删除 <key>。` |
 
-- `version` 省略或为 `null`：这个键现在必须不存在。
+- `version` 省略、为 `null`、为 0 或负数：这个键现在必须不存在。版本号从 1 起，0 和负数不可能是读到的版本；模型常给新键填 0，旧文案只说“键不存在”、没说怎么改，模型会一直重发，所以当作没带。只在 `memory_set` 这样；`Memory.set` 和线协议的 `expected` 不变（`null` 或正整数），`memory_delete` 的 `version` 仍必填。已有的键带 0 照样冲突，不覆盖。
 - `version` 必须是整数，`1.5` 也不行。
 - 参数不对：结果是 `参数错误：<说明>`，`isError` 为 `true`，不碰记忆。`brief` 缺了或不是字符串也在这里。更新时间是这条输入的 `now`。
-- 版本对不上：不写入，`isError` 为 `true`，结果带最新值：`版本冲突，没有写入。现在的值是 ` 接 `memory_get` 那一段（键、版本、更新日期、摘要、值）。键已不存在时是 `版本冲突，没有写入。键 <key> 现在不存在。`；`memory_set` 在这句后面再接 `新建键不要带 version，去掉它再写一次。`（只有带了 `version` 才会走到这里：模型常给新键填 0 或 1，光说“不存在”它会照样重试）。`memory_delete` 用前两句，不加这一句。
+- 版本对不上：不写入，`isError` 为 `true`，结果带最新值：`版本冲突，没有写入。现在的值是 ` 接 `memory_get` 那一段（键、版本、更新日期、摘要、值）。键已不存在时是 `版本冲突，没有写入。键 <key> 现在不存在。`；`memory_set` 在这句后面再接 `新建键不要带 version，去掉它再写一次。`（只有带了正的 `version` 才会走到这里：模型常给新键填 1 之类，光说“不存在”它会照样重试）。`memory_delete` 用前两句，不加这一句。
 - `memory_set` 超出上限：不写入，`isError` 为 `true`。结果是 `超出上限，没有写入：` 接下表的一句。`N` 是 `Memory.set` 返回的 `bytes`，上限取自 `src/kernel/tools.ts` 的常量。
 
 | 超出的 | 接的那句 |
