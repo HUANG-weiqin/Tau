@@ -214,7 +214,7 @@ git -C $REPO branch -d wt/<名字>
 - 没解决：两个队友改同一个文件。冲突在合并时才出现。
 - 没解决：并发跑全量测试的计时类假红。那是 CPU 争用，不是文件互踩，全量测试照旧一次一个。
 - 运行中的服务用的是主树的代码。队友在 worktree 里改，不影响它。要看效果，在 worktree 里跑测试。
-- 界面把进程的 `workdir` 当项目：worktree 里的队友会让左栏多出一个“项目”（[D77](kb-decisions.md#d77-spawnstartcheck-带-workdir) 的后果）。
+- 界面把进程的 `workdir` 当项目：worktree 里的队友会让左栏多出一个“项目”（[D77](kb-decisions.md#d77-spawnstartcheck-带-workdir) 的后果）。worktree 删了，这个“项目”还在，因为那个队友的进程还在库里。合并清理以后，把队友的进程也删掉（界面里删进程，或协议的 `remove`），“项目”才消失。临时队友的进程没有留着的价值：改动已经在分支里。
 
 实测过（2026-11-18，当时 `spawn` 还不能带 `workdir`，用的是一份只换 `workdir` 的临时预设；下面这些和 `spawn` 怎么指目录无关，仍然成立）：
 
