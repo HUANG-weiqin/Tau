@@ -2256,6 +2256,19 @@ fork 原来在这张表里，已进内核，见 [D49](#d49-fork-进内核)。
 - 还没做：推导测试（[kb-contract 的做法](kb-contract.md#推导测试的做法)）。和 D87、D88、D89 一样，等用户定受试者。后续阶段：第 2 阶段 `self` 投影列出后台命令；第 3 阶段退役 `shell`、`bg_run`，改预设和界面。以后项（不做）：结果里带 `taskkill` 杀法；长时间硬上限。
 - 写在这里的页：[kb-tools 的 bash](kb-tools.md#bash)、[kb-contract](kb-contract.md#契约清单)、[设计稿的风险](../docs/design/mvp.md#风险)、[kb-store 的位置](kb-store.md#位置)。
 
+### D91 使用反馈：msys 盘符路径、bash 描述的路径和 PowerShell 提示、界面列出转入后台的 bash 命令
+
+- 状态：已做（2026-11-20），来自用户的使用反馈。不改类型、表、线协议、工具名字。
+- 事实：
+  - 模型在 bash 里习惯写 `/e/tau/x`，同一个路径交给 read、write、edit，`path.resolve` 把它当成当前盘根下的 `\e\tau\x`，悄悄读写到别处（write 还会建出 `E:\e\`）。
+  - 模型在 bash 里写 `C:\…`，反斜杠被当成转义。bash 里没有 PowerShell 的命令（`Get-ChildItem` 等），模型以为是工具缺失。
+  - bash 转入后台的命令，“后台”页看不到：页面只认 `extras/bg/`。
+- 决定：
+  1. `files.ts` 的 `resolvePath`：开头是 `/<一个字母>/` 或恰好是 `/<一个字母>` 的，换成 `X:/…` 再解析。其它 msys 路径不认。
+  2. bash 的工具描述加两句：路径写法，PowerShell 命令用 `powershell -NoProfile -Command` 调用。不加别的机制。
+  3. 桥的 `bg` 请求也列 `extras/shell/<进程 ID>/*.log` 里旁边有 `.claim` 的（只有转入后台的才有，D90），名字是任务号；每项加 `file`（相对 `extras/` 的路径，可选键）。`shell` 工具的 log 不列：它要退役。
+- 代价：工具描述变长，启动检查的固定部分多约 200 字节。
+
 ## 未确认的默认值
 
 这些都不影响开工，写代码时可以随时改：

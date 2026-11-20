@@ -578,7 +578,7 @@ function BgCard({ app, log }) {
     <div class="bg-f dim">
       <span>最后输出在 ${formatAgo(ago)}</span>
       ${more && html`<button type="button" class="link" aria-expanded=${open} onClick=${() => setOpen(!open)}>${open ? "收起" : "展开"}</button>`}
-      <span class="mono ell bg-file">log：${log.process}-${log.name}.log</span>
+      <span class="mono ell bg-file">log：${log.file}</span>
     </div>
   </li>`;
 }
@@ -606,7 +606,7 @@ function BgPage({ app, ids, bgs, project }) {
       ]}
     />
     <div class="ibody">
-      <p class="inote">按后台命令的配方跑的命令，log 在 <span class="mono fg">~/.tau/extras/bg/</span>。${project ? "停止进程不会结束它们。" : ""}</p>
+      <p class="inote">bash 转入后台的命令和按后台命令的配方跑的命令，log 在 <span class="mono fg">~/.tau/extras/shell/</span> 和 <span class="mono fg">bg/</span> 下。${project ? "停止进程不会结束它们。" : ""}</p>
       ${!project && html`<div class="iband"><span class="tx" aria-hidden="true"></span><i aria-hidden="true"></i><span>停止这个进程，不会结束它们</span></div>`}
       ${logs.length === 0 && html`<${Note}>${project ? "这个项目的进程" : "这个进程"}还没有后台命令的 log。<//>`}
       ${project

@@ -575,7 +575,7 @@ MCP（弹窗的第三节，编号 03）：
 | 临时进程的标题 | 读第 1 段，取第一封信正文的第一行，缓存在 `~/.tau/extras/gui/`。`prune` 或 `remove` 之前先缓存 |
 | 最后动静的时间 | 当前段最后一条消息的时间戳 |
 | 改动、分支、提交 | 在工作目录里跑 git，带 `--no-optional-locks` |
-| 后台命令 | `~/.tau/extras/bg/<进程 ID>-<名字>.log`。有退出码那一行就是结束了；没有时只写“没看到退出码”：机器重启或子 shell 被杀时，那一行永远不会来 |
+| 后台命令 | `~/.tau/extras/bg/<进程 ID>-<名字>.log`，和 bash 转入后台的 `~/.tau/extras/shell/<进程 ID>/*.log`（旁边有 `.claim` 才算，D90）。有退出码那一行就是结束了；没有时只写“没看到退出码”：机器重启或子 shell 被杀时，那一行永远不会来 |
 | 寄信、建进程、分叉、停止、删除 | `send`、`start`、`fork`、`stop`、`remove`、`sweep` |
 | 记忆库的键、值、版本号；改、加、删 | `memory`、`memory_write` |
 | 新建、改、删除预设 | HTTP 桥写、改或删 `~/.tau/presets/<ID>.md`。改完立刻 `check`，不行就改回去 |

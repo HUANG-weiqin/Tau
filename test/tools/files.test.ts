@@ -321,3 +321,24 @@ describe("encoding and line endings", () => {
     assert.ok(r.text.endsWith("line199999"));
   });
 });
+
+describe("msys drive paths", () => {
+  // /c/Users/x 是 Git Bash 的写法；path.resolve 会把它当成当前盘根下的 \c\Users\x。
+  const msys = (p: string): string => p.replace(/^([A-Za-z]):/, (_, d: string) => `/${d.toLowerCase()}`).replaceAll("\\", "/");
+
+  test("read, write and edit treat /x/… as X:/…", async () => {
+    const p = msys(path.join(dir, "msys.txt"));
+    assert.match(p, /^\/[a-z]\//);
+    assert.equal((await write({ path: p, content: "a\nb\n" }, "C:\\elsewhere")).isError, false);
+    assert.equal(await readFile(path.join(dir, "msys.txt"), "utf8"), "a\nb\n");
+    assert.equal((await edit({ path: p, old: "b", new: "c" }, "C:\\elsewhere")).isError, false);
+    assert.equal((await read({ path: p }, "C:\\elsewhere")).text, "     1\ta\n     2\tc");
+  });
+
+  test("a bare /x is the drive root; /xy/… and relative paths are left alone", async () => {
+    const r = await read({ path: msys(path.parse(dir).root) }, "C:\\elsewhere");
+    assert.match(r.text, /^是目录，不能读取：[A-Z]:\\$/);
+    assert.match((await read({ path: "/ee/none.txt" }, dir)).text, /读取失败：[A-Za-z]:\\ee\\none\.txt/);
+    assert.equal((await read({ path: "sub/none.txt" }, dir)).isError, true);
+  });
+});

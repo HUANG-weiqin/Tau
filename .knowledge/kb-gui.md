@@ -72,6 +72,7 @@
 | `extras/gui/state.json` | 界面数据 |
 | `extras/gui/*.log` | `start.ps1` 起的服务和桥的日志 |
 | `extras/bg/<进程 ID>-<名字>.log` | 后台命令的 log（[配方](kb-extras.md#后台命令和完成通知的配方)） |
+| `extras/shell/<进程 ID>/*.log` | bash 的输出；旁边有 `.claim` 的是转入后台的，“后台”页也列（D90） |
 
 ### GET 路由
 
@@ -161,8 +162,8 @@ git：
 
 后台命令：
 
-- 列出 `extras/bg/` 下以这些进程 ID 开头的 log。
-- 每个回 `{ process, name, size, mtime, tail, exit }`。`tail` 是最后 8 KB。`exit` 取最后一行 `[后台任务 <名字>] 退出码 N` 的 N，没有是 `null`。
+- 列出 `extras/bg/` 下以这些进程 ID 开头的 log，和 `extras/shell/<进程 ID>/` 下旁边有 `.claim` 的 log（bash 转入后台的，名字是任务号）。
+- 每个回 `{ process, name, file, size, mtime, tail, exit }`。`file` 是相对 `extras/` 的路径。`tail` 是最后 8 KB。`exit` 取最后一行 `[后台任务 <名字>] 退出码 N` 的 N，没有是 `null`。
 
 工具定义（`bridge/tools.ts`，工具库在 `extras/tools/`，做什么见 [kb-extras 的工具库](kb-extras.md#工具库)）：
 

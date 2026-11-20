@@ -24,8 +24,13 @@ function decode(buf: Buffer): string | undefined {
   return Buffer.from(text, "utf8").equals(buf) ? text : undefined;
 }
 
+// Git Bash 的 /c/Users/x 写法：模型在 bash 里用惯了，read、write、edit 也会这样写。
+// path.resolve 会把它当成当前盘根下的 \c\Users\x，悄悄读写到别处，所以先换成 C:/Users/x。
+const MSYS_DRIVE = /^\/([a-zA-Z])(?:\/|$)/;
+const resolvePath = (workdir: string, p: string): string => path.resolve(workdir, p.replace(MSYS_DRIVE, (_, d: string) => `${d.toUpperCase()}:/`));
+
 export async function read(args: { path: string; offset?: number; limit?: number }, workdir: string, accepts: boolean): Promise<ToolOutput> {
-  const file = path.resolve(workdir, args.path);
+  const file = resolvePath(workdir, args.path);
   try {
     if ((await stat(file)).isDirectory()) return fail(`是目录，不能读取：${file}`);
     const buf = await readFile(file);
@@ -59,7 +64,7 @@ function image(buf: Buffer, file: string, accepts: boolean): ToolOutput {
 }
 
 export async function write(args: { path: string; content: string }, workdir: string): Promise<ToolResultContent> {
-  const file = path.resolve(workdir, args.path);
+  const file = resolvePath(workdir, args.path);
   try {
     await mkdir(path.dirname(file), { recursive: true });
     await writeFile(file, args.content, "utf8");
@@ -73,7 +78,7 @@ export async function edit(
   args: { path: string; old: string; new: string; replaceAll?: boolean },
   workdir: string,
 ): Promise<ToolResultContent> {
-  const file = path.resolve(workdir, args.path);
+  const file = resolvePath(workdir, args.path);
   if (args.old === "") return fail(`原文不能为空：${file}`);
   try {
     const text = decode(await readFile(file));

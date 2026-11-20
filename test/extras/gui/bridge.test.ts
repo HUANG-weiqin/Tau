@@ -786,6 +786,19 @@ test("后台命令：按进程 ID 前缀列出，tail 取末尾，exit 取最后
   assert.equal(parseExit("[后台任务 a] 完成，退出码 1\n"), null);
 });
 
+test("后台命令：bash 转入后台的 log（旁边有 .claim）也列出，名字是任务号", async (t) => {
+  const e = await setupBridge(t);
+  const dir = join(e.home, "extras", "shell", "p1");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "1700000000000-ab12cd.log"), "跑着\n");
+  writeFileSync(join(dir, "1700000000000-ab12cd.log.claim"), "");
+  writeFileSync(join(dir, "1700000001000-ef34ab.log"), "没转后台的，只是还在等\n");
+  writeFileSync(join(dir, "1700000002000-0a0b0c.log"), "完了\n\n[后台任务 0a0b0c] 退出码 2\n");
+  writeFileSync(join(dir, "1700000002000-0a0b0c.log.claim"), "");
+  const r = (await post(e.port, "/api/bg", { processes: ["p1"] })).json.logs as any[];
+  assert.deepEqual(r.map((l) => [l.name, l.file, l.exit]), [["ab12cd", "shell/p1/1700000000000-ab12cd.log", null], ["0a0b0c", "shell/p1/1700000002000-0a0b0c.log", 2]]);
+});
+
 test("后台命令：没有 extras/bg 目录时是空列表", async (t) => {
   const e = await setupBridge(t);
   assert.deepEqual((await post(e.port, "/api/bg", { processes: ["p1"] })).json, { logs: [] });
