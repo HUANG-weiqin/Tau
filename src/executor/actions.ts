@@ -1,12 +1,13 @@
 import { StringDecoder } from "node:string_decoder";
 // 真正的动作：调用模型、运行库外工具（见 .knowledge/kb-executor.md、.knowledge/kb-tools.md）。
 import { validateToolArguments } from "@earendil-works/pi-ai";
-import type { Models, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import type { JsonObject, Models, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { buildContext, toolDescriptions } from "../kernel/context.ts";
 import { outputMax } from "../kernel/derive.ts";
 import { textContent } from "../kernel/types.ts";
 import type { ProcessId } from "../kernel/types.ts";
 import { resolveImages } from "../store/blobs.ts";
+import { fixArgs } from "../tools/args.ts";
 import { bash } from "../tools/bash.ts";
 import type { BashContext } from "../tools/bash.ts";
 import { edit, read, write } from "../tools/files.ts";
@@ -54,11 +55,14 @@ export function createActions(models: Models, onText: (id: ProcessId, n: number,
     },
     async runTool(job, call, signal) {
       const { workdir } = job.process.preset;
-      const tool = toolDescriptions(job.process.preset).find((t) => t.name === call.name);
-      if (!tool) return { content: textContent(`工具 ${call.name} 不存在，或者预设里没有它。`), isError: true };
+      const tools = toolDescriptions(job.process.preset);
+      const tool = tools.find((t) => t.name === call.name);
+      if (!tool) return { content: textContent(`工具 ${call.name} 不存在，或者预设里没有它。可用的工具：${tools.map((t) => t.name).join("、")}。`), isError: true };
+      const fixed = fixArgs(tool.parameters, call.arguments);
+      if ("error" in fixed) return { content: textContent(fixed.error), isError: true };
       let args;
       try {
-        args = validateToolArguments(tool, call);
+        args = validateToolArguments(tool, { ...call, arguments: fixed.args as JsonObject });
       } catch (e) {
         return { content: textContent(`参数错误：${e instanceof Error ? e.message : String(e)}`), isError: true };
       }

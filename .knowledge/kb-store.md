@@ -1,6 +1,6 @@
 # 存储
 
-`updated: 2026-11-18`
+`updated: 2026-11-20`
 
 ## 这个模块是干什么的
 
@@ -216,7 +216,7 @@ CREATE TABLE blobs (
 | `callModel` | 插入一行 `pending` |
 | `runTool`，库外工具 | 插入一行 `pending` |
 | `runTool`，库内工具 | 在这个事务里执行（`post`、`spawn`、`stop_process` 还写别的进程的信箱，`spawn` 还插进程行），结果作为 `toolResult` 放进信箱 |
-| `runTool`，不认识的工具或预设里没有的工具 | 把内容为这句文本的错误结果（`工具 <name> 不存在，或者预设里没有它。`）作为 `toolResult` 放进信箱 |
+| `runTool`，不认识的工具或预设里没有的工具 | 把内容为这句文本的错误结果（`工具 <name> 不存在，或者预设里没有它。可用的工具：<这个进程快照里有的工具名，用顿号隔开>。`）作为 `toolResult` 放进信箱 |
 
 - 库内还是库外，按进程快照里的预设判断：`findTool(p.preset, name)` 的 `inStore`。快照的 `tools` 只在 `reconfigure` 直接采用（空闲、段里没有助手消息等条件，见 [kb-kernel](kb-kernel.md#流程会话配置reconfigure)），或者换段采用 `next` 时才换，所以正在等的工具调用，不会因为 `reconfigure` 变成“预设里没有它”。
 - 事务里放进信箱的 `toolResult`，`status` 总是 `ok`，失败写在 `isError` 里。
@@ -372,7 +372,9 @@ CREATE TABLE blobs (
 
 共同规则（`src/store/instore.ts` 的 `runInStore`）：
 
+- 进任何工具之前先修参数，和库外工具共用 `fixArgs`（[kb-tools](kb-tools.md#参数从哪来)）：可选的 `null` 当没填，必填的 `null` 是错误结果 `参数 <名字> 是 null，必须给出一个值。`，数字和布尔和字符串互转。手写的检查在后面，是最后一道。
 - 参数不是对象时（包括 `null`），当作空对象。pi-ai 把流式 JSON 的 `null` 解析成 `null`。
+- `call.argumentsError` 有值（参数的 JSON 被截断、不是合法 JSON）时，不进工具：错误结果 `参数的 JSON 不完整或不合法：<原因的第一行>。请重新发送完整的参数。`
 - 结果和其它工具结果一样，在 `decide` 里按字节上限裁剪（[kb-kernel.md](kb-kernel.md)）。
 - 记忆的 `ns` 是进程快照里的预设 ID。
 
@@ -386,15 +388,15 @@ CREATE TABLE blobs (
 | `memory_delete` | `key` 字符串；`version` 整数，必填 | `已删除 <key>。` |
 
 - `version` 省略、为 `null`、为 0 或负数：这个键现在必须不存在。版本号从 1 起，0 和负数不可能是读到的版本；模型常给新键填 0，旧文案只说“键不存在”、没说怎么改，模型会一直重发，所以当作没带。只在 `memory_set` 这样；`Memory.set` 和线协议的 `expected` 不变（`null` 或正整数），`memory_delete` 的 `version` 仍必填。已有的键带 0 照样冲突，不覆盖。
-- `version` 必须是整数，`1.5` 也不行。
-- 参数不对：结果是 `参数错误：<说明>`，`isError` 为 `true`，不碰记忆。`brief` 缺了或不是字符串也在这里。更新时间是这条输入的 `now`。
-- 版本对不上：不写入，`isError` 为 `true`，结果带最新值：`版本冲突，没有写入。现在的值是 ` 接 `memory_get` 那一段（键、版本、更新日期、摘要、值）。键已不存在时是 `版本冲突，没有写入。键 <key> 现在不存在。`；`memory_set` 在这句后面再接 `新建键不要带 version，去掉它再写一次。`（只有带了正的 `version` 才会走到这里：模型常给新键填 1 之类，光说“不存在”它会照样重试）。`memory_delete` 用前两句，不加这一句。
+- `version` 必须是整数，`1.5` 也不行。`memory_edit`、`memory_delete` 缺它时还接 `先用 memory_get 读到现在的版本号。`
+- 参数不对：结果是 `参数错误：<说明>`，`isError` 为 `true`，不碰记忆。`memory_set`、`memory_edit` 少了哪个字符串参数就指名，并列出模型实际给的名字：`memory_set 缺少 value（字符串）。收到的参数名：key, content, brief。`（弱模型常把 `value` 写成 `content`）。别的工具只说哪几个必须是字符串。更新时间是这条输入的 `now`。
+- 版本对不上：不写入，`isError` 为 `true`，结果带最新值：`版本冲突，没有写入。现在的值是 ` 接 `memory_get` 那一段（键、版本、更新日期、摘要、值）。键已不存在时是 `版本冲突，没有写入。键 <key> 现在不存在。`；`memory_set` 在这句后面再接 `新建键不要带 version，去掉它再写一次。`（只有带了正的 `version` 才会走到这里：模型常给新键填 1 之类，光说“不存在”它会照样重试）。键还在时，`memory_set` 在值的那段后面另起一行接 `要覆盖，带 version=<现在的版本号> 再写一次。`（值可能以任何字符结尾，接在同一行会黏在一起）。`memory_delete` 不加这两句。
 - `memory_set` 超出上限：不写入，`isError` 为 `true`。结果是 `超出上限，没有写入：` 接下表的一句。`N` 是 `Memory.set` 返回的 `bytes`，上限取自 `src/kernel/tools.ts` 的常量。
 
 | 超出的 | 接的那句 |
 |---|---|
 | `key` | `键有 N 字节，上限 128 字节。` |
-| `value` | `值有 N 字节，上限 4096 字节。` |
+| `value` | `值有 N 字节，上限 4096 字节。一个汉字占 3 字节。把内容拆成几个键，或者写进文件。` |
 | `brief` | `摘要有 N 字节，上限 200 字节。` |
 | `view` | `写入后记忆视图有 N 字节，上限 32768 字节。先删掉不需要的键，或缩短键和摘要。` |
 
@@ -402,7 +404,7 @@ CREATE TABLE blobs (
 - `memory_edit`（[D89](kb-decisions.md#d89-memory_edit记忆工具的另一半只换一段不重发整个值)）：把值里的一段原文换成新文本，不用重发整个值。`old` 在值里必须恰好出现一次，没有 `replaceAll`。`version` 必填，是读到的版本号。`brief` 不传就不动摘要。
   - 只是“恰好出现一次”，和文件 `edit` 工具比少两样：没有 CRLF 兜底（那是文件 `edit` 才有的，值里就是原文），`old` 按字面子串匹配。重叠出现按不重叠计数：`old` 是 `aba` 而值是 `ababa` 时算一次（`split` 的语义）。
   - `old` 含孤立的代理项（例如 `\ud83d`，会切开一个表情）时报 `old 含不完整的 Unicode 字符。`：先换好再比，写进库才不会变成替换字符。
-  - 参数不对：`key`、`old`、`new` 必须是字符串；`old` 是空串时报 `old 不能为空。`；`version` 必须是整数，缺省、`null`、`1.5` 都算参数错误（不像 `memory_set` 那样当作没带）；`brief` 给了就必须是字符串。
+  - 参数不对：`key`、`old`、`new` 缺了或不是字符串时指名 (`memory_edit 缺少 new（字符串）。收到的参数名：key, old。`)；`old` 是空串时报 `old 不能为空。`；`version` 必须是整数，缺省、`1.5` 都算参数错误（不像 `memory_set` 那样当作没带），`null` 在 `fixArgs` 就报 `参数 version 是 null，必须给出一个值。`；`brief` 给了就必须是字符串。
   - 键不存在：`键 <key> 不存在。要新建，用 memory_set。`，`isError` 为 `true`。
   - 版本对不上：和 `memory_set` 同一句冲突文字，带最新值，不写入。
   - `old` 一次都没找到：`没找到原文，没有写入。old 必须和值逐字一致，包括标点、空格和换行；先用 memory_get 看现在的值。`。出现 N 次：`原文出现 N 次，必须唯一，没有写入。把 old 写长一点，带上前后的字。`。都是 `isError`，不写入。
@@ -477,7 +479,7 @@ CREATE TABLE blobs (
 | `post` 成功 | `已寄给 <id>。`；`reply` 为真时再加 `它处理这封信的那一轮结束时会给你回信，之后的几轮不会。` | 否 |
 | `spawn` 成功 | `已建进程 <id>，预设 <preset>。它这一轮结束时会给你回信，之后的几轮不会。` | 否 |
 | `stop_process` 成功 | `已给 <id> 发出停止。` | 否 |
-| 收件人或目标不存在 | `没有进程 <id>。` | 是 |
+| 收件人或目标不存在 | `没有进程 <id>。用 self 查运行中的进程 ID。` | 是 |
 | `post` 给自己 | `不能给自己寄信。` | 是 |
 | `stop_process` 停自己 | `不能停止自己。要结束这一轮，直接回复，不再调用工具。` | 是 |
 | 预设读不出 | `预设 <preset> 读不出：<原因>`，原因是读预设抛出的错误信息 | 是 |
@@ -527,7 +529,7 @@ CREATE TABLE blobs (
 
 - 结果提交进信箱之前被杀：执行器的动作报“被中断”，声明的动作一个都没做（信箱里没有带 `calls` 的结果）。
 - 结果提交之后、`handleNext` 之前被杀：信箱里的结果还在，重启后处理它时执行，处理的事务提交才删掉这一行，所以恰好执行一次。
-- 声明的 `post` 的目标在这之前被删：这一项失败（`没有进程 <id>。`）。目标已收到声明的信时，信箱里有它的输入，`removeProcess` 拒绝删它。
+- 声明的 `post` 的目标在这之前被删：这一项失败（`没有进程 <id>。用 self 查运行中的进程 ID。`）。目标已收到声明的信时，信箱里有它的输入，`removeProcess` 拒绝删它。
 
 规则的例外（前两条的理由和别的做法见 [D36](kb-decisions.md#d36-第-4-步第二部分进程之间的工具的执行和两处例外)）：
 

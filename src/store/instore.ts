@@ -4,9 +4,10 @@ import { createHash } from "node:crypto";
 import { start } from "../kernel/decide.ts";
 import { endedText, HOPS_MAX, startError } from "../kernel/derive.ts";
 import { observe } from "../kernel/observe.ts";
-import { MEMORY_BRIEF_MAX_BYTES, MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
+import { findTool, MEMORY_BRIEF_MAX_BYTES, MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
 import { textContent, unreachable } from "../kernel/types.ts";
 import { utcDate } from "../memory/kv.ts";
+import { fixArgs } from "../tools/args.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { PhaseView, Projection } from "../kernel/observe.ts";
 import type { DeclaredCall, Env, Input, Instant, Memory, Message, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Versioned } from "../kernel/types.ts";
@@ -40,9 +41,12 @@ export function spawnId(parent: ProcessId, n: number, attempt: number): ProcessI
 }
 
 export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment: readonly Message[], call: ToolCall, now: Instant, readPreset: ReadPreset = noPresets): ToolResultContent {
-  // 参数来自模型：pi-ai 把流式 JSON 'null' 解析成 null，所以不能直接解构。
-  const args: Record<string, unknown> = typeof call.arguments === "object" && call.arguments !== null ? call.arguments : {};
-  const { key, value, brief, version } = args;
+  // 参数的 JSON 不完整时 arguments 是 {}，原因在 argumentsError 里：说清楚，别只回“key 必须是字符串”。
+  if (call.argumentsError !== undefined) return fail(`参数的 JSON 不完整或不合法：${call.argumentsError.split("\n")[0]}。请重新发送完整的参数。`);
+  // 参数来自模型：pi-ai 把流式 JSON 'null' 解析成 null，所以不能直接解构；先按 schema 修正（tools/args.ts）。
+  const fixed = fixArgs(findTool(p.preset, call.name)?.parameters ?? {}, typeof call.arguments === "object" && call.arguments !== null ? call.arguments : {});
+  if ("error" in fixed) return fail(fixed.error);
+  const { key, value, brief, version } = fixed.args;
   const ns = p.preset.id;
   switch (call.name) {
     case "self":
@@ -51,7 +55,7 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
       // 换段由 `decide` 在安全点发起：它看这个结果不是错误。
       return ok("将在这批工具结果之后换段。");
     case "post": {
-      const { to, text, reply } = args;
+      const { to, text, reply } = fixed.args;
       if (typeof to !== "string" || typeof text !== "string") return bad("to 和 text 必须是字符串。");
       if (reply != null && typeof reply !== "boolean") return bad("reply 必须是布尔值，或者省略。");
       if (to === p.id) return fail("不能给自己寄信。");
@@ -62,7 +66,7 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
       return ok(`已寄给 ${to}。${reply === true ? POST_REPLY : ""}`);
     }
     case "spawn": {
-      const { preset, text, workdir } = args;
+      const { preset, text, workdir } = fixed.args;
       if (typeof preset !== "string" || typeof text !== "string") return bad("preset 和 text 必须是字符串。");
       if (workdir != null && typeof workdir !== "string") return bad("workdir 必须是字符串，或者省略。");
       const hops = nextHops(p);
@@ -85,7 +89,7 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
       return ok(`已建进程 ${id}，预设 ${preset}。${SPAWN_REPLY}`);
     }
     case "stop_process": {
-      const { process: target } = args;
+      const { process: target } = fixed.args;
       if (typeof target !== "string") return bad("process 必须是字符串。");
       if (target === p.id) return fail("不能停止自己。要结束这一轮，直接回复，不再调用工具。");
       if (!loadProcess(db, target)) return noProcess(target);
@@ -98,21 +102,21 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
       return ok(cur ? show(key, cur) : `键 ${key} 不存在。`);
     }
     case "memory_set": {
-      if (typeof key !== "string" || typeof value !== "string" || typeof brief !== "string") return bad("key、value 和 brief 必须是字符串。");
+      if (typeof key !== "string" || typeof value !== "string" || typeof brief !== "string") return bad(missing("memory_set", fixed.args, ["key", "value", "brief"]));
       if (version != null && !isInt(version)) return bad("version 必须是整数，或者省略。");
       // 版本号从 1 起，0 和负数不可能是读到的版本：模型常给新键这么填，当作没带。
       const r = memory.set(ns, key, { value, brief, now }, isInt(version) && version > 0 ? version : null);
       if (r.ok) return ok(`已写入 ${key}，版本 ${r.version}。`);
       if ("over" in r) return { content: textContent("超出上限，没有写入：" + overText(r.over, r.bytes)), isError: true };
-      return conflict(key, r.current, "新建键不要带 version，去掉它再写一次。");
+      return conflict(key, r.current, r.current ? OVERRIDE : "新建键不要带 version，去掉它再写一次。");
     }
     case "memory_edit": {
-      const { old, new: replacement } = args;
-      if (typeof key !== "string" || typeof old !== "string" || typeof replacement !== "string") return bad("key、old 和 new 必须是字符串。");
+      const { old, new: replacement } = fixed.args;
+      if (typeof key !== "string" || typeof old !== "string" || typeof replacement !== "string") return bad(missing("memory_edit", fixed.args, ["key", "old", "new"]));
       if (old === "") return bad("old 不能为空。");
       // 孤立的代理项会切开一个表情，写进库就变成替换字符。
       if (!old.isWellFormed()) return bad("old 含不完整的 Unicode 字符。");
-      if (!isInt(version)) return bad("version 必须是整数。");
+      if (!isInt(version)) return bad(VERSION_HINT);
       if (brief != null && typeof brief !== "string") return bad("brief 必须是字符串，或者省略。");
       const cur = memory.get(ns, key);
       if (!cur) return fail(`键 ${key} 不存在。要新建，用 memory_set。`);
@@ -128,7 +132,8 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
       return conflict(key, r.current);
     }
     case "memory_delete": {
-      if (typeof key !== "string" || !isInt(version)) return bad("key 必须是字符串，version 必须是整数。");
+      if (typeof key !== "string") return bad("key 必须是字符串。");
+      if (!isInt(version)) return bad(VERSION_HINT);
       const r = memory.delete(ns, key, version);
       return r.ok ? ok(`已删除 ${key}。`) : conflict(key, r.current);
     }
@@ -172,6 +177,11 @@ function declare(db: DatabaseSync, memory: Memory, p: Process, segment: readonly
   }
 }
 
+/** 第一个没给或类型不对的参数名，加上模型实际给的那批名字：弱模型常把 value 写成 content。调用方已经确认有一个不是字符串。 */
+function missing(name: string, args: Record<string, unknown>, fields: readonly string[]): string {
+  return `${name} 缺少 ${fields.find((f) => typeof args[f] !== "string") ?? fields[0]}（字符串）。收到的参数名：${Object.keys(args).join(", ")}。`;
+}
+
 function isInt(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v);
 }
@@ -179,6 +189,8 @@ function isInt(v: unknown): v is number {
 const AFTER_REPLY = "，之后的几轮不会。";
 const POST_REPLY = "它处理这封信的那一轮结束时会给你回信" + AFTER_REPLY;
 const SPAWN_REPLY = "它这一轮结束时会给你回信" + AFTER_REPLY;
+const VERSION_HINT = "version 必须是整数。先用 memory_get 读到现在的版本号。";
+const OVERRIDE = "要覆盖，带 version=<现在的版本号> 再写一次。";
 
 /** `p` 寄出的信的跳数：不空闲时是本轮的跳数加 1，空闲时是 1。库内工具只在等工具时执行；协议的 `send` 带 `from` 时，`p` 可能在等模型。 */
 export function nextHops(p: Process): number {
@@ -193,7 +205,7 @@ function fail(text: string): ToolResultContent {
   return { content: textContent(text), isError: true };
 }
 
-const noProcess = (id: string): ToolResultContent => fail(`没有进程 ${id}。`);
+const noProcess = (id: string): ToolResultContent => fail(`没有进程 ${id}。用 self 查运行中的进程 ID。`);
 
 const hopsFail = (): ToolResultContent => fail(`跳数到上限（${HOPS_MAX}）：这封信是被进程之间的信一路引出来的。结束本轮，等用户的下一封信。`);
 
@@ -214,7 +226,7 @@ function overText(over: "key" | "value" | "brief" | "view", bytes: number): stri
     case "key":
       return `键有 ${bytes} 字节，上限 ${MEMORY_KEY_MAX_BYTES} 字节。`;
     case "value":
-      return `值有 ${bytes} 字节，上限 ${MEMORY_VALUE_MAX_BYTES} 字节。`;
+      return `值有 ${bytes} 字节，上限 ${MEMORY_VALUE_MAX_BYTES} 字节。一个汉字占 3 字节。把内容拆成几个键，或者写进文件。`;
     case "brief":
       return `摘要有 ${bytes} 字节，上限 ${MEMORY_BRIEF_MAX_BYTES} 字节。`;
     case "view":
@@ -224,8 +236,9 @@ function overText(over: "key" | "value" | "brief" | "view", bytes: number): stri
   }
 }
 
-function conflict(key: string, current: Versioned | null, ifGone = ""): ToolResultContent {
-  return { content: textContent(`版本冲突，没有写入。${current ? `现在的值是 ${show(key, current)}` : `键 ${key} 现在不存在。${ifGone}`}`), isError: true };
+function conflict(key: string, current: Versioned | null, hint = ""): ToolResultContent {
+  // 带现值时提示另起一行：值可能以任何字符结尾，接在同一行会黏在一起。
+  return { content: textContent(`版本冲突，没有写入。${current ? `现在的值是 ${show(key, current)}${hint === "" ? "" : `\n${hint}`}` : `键 ${key} 现在不存在。${hint}`}`), isError: true };
 }
 
 /** 本地时间和时区在内核外格式化（见 .knowledge/kb-kernel.md）。 */

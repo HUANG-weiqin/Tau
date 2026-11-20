@@ -115,17 +115,22 @@
 
 ### 参数从哪来
 
-执行器先用 pi-ai 的 `validateToolArguments` 校验，再调用工具（[kb-executor](kb-executor.md#运行工具actionsts)）。所以工具收到的参数类型都对，必填的都在，没有多余字段。校验会改写一些值：
+执行器先用 `fixArgs`（`src/tools/args.ts`）修正，再用 pi-ai 的 `validateToolArguments` 校验，然后调用工具（[kb-executor](kb-executor.md#运行工具actionsts)）。库内工具（`runInStore`）同样先过 `fixArgs`，再用手写的检查（[kb-store](kb-store.md#记忆工具)）。所以工具收到的参数类型都对，必填的都在，没有多余字段。
 
-- 可选参数是 `null` 时被删掉，等于省略。
-- 必填的字符串是 `null` 时变成 `""`。数字和布尔值变成字符串。
-- `"5"` 变成 `5`，`"true"` 变成 `true`。小数和非数字的字符串当整数时校验失败。
+`fixArgs` 做的事（只动 `null` 和标量类型）：
+
+- 值为 `null` 的键不在 `required` 里：删掉，等于没填。
+- 值为 `null` 的键在 `required` 里：错误结果 `参数 <名字> 是 null，必须给出一个值。` 不会再变成字符串 `"null"` 写进文件。
+- 数字和布尔值写成字符串的按 schema 的类型转：`"5"` 转 `5`，`"true"` 转 `true`；字符串写成数字或布尔值，转成字符串。转不了的留着，由校验报错（小数、非数字的字符串当整数时校验失败）。
+- 别的键原样留着：库外工具由校验报错（`additionalProperties` 是 `false`），库内工具静默忽略。
 - 不校验取值范围。`offset`、`limit`、`timeout` 的范围由工具自己检查。
 
 ### 路径
 
 - 用 `path.resolve(workdir, args.path)`。绝对路径原样用，相对路径按工作目录解析，`..` 照常生效。
-- 例外：开头是 `/<一个字母>/` 或恰好是 `/<一个字母>` 的，按 Git Bash 的盘符写法，当 `X:/…`（`/e/tau` 是 `E:\tau`）。不换的话 `path.resolve` 会把它当成当前盘根下的 `\e\tau`，悄悄读写到别处。其它 msys 路径（`/tmp`、`/usr`）不认。bash 工具的描述里写明了这两种写法 read、write、edit 都认，以及 PowerShell 的命令要用 `powershell -NoProfile -Command` 调用。
+- 例外：开头是 `/<一个字母>/` 或恰好是 `/<一个字母>` 的，按 Git Bash 的盘符写法，当 `X:/…`（`/e/tau` 是 `E:\tau`）。不换的话 `path.resolve` 会把它当成当前盘根下的 `\e\tau`，悄悄读写到别处。其它 msys 路径（`/tmp`、`/usr`）不认。
+- 例外：`~/…` 和恰好是 `~` 的，`~` 换成家目录（`os.homedir()`，正斜杠写法）。`~user` 不认。`/tmp`、`/home` 照旧按普通路径解析，不换成家目录。
+- 三个路径工具走同一个解析函数（`resolvePath`），read、write、edit 都认上面两种写法。bash 工具的描述里写明了这两种写法，以及 PowerShell 的命令要用 `powershell -NoProfile -Command` 调用。
 - 不限制路径（[D14](kb-decisions.md#d14-yagni-审查移出-mvp-的-20-项)）。有 bash 就能绕过任何限制。
 - 结果里写的是解析后的绝对路径。
 
@@ -333,7 +338,7 @@ bash 工具（BG_WRAPPER）
 | `read` | 空文件 | `文件为空：<路径>` | 否 |
 | `read` | `offset` 超过行数 | `文件共 N 行，offset M 超出范围：<路径>` | 否 |
 | `read` | 是目录 | `是目录，不能读取：<路径>` | 是 |
-| `read` | 不是 UTF-8 | `不是 UTF-8 文本：<路径>` | 是 |
+| `read` | 不是 UTF-8 | `不是 UTF-8 文本：<路径>。可以用 bash 转码：iconv -f GBK -t UTF-8 原文件 > 新文件。` | 是 |
 | `read` | 图片，模型收图片 | 没有文本块，一个图片块（`blob:<hash>`），`images` 带字节 | 否 |
 | `read` | 图片，模型不收图片 | `[图片：模型不支持，已省略]` | 否 |
 | `read` | 图片不合格 | `图片不合格：<路径>（<原因>）` | 是 |
@@ -343,8 +348,8 @@ bash 工具（BG_WRAPPER）
 | `write` | 失败 | `写入失败：<路径>（<原因>）` | 是 |
 | `edit` | 成功 | `已替换 N 处：<路径>` | 否 |
 | `edit` | `old` 为空 | `原文不能为空：<路径>` | 是 |
-| `edit` | 不是 UTF-8 | `不是 UTF-8 文本，不能编辑：<路径>` | 是 |
-| `edit` | 找不到 | `没找到原文：<路径>` | 是 |
+| `edit` | 不是 UTF-8 | `不是 UTF-8 文本，不能编辑：<路径>。可以用 bash 转码：iconv -f GBK -t UTF-8 原文件 > 新文件。` | 是 |
+| `edit` | 找不到 | `没找到原文：<路径>。先用 read 看原文：空白、缩进、换行都要逐字一致。` | 是 |
 | `edit` | 多处且没有 `replaceAll` | `原文出现 N 次，必须唯一，或改用 replaceAll：<路径>` | 是 |
 | `edit` | 其它失败 | `编辑失败：<路径>（<原因>）` | 是 |
 | `bash` | 退出 | `<输出>[退出码 N]` | N 不是 0 时 |
@@ -408,13 +413,15 @@ bash 工具（BG_WRAPPER）
 | 路径 | 内容 |
 |---|---|
 | `src/tools/files.ts` | `read`、`write`、`edit` |
+| `src/tools/args.ts` | `fixArgs`：库内和库外工具共用的参数修正（`null`、标量类型） |
 | `src/tools/bash.ts` | `bash`（先等、转后台、输出文件）、`runCommand`（工具定义用）：找 shell、包装脚本、输出、`killAll` |
 | `src/tools/notify.ts` | 通知脚本：转后台的命令跑完后寄信 |
 | `src/tools/tooldef.ts` | `runToolDef`：运行工具定义，解析 `content` 输出 |
 | `src/executor/actions.ts` | 校验参数，按名字调用工具（[kb-executor](kb-executor.md#运行工具actionsts)） |
 | `src/kernel/tools.ts` | 给模型看的工具描述（[kb-kernel](kb-kernel.md#工具描述)） |
 | `src/kernel/derive.ts` | `clip`、`MESSAGE_MAX_BYTES` |
-| `test/tools/files.test.ts` | 文件工具 |
+| `test/tools/files.test.ts` | 文件工具，含 msys 盘符和 `~` 的家目录展开 |
+| `test/tools/args.test.ts` | `fixArgs` |
 | `test/tools/bash.test.ts` | bash |
 | `test/tools/tooldef.test.ts` | 运行工具定义，用假命令 |
 
@@ -425,11 +432,12 @@ bash 工具（BG_WRAPPER）
 
 | 测试 | 证明 |
 |---|---|
+| 路径 | `~/x` 和 `~` 展开成家目录，read、write、edit 都一样；`/tmp`、`/home`、`~user` 照旧按普通路径；msys 盘符见 `test/tools/files.test.ts` 的 `describe("msys drive paths")` |
 | `read` | 每行带行号；`offset`、`limit` 选范围；没有结尾换行时行数不变；CRLF 去掉 `\r`；空文件和 `offset` 越界不算错误；不存在、是目录算错误；相对路径按工作目录 |
 | `read` 读图片 | png 读成图片块且 `images` 带原字节；模型不收图片时只有占位行、不存；超大、超尺寸报错（收不收图片都报）；看魔数不看扩展名（`x.txt` 里的 png 是图片，`x.png` 里的文本是文本）；非图片的二进制仍报“不是 UTF-8 文本” |
 | `write` | 建好多层目录，原样写出（含 `\r\n`）；覆盖已有文件；按字节计数；相对路径 |
-| `edit` | 唯一时替换；找不到或多处时报错且文件不变；`replaceAll` 替换不重叠的出现；`$&`、`$1` 按字面；`old` 为空报错；文件不存在回错误不抛出；空白不归一；相对路径 |
-| 编码和换行 | GBK、UTF-16LE 被拒绝且字节不变；BOM 保留；CRLF 文件上多行原文能匹配，写回全是 CRLF；单行原文、`new` 带 `\n` 也写 CRLF；CRLF 下多行原文出现两次仍要求唯一；LF 文件不受影响；约 20 万行的文件截到上限并保留首尾行 |
+| `edit` | 唯一时替换；找不到（错误里指向 `read` 逐字对照）或多处时报错且文件不变；`replaceAll` 替换不重叠的出现；`$&`、`$1` 按字面；`old` 为空报错；文件不存在回错误不抛出；空白不归一；相对路径 |
+| 编码和换行 | GBK、UTF-16LE 被拒绝且字节不变、错误里带转码的命令；BOM 保留；CRLF 文件上多行原文能匹配，写回全是 CRLF；单行原文、`new` 带 `\n` 也写 CRLF；CRLF 下多行原文出现两次仍要求唯一；LF 文件不受影响；约 20 万行的文件截到上限并保留首尾行 |
 
 ### bash 测试（`test/tools/bash.test.ts`）
 
@@ -480,7 +488,7 @@ bash 工具（BG_WRAPPER）
 ## 坑点
 
 - **msys 路径。** 模型在 bash 里看到 `/e/tau/x`，交给 `read` 会解析成 `E:\e\tau\x`（工作目录所在盘）。结果里有解析后的路径，模型能发现。
-- **`null` 参数被改写。** `edit` 的 `new` 为 `null` 时变成 `""`，等于删掉原文。`bash` 的 `command` 为 `null` 时什么都不跑，回 `[退出码 0]`。`path` 为 `null` 时指向工作目录本身。
+- **`null` 参数。** 可选的 `null` 当没填；必填的 `null` 是错误结果（`参数 <名字> 是 null，必须给出一个值。`），不会变成字符串 `"null"` 写进文件。旧版会转成 `"null"`：`edit` 的 `new` 为 `null` 时等于写入 `null`，`write` 的 `content` 为 `null` 时写入 `null`。
 - **写文件不是原子的。** 服务在 `write` 或 `edit` 写到一半时被杀，文件可能只剩一部分。重启后结果是“被中断”（[kb-executor](kb-executor.md#崩溃窗口)）。中止不影响文件工具，它们照样写完（[kb-executor](kb-executor.md#坑点)）。
 - **`write` 不保留原文件的 BOM 和 CRLF。** 它只写模型给的内容。
 - **bash 输出只按 UTF-8 解码。** Windows 原生程序按系统代码页输出时，非 ASCII 字符变成替换字符。头尾的切口也可能切开一个多字节字符。

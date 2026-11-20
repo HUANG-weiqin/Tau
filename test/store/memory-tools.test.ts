@@ -58,7 +58,7 @@ test("模型调 memory_get 和 memory_set：结果的文字带摘要、更新日
   handleNext(db, memory, NOW); // 执行 memory_get
   assert.equal(toolText(db, 4), `城市（版本 1，更新 ${utcDate(NOW)}）：\n摘要：住在哪\n杭州`);
   handleNext(db, memory, NOW); // 处理 memory_get 的结果，执行 memory_set
-  assert.equal(toolText(db, 5), `版本冲突，没有写入。现在的值是 城市（版本 1，更新 ${utcDate(NOW)}）：\n摘要：住在哪\n杭州`);
+  assert.equal(toolText(db, 5), `版本冲突，没有写入。现在的值是 城市（版本 1，更新 ${utcDate(NOW)}）：\n摘要：住在哪\n杭州\n要覆盖，带 version=<现在的版本号> 再写一次。`);
   assert.deepEqual(memoryRows(db), [{ key: "城市", value: "杭州", brief: "住在哪", updated: NOW, version: 1 }], "冲突没有写入");
 });
 
@@ -74,16 +74,15 @@ function callTool(t: TestContext, name: string, args: JsonObject, seed?: { value
   return { db, memory, r: toolResult(db, 2) };
 }
 
-test("memory_edit 的参数：key、old、new 必须是字符串，old 不能为空，version 必填且是整数，brief 给了必须是字符串；都不碰记忆", (t) => {
+test("memory_edit 的参数：old 不能为空，version 必填且是整数，brief 给了必须是字符串，必填是 null 就报 null；都不碰记忆", (t) => {
   const cases: [JsonObject, string][] = [
-    [{ key: 1, old: "甲", new: "乙", version: 1 }, "参数错误：key、old 和 new 必须是字符串。"],
-    [{ key: "笔记", old: 1, new: "乙", version: 1 }, "参数错误：key、old 和 new 必须是字符串。"],
-    [{ key: "笔记", old: "甲", new: null, version: 1 }, "参数错误：key、old 和 new 必须是字符串。"],
     [{ key: "笔记", old: "", new: "乙", version: 1 }, "参数错误：old 不能为空。"],
-    [{ key: "笔记", old: "甲", new: "乙" }, "参数错误：version 必须是整数。"],
-    [{ key: "笔记", old: "甲", new: "乙", version: null }, "参数错误：version 必须是整数。"],
-    [{ key: "笔记", old: "甲", new: "乙", version: 1.5 }, "参数错误：version 必须是整数。"],
-    [{ key: "笔记", old: "甲", new: "乙", version: 1, brief: 2 }, "参数错误：brief 必须是字符串，或者省略。"],
+    [{ key: "笔记", old: "甲", new: "乙" }, "参数错误：version 必须是整数。先用 memory_get 读到现在的版本号。"],
+    [{ key: "笔记", old: "甲", new: "乙", version: 1.5 }, "参数错误：version 必须是整数。先用 memory_get 读到现在的版本号。"],
+    [{ key: "笔记", old: "甲", new: "乙", version: 1, brief: ["x"] }, "参数错误：brief 必须是字符串，或者省略。"],
+    [{ key: "笔记", old: "甲", new: null, version: 1 }, "参数 new 是 null，必须给出一个值。"],
+    [{ key: "笔记", old: "甲", new: "乙", version: null }, "参数 version 是 null，必须给出一个值。"],
+    [{ key: "笔记", old: "甲" }, "参数错误：memory_edit 缺少 new（字符串）。收到的参数名：key, old。"],
   ];
   for (const [args, want] of cases) {
     const { db, r } = callTool(t, "memory_edit", args);
@@ -115,7 +114,7 @@ test("memory_edit：old 没找到、出现多次都是 isError，不写入", (t)
 
 test("memory_edit：替换后超出上限，走 memory_set 的 over 分支，原值不变", (t) => {
   const long = callTool(t, "memory_edit", { key: "笔记", old: "x".repeat(4000), new: "y".repeat(4100), version: 1 }, { value: "x".repeat(4000), brief: "摘要" });
-  assert.deepEqual(long.r, { text: "超出上限，没有写入：值有 4100 字节，上限 4096 字节。", isError: true });
+  assert.deepEqual(long.r, { text: "超出上限，没有写入：值有 4100 字节，上限 4096 字节。一个汉字占 3 字节。把内容拆成几个键，或者写进文件。", isError: true });
   assert.equal(long.memory.get(PRESET.id, "笔记")?.value, "x".repeat(4000));
   assert.equal(long.memory.get(PRESET.id, "笔记")?.version, 1);
   const brief = callTool(t, "memory_edit", { key: "笔记", old: "乙", new: "丁", version: 1, brief: "摘".repeat(70) }, { value: "甲乙丙", brief: "摘要" });

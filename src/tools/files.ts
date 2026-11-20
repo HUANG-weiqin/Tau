@@ -1,4 +1,5 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import type { ToolOutput } from "../executor/executor.ts";
 import { checkImages, imageType } from "../images.ts";
@@ -8,6 +9,7 @@ import type { ToolResultContent } from "../kernel/types.ts";
 import { clip } from "../kernel/derive.ts";
 import { imageBlock } from "./tooldef.ts";
 
+const ICONV_HINT = "可以用 bash 转码：iconv -f GBK -t UTF-8 原文件 > 新文件。";
 const ok = (text: string): ToolResultContent => ({ content: textContent(text), isError: false });
 const fail = (text: string): ToolResultContent => ({ content: textContent(text), isError: true });
 
@@ -27,7 +29,10 @@ function decode(buf: Buffer): string | undefined {
 // Git Bash 的 /c/Users/x 写法：模型在 bash 里用惯了，read、write、edit 也会这样写。
 // path.resolve 会把它当成当前盘根下的 \c\Users\x，悄悄读写到别处，所以先换成 C:/Users/x。
 const MSYS_DRIVE = /^\/([a-zA-Z])(?:\/|$)/;
-const resolvePath = (workdir: string, p: string): string => path.resolve(workdir, p.replace(MSYS_DRIVE, (_, d: string) => `${d.toUpperCase()}:/`));
+// 模型也常写 `~/x` 和 `~`：换成家目录（正斜杠写法，和上面一致）。/tmp、/home 不认。
+const HOME = /^~(?=\/|$)/;
+const resolvePath = (workdir: string, p: string): string =>
+  path.resolve(workdir, p.replace(HOME, os.homedir().replaceAll("\\", "/")).replace(MSYS_DRIVE, (_, d: string) => `${d.toUpperCase()}:/`));
 
 export async function read(args: { path: string; offset?: number; limit?: number }, workdir: string, accepts: boolean): Promise<ToolOutput> {
   const file = resolvePath(workdir, args.path);
@@ -36,7 +41,7 @@ export async function read(args: { path: string; offset?: number; limit?: number
     const buf = await readFile(file);
     if (imageType(buf)) return image(buf, file, accepts);
     const text = decode(buf);
-    if (text === undefined) return fail(`不是 UTF-8 文本：${file}`);
+    if (text === undefined) return fail(`不是 UTF-8 文本：${file}。${ICONV_HINT}`);
     const lines = text === "" ? [] : text.split("\n");
     if (text.endsWith("\n")) lines.pop();
     if (lines.length === 0) return ok(`文件为空：${file}`);
@@ -82,13 +87,13 @@ export async function edit(
   if (args.old === "") return fail(`原文不能为空：${file}`);
   try {
     const text = decode(await readFile(file));
-    if (text === undefined) return fail(`不是 UTF-8 文本，不能编辑：${file}`);
+    if (text === undefined) return fail(`不是 UTF-8 文本，不能编辑：${file}。${ICONV_HINT}`);
     // 模型看到的行不含 \r。CRLF 文件里：多行原文换成 \r\n 再匹配，新文本的 \n 也换成 \r\n。
     const crlf = text.includes("\r\n") && !args.old.includes("\r");
     let parts = text.split(args.old);
     if (parts.length === 1 && crlf) parts = text.split(args.old.replaceAll("\n", "\r\n"));
     const count = parts.length - 1;
-    if (count === 0) return fail(`没找到原文：${file}`);
+    if (count === 0) return fail(`没找到原文：${file}。先用 read 看原文：空白、缩进、换行都要逐字一致。`);
     if (count > 1 && !args.replaceAll) return fail(`原文出现 ${count} 次，必须唯一，或改用 replaceAll：${file}`);
     const repl = crlf ? args.new.replace(/(?<!\r)\n/g, "\r\n") : args.new;
     await writeFile(file, parts.join(repl), "utf8");
