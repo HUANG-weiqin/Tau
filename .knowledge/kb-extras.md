@@ -223,7 +223,7 @@ git -C $REPO branch -d wt/<名字>
 
 怎么做：
 
-- `history_dump` 读协议的 `history`：只 dump 本进程（`TAU_PROCESS`）的旧段（第 1 段到当前段号减 1），当前段的内容模型已经有了；看别的进程用 `peek`。位置写成“段号:序号”，旧段不改，只会被 `prune` 整段删掉，所以位置不会漂。渲染、写文件、清理的纯函数在 `extras/tools/history.ts`，脚本和测试都导入它。
+- `history_dump` 读协议的 `history`：只 dump 本进程（`TAU_PROCESS`）的旧段（第 1 段到当前段号减 1），当前段的内容模型已经有了；看别的进程用 `peek`。位置写成“段号:序号”，旧段不改，只会被 `prune` 整段删掉，所以位置不会漂。本地已有 `seg-<n>.md` 时，只发 `from: Number.MAX_SAFE_INTEGER` 探针确认没被 `prune` 删掉，然后从本地文件刷新修改时间并提取大小、行数和开头（`readExistingSegment`、`headFromMarkdown`），不再经管道全量拉取。渲染、写文件、清理的纯函数在 `extras/tools/history.ts`，脚本和测试都导入它。
 - 清理规则：数据放 `~/.tau/extras/history/<进程 ID>/`，不进库、不备份。每次调用先遍历这个目录，删修改时间超过 7 天的文件，删空了的进程目录也删；每步失败都跳过（文件可能被占用），清理出错不让工具失败。期限和内核清理 bash 输出文件一样是 7 天（[kb-tools 的输出文件](kb-tools.md#输出文件)）。清理放在工具自己里：内核只写 `extras/shell/` 一处（[D90](kb-decisions.md#d90-bash-接管后台命令先等没跑完转后台输出写文件跑完寄信)），而且 GUI 和计划任务都不常驻，不能指望上层有个程序一直跑（[D93](kb-decisions.md#d93-history_dump-取代-history_search-和-history_read)）。
 - 除 `web_search`、`list_presets` 外，都只在 tau 的工具调用里运行：没有 `TAU_PROCESS` 或 `TAU_PIPE` 时报错。这两个不连管道，不需要这两个变量。连管道的小客户端是 `extras/tools/client.ts`，发完请求不半关闭。
 - 测试：`test/extras/tools/web_search.test.ts`（`web_search`：脚本在子进程里跑，后端是本机的假 HTTP 服务，不碰真网络，也不读真的 `~/.tau`；后端的顺序和退路、错误文字、auth.json 的各种写法、输出的截断）。`test/extras/tools/list_presets.test.ts`（`list_presets`：纯函数，加一次指到临时目录的子进程）。`test/extras/tools/tools.test.ts`（`peek`、`wait`，和桥的工具路由），真的服务、真的 Git Bash；数据目录靠 `USERPROFILE` 指到临时目录。`test/extras/tools/history.test.ts`（`history_dump`）：渲染、输出、清理、写文件的幂等不要服务，另有对着真的服务的集成测试。
@@ -360,7 +360,7 @@ schtasks /Create /TN "tau-backup" /SC DAILY /ST 03:30 /TR "node \"<仓库>\extra
 **结果**
 
 - MCP 的 `text` 项原样变成 `{"type":"text","text":…}`。
-- `image` 项先写成文件 `~/.tau/extras/mcp/images/<进程 ID>/<时间>-<序号>.<扩展名>`，再变成 `{"type":"image","path":"<Windows 绝对路径>"}`。
+- `image` 项先写成文件 `~/.tau/extras/mcp/images/<进程 ID>/<时间>-<序号>.<扩展名>`，再变成 `{"type":"image","path":"<Windows 绝对路径>"}`。`call.ts` 每次调用顺手清掉修改时间超过 7 天的图片文件和变空的进程目录（和内核 `shell/`、`history_dump` 同期限，单步失败跳过）。
 - 长边超过 2000 像素、超过 1.5 MiB、或者类型不是 png/jpeg/gif/webp 的图片不放进 image 项，改成一行文字写出路径。一次结果最多放 2 张，多的也改成文字写路径。长边读图片头算，png、jpeg、gif、webp 都支持。
 - 其它类型（`resource`、`audio` 等）转成一行文字说明。
 - `isError` 或者 `ok:false`：文字打到标准输出，退出码 1。

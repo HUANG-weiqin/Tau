@@ -4,11 +4,12 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { IMAGE_KEEP_MS, pruneOldImages } from "../../../extras/mcp/call.ts";
 import { ConnectError, talk } from "../../../extras/tools/client.ts";
 import { listServer } from "../../../extras/mcp/gen.ts";
 
@@ -257,6 +258,39 @@ describe("relay 和 call", () => {
     );
     assert.match(many[2].text, /最多放 2 张/);
     assert.ok(existsSync(many[2].text.match(/已存成 (.+?)\]$/)[1]));
+  });
+
+  test("图片清理：7 天前的文件和变空的进程目录被删；未满和刚满 7 天的保留，目录不存在或不纯不出错；调用工具会顺手清理", () => {
+    const root = join(dir, "prune-images");
+    const now = Date.UTC(2026, 10, 20);
+    assert.equal(pruneOldImages(root, now), 0);
+    const dead = join(root, "dead");
+    const live = join(root, "live");
+    mkdirSync(dead, { recursive: true });
+    mkdirSync(live, { recursive: true });
+    const age = (file: string, ms: number): void => utimesSync(file, (now - ms) / 1000, (now - ms) / 1000);
+    writeFileSync(join(dead, "1-1.png"), "old");
+    age(join(dead, "1-1.png"), IMAGE_KEEP_MS + 1000);
+    writeFileSync(join(live, "1-1.png"), "fresh");
+    writeFileSync(join(live, "2-1.png"), "old");
+    age(join(live, "2-1.png"), IMAGE_KEEP_MS + 1000);
+    writeFileSync(join(live, "3-1.png"), "exact");
+    age(join(live, "3-1.png"), IMAGE_KEEP_MS);
+    writeFileSync(join(root, "stray.txt"), "x");
+    assert.equal(pruneOldImages(root, now), 2);
+    assert.ok(!existsSync(dead));
+    assert.deepEqual(readdirSync(live).sort(), ["1-1.png", "3-1.png"]);
+    assert.ok(existsSync(join(root, "stray.txt")));
+
+    const oldDir = join(home, ".tau", "extras", "mcp", "images", "expired");
+    mkdirSync(oldDir, { recursive: true });
+    const expired = join(oldDir, "1-1.png");
+    writeFileSync(expired, "old");
+    const past = (Date.now() - IMAGE_KEEP_MS - 60_000) / 1000;
+    utimesSync(expired, past, past);
+    const r = call("fake", "count");
+    assert.equal(r.code, 0, r.err);
+    assert.ok(!existsSync(oldDir), "真实调用 call.ts 时顺手清掉了 7 天前的图片目录");
   });
 
   test("其它类型转成一行文字说明", () => {

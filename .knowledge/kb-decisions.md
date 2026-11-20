@@ -2256,7 +2256,8 @@ fork 原来在这张表里，已进内核，见 [D49](#d49-fork-进内核)。
 - 验证：`test/tools/bash.test.ts` 39 条：快命令（结果文字不变，文件和 claim 都没留下，没有信）、`exit N`、`timeout` 封顶（3000000 秒，`sleep 3` 等到跑完）、命令含 NUL（错误结果，不抛）、参数错误（负数、`NaN`、1.5）、转后台（及时返回、第一行格式、输出文件位置、命令跑完、log 有退出码行、信寄到且正文不重复退出码行、pgid 已删）、非零退出码的信、`timeout` 0、`LANG=zh_CN.GBK` 加含中文的 home、转后台前最后推一次（4 个并发，预览和结果一字不差）、预览每次读最多 1 MiB、claim 竞态 20 次、前台中止杀进程树（原生、msys、启动途中）、转后台以后中止不杀、大输出头尾加路径、刚好 `2 * KEEP_BYTES` 删文件和多 1 字节留文件、转后台时已有输出截断、7 天清理（log 还在的 claim 不删）、通知脚本（重试、尾部 20 行和 3000 字、边界落在 emoji 中间、去掉最后的退出码行、没回执不重试、被拒绝不重试）、末尾没有残留 `notify.ts` 进程。`test/bash-home.test.ts` 扫描：真会跑内置 bash 的测试文件都把 home 指到临时目录。`test/tools/tooldef.test.ts` 只改了 home，`test/server/protocol.test.ts` 的 D88 预览测试仍通过。测试文件的 home 都指到临时目录（`test/home.ts`）。审查后新加的测试都先红后绿（上面 `timeout` 封顶、NUL、`LANG`、最后推一次、读上限、emoji、退出码行、claim 清理）。
 - 通知脚本残留：审查时全量后留下 3 个 `notify.ts` 重试进程，占着临时目录（服务没了，它们按设计重试约 1 小时）。没能复现：`test/server`、`test/tools`、`test/extras/tools`、`test/extras/gui`、`test/store`、`test/presets` 一起跑完，没有残留；也没找到哪个测试会让命令转后台：除 `bash.test.ts` 外，真跑内置 bash 的命令都在几秒内结束，默认等 60 秒。转后台的用例在 `bash.test.ts` 里，都等到了信才结束。守法：`bash.test.ts` 末尾检查本文件开始以后起的 `notify.ts` 进程都已退出。
 - 还没做：推导测试（[kb-contract 的做法](kb-contract.md#推导测试的做法)）。和 D87、D88、D89 一样，等用户定受试者。后续阶段：第 2 阶段 `self` 投影列出后台命令；第 3 阶段退役 `shell`、`bg_run`，改预设和界面。以后项（不做）：结果里带 `taskkill` 杀法；长时间硬上限。
-- 第 3 阶段已做（2026-11-20）：`shell`、`bg_run` 退役，工具库里删了两个定义和它们的脚本，预设改回 `bash`，界面不再提示“两个一起开”；`~/.tau/tools/` 里也删了这两个定义。老 `extras/bg/` 的 log 界面仍认。第 2 阶段（`self` 投影列出后台命令）还没做。
+- 第 3 阶段已做（2026-11-20）：`shell`、`bg_run` 退役，工具库里删了两个定义和它们的脚本，预设改回 `bash`，界面不再提示“两个一起开”；`~/.tau/tools/` 里也删了这两个定义。老 `extras/bg/` 的 log 界面仍认。
+- 第 2 阶段已做（2026-11-21）：`self` 投影增加可选字段 `bgJobs`（只列当前段尚未收到完成信的后台 bash 任务），`formatSelf` 同步展示。
 - 写在这里的页：[kb-tools 的 bash](kb-tools.md#bash)、[kb-contract](kb-contract.md#契约清单)、[设计稿的风险](../docs/design/mvp.md#风险)、[kb-store 的位置](kb-store.md#位置)。
 
 ### D91 使用反馈：msys 盘符路径、bash 描述的路径和 PowerShell 提示、界面列出转入后台的 bash 命令

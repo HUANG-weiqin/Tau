@@ -152,3 +152,8 @@ export function toolsFor(preset: Tools): ToolSpec[] {
 export function findTool(preset: Tools, name: string): ToolSpec | undefined {
   return toolsFor(preset).find((t) => t.name === name);
 }
+
+const BUILTIN = toolsFor({ tools: ["read", "write", "edit", "bash", "memory", "agents"], toolDefs: [] });
+
+/** 全部内置工具里按名字找描述，不看预设开了哪些组（`runDeclared` 可以声明未在预设列出的库内动作）。 */
+export const findBuiltin = (name: string): ToolSpec | undefined => BUILTIN.find((t) => t.name === name);

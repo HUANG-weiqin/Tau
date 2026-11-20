@@ -36,6 +36,8 @@ export interface Projection {
     usage: Usage;
     /** 有待换配置（`next`）时：它和当前快照结构性字段里不一样的键名（D71）。没有 `next` 就没有这个键。放在 `self` 里，因为 `watch` 的 `update` 只带 `self`。 */
     pending?: { fields: string[] };
+    /** 当前段里转入后台、还没收到完成信的 bash 任务（D90 第 2 阶段）。没有就没有这个键。 */
+    bgJobs?: { id: string; age: number }[];
   };
   /** 同一个预设下不处于 idle 的其他进程。 */
   siblings: ProcessView[];
@@ -54,6 +56,7 @@ export function observe(p: Process, segment: readonly Message[], siblings: reado
   const kids = siblings.filter((s) => s.parent === p.id);
   const dir = p.preset.workdir.toLowerCase();
   const hot = siblings.filter((s) => s.phase.tag !== "idle");
+  const bgJobs = activeBgJobs(segment, now);
   return {
     now,
     self: {
@@ -64,6 +67,7 @@ export function observe(p: Process, segment: readonly Message[], siblings: reado
       messages: segment.length,
       usage: { ...p.usage },
       ...(p.next === undefined ? {} : { pending: { fields: pendingFields(p.preset, p.next) } }),
+      ...(bgJobs.length === 0 ? {} : { bgJobs }),
     },
     siblings: siblings.filter((s) => s.id !== p.id && s.preset.id === p.preset.id && s.phase.tag !== "idle").map((s) => view(s, now)),
     children: kids.filter((s) => s.phase.tag !== "idle").map((s) => view(s, now)),
@@ -71,6 +75,27 @@ export function observe(p: Process, segment: readonly Message[], siblings: reado
     sameDir: hot.filter((s) => s.id !== p.id && s.preset.workdir.toLowerCase() === dir).map((s) => view(s, now)),
     running: hot.length,
   };
+}
+
+const BG_START = /^\[转入后台 ([0-9a-f]{6})\] 命令还在运行，没有被结束。\n输出文件：/gm;
+const BG_DONE = /^\[后台任务 ([0-9a-f]{6})\] 退出码 -?\d+$/;
+
+function activeBgJobs(segment: readonly Message[], now: Instant): { id: string; age: number }[] {
+  const jobs = new Map<string, number>();
+  for (const m of segment) {
+    const text = typeof m.content === "string" ? m.content : m.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("");
+    if (m.role === "toolResult" && m.toolName === "bash" && !m.isError) {
+      const id = [...text.matchAll(BG_START)].at(-1)?.[1];
+      if (id !== undefined) jobs.set(id, Math.max(0, now - m.timestamp));
+    } else if (m.role === "user") {
+      const lines = m.tau?.letters ? m.tau.letters.flatMap((l) => (l.from.kind === "user" && l.at !== undefined ? [text.slice(l.at[0], l.at[1]).split("\n", 1)[0] ?? ""] : [])) : [text.split("\n", 1)[0] ?? ""];
+      for (const line of lines) {
+        const id = BG_DONE.exec(line)?.[1];
+        if (id !== undefined) jobs.delete(id);
+      }
+    }
+  }
+  return [...jobs.entries()].map(([id, age]) => ({ id, age }));
 }
 
 function view(p: Process, now: Instant): ProcessView {

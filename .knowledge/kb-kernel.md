@@ -680,6 +680,7 @@ interface Projection {
     messages: number;                      // 当前段的消息条数
     usage: Usage;                          // 累计用量，跨段
     pending?: { fields: string[] };        // 有待换配置时：它和当前快照结构性字段里不一样的键名；没有 next 就没有这个键
+    bgJobs?: { id: string; age: number }[]; // 当前段转入后台、还没收到完成信的 bash 任务（D90 第 2 阶段）；没有就没有这个键
   };
   siblings: ProcessView[];                 // 同一个预设、不处于 idle 的其他进程
   sameDir?: ProcessView[];                 // 同一个工作目录（不分大小写）、不处于 idle 的其他进程，不看预设（D78）；observe 总是给
@@ -701,6 +702,7 @@ type PhaseView =
 - `sameDir`、`running`（D78）：和 `siblings`、`children` 各自独立，不去重；去重在 `self` 的文字里做（[kb-store](kb-store.md#self)）。`sameDir` 比较的是快照里 `workdir` 字符串的小写，不处理 junction、符号链接和 8.3 短名。`running` 是对传入记录的计数：`self`、`ps` 传全部进程，含自己；`watch` 传 `[p]`，用不到。写成可选键，因为契约只加可选键，`observe` 总是给。
 - `context.threshold` 是 `handoffThreshold(快照)`，含预设的 `handoff`。
 - `self.pending.fields`（D71）：`next` 和 `preset` 的结构性字段里不一样的键名，由 `snapshot.ts` 的 `pendingFields` 算。取值只有 `model`、`prompt`、`tools`、`workdir`、`context`，按这个顺序排。`toolDefs` 的内容变了算 `tools`；`contextWindow`、`input` 是按 `model` 查目录得来的，算 `model`。没有 `next` 时 `self` 里没有 `pending` 这个键。它放在 `self` 里，因为协议的 `watch` 的 `update` 只带 `self`，界面靠它知道有待换配置。`self` 工具的文字是同一份（[kb-store](kb-store.md#self)）。`next` 本身不在投影里：要看新快照的全部内容，用协议的 `inspect` 读进程记录。
+- `self.bgJobs`（D90 第 2 阶段）：从当前段派生。扫描 `toolName === "bash"` 且 `!isError` 的 `toolResult` 中末行匹配的 `[转入后台 <id>] 命令还在运行，没有被结束。\n输出文件：`，记录 `age = now - timestamp`；再按用户信里第一行（有 `tau.letters` 时只看 `from.kind === "user"` 且有 `at` 的信正文第一行）完整匹配 `^\[后台任务 ([0-9a-f]{6})\] 退出码 -?\d+$` 的移除。没有未完成任务时没有这个键。
 - `messages` 是当前段的消息条数；`usage` 是进程记录里的累计用量，不是从段里算的。
 - `idle` 阶段的出错原因经 `endedReason` 截短（先截到 1024 字节再把换行换成空格）。进程记录里存的仍是原文。运行中的进程没有结束原因，所以只有空闲的自己会出现截短的原因。
 - 本地时间、时区和文本格式在纯函数层外：`self` 在事务里（[kb-store.md](kb-store.md#self)），`tau ps` 在 CLI 里（[kb-service.md](kb-service.md#tau-ps-的文字格式)）。

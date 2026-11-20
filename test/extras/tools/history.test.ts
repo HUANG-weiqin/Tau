@@ -16,7 +16,7 @@ import type { Service } from "../../../src/server/serve.ts";
 import { runToolDef } from "../../../src/tools/tooldef.ts";
 import { talk } from "../../../extras/tools/client.ts";
 import { CATALOG, definitionOf } from "../../../extras/tools/catalog.ts";
-import { bodyOf, fmtTime, formatDump, headOf, KEEP_MS, LISTED, NOTICE, pruneOld, renderSegment, titleOf, writeSegment } from "../../../extras/tools/history.ts";
+import { bodyOf, fmtTime, formatDump, headFromMarkdown, headOf, KEEP_MS, LISTED, NOTICE, pruneOld, readExistingSegment, renderSegment, titleOf, writeSegment } from "../../../extras/tools/history.ts";
 import type { Row } from "../../../extras/tools/history.ts";
 import { textOfResult } from "../../plain.ts";
 
@@ -362,6 +362,25 @@ describe("真的服务", () => {
     assert.ok(existsSync(join(dumpDir(main), "seg-2.md")), "新的文件留着");
   });
 
+  test("headFromMarkdown 与 headOf 口径一致；readExistingSegment 直接读缓存算大小、行数和开头", () => {
+    const samples: Row[][] = [
+      [{ seq: 0, message: user("第一行\n第二行") }],
+      [{ seq: 0, message: handoff("\n\n交接内容第一行\n第二行") }],
+      [{ seq: 0, message: user("") }, { seq: 1, message: { role: "assistant", content: [text("答复")], timestamp: T } }],
+      [{ seq: 0, message: { role: "assistant", content: [{ type: "toolCall", id: "c1", name: "read", arguments: { path: "a" } }], timestamp: T } }],
+    ];
+    for (const rows of samples) {
+      assert.equal(headFromMarkdown(renderSegment(1, rows)), headOf(rows));
+    }
+    const cacheDir = join(dir, "cache-read");
+    const md = renderSegment(1, [{ seq: 0, message: handoff("交接目标 X。\n细节 Y") }, { seq: 1, message: user("后续") }]);
+    writeSegment(cacheDir, 1, md, T);
+    const later = T + 10_000;
+    const cached = readExistingSegment(cacheDir, 1, later);
+    assert.deepEqual(cached, { bytes: Buffer.byteLength(md), lines: md.split("\n").length - 1, head: "交接目标 X。" });
+    assert.ok(Math.abs(statSync(join(cacheDir, "seg-1.md")).mtimeMs - later) < 5);
+  });
+
   test("只有一段的进程：写明没有旧段，不建目录", async () => {
     faux.setResponses([say("好。")]);
     const one = await begin("单段的进程");
@@ -371,11 +390,14 @@ describe("真的服务", () => {
     assert.ok(!existsSync(dumpDir(one)));
   });
 
-  test("被 prune 删掉的段：写一句原因，别的段照常", async () => {
+  test("被 prune 删掉的段：写一句原因，别的段照常（已缓存过的文件也能感知到 prune）", async () => {
     faux.setResponses([say("一。"), say("交接一：清掉。"), say("二。"), say("交接二：清掉。"), say("三。")]);
     const id = await begin("要被删的段");
     await next(id, "进入第二段");
     await next(id, "进入第三段");
+    const first = await tool("history_dump", {}, id);
+    assert.equal(first.isError, false, first.text);
+    assert.ok(existsSync(join(dumpDir(id), "seg-1.md")));
     const [receipt] = await request({ op: "prune", process: id, before: 2 });
     assert.equal(receipt.type, "receipt");
     const r = await tool("history_dump", {}, id);

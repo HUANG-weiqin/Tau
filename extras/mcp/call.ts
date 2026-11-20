@@ -2,7 +2,7 @@
 // 它先把请求转发给中转进程，连不上就拉起中转再重试；回复按 `output: content` 的格式写到标准输出。
 // 拉起中转是关键：中间隔一层 cmd 的 start，让中转的父进程立刻消失，内核按进程树结束命令时找不到它。
 import { spawn } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -15,6 +15,8 @@ const IMAGE_MAX_BYTES = 1.5 * 1024 * 1024;
 const IMAGE_MAX_EDGE = 2000;
 /** 一次结果里最多放几张图；多的改成一行文字。 */
 const IMAGES_MAX = 2;
+/** 存成文件的 MCP 图片保留这么久（7 天），和内核 bash 输出文件、history_dump 一致。 */
+export const IMAGE_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
 /** 标准输出最多这么多字节（结尾的换行也算）。内核的上限约 32 KiB，超了整份不合法。 */
 const OUT_MAX_BYTES = 30 * 1024 - 2;
 /** 等中转连上的上限。 */
@@ -32,6 +34,29 @@ const EXT: Record<ImageKind, string> = { png: "png", jpeg: "jpg", gif: "gif", we
 const pipeName = (): string => process.env["TAU_MCP_PIPE"] || "\\\\.\\pipe\\tau-mcp";
 
 const dataDir = (...parts: string[]): string => path.join(homedir(), ".tau", "extras", "mcp", ...parts);
+
+function tryGet<T>(f: () => T): T | undefined {
+  try {
+    return f();
+  } catch {
+    return undefined;
+  }
+}
+
+/** 删 `root` 下修改时间超过 `IMAGE_KEEP_MS` 的图片文件，删空了的进程目录也删（`keep` 除外）。单步失败跳过，不影响工具调用。 */
+export function pruneOldImages(root: string, now: number, keep?: string): number {
+  let gone = 0;
+  for (const name of tryGet(() => readdirSync(root)) ?? []) {
+    const dir = path.join(root, name);
+    for (const f of tryGet(() => (statSync(dir).isDirectory() ? readdirSync(dir) : [])) ?? []) {
+      const p = path.join(dir, f);
+      if (!(tryGet(() => statSync(p).isFile() && now - statSync(p).mtimeMs > IMAGE_KEEP_MS) ?? false)) continue;
+      if (tryGet(() => { unlinkSync(p); return true; }) === true) gone++;
+    }
+    if (dir !== keep) tryGet(() => (readdirSync(dir).length === 0 ? rmdirSync(dir) : undefined));
+  }
+  return gone;
+}
 
 /** 给模型看的路径：Windows 的反斜杠写法。 */
 const winPath = (p: string): string => path.resolve(p).replace(/\//g, "\\");
@@ -272,6 +297,7 @@ async function main(): Promise<void> {
   } catch (e) {
     throw new Fail(e instanceof Error ? e.message : String(e));
   }
+  pruneOldImages(dataDir("images"), Date.now(), dataDir("images", proc));
 
   const reply = await ask({ op: "call", process: proc, workdir, server, tool, arguments: args });
   if (reply["ok"] !== true) throw new Fail(typeof reply["error"] === "string" ? reply["error"] : "MCP 中转返回了不认识的结果。");
@@ -287,7 +313,9 @@ async function main(): Promise<void> {
   process.stdout.write(`${JSON.stringify(fit(items))}\n`);
 }
 
-main().catch((e: unknown) => {
-  process.stderr.write(`${e instanceof Fail ? e.message : `调用 MCP 工具出错：${e instanceof Error ? e.message : String(e)}`}\n`);
-  process.exitCode = 1;
-});
+if (import.meta.main) {
+  main().catch((e: unknown) => {
+    process.stderr.write(`${e instanceof Fail ? e.message : `调用 MCP 工具出错：${e instanceof Error ? e.message : String(e)}`}\n`);
+    process.exitCode = 1;
+  });
+}

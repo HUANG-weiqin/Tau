@@ -5,7 +5,7 @@ import { fixArgs } from "../../src/tools/args.ts";
 
 const schema = {
   type: "object",
-  properties: { path: { type: "string" }, offset: { type: "integer" }, all: { type: "boolean" } },
+  properties: { path: { type: "string" }, offset: { type: "integer" }, all: { type: "boolean" }, items: { type: "array" }, meta: { type: "object" } },
   required: ["path"],
   additionalProperties: false,
 };
@@ -25,6 +25,12 @@ test("按 schema 转换标量：数字和布尔转字符串，字符串转整数
   assert.deepEqual(fixArgs(schema, { path: "a", offset: "3.5", all: "yes" }), { args: { path: "a", offset: "3.5", all: "yes" } });
 });
 
-test("schema 里没有的键原样留着（库内工具忽略多余字段，库外工具由校验报错）", () => {
+test("schema 里没有的键原样留着（库内工具和库外工具都由各自校验拒绝多余字段）", () => {
   assert.deepEqual(fixArgs(schema, { path: "a", extra: 1 }), { args: { path: "a", extra: 1 } });
+});
+
+test("字符串化的 JSON 数组和对象按 schema 解析；类型不对或不是合法 JSON 留着让校验报错", () => {
+  assert.deepEqual(fixArgs(schema, { path: "a", items: '["p1","p2"]', meta: '{"k":1}' }), { args: { path: "a", items: ["p1", "p2"], meta: { k: 1 } } });
+  assert.deepEqual(fixArgs(schema, { path: "a", items: '{"not":"array"}', meta: "[1,2]" }), { args: { path: "a", items: '{"not":"array"}', meta: "[1,2]" } });
+  assert.deepEqual(fixArgs(schema, { path: "a", items: "[bad" }), { args: { path: "a", items: "[bad" } });
 });

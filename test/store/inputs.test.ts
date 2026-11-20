@@ -252,8 +252,14 @@ test("库内工具的参数先修正再检查：可选的 null 当没填、数�
   // 参数的 JSON 被截断时 arguments 是 {}，原因在 argumentsError 里：只报第一行，让它重发。
   const broken = { type: "toolCall", id: "c", name: "memory_get", arguments: {}, argumentsError: 'Unexpected end of JSON input\n原文：{"key": "a' } as ToolCall;
   assert.deepEqual(run(broken), { text: "参数的 JSON 不完整或不合法：Unexpected end of JSON input。请重新发送完整的参数。", isError: true }, "只报第一行");
-  // 多余字段静默忽略，缺的那个要指名。
+  // 必填缺了时先指名缺哪个，再挡多余参数（例如 handoff({ summary })、memory_edit({ ..., replaceAll: true })）。
   assert.deepEqual(run(toolCall("c", "memory_set", { key: "a", content: "x", brief: "甲" })), { text: "参数错误：memory_set 缺少 value（字符串）。收到的参数名：key, content, brief。", isError: true });
+  assert.deepEqual(run(toolCall("c", "handoff", { summary: "总结" })), { text: "参数错误：handoff 不需要参数（收到 summary）。请不带参数调用 handoff，交接说明会在下一步单独写。", isError: true });
+  assert.deepEqual(run(toolCall("c", "self", { extra: 1 })), { text: "参数错误：self 没有参数 extra。不需要参数。", isError: true });
+  assert.deepEqual(run(toolCall("c", "memory_edit", { key: "k", old: "1", new: "2", version: 2, replaceAll: true })), { text: "参数错误：memory_edit 没有参数 replaceAll。可用的参数：key, old, new, version, brief。", isError: true });
+  // self 格式化当前段仍在运行的 bash 后台任务（D90 第 2 阶段）。
+  const withBg = runInStore(db, memory, p, [{ role: "toolResult", toolCallId: "b1", toolName: "bash", isError: false, timestamp: 1_000, content: [{ type: "text", text: "[转入后台 abcdef] 命令还在运行，没有被结束。\n输出文件：C:\\x.log" }] }], toolCall("c", "self", {}), 6_000);
+  assert.match(plain(withBg).text, /当前段仍在运行的后台命令：\n- abcdef（已转后台 5 秒）/);
 });
 
 test("处理一条输入只读当前段：旧段不加载，查询走 (process_id, segment_seq)", async (t) => {

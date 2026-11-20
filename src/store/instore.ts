@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { start } from "../kernel/decide.ts";
 import { endedText, HOPS_MAX, startError } from "../kernel/derive.ts";
 import { observe } from "../kernel/observe.ts";
-import { findTool, MEMORY_BRIEF_MAX_BYTES, MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
+import { findBuiltin, MEMORY_BRIEF_MAX_BYTES, MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
 import { textContent, unreachable } from "../kernel/types.ts";
 import { utcDate } from "../memory/kv.ts";
 import { fixArgs } from "../tools/args.ts";
@@ -44,20 +44,28 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
   // 参数的 JSON 不完整时 arguments 是 {}，原因在 argumentsError 里：说清楚，别只回“key 必须是字符串”。
   if (call.argumentsError !== undefined) return fail(`参数的 JSON 不完整或不合法：${call.argumentsError.split("\n")[0]}。请重新发送完整的参数。`);
   // 参数来自模型：pi-ai 把流式 JSON 'null' 解析成 null，所以不能直接解构；先按 schema 修正（tools/args.ts）。
-  const fixed = fixArgs(findTool(p.preset, call.name)?.parameters ?? {}, typeof call.arguments === "object" && call.arguments !== null ? call.arguments : {});
+  const spec = findBuiltin(call.name);
+  const fixed = fixArgs(spec?.parameters ?? {}, typeof call.arguments === "object" && call.arguments !== null ? call.arguments : {});
   if ("error" in fixed) return fail(fixed.error);
+  const allowed = Object.keys(((spec?.parameters as { properties?: Record<string, unknown> })?.properties) ?? {});
+  const extra = Object.keys(fixed.args).filter((k) => !allowed.includes(k));
+  const badExtra = (): ToolResultContent =>
+    call.name === "handoff"
+      ? bad(`handoff 不需要参数（收到 ${extra.join(", ")}）。请不带参数调用 handoff，交接说明会在下一步单独写。`)
+      : bad(`${call.name} 没有参数 ${extra.join(", ")}。${allowed.length === 0 ? "不需要参数。" : `可用的参数：${allowed.join(", ")}。`}`);
   const { key, value, brief, version } = fixed.args;
   const ns = p.preset.id;
   switch (call.name) {
     case "self":
-      return ok(formatSelf(observe(p, segment, loadProcesses(db), now)));
+      return extra.length > 0 ? badExtra() : ok(formatSelf(observe(p, segment, loadProcesses(db), now)));
     case "handoff":
       // 换段由 `decide` 在安全点发起：它看这个结果不是错误。
-      return ok("将在这批工具结果之后换段。");
+      return extra.length > 0 ? badExtra() : ok("将在这批工具结果之后换段。");
     case "post": {
       const { to, text, reply } = fixed.args;
       if (typeof to !== "string" || typeof text !== "string") return bad("to 和 text 必须是字符串。");
       if (reply != null && typeof reply !== "boolean") return bad("reply 必须是布尔值，或者省略。");
+      if (extra.length > 0) return badExtra();
       if (to === p.id) return fail("不能给自己寄信。");
       if (!loadProcess(db, to)) return noProcess(to);
       const hops = nextHops(p);
@@ -69,6 +77,7 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
       const { preset, text, workdir } = fixed.args;
       if (typeof preset !== "string" || typeof text !== "string") return bad("preset 和 text 必须是字符串。");
       if (workdir != null && typeof workdir !== "string") return bad("workdir 必须是字符串，或者省略。");
+      if (extra.length > 0) return badExtra();
       const hops = nextHops(p);
       if (hops > HOPS_MAX) return hopsFail();
       let snapshot: PresetSnapshot;
@@ -91,6 +100,7 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
     case "stop_process": {
       const { process: target } = fixed.args;
       if (typeof target !== "string") return bad("process 必须是字符串。");
+      if (extra.length > 0) return badExtra();
       if (target === p.id) return fail("不能停止自己。要结束这一轮，直接回复，不再调用工具。");
       if (!loadProcess(db, target)) return noProcess(target);
       putMail(db, target, { kind: "stop" });
@@ -98,12 +108,14 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
     }
     case "memory_get": {
       if (typeof key !== "string") return bad("key 必须是字符串。");
+      if (extra.length > 0) return badExtra();
       const cur = memory.get(ns, key);
       return ok(cur ? show(key, cur) : `键 ${key} 不存在。`);
     }
     case "memory_set": {
       if (typeof key !== "string" || typeof value !== "string" || typeof brief !== "string") return bad(missing("memory_set", fixed.args, ["key", "value", "brief"]));
       if (version != null && !isInt(version)) return bad("version 必须是整数，或者省略。");
+      if (extra.length > 0) return badExtra();
       // 版本号从 1 起，0 和负数不可能是读到的版本：模型常给新键这么填，当作没带。
       const r = memory.set(ns, key, { value, brief, now }, isInt(version) && version > 0 ? version : null);
       if (r.ok) return ok(`已写入 ${key}，版本 ${r.version}。`);
@@ -118,6 +130,7 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
       if (!old.isWellFormed()) return bad("old 含不完整的 Unicode 字符。");
       if (!isInt(version)) return bad(VERSION_HINT);
       if (brief != null && typeof brief !== "string") return bad("brief 必须是字符串，或者省略。");
+      if (extra.length > 0) return badExtra();
       const cur = memory.get(ns, key);
       if (!cur) return fail(`键 ${key} 不存在。要新建，用 memory_set。`);
       if (cur.version !== version) return conflict(key, cur);
@@ -134,6 +147,7 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
     case "memory_delete": {
       if (typeof key !== "string") return bad("key 必须是字符串。");
       if (!isInt(version)) return bad(VERSION_HINT);
+      if (extra.length > 0) return badExtra();
       const r = memory.delete(ns, key, version);
       return r.ok ? ok(`已删除 ${key}。`) : conflict(key, r.current);
     }
@@ -256,6 +270,7 @@ function formatSelf(v: Projection): string {
     `上下文：已用约 ${s.context.used} token，窗口 ${s.context.window} token`,
     `换段阈值：${s.context.threshold} token`,
     ...(s.pending === undefined ? [] : [`待换配置：${s.pending.fields.join("、")}（换段时生效）`]),
+    ...(s.bgJobs === undefined ? [] : ["当前段仍在运行的后台命令：", ...s.bgJobs.map((j) => `- ${j.id}（已转后台 ${duration(j.age)}）`)]),
     `累计用量：输入 ${s.usage.input}，输出 ${s.usage.output}，缓存读 ${s.usage.cacheRead}，缓存写 ${s.usage.cacheWrite}（token）`,
     v.siblings.length === 0 ? "同一个预设下没有其他运行中的进程。" : "同一个预设下运行中的其他进程：",
     ...v.siblings.map((x) => `- ${x.id}：${phaseText(x.phase)}，已运行 ${duration(x.age)}`),

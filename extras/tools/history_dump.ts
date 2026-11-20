@@ -1,9 +1,9 @@
 // history_dump：把本进程的每个旧段写成 `~/.tau/extras/history/<进程 ID>/seg-<n>.md`，给模型一个能用 rg/grep 搜、用 read 读的目录
 // （kb-extras 的“工具库”和“换段以后查旧段”）。没有参数。只读旧段，顺手清掉 7 天前的文件。
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { extrasDir, run, tauEnv } from "./common.ts";
-import { currentSegment, fetchSegment, formatDump, headOf, pruneOld, renderSegment, writeSegment } from "./history.ts";
+import { currentSegment, fetchSegment, formatDump, headOf, probeSegment, pruneOld, readExistingSegment, renderSegment, segmentPath, writeSegment } from "./history.ts";
 import type { DumpEntry } from "./history.ts";
 
 if (import.meta.main) run(async () => {
@@ -22,6 +22,18 @@ if (import.meta.main) run(async () => {
   mkdirSync(dir, { recursive: true });
   const entries: DumpEntry[] = [];
   for (let seg = 1; seg < current; seg++) {
+    if (existsSync(segmentPath(dir, seg))) {
+      const missing = await probeSegment(pipe, proc, seg);
+      if (missing !== null) {
+        entries.push({ seg, missing });
+        continue;
+      }
+      const cached = readExistingSegment(dir, seg, now);
+      if (cached !== null) {
+        entries.push({ seg, ...cached });
+        continue;
+      }
+    }
     const rows = await fetchSegment(pipe, proc, seg);
     if (typeof rows === "string") {
       entries.push({ seg, missing: rows });

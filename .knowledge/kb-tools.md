@@ -117,12 +117,12 @@
 
 执行器先用 `fixArgs`（`src/tools/args.ts`）修正，再用 pi-ai 的 `validateToolArguments` 校验，然后调用工具（[kb-executor](kb-executor.md#运行工具actionsts)）。库内工具（`runInStore`）同样先过 `fixArgs`，再用手写的检查（[kb-store](kb-store.md#记忆工具)）。所以工具收到的参数类型都对，必填的都在，没有多余字段。
 
-`fixArgs` 做的事（只动 `null` 和标量类型）：
+`fixArgs` 做的事（只动 `null`、标量类型和字符串化的顶层容器）：
 
 - 值为 `null` 的键不在 `required` 里：删掉，等于没填。
 - 值为 `null` 的键在 `required` 里：错误结果 `参数 <名字> 是 null，必须给出一个值。` 不会再变成字符串 `"null"` 写进文件。
-- 数字和布尔值写成字符串的按 schema 的类型转：`"5"` 转 `5`，`"true"` 转 `true`；字符串写成数字或布尔值，转成字符串。转不了的留着，由校验报错（小数、非数字的字符串当整数时校验失败）。
-- 别的键原样留着：库外工具由校验报错（`additionalProperties` 是 `false`），库内工具静默忽略。
+- 数字和布尔值写成字符串的按 schema 的类型转：`"5"` 转 `5`，`"true"` 转 `true`；字符串写成数字或布尔值，转成字符串；`array` 或 `object` 写成 JSON 字符串时按对应容器类型解析。转不了的留着，由校验报错（小数、非数字的字符串当整数时校验失败）。
+- 别的键原样留着：库外工具由校验报错（`additionalProperties` 是 `false`），库内工具先查必填参数，再拒绝多余键（`handoff`、`self` 等无参工具也会拒绝多余键）。
 - 不校验取值范围。`offset`、`limit`、`timeout` 的范围由工具自己检查。
 
 ### 路径
@@ -146,14 +146,15 @@
 ### `read`
 
 1. 路径是目录就拒绝。
-2. 读整个文件，检查编码。
-3. 按 `\n` 分行。文件以 `\n` 结尾时，不多出一个空行。
-4. 空文件回 `文件为空`，不算错误。
-5. `offset` 默认 1，`limit` 默认读到末尾。任一小于 1 算错误。`offset` 超过行数时回总行数，不算错误。
-6. 每行写成 `<行号，右对齐 6 位>\t<行>`，用 `\n` 连接，末尾没有换行。
-7. 整段输出经 `clip` 截到 `MESSAGE_MAX_BYTES`，保留头尾（[kb-kernel](kb-kernel.md#常量)）。
+2. 先看 `stat` 大小：超过 `IMAGE_MAX_BYTES` 时先读前 16 字节查魔数，是图片就直接报 `图片不合格`；否则超过 `READ_MAX_BYTES`（32 MiB）直接拒绝整份读入内存，提示改用 bash。
+3. 读整个文件，检查编码。
+4. 按 `\n` 分行。文件以 `\n` 结尾时，不多出一个空行。
+5. 空文件回 `文件为空`，不算错误。
+6. `offset` 默认 1，`limit` 默认读到末尾。任一小于 1 算错误。`offset` 超过行数时回总行数，不算错误。
+7. 每行写成 `<行号，右对齐 6 位>\t<行>`，用 `\n` 连接，末尾没有换行。
+8. 整段输出经 `clip` 截到 `MESSAGE_MAX_BYTES`，保留头尾（[kb-kernel](kb-kernel.md#常量)）。
 
-- 没有自己的大小上限（[D19](kb-decisions.md#d19-第四轮审查fable-52-复审-d18-之后的文档)）。整个文件读进内存。
+- 文本读取受 `READ_MAX_BYTES`（32 MiB）保护，防止超大非文本/构建文件吃满堆内存。
 - 单行不截断。一行很长时，同样由 `clip` 保留整段输出的头尾。
 
 #### `read` 读图片
@@ -342,6 +343,7 @@ bash 工具（BG_WRAPPER）
 | `read` | 图片，模型收图片 | 没有文本块，一个图片块（`blob:<hash>`），`images` 带字节 | 否 |
 | `read` | 图片，模型不收图片 | `[图片：模型不支持，已省略]` | 否 |
 | `read` | 图片不合格 | `图片不合格：<路径>（<原因>）` | 是 |
+| `read` | 超出读取保护上限（32 MiB） | `文件有 N 字节（上限 33554432 字节），不能整份读取：<路径>。可以用 bash 配合 wc -l、sed 或 rg 查看。` | 是 |
 | `read` | `offset` 或 `limit` 小于 1 | `offset 和 limit 必须从 1 开始：<路径>` | 是 |
 | `read` | 其它失败 | `读取失败：<路径>（<原因>）` | 是 |
 | `write` | 成功 | `已写入 N 字节：<路径>`，N 是 UTF-8 字节数 | 否 |
@@ -382,7 +384,7 @@ bash 工具（BG_WRAPPER）
 | `read`、`edit` 拒绝非 UTF-8 文件 | `edit` 曾毁掉 GBK、UTF-16 文件（[D20](kb-decisions.md#d20-实现第-0-到-2-步时定下的事)） |
 | `read` 去掉行尾 `\r`，`edit` 按 CRLF 重试并写回 CRLF | 多行 `edit` 在 CRLF 文件上曾永远匹配不到（D20） |
 | `edit` 用 `split` 和 `join` | `new` 按字面插入，不受 `replace` 的 `$` 模式影响 |
-| `read` 没有自己的大小上限 | 统一用工具结果的字节上限（D19） |
+| `read` 限制整份读取上限 `READ_MAX_BYTES`（32 MiB） | 防止误读几百 MB 构建产物或库文件把堆内存吃满；单次输出仍用 `clip` 截到 `MESSAGE_MAX_BYTES` |
 | 不限制路径 | 有 bash 就能绕过，是假边界（D14） |
 | 失败写成结果，不抛出 | 模型看到原因能改正；执行器另有兜底（[kb-executor](kb-executor.md#失败怎样变成结果)） |
 
@@ -514,5 +516,5 @@ bash 工具（BG_WRAPPER）
 - [kb-kernel.md](kb-kernel.md)：工具描述、`clip` 和字节上限、结果在 `decide` 里的统一裁剪。
 - [kb-executor.md](kb-executor.md)：参数校验、按名字分派、中止信号、失败怎样变成结果、崩溃后的“被中断”。
 - [kb-store.md](kb-store.md)：库内工具 `memory_*`、`self`、`handoff`、`post`、`spawn` 和 `stop_process` 的参数和结果。
-- [kb-decisions.md](kb-decisions.md)：D7（不做沙箱）、D14（不限制路径）、D19（`read` 没有自己的上限）、D20（编码和 CRLF 的缺陷）、D21（shell 的选择，和原设计稿的差异）。
+- [kb-decisions.md](kb-decisions.md)：D7（不做沙箱）、D14（不限制路径）、D19（统一输出上限）、D20（编码和 CRLF 的缺陷）、D21（shell 的选择，和原设计稿的差异）。
 - [kb-service.md](kb-service.md)：服务层用真工具的测试；服务正常退出。

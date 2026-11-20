@@ -1,6 +1,6 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, truncate, writeFile, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as files from "../../src/tools/files.ts";
@@ -85,6 +85,14 @@ describe("read", () => {
   test("relative path resolves against workdir", async () => {
     await file("rel-read.txt", "x\n");
     assert.equal((await read({ path: "rel-read.txt" }, dir)).text, "     1\tx");
+  });
+
+  test("超大文本文件在 stat 后直接拒绝，不整份读入内存", async () => {
+    const p = await file("huge.log", "hello\n");
+    await truncate(p, files.READ_MAX_BYTES + 1);
+    const r = await read({ path: p }, dir);
+    assert.equal(r.isError, true);
+    assert.match(r.text, /不能整份读取/);
   });
 });
 

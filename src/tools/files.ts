@@ -1,8 +1,8 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { ToolOutput } from "../executor/executor.ts";
-import { checkImages, imageType } from "../images.ts";
+import { checkImages, IMAGE_MAX_BYTES, imageType } from "../images.ts";
 import { IMAGE_UNSUPPORTED } from "../kernel/context.ts";
 import { textContent } from "../kernel/types.ts";
 import type { ToolResultContent } from "../kernel/types.ts";
@@ -10,6 +10,8 @@ import { clip } from "../kernel/derive.ts";
 import { imageBlock } from "./tooldef.ts";
 
 const ICONV_HINT = "可以用 bash 转码：iconv -f GBK -t UTF-8 原文件 > 新文件。";
+/** 整份读入内存的文本保护上限（32 MiB），防止把几百 MB 的构建产物或库文件一次吃进堆内存。 */
+export const READ_MAX_BYTES = 32 * 1024 * 1024;
 const ok = (text: string): ToolResultContent => ({ content: textContent(text), isError: false });
 const fail = (text: string): ToolResultContent => ({ content: textContent(text), isError: true });
 
@@ -37,7 +39,19 @@ const resolvePath = (workdir: string, p: string): string =>
 export async function read(args: { path: string; offset?: number; limit?: number }, workdir: string, accepts: boolean): Promise<ToolOutput> {
   const file = resolvePath(workdir, args.path);
   try {
-    if ((await stat(file)).isDirectory()) return fail(`是目录，不能读取：${file}`);
+    const st = await stat(file);
+    if (st.isDirectory()) return fail(`是目录，不能读取：${file}`);
+    if (st.size > IMAGE_MAX_BYTES) {
+      const fh = await open(file, "r");
+      const head = Buffer.alloc(16);
+      try {
+        const { bytesRead } = await fh.read(head, 0, 16, 0);
+        if (imageType(head.subarray(0, bytesRead))) return fail(`图片不合格：${file}（有 ${st.size} 字节，上限 ${IMAGE_MAX_BYTES} 字节）`);
+      } finally {
+        await fh.close();
+      }
+      if (st.size > READ_MAX_BYTES) return fail(`文件有 ${st.size} 字节（上限 ${READ_MAX_BYTES} 字节），不能整份读取：${file}。可以用 bash 配合 wc -l、sed 或 rg 查看。`);
+    }
     const buf = await readFile(file);
     if (imageType(buf)) return image(buf, file, accepts);
     const text = decode(buf);

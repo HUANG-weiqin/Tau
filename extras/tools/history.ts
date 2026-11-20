@@ -110,6 +110,26 @@ export function headOf(rows: readonly Row[]): string {
   return clip((body.split("\n").find((l) => l.trim() !== "") ?? "").trim(), 60);
 }
 
+const HEADING_RE = /^## \[\d+:\d+\] (?:交接说明|用户|助手|工具结果 )/;
+const NEXT_HEADING = /\n\n## \[\d+:\d+\] (?:交接说明|用户|助手|工具结果 )/;
+
+/** 从已渲染的 `seg-<n>.md` 文本里取第一条消息的开头 60 字，口径与 `headOf` 一致。 */
+export function headFromMarkdown(text: string): string {
+  const nl = text.indexOf("\n");
+  if (nl < 0) return "";
+  const title = text.slice(0, nl);
+  if (!text.slice(nl + 1).startsWith("\n")) return "";
+  let body = text.slice(nl + 2);
+  if (HEADING_RE.test(body)) return "";
+  const next = NEXT_HEADING.exec(body);
+  if (next !== null) body = body.slice(0, next.index);
+  if (/^## \[\d+:\d+\] 交接说明/.test(title)) {
+    const at = body.indexOf("\n\n");
+    if (at >= 0) body = body.slice(at + 2);
+  }
+  return clip((body.split("\n").find((l) => l.trim() !== "") ?? "").trim(), 60);
+}
+
 // ---------- 写进目录、清掉旧文件 ----------
 
 export interface Written {
@@ -144,6 +164,18 @@ export function writeSegment(dir: string, seg: number, text: string, now: number
     return existing();
   }
   return { bytes: Buffer.byteLength(text), lines: lineCount(text), rewritten: true };
+}
+
+export const segmentPath = (dir: string, seg: number): string => path.join(dir, `seg-${seg}.md`);
+
+/** 已导出的段文件存在时：刷新修改时间，直接从本地文件算大小、行数和开头一句，免去经管道全量拉取。 */
+export function readExistingSegment(dir: string, seg: number, now: number): { bytes: number; lines: number; head: string } | null {
+  const file = segmentPath(dir, seg);
+  if (!existsSync(file)) return null;
+  utimesSync(file, now / 1000, now / 1000);
+  const bytes = statSync(file).size;
+  const text = readFileSync(file, "utf8");
+  return { bytes, lines: lineCount(text), head: headFromMarkdown(text) };
 }
 
 /** 跑一下，成功返回结果；出错返回 undefined。清理不能失败，跳过就行。 */
@@ -232,4 +264,21 @@ export async function fetchSegment(pipe: string, proc: string, segment: number):
   if (got.error !== undefined) return got.error;
   if (got.ended !== true) throw new Fail("服务没读完就断开了。");
   return rows;
+}
+
+/** 轻量探针：只查这一段还在不在库里（不拉任何消息）。在库里返回 null，已被 prune 删掉则返回错误文字。 */
+export async function probeSegment(pipe: string, proc: string, segment: number): Promise<string | null> {
+  const got: { ended?: true; error?: string } = {};
+  try {
+    await talk(pipe, { op: "history", process: proc, segment, from: Number.MAX_SAFE_INTEGER }, (r) => {
+      if (r.type === "end") got.ended = true;
+      else if (r.type === "error") got.error = String(r.message);
+      return got.ended === true || got.error !== undefined;
+    });
+  } catch (e) {
+    throw asFail(e);
+  }
+  if (got.error !== undefined) return got.error;
+  if (got.ended !== true) throw new Fail("服务没读完就断开了。");
+  return null;
 }
