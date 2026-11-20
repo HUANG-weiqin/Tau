@@ -120,6 +120,17 @@ export const CATALOG: ToolEntry[] = [
     output: "text",
     command: node,
   },
+  {
+    name: "list_presets",
+    script: "list_presets.ts",
+    description:
+      "列出可用的预设：ID、一句话说明（预设正文的第一行）、模型、工具、工作目录。预设是全局的，在 ~/.tau/presets/。" +
+      "用 spawn 建新进程前先看它：spawn 的 preset 参数填这里的 ID。只读。",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    timeout: 30,
+    output: "text",
+    command: node,
+  },
 ];
 
 /** 写进 `~/.tau/tools/<name>.json` 的内容。键的顺序固定。`dir` 是本目录的绝对路径，正斜杠。 */
