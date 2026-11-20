@@ -67,7 +67,7 @@ test("键、值或摘要超出上限：给出确切的文本，库不变，版�
   const before = rows(db);
 
   assert.deepEqual(set("键".repeat(43), "v"), over("键有 129 字节，上限 128 字节。"));
-  assert.deepEqual(set("c", "x".repeat(4097)), over("值有 4097 字节，上限 4096 字节。"));
+  assert.deepEqual(set("c", "x".repeat(4097)), over("值有 4097 字节，上限 4096 字节。一个汉字占 3 字节。把内容拆成几个键，或者写进文件。"));
   assert.deepEqual(set("c", "v", undefined, "b".repeat(201)), over("摘要有 201 字节，上限 200 字节。"));
   assert.deepEqual(memory.set(NS, "c", { value: "v", brief: "b".repeat(201), now: NOW }, null), { ok: false, over: "brief", bytes: 201 });
   assert.deepEqual(memory.set(NS, "k".repeat(129), { value: "v", brief: "摘要", now: NOW }, null), { ok: false, over: "key", bytes: 129 });
@@ -203,7 +203,7 @@ test("两个进程写同一个键：后写的得到冲突和最新值，重试�
   assert.equal(set("城市", "北京", undefined, "首都").text, "已写入 城市，版本 1。");
   // 两个进程都读到版本 1。
   assert.deepEqual(set("城市", "上海", 1, "现在住的地方", "p1"), { text: "已写入 城市，版本 2。", isError: false });
-  assert.deepEqual(set("城市", "杭州", 1, "现在住的地方", "p2"), { text: "版本冲突，没有写入。现在的值是 城市（版本 2，更新 1970-01-01）：\n摘要：现在住的地方\n上海", isError: true });
+  assert.deepEqual(set("城市", "杭州", 1, "现在住的地方", "p2"), { text: "版本冲突，没有写入。现在的值是 城市（版本 2，更新 1970-01-01）：\n摘要：现在住的地方\n上海\n要覆盖，带 version=2 再写一次。", isError: true });
   assert.deepEqual(set("城市", "杭州", 2, "现在住的地方", "p2"), { text: "已写入 城市，版本 3。", isError: false });
 });
 

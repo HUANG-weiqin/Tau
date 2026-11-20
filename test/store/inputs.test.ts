@@ -208,7 +208,7 @@ test("记忆工具：读、写、冲突时带最新值、删除、参数错误",
   const run = (name: string, args: Parameters<typeof toolCall>[2]) => plain(runInStore(db, memory, p, [], toolCall("c", name, args), 0));
   assert.deepEqual(run("memory_get", { key: "k" }), { text: "键 k 不存在。", isError: false });
   assert.deepEqual(run("memory_set", { key: "k", value: "1", brief: "甲" }), { text: "已写入 k，版本 1。", isError: false });
-  assert.deepEqual(run("memory_set", { key: "k", value: "2", brief: "乙" }), { text: "版本冲突，没有写入。现在的值是 k（版本 1，更新 1970-01-01）：\n摘要：甲\n1\n要覆盖，带 version=<现在的版本号> 再写一次。", isError: true });
+  assert.deepEqual(run("memory_set", { key: "k", value: "2", brief: "乙" }), { text: "版本冲突，没有写入。现在的值是 k（版本 1，更新 1970-01-01）：\n摘要：甲\n1\n要覆盖，带 version=1 再写一次。", isError: true });
   assert.deepEqual(run("memory_set", { key: "k", value: "2", brief: "乙", version: 1 }), { text: "已写入 k，版本 2。", isError: false });
   assert.deepEqual(run("memory_get", { key: "k" }), { text: "k（版本 2，更新 1970-01-01）：\n摘要：乙\n2", isError: false });
   assert.equal(run("memory_delete", { key: "k", version: 1 }).isError, true);
@@ -217,7 +217,7 @@ test("记忆工具：读、写、冲突时带最新值、删除、参数错误",
   assert.deepEqual(run("memory_set", { key: "k", value: "3", brief: "丙", version: 2 }), { text: "版本冲突，没有写入。键 k 现在不存在。新建键不要带 version，去掉它再写一次。", isError: true });
   assert.deepEqual(run("memory_set", { key: "k", value: "3", brief: "丙", version: 0 }), { text: "已写入 k，版本 3。", isError: false }, "新键带 0：写得进");
   // 0 只代表“新键”：已有的键带 0 照样冲突，不覆盖。
-  assert.deepEqual(run("memory_set", { key: "k", value: "9", brief: "戊", version: 0 }), { text: "版本冲突，没有写入。现在的值是 k（版本 3，更新 1970-01-01）：\n摘要：丙\n3\n要覆盖，带 version=<现在的版本号> 再写一次。", isError: true });
+  assert.deepEqual(run("memory_set", { key: "k", value: "9", brief: "戊", version: 0 }), { text: "版本冲突，没有写入。现在的值是 k（版本 3，更新 1970-01-01）：\n摘要：丙\n3\n要覆盖，带 version=3 再写一次。", isError: true });
   assert.deepEqual(run("memory_delete", { key: "k", version: 1 }), { text: "版本冲突，没有写入。现在的值是 k（版本 3，更新 1970-01-01）：\n摘要：丙\n3", isError: true });
   assert.deepEqual(run("memory_delete", { key: "k", version: 3 }), { text: "已删除 k。", isError: false });
   assert.deepEqual(run("memory_delete", { key: "k", version: 3 }), { text: "版本冲突，没有写入。键 k 现在不存在。", isError: true });

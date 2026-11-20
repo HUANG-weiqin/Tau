@@ -58,7 +58,7 @@ test("模型调 memory_get 和 memory_set：结果的文字带摘要、更新日
   handleNext(db, memory, NOW); // 执行 memory_get
   assert.equal(toolText(db, 4), `城市（版本 1，更新 ${utcDate(NOW)}）：\n摘要：住在哪\n杭州`);
   handleNext(db, memory, NOW); // 处理 memory_get 的结果，执行 memory_set
-  assert.equal(toolText(db, 5), `版本冲突，没有写入。现在的值是 城市（版本 1，更新 ${utcDate(NOW)}）：\n摘要：住在哪\n杭州\n要覆盖，带 version=<现在的版本号> 再写一次。`);
+  assert.equal(toolText(db, 5), `版本冲突，没有写入。现在的值是 城市（版本 1，更新 ${utcDate(NOW)}）：\n摘要：住在哪\n杭州\n要覆盖，带 version=1 再写一次。`);
   assert.deepEqual(memoryRows(db), [{ key: "城市", value: "杭州", brief: "住在哪", updated: NOW, version: 1 }], "冲突没有写入");
 });
 

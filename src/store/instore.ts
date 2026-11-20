@@ -108,7 +108,7 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
       const r = memory.set(ns, key, { value, brief, now }, isInt(version) && version > 0 ? version : null);
       if (r.ok) return ok(`已写入 ${key}，版本 ${r.version}。`);
       if ("over" in r) return { content: textContent("超出上限，没有写入：" + overText(r.over, r.bytes)), isError: true };
-      return conflict(key, r.current, r.current ? OVERRIDE : "新建键不要带 version，去掉它再写一次。");
+      return conflict(key, r.current, r.current ? override(r.current.version) : "新建键不要带 version，去掉它再写一次。");
     }
     case "memory_edit": {
       const { old, new: replacement } = fixed.args;
@@ -190,7 +190,7 @@ const AFTER_REPLY = "，之后的几轮不会。";
 const POST_REPLY = "它处理这封信的那一轮结束时会给你回信" + AFTER_REPLY;
 const SPAWN_REPLY = "它这一轮结束时会给你回信" + AFTER_REPLY;
 const VERSION_HINT = "version 必须是整数。先用 memory_get 读到现在的版本号。";
-const OVERRIDE = "要覆盖，带 version=<现在的版本号> 再写一次。";
+const override = (version: number): string => `要覆盖，带 version=${version} 再写一次。`;
 
 /** `p` 寄出的信的跳数：不空闲时是本轮的跳数加 1，空闲时是 1。库内工具只在等工具时执行；协议的 `send` 带 `from` 时，`p` 可能在等模型。 */
 export function nextHops(p: Process): number {
