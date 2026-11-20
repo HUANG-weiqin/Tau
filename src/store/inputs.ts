@@ -1,7 +1,7 @@
 // 进程的事务：启动、分叉、收一条命令、处理一条输入、三个删除、写记忆（见 .knowledge/kb-store.md）。每个函数恰好一个事务。
 import { decide, effectOf, fork, start } from "../kernel/decide.ts";
 import { briefOf, HOPS_MAX, startError } from "../kernel/derive.ts";
-import { findTool } from "../kernel/tools.ts";
+import { findTool, toolsFor } from "../kernel/tools.ts";
 import { textContent, unreachable } from "../kernel/types.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { Effect, Input, Instant, Memory, MemoryFailure, MemoryOp, Message, PresetSnapshot, Process, ProcessId, ToolResultContent } from "../kernel/types.ts";
@@ -230,7 +230,7 @@ function syncEffects(db: DatabaseSync, memory: Memory, p: Process, seg: readonly
       if (spec?.inStore === false) break;
       const content: ToolResultContent = spec
         ? runInStore(db, memory, p, seg, after.call, now, readPreset)
-        : { content: textContent(`工具 ${after.call.name} 不存在，或者预设里没有它。`), isError: true };
+        : { content: textContent(`工具 ${after.call.name} 不存在，或者预设里没有它。可用的工具：${toolsFor(p.preset).map((t) => t.name).join("、")}。`), isError: true };
       putMail(db, p.id, { kind: "toolResult", n: after.n, outcome: { status: "ok", content } });
       return abort;
     }

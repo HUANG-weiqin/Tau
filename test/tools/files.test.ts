@@ -196,7 +196,7 @@ describe("edit", () => {
     const p = await file("e2.txt", "abc");
     const r = await edit({ path: p, old: "xyz", new: "1" }, dir);
     assert.equal(r.isError, true);
-    assert.match(r.text, /没找到原文/);
+    assert.match(r.text, /^没找到原文：.*。先用 read 看原文：空白、缩进、换行都要逐字一致。$/);
     assert.equal(await readFile(p, "utf8"), "abc");
   });
 
@@ -256,7 +256,7 @@ describe("encoding and line endings", () => {
     const p = await file("gbk-edit.txt", gbk);
     const r = await edit({ path: p, old: "A=1", new: "A=2" }, dir);
     assert.equal(r.isError, true);
-    assert.match(r.text, /不是 UTF-8 文本，不能编辑/);
+    assert.match(r.text, /^不是 UTF-8 文本，不能编辑：.*。可以用 bash 转码：iconv -f GBK -t UTF-8 原文件 > 新文件。$/);
     assert.deepEqual(await readFile(p), gbk);
   });
 
@@ -272,7 +272,7 @@ describe("encoding and line endings", () => {
     const p = await file("gbk-read.txt", gbk);
     const r = await read({ path: p }, dir);
     assert.equal(r.isError, true);
-    assert.match(r.text, /不是 UTF-8 文本：/);
+    assert.match(r.text, /^不是 UTF-8 文本：.*。可以用 bash 转码：iconv -f GBK -t UTF-8 原文件 > 新文件。$/);
   });
 
   test("edit keeps a UTF-8 BOM", async () => {
@@ -319,6 +319,27 @@ describe("encoding and line endings", () => {
     assert.ok(Buffer.byteLength(r.text, "utf8") <= MESSAGE_MAX_BYTES);
     assert.ok(r.text.startsWith("     1\tline0\n"));
     assert.ok(r.text.endsWith("line199999"));
+  });
+});
+
+describe("家目录路径", () => {
+  // 模型写 `~/x` 或 `~`：展开成家目录，read、write、edit 走同一个解析。
+  const home = os.homedir();
+
+  test("~/ 和 ~ 展开成家目录", async () => {
+    const name = `tau-home-missing-${process.pid}.txt`;
+    const file = path.join(home, name);
+    assert.deepEqual(await read({ path: `~/${name}` }, dir), { text: `读取失败：${file}（文件不存在）`, isError: true });
+    assert.deepEqual(await edit({ path: `~/${name}`, old: "a", new: "b" }, dir), { text: `编辑失败：${file}（文件不存在）`, isError: true });
+    const w = await write({ path: "~", content: "x" }, dir);
+    assert.equal(w.isError, true);
+    assert.ok(w.text.startsWith(`写入失败：${home}（`), w.text);
+  });
+
+  test("只认 ~ 和 ~/：/tmp、/home、~user 都按普通路径解析", async () => {
+    assert.equal((await read({ path: "/tmp/tau-none.txt" }, dir)).text, `读取失败：${path.resolve(dir, "/tmp/tau-none.txt")}（文件不存在）`);
+    assert.equal((await read({ path: "/home/tau-none.txt" }, dir)).text.includes(home), false);
+    assert.equal((await read({ path: "~user/tau-none.txt" }, dir)).text, `读取失败：${path.resolve(dir, "~user/tau-none.txt")}（文件不存在）`);
   });
 });
 

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { start } from "../../src/kernel/decide.ts";
 import { userLetter } from "../../src/kernel/types.ts";
-import type { PresetSnapshot } from "../../src/kernel/types.ts";
+import type { PresetSnapshot, ToolCall } from "../../src/kernel/types.ts";
 import { handoffThreshold } from "../../src/kernel/derive.ts";
 import { createExecutor } from "../../src/executor/executor.ts";
 import { loadProcess, loadSegment, tx } from "../../src/store/db.ts";
@@ -105,9 +105,10 @@ test("不认识的工具、预设里没有的工具：错误结果在事务里�
   assertStoreInvariants(db);
   await settle(db, memory, exec);
   const results = loadSegment(db, loadProcess(db, "p1")!).filter((m) => m.role === "toolResult");
+  const available = "read、memory_get、memory_set、memory_edit、memory_delete、self、handoff";
   assert.deepEqual(results.map((m) => [m.toolCallId, m.isError, m.content[0]?.type === "text" && m.content[0].text]), [
-    ["c1", true, "工具 bash 不存在，或者预设里没有它。"],
-    ["c2", true, "工具 nope 不存在，或者预设里没有它。"],
+    ["c1", true, `工具 bash 不存在，或者预设里没有它。可用的工具：${available}。`],
+    ["c2", true, `工具 nope 不存在，或者预设里没有它。可用的工具：${available}。`],
   ]);
 });
 
@@ -207,7 +208,7 @@ test("记忆工具：读、写、冲突时带最新值、删除、参数错误",
   const run = (name: string, args: Parameters<typeof toolCall>[2]) => plain(runInStore(db, memory, p, [], toolCall("c", name, args), 0));
   assert.deepEqual(run("memory_get", { key: "k" }), { text: "键 k 不存在。", isError: false });
   assert.deepEqual(run("memory_set", { key: "k", value: "1", brief: "甲" }), { text: "已写入 k，版本 1。", isError: false });
-  assert.deepEqual(run("memory_set", { key: "k", value: "2", brief: "乙" }), { text: "版本冲突，没有写入。现在的值是 k（版本 1，更新 1970-01-01）：\n摘要：甲\n1", isError: true });
+  assert.deepEqual(run("memory_set", { key: "k", value: "2", brief: "乙" }), { text: "版本冲突，没有写入。现在的值是 k（版本 1，更新 1970-01-01）：\n摘要：甲\n1\n要覆盖，带 version=<现在的版本号> 再写一次。", isError: true });
   assert.deepEqual(run("memory_set", { key: "k", value: "2", brief: "乙", version: 1 }), { text: "已写入 k，版本 2。", isError: false });
   assert.deepEqual(run("memory_get", { key: "k" }), { text: "k（版本 2，更新 1970-01-01）：\n摘要：乙\n2", isError: false });
   assert.equal(run("memory_delete", { key: "k", version: 1 }).isError, true);
@@ -216,24 +217,43 @@ test("记忆工具：读、写、冲突时带最新值、删除、参数错误",
   assert.deepEqual(run("memory_set", { key: "k", value: "3", brief: "丙", version: 2 }), { text: "版本冲突，没有写入。键 k 现在不存在。新建键不要带 version，去掉它再写一次。", isError: true });
   assert.deepEqual(run("memory_set", { key: "k", value: "3", brief: "丙", version: 0 }), { text: "已写入 k，版本 3。", isError: false }, "新键带 0：写得进");
   // 0 只代表“新键”：已有的键带 0 照样冲突，不覆盖。
-  assert.deepEqual(run("memory_set", { key: "k", value: "9", brief: "戊", version: 0 }), { text: "版本冲突，没有写入。现在的值是 k（版本 3，更新 1970-01-01）：\n摘要：丙\n3", isError: true });
+  assert.deepEqual(run("memory_set", { key: "k", value: "9", brief: "戊", version: 0 }), { text: "版本冲突，没有写入。现在的值是 k（版本 3，更新 1970-01-01）：\n摘要：丙\n3\n要覆盖，带 version=<现在的版本号> 再写一次。", isError: true });
   assert.deepEqual(run("memory_delete", { key: "k", version: 1 }), { text: "版本冲突，没有写入。现在的值是 k（版本 3，更新 1970-01-01）：\n摘要：丙\n3", isError: true });
   assert.deepEqual(run("memory_delete", { key: "k", version: 3 }), { text: "已删除 k。", isError: false });
   assert.deepEqual(run("memory_delete", { key: "k", version: 3 }), { text: "版本冲突，没有写入。键 k 现在不存在。", isError: true });
   assert.deepEqual(run("memory_set", { key: "k", value: "4", brief: "丁", version: -1 }), { text: "已写入 k，版本 4。", isError: false }, "新键带负数：同 0");
   assert.deepEqual(run("memory_delete", { key: "k", version: 4 }), { text: "已删除 k。", isError: false });
   assert.equal(memory.get(PRESET.id, "k"), null);
-  for (const [name, args] of [
-    ["memory_get", {}],
-    ["memory_set", { key: "k", value: 1, brief: "甲" }],
-    ["memory_set", { key: "k", value: "v", brief: 1 }],
-    ["memory_set", { key: "k", value: "v" }],
-    ["memory_set", { key: "k", value: "v", brief: "甲", version: 1.5 }],
-    ["memory_delete", { key: "k" }],
-    ["memory_edit", { key: "k", old: "1", new: "2" }],
+  for (const [name, args, want] of [
+    ["memory_get", {}, "key 必须是字符串。"],
+    ["memory_set", { key: "k", value: "v" }, "memory_set 缺少 brief（字符串）。收到的参数名：key, value。"],
+    ["memory_set", { key: "k", value: "v", brief: "甲", version: 1.5 }, "version 必须是整数，或者省略。"],
+    ["memory_delete", { key: "k" }, "version 必须是整数。先用 memory_get 读到现在的版本号。"],
+    ["memory_delete", { version: 1 }, "key 必须是字符串。"],
+    ["memory_edit", { key: "k", old: "1", new: "2" }, "version 必须是整数。先用 memory_get 读到现在的版本号。"],
   ] as const) {
-    assert.match(run(name, args).text, /^参数错误/, name);
+    assert.equal(run(name, args).text, `参数错误：${want}`, name);
   }
+});
+
+test("库内工具的参数先修正再检查：可选的 null 当没填、数字和布尔转字符串、JSON 不完整时直说", (t) => {
+  const db = tempDb(t);
+  const memory = fakeMemory();
+  const p = start("p1", PRESET, { now: 0, memoryView: "" });
+  const run = (call: ToolCall) => plain(runInStore(db, memory, p, [], call, 0));
+  // 必填是 null：直说要给出值，不会变成字符串 "null" 写进库。
+  assert.deepEqual(run(toolCall("c", "memory_set", { key: "k", value: null, brief: "甲" })), { text: "参数 value 是 null，必须给出一个值。", isError: true });
+  assert.equal(memory.get(PRESET.id, "k"), null);
+  // 可选的 null 当没填：memory_set 的 version。
+  assert.deepEqual(run(toolCall("c", "memory_set", { key: "k", value: "v", brief: "甲", version: null })), { text: "已写入 k，版本 1。", isError: false });
+  // 数字和布尔转成字符串，字符串转成整数：version "1" 是读到的版本。
+  assert.deepEqual(run(toolCall("c", "memory_set", { key: "k", value: 2, brief: 3, version: "1" })), { text: "已写入 k，版本 2。", isError: false });
+  assert.deepEqual(memory.get(PRESET.id, "k"), { value: "2", brief: "3", updated: 0, version: 2 });
+  // 参数的 JSON 被截断时 arguments 是 {}，原因在 argumentsError 里：只报第一行，让它重发。
+  const broken = { type: "toolCall", id: "c", name: "memory_get", arguments: {}, argumentsError: 'Unexpected end of JSON input\n原文：{"key": "a' } as ToolCall;
+  assert.deepEqual(run(broken), { text: "参数的 JSON 不完整或不合法：Unexpected end of JSON input。请重新发送完整的参数。", isError: true }, "只报第一行");
+  // 多余字段静默忽略，缺的那个要指名。
+  assert.deepEqual(run(toolCall("c", "memory_set", { key: "a", content: "x", brief: "甲" })), { text: "参数错误：memory_set 缺少 value（字符串）。收到的参数名：key, content, brief。", isError: true });
 });
 
 test("处理一条输入只读当前段：旧段不加载，查询走 (process_id, segment_seq)", async (t) => {

@@ -115,7 +115,7 @@ test("spawn 带 workdir：目录不存在、不是字符串都是错误结果，
   };
   bad({ preset: "kid", text: "做", workdir: join(work, "nope") }, /^预设 kid 读不出：.*工作目录不存在/);
   // bad() 会加“参数错误：”前缀，和同一分支的其它参数错误一致。
-  bad({ preset: "kid", text: "做", workdir: 5 }, /^参数错误：workdir 必须是字符串，或者省略。$/);
+  bad({ preset: "kid", text: "做", workdir: ["x"] }, /^参数错误：workdir 必须是字符串，或者省略。$/);
   assert.equal(loadProcesses(db).length, 1);
   assert.deepEqual(mailbox(db), []);
   assertStoreInvariants(db);

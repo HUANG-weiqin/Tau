@@ -58,6 +58,16 @@ test("post：收件人收到一封带头的信；reply 为真时带 replyTo，�
   ]);
 });
 
+test("弱模型把 reply 写成字符串：\"true\" 当布尔，别的照旧报参数错误", (t) => {
+  const db = tempDb(t);
+  const memory = fakeMemory();
+  startProcess(db, memory, "b", KID, "hi", 0);
+  const p = asking(db, memory);
+  db.exec("DELETE FROM mailbox");
+  assert.equal(run(db, memory, p, "post", { to: "b", text: "几点", reply: "true" }).isError, false);
+  assert.deepEqual(mailbox(db).map((m) => m.input.kind === "letter" && m.input.letter.replyTo), ["a"]);
+});
+
 test("post 和 stop_process 的失败：收件人不存在、对象是自己、参数不对，都是 isError，什么都不写", (t) => {
   const db = tempDb(t);
   const memory = fakeMemory();
@@ -67,12 +77,12 @@ test("post 和 stop_process 的失败：收件人不存在、对象是自己、�
     assert.equal(r.isError, true, name);
     assert.match(r.text, typeof text === "string" ? new RegExp(`^${text}$`) : text);
   };
-  bad("post", { to: "zz", text: "x" }, "没有进程 zz。");
+  bad("post", { to: "zz", text: "x" }, "没有进程 zz。用 self 查运行中的进程 ID。");
   bad("post", { to: "a", text: "x" }, "不能给自己寄信。");
-  bad("post", { to: 1, text: "x" }, /^参数错误/);
+  bad("post", { to: 1, text: "x" }, "没有进程 1。用 self 查运行中的进程 ID。"); // 数字转成字符串
   bad("post", { to: "a" }, /^参数错误/);
   bad("post", { to: "zz", text: "x", reply: "yes" }, /^参数错误/);
-  bad("stop_process", { process: "zz" }, "没有进程 zz。");
+  bad("stop_process", { process: "zz" }, "没有进程 zz。用 self 查运行中的进程 ID。");
   bad("stop_process", { process: "a" }, "不能停止自己。要结束这一轮，直接回复，不再调用工具。");
   bad("stop_process", {}, /^参数错误/);
   bad("spawn", { preset: "kid" }, /^参数错误/);

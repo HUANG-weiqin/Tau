@@ -139,7 +139,7 @@ test("声明的 memory_set 缺 brief：参数错误，库不变", (t) => {
   const n = waiting(db, memory);
   const r = handleResult(db, memory, "boss", result(n, [call("memory_set", { key: "k", value: "v" })]));
   assert.equal(r.isError, true);
-  assert.match(r.text, /^ok\n\n\[memory_set\] 参数错误：key、value 和 brief 必须是字符串。$/);
+  assert.match(r.text, /^ok\n\n\[memory_set\] 参数错误：memory_set 缺少 brief（字符串）。收到的参数名：key, value。$/);
   assert.equal(memory.get("boss", "k"), null);
   assert.deepEqual(memory.calls.filter((c) => c === "set"), []);
 });
@@ -190,7 +190,7 @@ test("第一个失败后其余写“未执行”：失败的什么都不写，�
   const n = waiting(db, memory);
   const r = handleResult(db, memory, "boss", result(n, [call("memory_set", { key: "a", value: "1", brief: "甲" }), call("post", { to: "zz", text: "x" }), call("memory_set", { key: "b", value: "2", brief: "乙" }), call("nope")]));
   assert.equal(r.isError, true);
-  assert.match(r.text, /^ok\n\n\[memory_set\] 已写入 a，版本 \d+。\n\n\[post\] 没有进程 zz。\n\n\[memory_set\] 未执行。\n\n\[nope\] 未执行。$/);
+  assert.match(r.text, /^ok\n\n\[memory_set\] 已写入 a，版本 \d+。\n\n\[post\] 没有进程 zz。用 self 查运行中的进程 ID。\n\n\[memory_set\] 未执行。\n\n\[nope\] 未执行。$/);
   assert.equal(memory.get("boss", "a")?.value, "1");
   assert.equal(memory.get("boss", "b"), null);
   assert.deepEqual(mailbox(db), []);

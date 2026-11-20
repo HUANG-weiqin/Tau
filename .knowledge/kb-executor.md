@@ -1,6 +1,6 @@
 # 执行器
 
-`updated: 2026-11-18`
+`updated: 2026-11-20`
 
 ## 这个模块是干什么的
 
@@ -147,13 +147,14 @@ pi-ai 会经常升级（[D84](kb-decisions.md#d84-pi-ai-升级版本不再写死
 
 ### 运行工具（`actions.ts`）
 
-1. 从 `toolDescriptions(preset)` 找到工具描述。
-2. 用 pi-ai 的 `validateToolArguments(tool, call)` 校验参数。它先按 JSON Schema 转换类型（`"5"` 变成 `5`），再检查。参数整体是 `null`、缺必填字段、多出字段都失败。失败时回 `参数错误：<pi-ai 的说明>`，`isError: true`。说明里带收到的参数原文。
+1. 从 `toolDescriptions(preset)` 找到工具描述。找不到时回 `工具 <name> 不存在，或者预设里没有它。可用的工具：<这个进程快照里有的工具名>。`
+2. 先过 `fixArgs`（`src/tools/args.ts`）：可选的 `null` 当没填，必填的 `null` 回 `参数 <名字> 是 null，必须给出一个值。`，字符串和数字、布尔互转。再用 pi-ai 的 `validateToolArguments(tool, call)` 校验。它按 JSON Schema 检查。参数整体是 `null`、缺必填字段、多出字段都失败。失败时回 `参数错误：<pi-ai 的说明>`，`isError: true`。说明里带收到的参数原文。
 3. 按名字调用 `read`、`write`、`edit`（传工作目录），或 `bash`（传工作目录、中止信号，以及进程 ID 和管道名）。进程 ID 是 `job.process.id`；管道名是 `createActions` 的第三个参数，服务传它实际监听的管道（`opts.pipe`）。bash 把这两个值放进命令的环境（[kb-tools](kb-tools.md#包装脚本)）。别的名字，在快照的 `toolDefs` 里找工具定义，用 `runToolDef` 运行：参数、工作目录、中止信号、进程 ID 和管道名同 `bash`，再加快照的 `input` 是否含 `image`（[kb-tools](kb-tools.md#运行工具定义)）。
 
-- 单个字段是 `null` 不一定失败：校验会改写一些值。工具收到的是改写后的值（[kb-tools.md](kb-tools.md#参数从哪来)）。
+- 参数怎么被改写，见 [kb-tools.md](kb-tools.md#参数从哪来)。弱模型的参数 JSON 不完整时 `validateToolArguments` 用 `call.argumentsError` 报错。
+- 库内工具的 `runInStore` 用同一个 `fixArgs`，文字见 [kb-store.md](kb-store.md#记忆工具)。
 - 只有 `bash` 和工具定义拿到中止信号。`read`、`write`、`edit` 被中止时照样跑完，结果被丢弃。
-- 库内工具的参数不经过这里。它们在处理输入的事务里处理，`null` 参数当作空对象。
+- 库内工具的参数不经过这里。它们在处理输入的事务里处理，`null` 参数当作空对象（`fixArgs` 也在那里跑一遍）。
 - 工具不在预设里、或者名字是库内工具时，`runTool` 也回错误结果。正常流程走不到这两支：只有库外工具会进待办副作用表。名字既不是内置库外工具、快照的 `toolDefs` 里也没有时，回 `工具 <name> 不由执行器运行。`。
 
 ### 崩溃窗口

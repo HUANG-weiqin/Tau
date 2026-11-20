@@ -1,19 +1,21 @@
 // 设计稿第 6 节：执行器的开始、完成、中止、失败上报、启动恢复，以及执行清单第 2 步的竞态。
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import type { JsonObject } from "@earendil-works/pi-ai";
 import { createActions } from "../../src/executor/actions.ts";
 import { createExecutor } from "../../src/executor/executor.ts";
 import { start } from "../../src/kernel/decide.ts";
 import { userLetter } from "../../src/kernel/types.ts";
-import type { Message, Process } from "../../src/kernel/types.ts";
+import type { Message, PresetSnapshot, Process } from "../../src/kernel/types.ts";
 import { loadProcess, loadSegment, openDb } from "../../src/store/db.ts";
 import { handleNext, send, startProcess } from "../../src/store/inputs.ts";
 import { effectRows, fakeMemory, gated, mailbox, PRESET, say, scripted, settle, tempDb, tempDir, toolCall, use } from "./fixtures.ts";
 import type { Gate } from "./fixtures.ts";
-import { res } from "../plain.ts";
+import { plain, res } from "../plain.ts";
 import { assertStoreInvariants } from "./invariants.ts";
 
 const okTool = () => res("ok");
@@ -248,4 +250,20 @@ test("调用模型时 maxTokens 取模型的上限和窗口的 1/8 中较小的�
       assert.equal(seen, Math.min(m, Math.floor(w / 8)), `${w}/${m}，${purpose}`);
     }
   }
+});
+
+test("库外工具的 null 参数：可选当作没填，必填报错，不会把 \"null\" 写进文件", async (t) => {
+  const workdir = tempDir(t);
+  const preset: PresetSnapshot = { ...PRESET, workdir, tools: ["read", "write", "edit"] };
+  const process: Process = start("p1", preset, { now: 0, memoryView: "" });
+  const actions = createActions(createModels(), () => {}, "test-pipe", () => undefined);
+  const run = async (name: string, args: JsonObject) => {
+    const call = toolCall("c1", name, args);
+    return plain(await actions.runTool({ process, segment: [], effect: { kind: "runTool", n: 1, call } }, call, new AbortController().signal));
+  };
+  assert.deepEqual(await run("edit", { path: "a.txt", old: "x", new: null }), { text: "参数 new 是 null，必须给出一个值。", isError: true });
+  assert.deepEqual(await run("write", { path: "a.txt", content: 123 }), { text: `已写入 3 字节：${join(workdir, "a.txt")}`, isError: false }, "数字和布尔照旧转成字符串");
+  assert.equal(await readFile(join(workdir, "a.txt"), "utf8"), "123");
+  assert.deepEqual(await run("read", { path: "a.txt", offset: null }), { text: "     1\t123", isError: false }, "可选的 null 当作没填");
+  assert.deepEqual(await run("bash", { command: "ls" }), { text: "工具 bash 不存在，或者预设里没有它。可用的工具：read、write、edit、self、handoff。", isError: true }, "不认识的工具名带上能用的");
 });
