@@ -1,8 +1,8 @@
 import { execFile, spawn } from "node:child_process";
-import type { ChildProcessByStdio } from "node:child_process";
+import type { ChildProcess, ChildProcessByStdio } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
-import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { randomBytes, randomUUID } from "node:crypto";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmdirSync, rmSync, statSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -10,7 +10,7 @@ import { clip, MESSAGE_MAX_BYTES } from "../kernel/derive.ts";
 import { textContent } from "../kernel/types.ts";
 import type { ToolResultContent } from "../kernel/types.ts";
 
-const DEFAULT_SECONDS = 120;
+const DEFAULT_SECONDS = 60;
 const MAX_SECONDS = 600;
 // 输出过长时只留头尾各这么多字节，中段只计数。两段加上说明行仍在工具结果上限内。
 const KEEP_BYTES = MESSAGE_MAX_BYTES / 2 - 256;
@@ -98,10 +98,194 @@ const commandEnv = (ctx: BashContext): NodeJS.ProcessEnv => ({
   TAU_PIPE: ctx.pipe,
 });
 
+const NO_SHELL = "需要 Git for Windows：PATH 上找不到 git.exe，也就找不到它的 bin\\bash.exe";
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const POLL_MS = 200;
+// 预览每次轮询最多读这么多：写得快的命令不能让一次推送占住事件循环，剩下的留给下一次。
+const PUSH_MAX = 1024 * 1024;
+const winPath = (p: string): string => path.resolve(p).replace(/\//g, "\\");
+const bashPath = (p: string): string => path.resolve(p).replace(/\\/g, "/");
+const drop = (...files: string[]): void => {
+  for (const f of files) {
+    try {
+      rmSync(f, { recursive: true, force: true });
+    } catch {
+      // 被占着删不掉：留着，7 天后清。
+    }
+  }
+};
+
+// 后台命令的包装脚本（D90）。和 WRAPPER 一样先写 pgid、经环境变量取命令、export -n；命令在子 shell 里跑，
+// 命令里的 exit 和 exec 都不会让收尾跳过。命令结束后抢 claim（noclobber 下建文件，内建，不起进程；内核那边用 "wx"，
+// 两边都是 O_EXCL，只有一个建得成）：内核先抢到（转了后台），脚本这时才写退出码行、运行通知脚本；脚本先抢到，什么都不做。
+// 抢输了的错误信息丢掉，别写进 log。中文用 \x 转义写，任务号和 log 路径经环境变量给通知脚本（前缀赋值只导出给这一条命令）。
+// 非 UTF-8 的 LANG（zh_CN.GBK、ja_JP.SJIS）下，msys 把环境变量和参数里的非 ASCII 字符（home 含中文时 claim 和 log 的路径）
+// 按那个字符集转，会走样，claim 找不到、信丢了。所以命令跑完以后、碰这些路径之前，把这个 shell 的字符集换成 UTF-8
+// （不导出，只对收尾有效；命令是在子 shell 里跑的，早已跑完，看到的仍是服务的 LANG）。
+const hex = (s: string): string => [...Buffer.from(s)].map((b) => `\\x${b.toString(16).padStart(2, "0")}`).join("");
+const BG_WRAPPER = [
+  'echo $$ > "$TAU_PGID" || exit',
+  "export -n TAU_PGID TAU_COMMAND TAU_CLAIM TAU_JOB TAU_LOG TAU_NODE TAU_NOTIFY",
+  '(eval "$TAU_COMMAND")',
+  "c=$?",
+  "LC_ALL=C.UTF-8",
+  "set -C",
+  `if ! { : > "$TAU_CLAIM"; } 2>/dev/null && [ -e "$TAU_CLAIM" ]; then rm -f "$TAU_PGID"; printf '\\n[${hex("后台任务")} %s] ${hex("退出码")} %s\\n' "$TAU_JOB" $c; TAU_JOB="$TAU_JOB" TAU_LOG="$TAU_LOG" "$TAU_NODE" "$TAU_NOTIFY" $c; fi`,
+  "exit $c",
+].join("; ");
+
+/** 删 `root` 下 7 天前的文件和空了的进程目录（`keep` 除外）。claim 只在同名 log 已经没了才清：log 还在，命令可能还在跑。每一步失败都忽略。 */
+function sweep(root: string, keep: string): void {
+  try {
+    for (const d of readdirSync(root, { withFileTypes: true })) {
+      const dir = path.join(root, d.name);
+      if (!d.isDirectory()) continue;
+      for (const f of readdirSync(dir).sort()) {
+        const file = path.join(dir, f);
+        if (f.endsWith(".claim") && existsSync(file.slice(0, -".claim".length))) continue;
+        if (Date.now() - statSync(file).mtimeMs > WEEK_MS) drop(file);
+      }
+      if (dir !== keep && readdirSync(dir).length === 0) rmdirSync(dir);
+    }
+  } catch {
+    // 别的调用同时在清，或目录不存在：不管。
+  }
+}
+
+/** 文件从 `start` 起最多 `len` 字节；读不出是空。 */
+function readAt(file: string, start: number, len: number): Buffer {
+  const buf = Buffer.alloc(len);
+  let fd: number | undefined;
+  try {
+    fd = openSync(file, "r");
+    return buf.subarray(0, readSync(fd, buf, 0, len, start));
+  } catch {
+    return Buffer.alloc(0);
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/** 输出文件读成文字：头尾各 KEEP_BYTES 放得下就是全部，放不下留头尾。`size` 是文件的字节数。 */
+function view(log: string): { body: string; size: number } {
+  let size = 0;
+  try {
+    size = statSync(log).size;
+  } catch {
+    // 文件没了：当作没有输出。
+  }
+  if (size <= 2 * KEEP_BYTES) return { body: readAt(log, 0, size).toString("utf8"), size };
+  const head = readAt(log, 0, KEEP_BYTES).toString("utf8");
+  const tail = readAt(log, size - KEEP_BYTES, KEEP_BYTES).toString("utf8");
+  return { body: `${head}\n…（中间省略 ${size - 2 * KEEP_BYTES} 字节）…\n${tail}`, size };
+}
+
+const lineEnd = (body: string): string => (body === "" || body.endsWith("\n") ? "" : "\n");
+
+/**
+ * bash 工具（D90）：先等 `timeout` 秒，命令在这么久里跑完，结果就是输出和退出码；没跑完就转后台，命令不被结束，
+ * 输出一直写在文件里，跑完寄一封信。标准输出和标准错误从一开始就接到同一个文件，不走管道。
+ * 谁来汇报只有一个赢家：内核在到时间时、包装脚本在命令结束后，各自建 `<log>.claim` 文件（O_EXCL），先建成的赢。
+ */
 export async function bash(args: { command: string; timeout?: number }, workdir: string, signal: AbortSignal, ctx: BashContext): Promise<ToolResultContent> {
-  const seconds = Math.min(args.timeout ?? DEFAULT_SECONDS, MAX_SECONDS);
-  if (!(seconds > 0)) return fail(`timeout 必须是正数（秒）：${args.timeout}`);
-  return (await runCommand({ command: args.command, seconds }, workdir, signal, ctx)).result;
+  const wanted = args.timeout ?? DEFAULT_SECONDS;
+  if (!Number.isInteger(wanted) || wanted < 0) return fail(`timeout 必须是非负整数（秒）：${args.timeout}`);
+  const seconds = Math.min(wanted, MAX_SECONDS); // 超过 2^31 毫秒的定时器，Node 会改成 1 毫秒
+  if (signal.aborted) return fail("已中止，命令没有运行");
+  const exe = findShell();
+  if (exe === null) return fail(NO_SHELL);
+  const root = path.join(os.homedir(), ".tau", "extras", "shell");
+  const dir = path.join(root, ctx.process);
+  const job = randomBytes(3).toString("hex");
+  const log = path.join(dir, `${Date.now()}-${job}.log`);
+  const claim = `${log}.claim`;
+  const pgidFile = path.join(os.tmpdir(), `tau-bash-${randomUUID()}.pgid`);
+  let fd: number;
+  try {
+    mkdirSync(dir, { recursive: true });
+    sweep(root, dir);
+    fd = openSync(log, "w"); // 不能用 "a"：msys 写不了只追加的句柄，echo 静默失败。所有写入者共用这一个句柄，位置是共享的。
+  } catch (e) {
+    return fail(`无法建输出文件 ${winPath(log)}：${e instanceof Error ? e.message : String(e)}`);
+  }
+  const env = { ...commandEnv(ctx), TAU_PGID: pgidFile, TAU_COMMAND: args.command, TAU_CLAIM: bashPath(claim), TAU_JOB: job, TAU_LOG: bashPath(log), TAU_NODE: bashPath(process.execPath), TAU_NOTIFY: bashPath(path.join(import.meta.dirname, "notify.ts")) };
+  let child: ChildProcess;
+  try {
+    child = spawn(exe, ["-c", BG_WRAPPER], { cwd: workdir, env, stdio: ["ignore", fd, fd], windowsHide: true });
+  } catch (e) {
+    drop(log); // 命令含 NUL 字符时 spawn 同步抛错
+    return fail(`无法启动 bash（工作目录 ${workdir}）：${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    closeSync(fd);
+  }
+  return new Promise((resolve) => {
+    let offset = 0;
+    let settled = false;
+    let killing: Promise<string> | undefined;
+    // 预览（D88）：从上次读到的位置继续读。
+    const push = (): void => {
+      if (!ctx.onData) return;
+      for (let sent = 0; sent < PUSH_MAX; ) {
+        const chunk = readAt(log, offset, 65536);
+        if (chunk.length === 0) return;
+        offset += chunk.length;
+        sent += chunk.length;
+        ctx.onData(chunk);
+      }
+    };
+    const kill = (why: string): void => void (killing ??= killAll(exe, child.pid, pgidFile).then(() => why));
+    const onAbort = (): void => kill("已中止，结束了命令启动的进程");
+    const timer = setTimeout(() => {
+      if (killing) return;
+      try {
+        closeSync(openSync(claim, "wx")); // 已存在就抛错：包装脚本先抢到了，命令正好跑完，继续等 bash 退出。
+      } catch {
+        return;
+      }
+      settled = true;
+      push(); // 轮询以后写的那几行，趁现在补上
+      stopWatching();
+      child.unref();
+      const pgid = (() => {
+        try {
+          return readFileSync(pgidFile, "utf8").trim();
+        } catch {
+          return "";
+        }
+      })();
+      const { body } = view(log);
+      const text = `${body}${lineEnd(body)}[转入后台 ${job}] 命令还在运行，没有被结束。\n输出文件：${winPath(log)}（还在增长，用 read 读，可带 offset 和 limit）\n${/^\d+$/.test(pgid) ? `进程组号：${pgid}\n` : ""}跑完会给你寄一封信，内容是退出码和最后几行；你可以接着做别的事，也可以结束这一轮等信。`;
+      resolve({ content: textContent(clip(text)), isError: false });
+    }, seconds * 1000);
+    const ticker = ctx.onData ? setInterval(push, POLL_MS) : undefined;
+    signal.addEventListener("abort", onAbort, { once: true });
+    const stopWatching = (): void => {
+      clearTimeout(timer);
+      clearInterval(ticker);
+      signal.removeEventListener("abort", onAbort);
+    };
+    const finish = (result: ToolResultContent, keep = false): void => {
+      settled = true;
+      stopWatching();
+      if (!keep) drop(log);
+      drop(claim, pgidFile);
+      resolve(result);
+    };
+    child.on("error", (e) => settled || finish(fail(`无法启动 bash（工作目录 ${workdir}）：${e.message}`)));
+    child.on("exit", async (code) => {
+      if (settled) return;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      const why = await killing;
+      stopWatching();
+      push();
+      const { body, size } = view(log);
+      const keep = size > 2 * KEEP_BYTES;
+      const note = keep ? `输出共 ${size} 字节，只显示了头尾。完整输出在 ${winPath(log)}，用 read 读（可带 offset 和 limit）。\n` : "";
+      const text = clip(`${body}${lineEnd(body)}${note}[${why ?? `退出码 ${code ?? -1}`}]`);
+      finish(why !== undefined ? fail(text) : { content: textContent(text), isError: code !== 0 }, keep);
+    });
+  });
 }
 
 /** 一次命令的运行：`stdin` 有值时从标准输入给，写完就关；`split` 时另外单独收标准输出。 */
@@ -119,12 +303,12 @@ export interface CommandRun {
   stdout?: { text: string; truncated: boolean };
 }
 
-/** bash 工具和工具定义共用的运行机制（设计稿 5.5）：超时、中止、结束进程树、输出上限、环境变量都一样。 */
+/** 工具定义的运行（设计稿 5.5）：超时就结束进程树、中止、输出上限、环境变量。输出走管道，不写文件、不转后台；bash 工具是上面的 `bash`，只共享 `findShell`、`killAll`、`commandEnv`。 */
 export async function runCommand(spec: CommandSpec, workdir: string, signal: AbortSignal, ctx: BashContext): Promise<CommandRun> {
   const { seconds } = spec;
   if (signal.aborted) return { result: fail("已中止，命令没有运行") };
   const exe = findShell();
-  if (exe === null) return { result: fail("需要 Git for Windows：PATH 上找不到 git.exe，也就找不到它的 bin\\bash.exe") };
+  if (exe === null) return { result: fail(NO_SHELL) };
   const out = output();
   const stdoutOnly = output();
   const pgidFile = path.join(os.tmpdir(), `tau-bash-${randomUUID()}.pgid`);

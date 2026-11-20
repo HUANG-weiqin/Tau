@@ -9,6 +9,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCal
 import { main, request } from "../../src/cli/main.ts";
 import { sqliteMemory } from "../../src/memory/kv.ts";
 import type { Reply } from "../../src/protocol.ts";
+import "../home.ts";
 import { serve } from "../../src/server/serve.ts";
 
 function setup() {

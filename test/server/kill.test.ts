@@ -16,6 +16,7 @@ import { effectOf } from "../../src/kernel/decide.ts";
 import type { Reply, Request } from "../../src/protocol.ts";
 import { loadProcess, loadProcesses, loadSegment, openDb } from "../../src/store/db.ts";
 import { allMessages, effectRows, mailbox, rng } from "../store/fixtures.ts";
+import "../home.ts";
 import { assertStoreInvariants } from "../store/invariants.ts";
 
 const SEED = 20261115;

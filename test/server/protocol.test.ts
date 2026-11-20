@@ -22,6 +22,7 @@ import { gif, jpeg, png } from "../images.ts";
 import { appendMessages, loadProcess, loadSegment, putMail, saveProcess } from "../../src/store/db.ts";
 import { putBlobs } from "../../src/store/blobs.ts";
 import { checkImages } from "../../src/images.ts";
+import "../home.ts";
 import type { Turn } from "../../src/kernel/types.ts";
 
 interface Env {

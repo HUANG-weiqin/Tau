@@ -34,11 +34,12 @@
   tau.db-shm   SQLite 的 WAL 索引
   presets/     预设，纯文本，不在库里
   tools/       工具定义，JSON 文件，不在库里
+  extras/shell/<进程 ID>/  bash 工具的输出文件和 claim 目录（D90），不在库里，7 天清理
 ```
 
 - `tau serve` 先建出 `~/.tau/presets/`，再打开 `tau.db`（`src/main.ts`）。
 - 项目目录里不写任何东西。
-- 备份：协议的 `backup` 请求把整个库一致地复制成一个文件（[kb-service 的备份](kb-service.md#备份backup)，[D73](kb-decisions.md#d73-backup-请求)）。库外的东西（预设、工具定义、`extras/` 的数据）不在里面，要另外复制。
+- 备份：协议的 `backup` 请求把整个库一致地复制成一个文件（[kb-service 的备份](kb-service.md#备份backup)，[D73](kb-decisions.md#d73-backup-请求)）。库外的东西（预设、工具定义、`extras/` 的数据，包括 bash 的输出文件）不在里面，要另外复制。
 
 ### 表
 

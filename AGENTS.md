@@ -79,7 +79,7 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 **边界与存储**（第 2 节、第 7 节、第 9 到 11 节）
 
 - `self` 只读，这是接口的范围，不是权限边界。没有沙箱。不做能被 bash 绕过的假边界。
-- 预设是 `~/.tau/presets/` 下的文件，工具定义是 `~/.tau/tools/` 下的文件，上层的数据在 `~/.tau/extras/<名字>/`，凭据（api key 和 OAuth 令牌）在 `~/.tau/auth.json`（[D83](.knowledge/kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)，这是唯一一个不进库的内核数据），其余数据都在 `~/.tau/tau.db`，包括图片（`blobs` 表）。项目目录里不写任何东西。
+- 预设是 `~/.tau/presets/` 下的文件，工具定义是 `~/.tau/tools/` 下的文件，上层的数据在 `~/.tau/extras/<名字>/`，凭据（api key 和 OAuth 令牌）在 `~/.tau/auth.json`（[D83](.knowledge/kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)，这是不进库的内核数据之一）。另一个是 bash 工具的输出文件：写在 `~/.tau/extras/shell/<进程 ID>/`（[D90](.knowledge/kb-decisions.md#d90-bash-接管后台命令先等没跑完转后台输出写文件跑完寄信)），不进库、不备份、7 天清理，这是内核唯一写 `extras/` 的地方。其余数据都在 `~/.tau/tau.db`，包括图片（`blobs` 表）。项目目录里不写任何东西。
 - 服务只在命名管道上监听，监听成功才算持锁。MVP 只支持 Windows。
 
 ## 准入规则
@@ -98,7 +98,7 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 内核契约已冻结。完整清单、参与启动检查的量和不算改契约的事，见 [kb-contract](.knowledge/kb-contract.md#契约清单)。下面只是摘要：
 
 - 不变量，和进程、信件、阶段、投影这些类型的字段，以及表结构。
-- 行为：回信、安全点投递、停止、跳数，事务和两张表的规则，`decide` 的输出，bash 正常结束时不结束后台进程。
+- 行为：回信、安全点投递、停止、跳数，事务和两张表的规则，`decide` 的输出，bash 先等 `timeout` 秒、没跑完转后台（命令不被结束，输出写文件，跑完寄信，D90），正常结束时不结束后台进程。
 - 线协议、CLI、环境变量，以及预设和工具定义的文件格式和运行。
 - `decide` 写进段的固定文字，和内置工具的名字。
 - 入口条件：图片检查、消息和工具定义的大小上限、工具定义 `timeout` 的范围、跳数上限。
@@ -118,7 +118,7 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 - 没有构建步骤：Node 24（不低于 24.21）直接运行 `.ts`。只用可擦除的 TS 语法（不用 enum、namespace、参数属性）；import 写 `.ts` 扩展名。
 - tsconfig：strict 全开，`noEmit`、`erasableSyntaxOnly`、`allowImportingTsExtensions`、`verbatimModuleSyntax`。
 - 测试用 `node:test`。类型检查只跑 `tsc`。
-- 代码量预算：不算测试，`src/` 不超过 3670 行（D64 从 3000 放宽，D87 到 3610，D88 到 3640，D89 到 3670）。写到一半时校准这个数字。
+- 代码量预算：不算测试，`src/` 不超过 3950 行（D64 从 3000 放宽，D87 到 3610，D88 到 3640，D89 到 3670，D90 到 3950）。写到一半时校准这个数字。
 - 不写兼容代码。例外：改表结构要带迁移（[D74](.knowledge/kb-decisions.md#d74-迁移的规矩)）。不提前建抽象：只有记忆有接口，因为它明确要被替换。
 - 对崩溃、竞态和生命周期，先写最小反例测试，再改代码。
 

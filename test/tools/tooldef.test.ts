@@ -16,12 +16,17 @@ import { plain, textOfResult } from "../plain.ts";
 
 const CTX = { process: "p-def", pipe: "\\\\.\\pipe\\tau-def-test" };
 let dir = "";
+let home = "";
 
 before(async () => {
+  // bash 工具的输出文件写在 ~/.tau/extras/shell：home 指到临时目录。
+  home = await mkdtemp(path.join(os.tmpdir(), "tau-def-home-"));
+  process.env.USERPROFILE = process.env.HOME = home;
   for (const k of Object.keys(process.env)) if (k.toUpperCase().startsWith("TAU_")) delete process.env[k];
   dir = await mkdtemp(path.join(os.tmpdir(), "tau-def-"));
 });
 after(async () => {
+  await rm(home, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 });
   await rm(dir, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 });
 });
 

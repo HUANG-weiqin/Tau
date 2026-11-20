@@ -16,6 +16,7 @@ import { INTERRUPTED, SKIPPED } from "../../src/kernel/decide.ts";
 import type { Message } from "../../src/kernel/types.ts";
 import { sqliteMemory } from "../../src/memory/kv.ts";
 import type { Reply, Request } from "../../src/protocol.ts";
+import "../home.ts";
 import { serve } from "../../src/server/serve.ts";
 import type { Service } from "../../src/server/serve.ts";
 import { loadProcess, loadSegment, openDb } from "../../src/store/db.ts";

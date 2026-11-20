@@ -43,8 +43,8 @@ const EDIT: ToolSpec = {
 
 const BASH: ToolSpec = {
   name: "bash",
-  description: "在工作目录里运行一条 bash 命令（Git for Windows），返回输出和退出码。默认超时 120 秒，上限 600 秒；超时或中止时结束它启动的进程。命令退出后，留在后台的进程不再归本工具管，它们之后的输出看不到。",
-  parameters: object({ command: str("要运行的命令"), timeout: int("超时秒数") }, ["command"]),
+  description: "在工作目录里运行一条 bash 命令（Git for Windows）。先等 timeout 秒（默认 60，最长 600，0 表示不等）：这么久里跑完了，结果就是输出和退出码；没跑完，命令继续在后台运行，不会被结束，工具立刻返回输出文件的路径，跑完给你寄一封信。输出太长时只回头尾，完整输出存在文件里，用 read 读。没有标准输入。",
+  parameters: object({ command: str("要运行的命令"), timeout: int("最多等几秒，没跑完就转后台，0 是不等") }, ["command"]),
   inStore: false,
 };
 
