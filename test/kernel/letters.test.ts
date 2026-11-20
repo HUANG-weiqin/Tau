@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { CARRY_HEADER, HANDOFF_HEADER } from "../../src/kernel/context.ts";
 import { clip, handoffThreshold, IMAGES_PER_MESSAGE, MESSAGE_MAX_BYTES, utf8Bytes } from "../../src/kernel/derive.ts";
 import type { Ended, ImageContent, Message } from "../../src/kernel/types.ts";
-import { assistant, call, codeText, current, feed, image, letterInput, preset, processLetter, reply, stopInput, stripTau, textOf, toolDone, toolOkContent, userInput, userLetterWith, world } from "./helpers.ts";
+import { assistant, call, codeText, current, feed, giveUp, image, letterInput, preset, processLetter, reply, stopInput, stripTau, textOf, toolDone, toolOkContent, userInput, userLetterWith, world } from "./helpers.ts";
 import type { World } from "./helpers.ts";
 
 const P = preset({ contextWindow: 100_000 });
@@ -101,7 +101,7 @@ describe("信的头", () => {
 
   test("出错原因里的换行换成空格：说明也一样", () => {
     const w = begin();
-    reply(w, assistant({ usage: 0, stopReason: "error", errorMessage: "第一行\n第二行" }));
+    giveUp(w, assistant({ usage: 0, stopReason: "error", errorMessage: "第一行\n第二行" }));
     assert.equal(textOf(feed(w, userInput("好")).append[0]!), `（上一轮出错，没有做完：第一行 第二行。${WAITED}）\n\n好`);
   });
 });
@@ -201,7 +201,7 @@ describe("换段带全部段末消息", () => {
   function tailWith(...letters: Parameters<typeof letterInput>[0][]): World {
     const w = atHandoff();
     for (const l of letters) {
-      reply(w, assistant({ usage: 3_000, stopReason: "error", errorMessage: "超时" }));
+      giveUp(w, assistant({ usage: 3_000, stopReason: "error", errorMessage: "超时" }));
       feed(w, letterInput(l));
     }
     return w;
@@ -248,7 +248,7 @@ describe("换段带全部段末消息", () => {
     const a = image("a");
     const w = atHandoff();
     feed(w, letterInput(userLetterWith("", [a]))); // 排队，交接失败时合并写进旧段，没有说明
-    reply(w, assistant({ usage: 3_000, stopReason: "error", errorMessage: "超时" }));
+    giveUp(w, assistant({ usage: 3_000, stopReason: "error", errorMessage: "超时" }));
     assert.deepEqual(stripTau([current(w).at(-1)!])[0], { role: "user", content: [a], timestamp: 0 });
     feed(w, letterInput(userLetterWith("再来")));
     const s = reply(w, assistant({ usage: 3_000, text: "交接说明" }));

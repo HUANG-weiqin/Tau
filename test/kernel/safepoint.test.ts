@@ -5,7 +5,7 @@ import { buildContext, CARRY_HEADER, HANDOFF_HEADER } from "../../src/kernel/con
 import { effectOf } from "../../src/kernel/decide.ts";
 import { finalReply, handoffThreshold, pendingCalls, STEPS_PER_TURN } from "../../src/kernel/derive.ts";
 import type { Message } from "../../src/kernel/types.ts";
-import { assistant, call, current, feed, image, letter, letterInput, preset, processLetter, reply, stopInput, textOf, toolDone, toolInterrupted, userInput, userLetterWith, world } from "./helpers.ts";
+import { assistant, call, current, feed, giveUp, image, letter, letterInput, preset, processLetter, reply, stopInput, textOf, toolDone, toolInterrupted, userInput, userLetterWith, world } from "./helpers.ts";
 import type { World } from "./helpers.ts";
 
 const P = preset({ contextWindow: 100_000 });
@@ -277,7 +277,7 @@ describe("5.4 handoff", () => {
   test("交接失败以后，下一封信一来又换段；成功换段以后不再", () => {
     const w = withCalls(["h1"], LOW, "handoff");
     toolDone(w, "ok");
-    reply(w, assistant({ usage: 10, stopReason: "error", errorMessage: "炸了" }));
+    giveUp(w, assistant({ usage: 10, stopReason: "error", errorMessage: "炸了" }));
     assert.deepEqual(phase(w), { tag: "idle", ended: { error: "交接失败：炸了" } });
     assert.equal(w.p.segment.seq, 1);
     feed(w, userInput("再来"));

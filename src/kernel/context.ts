@@ -11,6 +11,13 @@ export const HANDOFF_INSTRUCTION = [
   "如果有还没回复完的用户请求，在说明里写清它要什么。最后几条还没处理的用户消息会原样附在说明后面，不用抄写。",
 ].join("\n");
 
+/** 交接说明没写出来、重发交接请求时，接在 `HANDOFF_INSTRUCTION` 后面（D92）。 */
+export const HANDOFF_RETRY = "注意：你上一次回复没有写出交接说明。这一次不要调用任何工具，也不要写工具调用，只用文字写交接说明。";
+/** 空回复后重发时末尾加的用户消息，不入库（D92）。 */
+export const EMPTY_REPLY_NOTE = "你上一条回复是空的：没有文字，也没有工具调用。请继续做事；做完了就写出最终回复。";
+/** 回复被截断后重发时末尾加的用户消息，不入库（D92）。 */
+export const LENGTH_NOTE = "你上一条回复太长，被截断，已经丢弃。请缩短思考和输出，把事情拆成小步，一步一步做。";
+
 /** 新段第一条消息的开头。 */
 export const HANDOFF_HEADER = "（这是你在上一个工作段结束时写的交接说明。）\n\n";
 /** 模型不收图片时，每张图换成的一行。信、工具结果和 fork 换预设都用它。 */
@@ -87,7 +94,13 @@ export function buildContext(p: Process, segment: readonly Message[]): ModelRequ
   if (p.phase.tag === "awaitingModel" && p.phase.purpose === "handoff") {
     // 段末还没处理的用户消息不进交接请求：换段成功时它们原样带到新段（decide 的 onHandoff）。
     messages.splice(tailStart(segment));
-    messages.push({ role: "user", content: HANDOFF_INSTRUCTION, timestamp: messages.at(-1)?.timestamp ?? p.createdAt });
+    // 交接请求只要重发过就带提示，不看失败的种类：先 toolUse 再流出错时，第三次请求也要带。
+    const retry = p.phase.turn.retry !== undefined ? `\n\n${HANDOFF_RETRY}` : "";
+    messages.push({ role: "user", content: HANDOFF_INSTRUCTION + retry, timestamp: messages.at(-1)?.timestamp ?? p.createdAt });
+  } else if (p.phase.tag === "awaitingModel" && p.phase.turn.retry !== undefined) {
+    // 重发时末尾的提示，不入库（D92）。error 重发的是同一个请求，不加。
+    const note = p.phase.turn.retry.kind === "empty" ? EMPTY_REPLY_NOTE : p.phase.turn.retry.kind === "length" ? LENGTH_NOTE : "";
+    if (note !== "") messages.push({ role: "user", content: note, timestamp: messages.at(-1)?.timestamp ?? p.createdAt });
   }
   messages = omitOldImages(messages).map(withoutTau);
   return { systemPrompt: systemPrompt(p), messages, tools: toolDescriptions(p.preset) };

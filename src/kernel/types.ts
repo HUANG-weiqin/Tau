@@ -120,6 +120,8 @@ export interface Turn {
   hops: number;
   /** 本轮结束时要寄回信的进程，去重。 */
   replyTo: ProcessId[];
+  /** 可恢复的模型失败后重发同一个请求（D92）：失败的种类和这一种已经重试了几次。只在重试期间有值，好的回复被接受时去掉。 */
+  retry?: { kind: "empty" | "length" | "handoff" | "error"; n: number };
 }
 
 export type Purpose = "turn" | "handoff";

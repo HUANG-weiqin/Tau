@@ -44,7 +44,7 @@
 10. 内核不自己删数据。旧段、进程、图片只经三个删除原语删，由上层调用（[D59](kb-decisions.md#d59-删除原语旧段和空闲进程)）。删除原语不碰记忆：记忆的键只经 `Memory` 接口的 `delete` 删，入口是库内工具 `memory_delete`（模型调用或工具定义声明）和协议的 `memory_write`（[D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)）。
 11. 服务只在命名管道上监听。
 
-另外不变的规矩：`src/` 的依赖白名单（`extras/` 的依赖不在其中，见 [D63](kb-decisions.md#d63-上层的依赖随便加)）；代码量预算 3950 行（D64 从 3000 放宽，D87、D88、D89、D90 各加一次；都在 [AGENTS.md](../AGENTS.md#小而硬规矩)）。
+另外不变的规矩：`src/` 的依赖白名单（`extras/` 的依赖不在其中，见 [D63](kb-decisions.md#d63-上层的依赖随便加)）；代码量预算 4100 行（D64 从 3000 放宽，D87、D88、D89、D90、D92 各加一次；都在 [AGENTS.md](../AGENTS.md#小而硬规矩)）。
 
 ### 原语和它在内核的理由
 
@@ -60,7 +60,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | bash 后台命令：先等、转后台、输出文件、跑完寄信 | [kb-tools 的 bash](kb-tools.md#bash)、[D90](kb-decisions.md#d90-bash-接管后台命令先等没跑完转后台输出写文件跑完寄信) | 以前两个工具并存：上层的 `shell` 和内置 `bash` 要在预设里二选一，选错出过事（`shell`、`bg_run` 已按 D90 退役）；`shell` 每次调用多起 2 到 3 次 node；通知和 claim 要在内核的包装脚本里才抢得公平 |
 | 内容块和图片 | [kb-service 的图片](kb-service.md#图片)、[kb-store 的图片](kb-store.md#图片)、[kb-kernel 的请求里的图片](kb-kernel.md#请求里的图片) | 做不到。上层没有办法把图片放进模型的上下文 |
 | 思考级别 | [kb-executor 的调用模型](kb-executor.md#调用模型actionsts) | 做不到。它是调用模型的参数 |
-| 重试 | [kb-executor 的调用模型](kb-executor.md#调用模型actionsts) | 丢数据。上层只能等这一轮出错结束，再寄“继续”。这时回信已经寄出，新的一轮没有 `replyTo`，等回信的父进程拿不到结果。上层没在运行时也不会重试 |
+| 重试 | [kb-executor 的调用模型](kb-executor.md#调用模型actionsts) | 做不到。失败的回复不进段，上层看不到；等这一轮出错结束再寄“继续”，回信已经寄出，新的一轮没有 `replyTo`，等回信的父进程拿不到结果。所以拿到成功的响应之前的重试交给 pi-ai，之后的失败由内核重发，连续最多 `RETRIES_PER_REPLY` 次（[D92](kb-decisions.md#d92-弱模型兜底可恢复的模型失败重试不结束这一轮)） |
 | 累计用量 | [kb-kernel 的累计用量](kb-kernel.md#累计用量) | 丢数据。交接回复和没写进段的回复，用量哪里都没存，上层从段里算不全。上层盯着 `watch` 累加，它没在运行时就漏了 |
 | fork（含换角色） | [kb-kernel 的 fork](kb-kernel.md#fork)、[kb-service 的线协议](kb-service.md#线协议srcprotocolts)、[D49](kb-decisions.md#d49-fork-进内核)、[D52](kb-decisions.md#d52-fork-带-preset给进程换角色) | 做不到。上层只能 `history` 读出再 `start`，第一封信最多 `MESSAGE_MAX_BYTES`（32 KiB），带不过去完整的段。本机的 Pi Web 用过 4 次（[D49](kb-decisions.md#d49-fork-进内核)）。带 `preset` 的换角色：上层只能让新进程按需 `history` 读回旧段，慢而且失真，见 [D52](kb-decisions.md#d52-fork-带-preset给进程换角色) |
 | 协议：`history`、`blob`、`watch` | [kb-service 的线协议](kb-service.md#线协议srcprotocolts)、[历史和订阅](kb-service.md#历史和订阅) | 做不到：上层只能通过协议看内核，读不了历史，就做不了历史检索；拿不到流式文本，页面就看不到实时输出。慢：没有 `watch`，上层只能反复 `ps`，`ps` 读全部进程，随年头变慢 |
@@ -84,6 +84,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | `decide` 的输出：新记录、追加的消息、回信 | [kb-kernel 的函数](kb-kernel.md#函数) |
 | 行为：回信的时机和正文的算法，`replyTo` 和 `hops` 并进 `turn` 的规则，`endTurn` 的顺序，排队的信的处理（`done` 时合并并开新一轮，只取这批信的 `replyTo` 和 `hops`；不是 `done` 时合并写进段、停在 `idle`） | [kb-kernel 的回信](kb-kernel.md#回信)、[流程：两个辅助步骤](kb-kernel.md#流程两个辅助步骤) |
 | 行为：安全点投递 | [kb-kernel 的安全点投递](kb-kernel.md#安全点投递) |
+| 行为：可恢复的模型失败重发（D92）。空回复（`stop` 或 `toolUse`，没有非空白文字也没有工具调用）、`length`、换段回复没写出说明、`stopReason` 是 `error`：不结束这一轮，重发同一个请求，失败的回复不入段，次数用完才是原来的结束处理（空回复仍写入并 `done`）；`stop` 带工具调用和 `toolUse` 一样进 `awaitingTool`；`aborted`、`pending`、`deferred` 不重发。重发的提示（`EMPTY_REPLY_NOTE`、`LENGTH_NOTE`、`HANDOFF_RETRY`）不入库，只在请求末尾 | [kb-kernel 的重发](kb-kernel.md#重发d92)、[D92](kb-decisions.md#d92-弱模型兜底可恢复的模型失败重试不结束这一轮) |
 | 行为：`fork` 复制什么（当前的预设快照，不含待换配置 `next`；当前段的前缀或全部；记忆视图和上下文视图；不复制 `parent`、用量、旧段），新进程的阶段，什么时候拒绝（没有进程、`before` 越界或不是用户消息、不带 `before` 而源进程不是 `idle`、启动检查不通过）。带 `preset` 是换角色：快照、记忆视图和上下文视图用新预设的；新模型不收图片时图片换成 `IMAGE_UNSUPPORTED`；不带锚点的估算要低于新预设的换段阈值，否则拒绝（[D52](kb-decisions.md#d52-fork-带-preset给进程换角色)）。事务：读源进程和当前段、建新进程、写消息，一个事务，抛错回滚 | [kb-kernel 的 fork](kb-kernel.md#fork)、[kb-store 的存储事务](kb-store.md#存储事务) |
 | 行为：删除原语。`prune` 删段号小于 `before` 的旧段，当前段永不删，`before` 大于当前段号拒绝。`remove` 在进程不是 `idle`、信箱里有它的输入、有进程的 `parent` 是它、它在 `turn.replyTo` 或排队的信的 `replyTo` 里、执行器还有它的动作没收尾时拒绝，拒绝时什么都不删。`sweep` 的引用收自三处：全部进程的全部段、信箱、进程记录里的 `turn.queued`。`history` 读已删的段回 `error`。`remove` 先推 `removed` 再回执 | [kb-store 的删除](kb-store.md#删除)、[kb-service 的删除](kb-service.md#删除) |
 | 行为：停止的语义、跳数怎样增加 | [kb-kernel 的流程](kb-kernel.md#流程每种输入)、[kb-store 的进程之间的工具](kb-store.md#进程之间的工具) |
@@ -122,6 +123,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 启动检查和阈值除了快照，还用到下面这些。它们从代码现取，不在快照里：
 
 - `MESSAGE_MAX_BYTES`、`IMAGES_PER_MESSAGE`、`IMAGE_TOKENS`、`MARGIN_TOKENS`、`BYTES_PER_TOKEN`、`outputMax` 占窗口的比例（1/8）：决定 R 和阈值（[kb-kernel 的换段阈值](kb-kernel.md#换段阈值)）。
+- `HANDOFF_REQUEST_MAX_BYTES`（交接指令、空行、重试提示的字节数）：余量要放得下它，`fitCalls` 的预算和换段阈值的证明都用它（D92）。改 `HANDOFF_INSTRUCTION` 或 `HANDOFF_RETRY` 的文字，等于改它。
 - 预设的 `handoff` 不在这一类：它在会话快照里，不是从代码现取。改预设文件只影响新出生的会话，改一个会话自己的 `handoff` 用 `reconfigure`（[D51](kb-decisions.md#d51-预设加-handoff换段阈值只能调低)、[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。
 - `MEMORY_VIEW_MAX_BYTES`：决定启动检查里记忆的上界（[kb-memory](kb-memory.md#上限)）。
 - `CONTEXT_VIEW_MAX_BYTES`：整个上下文视图的字节上界（标题行、段间空行、各种说明都计入），决定启动检查里上下文的上界 `contextMax = tokens(CONTEXT_VIEW_MAX_BYTES + 一节标题的字节)`。只有快照声明了非空的 `context` 才算（[D72](kb-decisions.md#d72-上下文文件开段重读)）。放宽或收紧都要先重算启动检查。
@@ -243,13 +245,13 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | 64K 窗口的预设收图片，带图的信赶上换段时图会丢 | [kb-kernel 的坑点](kb-kernel.md#坑点) |
 | 固定部分离阈值不到一份交接说明 | 交接以后的检查：每封信只交接一次就出错，报出各部分的数字。卡住的进程用 `reconfigure` 换成缩小了提示词或工具定义的配置、或者大窗口的模型：下一次交接按待换配置检查，通过就换过去（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。也可以新启动一个进程。记忆占得多时，可以先用同一预设的另一个进程删掉一些记忆，下一次交接用新的记忆视图 |
 | 旧版本不能读新信箱：库里有 `reconfigure` 输入时，换回没有它的旧版本，旧版本不认这种输入，信箱会卡住 | 不降级。真要降级，先停服务，确认 `mailbox` 的 `input_json` 里没有 `reconfigure`（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。D71 到 D73 只加可选键，没升 `SCHEMA_VERSION`，所以旧版本不会因为版本号拒绝打开：库能打开，不代表旧版本认得里面的新输入（[D74](kb-decisions.md#d74-迁移的规矩)） |
-| 重试只覆盖拿到成功的响应之前的错误 | 流式输出中途的错误，本轮出错结束。这比 Pi SDK 弱：它按最终消息判断要不要重试 |
+| pi-ai 的重试只覆盖拿到成功的响应之前的错误 | 流式输出中途的错误，由内核重发，连续最多 `RETRIES_PER_REPLY` 次，用完本轮出错结束（D92）。`error` 重发不分原因，鉴权失败这类必然重复的也会多发几次 |
 | 预算路径上回答只剩 1,024 | 算法见 [kb-executor 的调用模型](kb-executor.md#调用模型actionsts)；换模型时先算 |
 | 不发输出上限的 API（openai-codex-responses），总输出可能超过 `outputMax` | 不支持。tau 本来也调不了它 |
 | 工具定义的 schema 内层不合法，进程第一次调用模型就失败 | 改文件，`start` 新进程。上层的中转生成定义时负责规整 schema |
 | 工具定义存在每个 `state_json` 里，`self` 和 `ps` 变慢 | 定义有大小上限；真的变慢时加表达式索引 |
 | `tau.cmd` 把正文里的 `&` 当成命令 | 外部程序直接连管道；bash 里用 `tau` 脚本；计划任务直接运行 node |
-| 代码量超出预期 | 每步完成时校准；超出 3950 行（D64、D87、D88、D89、D90）先停下来复查设计 |
+| 代码量超出预期 | 每步完成时校准；超出 4100 行（D64、D87、D88、D89、D90、D92）先停下来复查设计 |
 
 ## 关联模块
 

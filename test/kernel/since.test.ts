@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { fork, start } from "../../src/kernel/decide.ts";
 import { observe } from "../../src/kernel/observe.ts";
 import type { Process } from "../../src/kernel/types.ts";
-import { assistant, call, current, env, feed, letter, letterInput, modelInterrupted, modelOk, preset, processLetter, reply, stopInput, toolDone, toolInterrupted, userInput, world } from "./helpers.ts";
+import { assistant, call, current, env, feed, giveUp, letter, letterInput, modelInterrupted, modelOk, preset, processLetter, reply, stopInput, toolDone, toolInterrupted, userInput, world } from "./helpers.ts";
 
 const P = preset();
 
@@ -40,7 +40,7 @@ describe("since 在各转移上的值", () => {
     const w = world(P, env(10));
     feed(w, userInput("开头"), env(20));
     const before = current(w).length;
-    reply(w, assistant({ usage: 0, stopReason: "error", errorMessage: "炸了" }), env(33));
+    giveUp(w, assistant({ usage: 0, stopReason: "error", errorMessage: "炸了" }), env(33));
     assert.deepEqual(w.p.phase, { tag: "idle", ended: { error: "炸了" } });
     assert.equal(current(w).length, before, "出错不写消息");
     assert.equal(w.p.since, 33);

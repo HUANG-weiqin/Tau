@@ -5,7 +5,7 @@ import { start } from "../../src/kernel/decide.ts";
 import { ENDED_REASON_MAX_BYTES, contextUsed, handoffThreshold, utf8Bytes } from "../../src/kernel/derive.ts";
 import { observe } from "../../src/kernel/observe.ts";
 import type { Message, Phase, Process } from "../../src/kernel/types.ts";
-import { assistant, call, current, deepFreeze, env, feed, letter, preset, reply, userInput, world } from "./helpers.ts";
+import { assistant, call, current, deepFreeze, env, feed, giveUp, letter, preset, reply, userInput, world } from "./helpers.ts";
 
 const A = preset({ id: "a", model: "faux/a" });
 const B = preset({ id: "b" });
@@ -55,7 +55,7 @@ test("阶段：等模型时带用途；idle 带上一轮的结束原因，没跑
 
   const w = world(A);
   feed(w, userInput("你好"));
-  reply(w, assistant({ usage: 10, stopReason: "error", errorMessage: "坏了" }));
+  giveUp(w, assistant({ usage: 10, stopReason: "error", errorMessage: "坏了" }));
   assert.deepEqual(observe(w.p, current(w), [], 0).self.phase, { tag: "idle", ended: { error: "坏了" } });
 });
 

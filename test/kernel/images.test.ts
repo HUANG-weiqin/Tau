@@ -3,8 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildContext, IMAGE_OMITTED, IMAGES_OMIT_BATCH, IMAGES_PER_REQUEST } from "../../src/kernel/context.ts";
 import { start } from "../../src/kernel/decide.ts";
-import { contextUsed, fixedTokens, handoffThreshold, IMAGE_TOKENS, IMAGES_PER_MESSAGE, MESSAGE_MAX_BYTES, outputMax, resultReserve, tokens, utf8Bytes } from "../../src/kernel/derive.ts";
-import { HANDOFF_INSTRUCTION } from "../../src/kernel/context.ts";
+import { contextUsed, fixedTokens, HANDOFF_REQUEST_MAX_BYTES, handoffThreshold, IMAGE_TOKENS, IMAGES_PER_MESSAGE, MESSAGE_MAX_BYTES, outputMax, resultReserve, tokens, utf8Bytes } from "../../src/kernel/derive.ts";
 import type { Message, ModelRequest } from "../../src/kernel/types.ts";
 import { assistant, call, codeText, current, env, feed, image, preset, reply, toolOkContent, userInput, world } from "./helpers.ts";
 import type { World } from "./helpers.ts";
@@ -69,7 +68,7 @@ test("成批省略：新来一张图时，前缀只在凑满一批时才变", ()
 
 /** 最坏情况：用量 U < T 时调用模型，回复写满输出上限，带 40 个工具调用，结果都带满字节上限的文本和 IMAGES_PER_MESSAGE 张图。 */
 test("最坏的图片负载：交接请求、指令和交接说明的输出放得进窗口", (t) => {
-  const I = tokens(utf8Bytes(HANDOFF_INSTRUCTION));
+  const I = tokens(HANDOFF_REQUEST_MAX_BYTES);
   const huge = codeText(2 * MESSAGE_MAX_BYTES);
   for (const W of [65_536, 64_000, 128_000, 200_000, 1_000_000]) {
     const pr = preset({ contextWindow: W, input: SEE });

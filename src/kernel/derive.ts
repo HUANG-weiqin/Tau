@@ -1,5 +1,5 @@
 // 能从工作段算出来的值都在这里算，不存（见 .knowledge/kb-kernel.md）。
-import { CONTEXT_HEADING, contextSection, fixedPrompt, MEMORY_HEADING, memorySection, systemPrompt, toolDescriptions } from "./context.ts";
+import { CONTEXT_HEADING, contextSection, fixedPrompt, HANDOFF_INSTRUCTION, HANDOFF_RETRY, MEMORY_HEADING, memorySection, systemPrompt, toolDescriptions } from "./context.ts";
 import { CONTEXT_VIEW_MAX_BYTES, MEMORY_BRIEF_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "./tools.ts";
 import { unreachable } from "./types.ts";
 import type { AssistantMessage, Ended, Instant, Message, PresetSnapshot, Process, ToolCall } from "./types.ts";
@@ -18,7 +18,9 @@ export const IMAGE_TOKENS = 5000;
 export const ENDED_REASON_MAX_BYTES = 1024;
 /** `post` 和 `spawn` 寄出的信，跳数超过它就失败（设计稿 5.3）。回信不受限制。 */
 export const HOPS_MAX = 1024;
-/** 阈值之上留给交接指令、补的结果、消息框架和估算误差的 token。 */
+/** 一次回复的可恢复失败（空回复、length、换段没写出说明、流出错）最多重发几次（D92）。 */
+export const RETRIES_PER_REPLY = 2;
+/** 阈值之上留给交接请求末尾的消息（指令加重试提示）、补的结果、消息框架和估算误差的 token。 */
 export const MARGIN_TOKENS = 4096;
 
 export function tokens(bytes: number): number {
@@ -241,3 +243,6 @@ function edge(text: string, budget: number, dir: 1 | -1): number {
 const isHigh = (c: number) => c >= 0xd800 && c < 0xdc00;
 const isLow = (c: number) => c >= 0xdc00 && c < 0xe000;
 const width = (c: number) => (c < 0x80 ? 1 : c < 0x800 ? 2 : 3);
+
+/** 交接请求末尾那条消息的字节上限：指令加空行加重试提示。余量按它算（D92）。要放在 `width` 之后：模块加载时就要算字节数。 */
+export const HANDOFF_REQUEST_MAX_BYTES = utf8Bytes(`${HANDOFF_INSTRUCTION}\n\n${HANDOFF_RETRY}`);

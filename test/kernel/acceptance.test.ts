@@ -1,10 +1,10 @@
 // 执行清单第 1 步和第 4 步的验收：换段不能无限循环；交接请求加上交接说明的输出，一定放得进窗口。
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildContext, HANDOFF_INSTRUCTION, tailStart } from "../../src/kernel/context.ts";
+import { buildContext, tailStart } from "../../src/kernel/context.ts";
 import { effectOf, SKIPPED } from "../../src/kernel/decide.ts";
-import { contextUsed, handoffThreshold, MARGIN_TOKENS, MESSAGE_MAX_BYTES, messageBytes, outputMax, STEPS_PER_TURN, tokens, usageOf, utf8Bytes } from "../../src/kernel/derive.ts";
-import { assistant, call, codeText, current, feed, preset, reply, stopInput, toolDone, userInput, world } from "./helpers.ts";
+import { contextUsed, HANDOFF_REQUEST_MAX_BYTES, handoffThreshold, MARGIN_TOKENS, MESSAGE_MAX_BYTES, messageBytes, outputMax, RETRIES_PER_REPLY, STEPS_PER_TURN, tokens, usageOf, utf8Bytes } from "../../src/kernel/derive.ts";
+import { assistant, call, codeText, current, feed, giveUp, preset, reply, stopInput, toolDone, userInput, world } from "./helpers.ts";
 import type { ReplySpec, World } from "./helpers.ts";
 
 /** 阈值是正数，但系统提示词和工具定义本身就超过阈值。 */
@@ -48,12 +48,12 @@ test("每段一开始就超过阈值：每条消息只交接一次，以交接�
   }
 });
 
-test("交接一直失败：每条用户消息只调用一次模型，旧段不变", () => {
+test("交接一直失败：每条用户消息只调用 1 + RETRIES_PER_REPLY 次模型（流出错重发），旧段不变", () => {
   const w = world(preset({ contextWindow: TINY }));
   for (let round = 1; round <= 5; round++) {
     feed(w, userInput(`第 ${round} 条消息`));
     const r = runTurn(w, () => ({ usage: 5, stopReason: "error", errorMessage: "过载" }));
-    assert.equal(r.calls, 1);
+    assert.equal(r.calls, 1 + RETRIES_PER_REPLY);
     assert.deepEqual(w.p.phase, { tag: "idle", ended: { error: "交接失败：过载" } });
     assert.equal(w.p.segment.seq, 1);
     assert.equal(current(w).length, round);
@@ -83,7 +83,7 @@ const WINDOWS = [65_536, 64_000, 128_000, 200_000, 1_000_000];
 /** 像源代码的大结果和大消息：带换行、引号和中文，都超过字节上限。 */
 const HUGE = codeText(2 * MESSAGE_MAX_BYTES);
 const BIG = codeText(MESSAGE_MAX_BYTES + 100, "u");
-const I = tokens(utf8Bytes(HANDOFF_INSTRUCTION));
+const I = tokens(HANDOFF_REQUEST_MAX_BYTES);
 
 /** `n` 个读大文件的工具调用，ID 由 `id` 给出。 */
 const manyCalls = (n: number, id: (i: number) => string = (i) => `c${i}`) => Array.from({ length: n }, (_, i) => call(id(i), "read", { path: `big${i}.ts` }));
@@ -191,7 +191,7 @@ test("交接失败 10 次，每次之后发一条大消息：交接请求每次�
     const full = textOfLastFull(w);
     const first = buildContext(w.p, current(w));
     for (let i = 1; i <= 10; i++) {
-      reply(w, assistant({ usage: 0, stopReason: "error", errorMessage: "超出窗口" }));
+      giveUp(w, assistant({ usage: 0, stopReason: "error", errorMessage: "超出窗口" }));
       feed(w, userInput(BIG));
       assert.deepEqual(buildContext(w.p, current(w)), first, `窗口 ${W}，第 ${i} 次`);
       assertBound(w, `窗口 ${W}，第 ${i} 次`, full);
@@ -210,7 +210,7 @@ test("一条回复的工具调用多到补的结果放不进余量：只留放�
   for (const [shape, bytes, id] of ID_SHAPES) {
     assert.equal(utf8Bytes(id(0)), bytes);
     // 上限用公式独立算：结果余量 + 余量 − 交接指令，再按每个调用的字节换成 token 取整（不依赖二分）。
-    const budget = MARGIN_TOKENS - tokens(utf8Bytes(HANDOFF_INSTRUCTION));
+    const budget = MARGIN_TOKENS - tokens(HANDOFF_REQUEST_MAX_BYTES);
     const per = 2 * bytes + utf8Bytes("read") + utf8Bytes(SKIPPED);
     // 上限用公式独立算（不照抄实现）：字节先合起来再换 token，所以直接找最大的 n。
     let cap = 0;
@@ -242,8 +242,10 @@ test("一条回复的工具调用多到补的结果放不进余量：只留放�
         assert.ok(last?.role === "assistant", label);
         assert.equal(last.content.filter((c) => c.type === "toolCall").length, cap, label);
         assert.ok(seg.length > before, `${label}：回复写进去了`);
-        if (stopReason === "toolUse") assert.deepEqual(x.p.phase.tag, "awaitingTool", label);
-        else assert.deepEqual(x.p.phase, { tag: "idle", ended: "done" }, `${label}：stop 的调用补未执行，这一轮正常结束`);
+        // D92：stop 带调用和 toolUse 一样进 awaitingTool。第一个结果写入后到阈值，剩下的补未执行，交接请求仍放得进窗口。
+        assert.deepEqual(x.p.phase.tag, "awaitingTool", label);
+        toolDone(x, HUGE);
+        assertBound(x, label, textOfLastFull(x));
       }
     }
   }

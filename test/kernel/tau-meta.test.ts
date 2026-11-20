@@ -5,7 +5,7 @@ import { buildContext, HANDOFF_HEADER } from "../../src/kernel/context.ts";
 import { contextUsed, messageBytes } from "../../src/kernel/derive.ts";
 import { fork } from "../../src/kernel/decide.ts";
 import type { Message } from "../../src/kernel/types.ts";
-import { assistant, call, codeText, current, deepFreeze, feed, letter, letterInput, preset, processLetter, reply, stopInput, textOf, toolDone, toolInterrupted, userInput, world } from "./helpers.ts";
+import { assistant, call, codeText, current, deepFreeze, feed, giveUp, letter, letterInput, preset, processLetter, reply, stopInput, textOf, toolDone, toolInterrupted, userInput, world } from "./helpers.ts";
 import type { World } from "./helpers.ts";
 
 const P = preset({ contextWindow: 100_000, input: ["text", "image"] });
@@ -99,7 +99,7 @@ describe("用户消息带 tau.letters", () => {
 
     const e = world(P);
     feed(e, userInput("一"));
-    reply(e, assistant({ usage: 10, stopReason: "error", errorMessage: "炸了" }));
+    giveUp(e, assistant({ usage: 10, stopReason: "error", errorMessage: "炸了" }));
     feed(e, userInput("二"));
     assert.deepEqual(tauOf(current(e).at(-1))!.after, { error: "炸了" });
 

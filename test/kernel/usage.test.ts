@@ -1,9 +1,9 @@
 // 设计稿第 5.8 节：累计用量。不被丢弃的 ok 的 modelResult 都加，写不写进段都加；丢弃的和被中断的不加。
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { handoffThreshold } from "../../src/kernel/derive.ts";
+import { handoffThreshold, RETRIES_PER_REPLY } from "../../src/kernel/derive.ts";
 import type { Usage } from "../../src/kernel/types.ts";
-import { assistant, call, feed, modelInterrupted, modelOk, preset, reply, stopInput, toolDone, usage, userInput, world } from "./helpers.ts";
+import { assistant, call, feed, giveUp, modelInterrupted, modelOk, preset, reply, stopInput, toolDone, usage, userInput, world } from "./helpers.ts";
 import type { World } from "./helpers.ts";
 
 const P = preset({ contextWindow: 100_000 });
@@ -81,9 +81,10 @@ describe("累计用量", () => {
     for (const m of failures) {
       const w = atHandoff();
       const b = w.p.usage;
-      reply(w, m);
+      giveUp(w, m);
       assert.equal(w.p.phase.tag, "idle");
-      assert.deepEqual(w.p.usage, plus(b, sum(5)));
+      // 失败先重发（D92）：每次失败的回复都计用量。
+      assert.deepEqual(w.p.usage, plus(b, sum(...Array.from({ length: 1 + RETRIES_PER_REPLY }, () => 5))));
     }
   });
 

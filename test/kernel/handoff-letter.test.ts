@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { buildContext, HANDOFF_HEADER } from "../../src/kernel/context.ts";
 import { handoffThreshold, STEPS_PER_TURN } from "../../src/kernel/derive.ts";
 import type { Letter } from "../../src/kernel/types.ts";
-import { assistant, call, current, feed, letter, letterInput, preset, reply, stopInput, textOf, toolDone, userInput, world } from "./helpers.ts";
+import { assistant, call, current, feed, giveUp, letter, letterInput, preset, reply, stopInput, textOf, toolDone, userInput, world } from "./helpers.ts";
 import type { World } from "./helpers.ts";
 
 const P = preset({ contextWindow: 100_000 });
@@ -90,7 +90,7 @@ describe("换段信：作废", () => {
     const w = idleWithReply();
     feed(w, userInput("下一件"));
     feed(w, letterInput(marked("排队的换段信")));
-    reply(w, assistant({ usage: LOW, stopReason: "error", errorMessage: "炸了" }));
+    giveUp(w, assistant({ usage: LOW, stopReason: "error", errorMessage: "炸了" }));
     assert.deepEqual(w.p.phase, { tag: "idle", ended: { error: "炸了" } });
     assert.ok(textOf(current(w).at(-1)!).includes("排队的换段信"));
     feed(w, userInput("再来一封"));

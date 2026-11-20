@@ -80,7 +80,7 @@ abort(id, n)
 | 恢复时进程在 `awaitingModel` | `modelResult`，`interrupted` |
 | 恢复时进程在 `awaitingTool` | `toolResult`，`interrupted` |
 
-- 模型失败只有一条路：写在助手消息里，`decide` 按 `stopReason` 处理（[kb-kernel.md](kb-kernel.md)）。
+- 模型失败只有一条路：写在助手消息里，`decide` 按 `stopReason` 处理（[kb-kernel.md](kb-kernel.md)）。`error` 的助手消息（含上面同步抛出或被拒绝时合成的那条）先被内核重发，连续最多 `RETRIES_PER_REPLY` 次，用完才结束这一轮（D92）。
 - 结果文本的长度由 `decide` 统一裁剪（[kb-kernel.md](kb-kernel.md)）。
 
 ### 调用模型（`actions.ts`）
@@ -129,7 +129,7 @@ abort(id, n)
 - pi-ai 只重试拿到成功的响应之前的失败：没有状态码的连接错误，以及 408、409、429 和 5xx 的错误响应，以错误响应的 `x-should-retry` 头为准。重试可以被中止。
 - 等多久：错误响应带 `retry-after-ms` 或 `retry-after` 时，按它等；超过 60 秒就直接失败（预设没写 `maxRetryDelayMs` 时；写 0 表示没有上限，会一直等到那个时间），429 通常带这个头，5 次最坏约 5 分钟（同样只在没写时成立）。不带时，退避从 0.5 秒起翻倍，乘 0.75 到 1 的随机数，单次最多 8 秒，5 次一共约 12 到 16 秒。等的时候，进程停在“等模型”。
 - 这不是重做副作用：还是同一个副作用，也还没有任何结果。崩溃后照样报“被中断”，不重做。
-- 流式输出开始以后出的错不重试，本轮出错结束。这比 Pi SDK 弱：它按最终消息判断要不要重试。
+- 流式输出开始以后出的错，pi-ai 不重试。内核在 `decide` 里重发：同一个请求，新的副作用编号，连续最多 `RETRIES_PER_REPLY` 次，用完本轮才出错结束（[D92](kb-decisions.md#d92-弱模型兜底可恢复的模型失败重试不结束这一轮)）。这是 `decide` 的决定，执行器自己仍不重试。
 - 状态：重试不存状态。
 
 ### 升级 pi-ai

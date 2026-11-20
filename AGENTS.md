@@ -118,7 +118,7 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 - 没有构建步骤：Node 24（不低于 24.21）直接运行 `.ts`。只用可擦除的 TS 语法（不用 enum、namespace、参数属性）；import 写 `.ts` 扩展名。
 - tsconfig：strict 全开，`noEmit`、`erasableSyntaxOnly`、`allowImportingTsExtensions`、`verbatimModuleSyntax`。
 - 测试用 `node:test`。类型检查只跑 `tsc`。
-- 代码量预算：不算测试，`src/` 不超过 3950 行（D64 从 3000 放宽，D87 到 3610，D88 到 3640，D89 到 3670，D90 到 3950）。写到一半时校准这个数字。
+- 代码量预算：不算测试，`src/` 不超过 4100 行（D64 从 3000 放宽，D87 到 3610，D88 到 3640，D89 到 3670，D90 到 3950，D92 到 4100）。写到一半时校准这个数字。
 - 不写兼容代码。例外：改表结构要带迁移（[D74](.knowledge/kb-decisions.md#d74-迁移的规矩)）。不提前建抽象：只有记忆有接口，因为它明确要被替换。
 - 对崩溃、竞态和生命周期，先写最小反例测试，再改代码。
 

@@ -3,7 +3,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { endedReason, finalReply, STEPS_PER_TURN } from "../../src/kernel/derive.ts";
 import type { Ended } from "../../src/kernel/types.ts";
-import { assistant, call, current, feed, letterInput, modelInterrupted, modelOk, preset, processLetter, reply, stopInput, textOf, toolDone, toolInterrupted, userInput, world } from "./helpers.ts";
+import { assistant, call, current, feed, giveUp, letterInput, modelInterrupted, modelOk, preset, processLetter, reply, stopInput, textOf, toolDone, toolInterrupted, userInput, world } from "./helpers.ts";
 import type { World } from "./helpers.ts";
 import { effectOf } from "../../src/kernel/decide.ts";
 
@@ -34,14 +34,16 @@ describe("回信：每种结束原因", () => {
 
   test("done：最终回复可以是空的，内容块为空", () => {
     const w = begin();
-    const s = reply(w, assistant({ usage: LOW }));
+    const s = giveUp(w, assistant({ usage: LOW }));
     assert.deepEqual(s.out, [back("a", "", "done", 4)]);
   });
 
-  test("done：带工具调用的回复先补“未执行”，最终回复取这条助手消息的正文", () => {
+  test("stop 带工具调用（D92）：像 toolUse 一样先执行，不寄信；最终回复是之后那一条", () => {
     const w = begin();
-    const s = reply(w, assistant({ usage: LOW, stopReason: "stop", text: "好了", calls: [call("c1")] }));
-    assert.deepEqual(s.out, [back("a", "好了", "done", 4)]);
+    const s = reply(w, assistant({ usage: LOW, stopReason: "stop", text: "我来读", calls: [call("c1")] }));
+    assert.deepEqual(s.out, []);
+    toolDone(w, "内容");
+    assert.deepEqual(reply(w, assistant({ usage: LOW, text: "好了" })).out, [back("a", "好了", "done", 4)]);
   });
 
   test("stopped：正在等工具时停止，回信正文是上一条助手消息的正文", () => {
@@ -70,7 +72,7 @@ describe("回信：每种结束原因", () => {
   test("出错：模型回复出错，原因已按 endedReason 处理（没有换行，不超长）", () => {
     const w = begin();
     const long = `第一行\n第二行${"错".repeat(3_000)}`;
-    const s = reply(w, assistant({ usage: LOW, stopReason: "error", errorMessage: long }));
+    const s = giveUp(w, assistant({ usage: LOW, stopReason: "error", errorMessage: long }));
     const ended = { error: endedReason(long) };
     assert.ok(!ended.error.includes("\n"));
     assert.deepEqual(s.out, [back("a", "", ended, 4)]);
@@ -86,7 +88,7 @@ describe("回信：每种结束原因", () => {
 
   test("出错：length", () => {
     const w = begin();
-    assert.deepEqual(reply(w, assistant({ usage: LOW, stopReason: "length", text: "半截" })).out, [back("a", "", { error: "输出被截断" }, 4)]);
+    assert.deepEqual(giveUp(w, assistant({ usage: LOW, stopReason: "length", text: "半截" })).out, [back("a", "", { error: "输出被截断" }, 4)]);
   });
 
   test("没有要回信的信：out 为空，每一步都是", () => {
@@ -157,7 +159,7 @@ describe("回信：排队的信里的 replyTo", () => {
   test("不是 done：出错也一样", () => {
     const w = begin();
     feed(w, letterInput(processLetter("再问", { id: "b", replyTo: "b", hops: 1 })));
-    const s = reply(w, assistant({ usage: LOW, stopReason: "error", errorMessage: "坏了" }));
+    const s = giveUp(w, assistant({ usage: LOW, stopReason: "error", errorMessage: "坏了" }));
     assert.deepEqual(s.out, [back("a", "", { error: "坏了" }, 4), back("b", "", { error: "坏了" }, 4)]);
   });
 

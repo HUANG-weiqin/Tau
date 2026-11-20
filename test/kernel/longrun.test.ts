@@ -1,9 +1,8 @@
 // 长跑：很多轮对话，周期性换段。进程记录和当前段的大小都有上界。
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { HANDOFF_INSTRUCTION } from "../../src/kernel/context.ts";
 import { effectOf, start } from "../../src/kernel/decide.ts";
-import { BYTES_PER_TOKEN, contextUsed, tokens, utf8Bytes } from "../../src/kernel/derive.ts";
+import { BYTES_PER_TOKEN, contextUsed, HANDOFF_REQUEST_MAX_BYTES, tokens, utf8Bytes } from "../../src/kernel/derive.ts";
 import { unreachable } from "../../src/kernel/types.ts";
 import type { Env } from "../../src/kernel/types.ts";
 import { assistant, call, codeText, current, feed, modelOk, preset, toolOk, usage, userInput, world } from "./helpers.ts";
@@ -16,7 +15,7 @@ test("3000 轮对话：周期性换段，进程记录和当前段的大小不随
   const e = (): Env => ({ now: (now += 1_000), memoryView: `turn: ${Math.floor(now / 1e6)}` });
   const w = world(pr, e());
   const base = JSON.stringify(start("p1", pr, e())).length;
-  const instruction = tokens(utf8Bytes(HANDOFF_INSTRUCTION));
+  const instruction = tokens(HANDOFF_REQUEST_MAX_BYTES);
   let ids = 0;
   let maxRecord = 0;
   let maxLength = 0;

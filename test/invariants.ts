@@ -2,7 +2,7 @@
 // 存储层的不变量在第 2 步另加，并复用这个函数。
 import { isDeepStrictEqual } from "node:util";
 import { effectOf } from "../src/kernel/decide.ts";
-import { contextUsed, handoffThreshold, IMAGES_PER_MESSAGE, STEPS_PER_TURN } from "../src/kernel/derive.ts";
+import { contextUsed, handoffThreshold, IMAGES_PER_MESSAGE, RETRIES_PER_REPLY, STEPS_PER_TURN } from "../src/kernel/derive.ts";
 import { unreachable } from "../src/kernel/types.ts";
 import type { Content, Ended, Letter, Message, Process, ToolCall, Turn } from "../src/kernel/types.ts";
 
@@ -72,6 +72,7 @@ export function assertInvariants(p: Process, segment: readonly Message[], relaxe
     }
     case "awaitingTool": {
       checkTurn(p, phase.turn, segment, bad);
+      if (phase.turn.retry !== undefined) throw bad("等工具时 turn 里不应有 retry（D92：好的回复被接受时去掉）");
       if (!missing) throw bad("awaitingTool 时没有待执行的工具调用");
       const call = missing.calls[missing.from];
       const expected = { kind: "runTool", n: p.lastEffect, call };
@@ -165,6 +166,9 @@ function checkTurn(p: Process, turn: Turn, segment: readonly Message[], bad: Bad
   if (!Number.isInteger(turn.hops) || turn.hops < 0) throw bad(`本轮跳数是 ${turn.hops}`);
   if (!Array.isArray(turn.replyTo) || new Set(turn.replyTo).size !== turn.replyTo.length) throw bad("turn.replyTo 应为去重的进程 ID 数组");
   if (segment.length === 0) throw bad("运行中工作段却是空的");
+  // D92：retry 只在重试期间有值；次数从 1 数，不超过上限，每次重试都计过一步。
+  const { retry } = turn;
+  if (retry !== undefined && (!["empty", "length", "handoff", "error"].includes(retry.kind) || !Number.isInteger(retry.n) || retry.n < 1 || retry.n > RETRIES_PER_REPLY || retry.n >= turn.steps)) throw bad(`turn.retry 不合法：${JSON.stringify(retry)}`);
 }
 
 function isLetter(x: unknown): boolean {

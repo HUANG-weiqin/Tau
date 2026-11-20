@@ -151,6 +151,8 @@ interface Stats {
   handoffByLetter: number;
   replies: number;
   emptyReplies: number;
+  /** 重发（D92）：可恢复的模型失败后，同一个请求再发一次。 */
+  retried: number;
   /** reconfigure 的几种结果：只改了调用参数或结构相同（含取消待换）、直接采用、条件都满足但段放不进新快照所以存 next、其余存 next，以及换段时采用或丢弃 next。 */
   reconfigured: number;
   cancelled: number;
@@ -162,7 +164,7 @@ interface Stats {
 }
 
 function newStats(): Stats {
-  return { handoffOk: 0, handoffFailed: 0, done: 0, stopped: 0, stepLimit: 0, errors: 0, skipped: 0, interrupted: 0, queuedMerged: 0, dropped: 0, duplicates: 0, usageAdded: 0, processLetters: 0, images: 0, safePoints: 0, handoffByCall: 0, handoffByLetter: 0, replies: 0, emptyReplies: 0, reconfigured: 0, cancelled: 0, adopted: 0, tooBig: 0, pending: 0, nextAdopted: 0, nextDiscarded: 0 };
+  return { handoffOk: 0, handoffFailed: 0, done: 0, stopped: 0, stepLimit: 0, errors: 0, skipped: 0, interrupted: 0, queuedMerged: 0, dropped: 0, duplicates: 0, usageAdded: 0, processLetters: 0, images: 0, safePoints: 0, handoffByCall: 0, handoffByLetter: 0, replies: 0, emptyReplies: 0, retried: 0, reconfigured: 0, cancelled: 0, adopted: 0, tooBig: 0, pending: 0, nextAdopted: 0, nextDiscarded: 0 };
 }
 
 /**
@@ -512,6 +514,17 @@ ${text(r, r.int(1, 300))}`;
     // 没有任何触发条件、用途却是 handoff：只能是换段信。
     if (w.p.phase.tag === "awaitingModel" && w.p.phase.purpose === "handoff" && contextUsed(w.p, current(w)) < handoffThreshold(w.p.preset) && !handoffRequested(current(w))) stats.handoffByLetter++;
 
+    // D92：重发不写段、不寄信、不动信箱里的信，阶段和用途不变，只计一步。
+    if (input.kind === "modelResult" && prev.phase.tag === "awaitingModel" && w.p.phase.tag === "awaitingModel" && w.p.phase.turn.retry !== undefined && prev.lastEffect === input.n) {
+      assert.deepEqual(s.append, []);
+      assert.deepEqual(s.out, []);
+      assert.equal(w.p.phase.purpose, prev.phase.purpose);
+      assert.equal(w.p.phase.turn.steps, prev.phase.turn.steps + 1);
+      assert.deepEqual(w.p.phase.turn.queued, prev.phase.turn.queued);
+      assert.equal(w.p.segment.seq, prev.segment.seq);
+      stats.retried++;
+    }
+
     // 统计覆盖面。
     if (input.kind === "letter" && input.letter.from.kind === "process") stats.processLetters++;
     if (s.append.some((m) => typeof m.content !== "string" && m.content.some((c) => c.type === "image"))) stats.images++;
@@ -610,7 +623,7 @@ for (const profile of PROFILES) {
     } else if (profile.name === "长轮") {
       assert.ok(stats.stepLimit > 0, "没有用完步数");
     } else {
-      for (const k of ["handoffFailed", "done", "stopped", "errors", "skipped", "interrupted", "queuedMerged", "duplicates", "usageAdded", "processLetters", "images", "safePoints", "handoffByCall", "handoffByLetter", "replies", "emptyReplies", "cancelled", "adopted", "tooBig", "pending", "nextAdopted", "nextDiscarded"] as const) {
+      for (const k of ["handoffFailed", "done", "stopped", "errors", "skipped", "interrupted", "queuedMerged", "duplicates", "usageAdded", "processLetters", "images", "safePoints", "handoffByCall", "handoffByLetter", "replies", "emptyReplies", "retried", "cancelled", "adopted", "tooBig", "pending", "nextAdopted", "nextDiscarded"] as const) {
         assert.ok(stats[k] > 0, `没有覆盖到 ${k}`);
       }
     }

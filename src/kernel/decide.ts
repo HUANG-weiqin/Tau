@@ -1,9 +1,9 @@
 // start、decide、effectOf：纯函数（见 .knowledge/kb-kernel.md）。
-import { CARRY_HEADER, HANDOFF_HEADER, HANDOFF_INSTRUCTION, IMAGE_UNSUPPORTED, tailStart } from "./context.ts";
-import { clip, contextUsed, endedReason, endedText, estimatedUsed, finalReply, handoffRequested, handoffThreshold, IMAGES_PER_MESSAGE, MARGIN_TOKENS, MESSAGE_MAX_BYTES, newSegmentUsed, pendingCalls, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
+import { CARRY_HEADER, HANDOFF_HEADER, IMAGE_UNSUPPORTED, tailStart } from "./context.ts";
+import { clip, contextUsed, endedReason, endedText, estimatedUsed, finalReply, HANDOFF_REQUEST_MAX_BYTES, handoffRequested, handoffThreshold, IMAGES_PER_MESSAGE, MARGIN_TOKENS, MESSAGE_MAX_BYTES, newSegmentUsed, pendingCalls, RETRIES_PER_REPLY, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
 import { sameStructure, withCallParams } from "./snapshot.ts";
 import { textContent, unreachable } from "./types.ts";
-import type { AssistantMessage, Content, Effect, Ended, Env, ImageContent, Input, Instant, Letter, LetterMeta, Message, Phase, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Turn, Usage, UserTau } from "./types.ts";
+import type { AssistantMessage, Content, Effect, Ended, Env, ImageContent, Input, Instant, Letter, LetterMeta, Message, Phase, PresetSnapshot, Process, ProcessId, Purpose, ToolCall, ToolResultContent, Turn, Usage, UserTau } from "./types.ts";
 
 export const INTERRUPTED = "被中断，结果未知";
 export const SKIPPED = "未执行";
@@ -158,21 +158,34 @@ function openingViews(d: Draft): { memoryView: string; contextView: string } {
   return { memoryView: f?.memoryView ?? d.env.memoryView, contextView: f?.contextView ?? "" };
 }
 
-/** 第 5.3 节。 */
+/**
+ * 第 5.3 节。可恢复的失败（空回复、`length`、流出错）不结束这一轮，重发同一个请求（D92，`retry`）；失败的回复不入段。
+ * 好的回复被接受时去掉 `turn.retry`。
+ */
 function onReply(d: Draft, turn: Turn, m: AssistantMessage): void {
   const r = m.stopReason;
+  const { retry: _, ...clean } = turn;
   switch (r) {
     case "toolUse":
     case "stop": {
+      // 空：没有非空白文字，没有工具调用（思考不算）。次数用完仍空就照常写进段，done。
+      if (!m.content.some((c) => c.type === "toolCall" || (c.type === "text" && c.text.trim() !== ""))) {
+        return retry(d, turn, "turn", "empty", () => {
+          push(d, m);
+          endTurn(d, clean, "done");
+        });
+      }
       const fitted = fitCalls(m);
       if (fitted === null) return endTurn(d, turn, { error: "一次回复的工具调用太多" });
       push(d, fitted);
-      if (r === "toolUse" && pendingCalls(d.seg).length > 0) return enter(d, { tag: "awaitingTool", turn });
-      return endTurn(d, turn, "done");
+      // 只看有没有待执行的调用，不看 stopReason：弱模型的 stop 常常带着调用。
+      if (pendingCalls(d.seg).length > 0) return enter(d, { tag: "awaitingTool", turn: clean });
+      return endTurn(d, clean, "done");
     }
     case "length":
-      return endTurn(d, turn, { error: "输出被截断" });
+      return retry(d, turn, "turn", "length", () => endTurn(d, turn, { error: "输出被截断" }));
     case "error":
+      return retry(d, turn, "turn", "error", () => endTurn(d, turn, { error: m.errorMessage ?? r }));
     case "aborted":
     case "pending":
     case "deferred":
@@ -185,11 +198,22 @@ function onReply(d: Draft, turn: Turn, m: AssistantMessage): void {
   }
 }
 
-/** 调用都补成“未执行”后放不进余量时只留放得下的前几个（D87）。预算只有余量减去交接指令：阈值之上的余量已经分给了一次
+/**
+ * 重发同一个请求（D92）：阶段仍是 `awaitingModel`，用途不变，`turn.retry` 记最后一次失败的种类和连续失败的次数，不分种类。
+ * 次数超过 `RETRIES_PER_REPLY` 就调用 `give`（现状的结束处理）。重发也计步，步数用完时以 `stepLimit` 结束。
+ */
+function retry(d: Draft, turn: Turn, purpose: Purpose, kind: NonNullable<Turn["retry"]>["kind"], give: () => void): void {
+  const n = (turn.retry?.n ?? 0) + 1;
+  if (n > RETRIES_PER_REPLY) return give();
+  if (turn.steps >= STEPS_PER_TURN) return endTurn(d, turn, "stepLimit");
+  return enter(d, { tag: "awaitingModel", turn: { ...turn, steps: turn.steps + 1, retry: { kind, n } }, purpose });
+}
+
+/** 调用都补成“未执行”后放不进余量时只留放得下的前几个（D87）。预算只有余量减去交接请求末尾的消息（指令加重试提示，D92）：阈值之上的余量已经分给了一次
  * 回复、一个没检查的工具结果和交接说明的输出。ID 算两次（调用和结果各带一次，回复的用量里没有它）。截断后没有文字时把尾巴
  * 里最后一个文字块接回来，免得回信正文是空串；连一个调用都放不下时返回 null。 */
 function fitCalls(m: AssistantMessage): AssistantMessage | null {
-  const budget = MARGIN_TOKENS - tokens(utf8Bytes(HANDOFF_INSTRUCTION));
+  const budget = MARGIN_TOKENS - tokens(HANDOFF_REQUEST_MAX_BYTES);
   let bytes = 0;
   let cut = -1;
   for (const [i, c] of m.content.entries()) {
@@ -246,9 +270,15 @@ function onHandoff(d: Draft, turn: Turn, m: AssistantMessage): void {
     d.seg = [];
     push(d, userMessage(HANDOFF_HEADER + note + carried, tail.flatMap(imagesOf), true, d.env.now, { letters, handoff: true }));
     // 交接已经做了：交接调用进行中到的信，标记用掉了，合并它们时不再换段。
-    return continueTurn(d, { ...turn, queued: turn.queued.map(unmarked) });
+    const { retry: _, ...clean } = turn;
+    return continueTurn(d, { ...clean, queued: clean.queued.map(unmarked) });
   }
-  return endTurn(d, turn, { error: "交接失败：" + (m.errorMessage ?? m.stopReason) });
+  // 没写出说明（调用了工具，或者没有文字）和流出错都重发，用途仍是 handoff（D92）；次数用完才报交接失败。其余（aborted、pending、deferred）直接失败。
+  const r = m.stopReason;
+  const fail = () => endTurn(d, turn, { error: "交接失败：" + (m.errorMessage ?? r) });
+  if (r === "error") return retry(d, turn, "handoff", "error", fail);
+  if (r === "toolUse" || r === "stop" || r === "length") return retry(d, turn, "handoff", "handoff", fail);
+  return fail();
 }
 
 /** 第 5.2 节，`toolResult` 正常。 */

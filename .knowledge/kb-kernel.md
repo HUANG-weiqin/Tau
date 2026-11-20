@@ -51,7 +51,7 @@ type Sender = { kind: "user" } | { kind: "process"; id: ProcessId; preset: strin
 interface Letter { from: Sender; content: Content[]; hops: number; replyTo?: ProcessId; handoff?: true }   // handoff：换段信，只由协议的 send 产生
 type Content = TextContent | ImageContent;   // pi-ai 的类型
 
-interface Turn { steps: number; queued: Letter[]; hops: number; replyTo: ProcessId[] }
+interface Turn { steps: number; queued: Letter[]; hops: number; replyTo: ProcessId[]; retry?: { kind: "empty" | "length" | "handoff" | "error"; n: number } }
 type Purpose = "turn" | "handoff";
 
 type Phase =
@@ -67,6 +67,7 @@ type Ended = "done" | "stepLimit" | "stopped" | { error: string };
 - `next` 是待换配置：`reconfigure` 改了结构性字段、又不能马上采用时，存在这里；换段被接受时它才变成 `preset`。没有待换配置时没有这个键。投影的 `self.pending` 列出它和 `preset` 差在哪些字段。`fork` 不复制它。
 - `segment.memoryView` 是开段那一刻的记忆视图，`segment.contextView` 是开段那一刻的上下文视图（[上下文文件](#上下文文件开段重读)）。以后算不出来，所以存。`contextView` 缺省和空串都表示没有上下文文件。开段指建进程和每次换段被接受。
 - `turn.steps` 必须存：一轮可以跨越换段。
+- `turn.retry` 只在重发期间有值：失败的种类和这一种已经重发了几次（[重发](#重发d92)）。好的回复被接受时去掉，所以 `awaitingTool` 和新一轮的 `turn` 里没有它。旧记录没有这个键。
 - `turn.queued` 存信件原样，写进段时才渲染。`turn.hops` 是本轮已经写进段的信的最大跳数，`turn.replyTo` 是本轮结束时要寄回信的进程，去重。并进 `turn` 的规则见[回信](#回信)。
 - `Letter.hops` 是这封信被进程之间的信一路引出来的跳数。CLI 寄来的信 `hops` 为 0，没有 `replyTo`。`replyTo` 有值时，处理这封信的那一轮结束时把最终回复寄给它。
 - `since`（D64 第 4 组）：`start`、`fork` 写建进程的时刻；`enter`（发出副作用、进入等待阶段）和 `endTurn`（回到 `idle`）写 `env.now`，`decide` 仍是纯函数。运行中排队的信、空闲时的 `stop`、编号对不上被忽略的结果都不动它。模型出错或被停止时段里不写消息，进入 `idle` 的时刻从段里算不出来，所以存。结束时有排队的信、接着开新一轮，走 `enter`，是新一轮发出调用的时刻。投影的 `ProcessView.since` 照抄它，旧记录没有就没有这个键。
@@ -131,7 +132,8 @@ interface Env { now: Instant; memoryView: string; fresh?: { memoryView: string; 
 - 工具：`toolDescriptions(preset)`，只放 `name`、`description`、`parameters`。工具定义的 `command`、`timeout`、`output` 不给模型。交接调用带同样的工具，请求前缀不变。
 - 消息就是工作段。`awaitingModel(handoff)` 时：
   - 去掉段末连续的用户消息（从 `tailStart` 起）。下标 0 总保留：第一条消息是写交接说明的依据。段末没有用户消息时什么都不去掉。
-  - 末尾加一条不入库的用户消息 `HANDOFF_INSTRUCTION`。时间戳取保留下来的最后一条消息的，段空时取 `createdAt`。
+  - 末尾加一条不入库的用户消息 `HANDOFF_INSTRUCTION`。时间戳取保留下来的最后一条消息的，段空时取 `createdAt`。`turn.retry` 有值时（不看 `kind`），这条消息在指令后面空一行，接 `HANDOFF_RETRY`。
+- `awaitingModel(turn)` 且 `turn.retry` 的 `kind` 是 `empty` 或 `length` 时，末尾加一条不入库的用户消息 `EMPTY_REPLY_NOTE` 或 `LENGTH_NOTE`，时间戳取段里最后一条的，段空时取 `createdAt`。`kind` 是 `error` 时不加，请求和第一次一字不差。没有 `retry` 时请求没有这一条。
 - 去掉的消息在换段成功时原样带到新段（见[流程：换段](#流程换段)）。为什么不能带进交接请求，见坑点。
 
 ### fork
@@ -237,7 +239,9 @@ interface Env { now: Instant; memoryView: string; fresh?: { memoryView: string; 
 | `STEPS_PER_TURN` | 1024 | 已定（[D68](kb-decisions.md#d68-steps_per_turn-定成-1024)） | 每轮最多调用多少次模型。它是收住换段循环的最后一道保险（见坑点） |
 | `BYTES_PER_TOKEN` | 2 | 已定 | 按字节估算用量时，多少字节算一个 token |
 | `MESSAGE_MAX_BYTES` | 32 KiB | 已定 | 每个工具结果和 `decide` 写入的每条用户消息的字节上限，超出时保留头尾 |
-| `MARGIN_TOKENS` | 4096 | 已定 | 阈值之上的余量：交接指令、补的结果、ID、消息框架和估算误差 |
+| `MARGIN_TOKENS` | 4096 | 已定 | 阈值之上的余量：交接请求末尾的消息（指令加重试提示）、补的结果、ID、消息框架和估算误差 |
+| `RETRIES_PER_REPLY` | 2 | 已定（[D92](kb-decisions.md#d92-弱模型兜底可恢复的模型失败重试不结束这一轮)） | 同一种可恢复失败最多重发几次。放在 `derive.ts` |
+| `HANDOFF_REQUEST_MAX_BYTES` | 617 | 由文字算出 | 交接请求末尾那条消息的最大字节数：`HANDOFF_INSTRUCTION`、空行、`HANDOFF_RETRY`。余量按它算。放在 `derive.ts` |
 | `ENDED_REASON_MAX_BYTES` | 1024 | 已定 | 出错的原因经 `clip` 截到这个字节数：D25 的说明、`self` 和回信的头都用 |
 | `HOPS_MAX` | 1024 | 暂定 | `post` 和 `spawn` 寄出的信，跳数超过它就失败。回信不受限制。只防库内工具的循环。检查在存储层 `post`、`spawn` 的执行里（[kb-store](kb-store.md#进程之间的工具)），常量放在 `derive.ts`。为什么是 1024，见 [D50](kb-decisions.md#d50-hops_max-放宽到-1024) |
 | `IMAGE_TOKENS` | 5000 | 已定 | 一张图算多少 token，不看字节。取全部测量值（最大 4,763）、文档上限 4,784 和 5000 里的最大值（[D42](kb-decisions.md#d42-第-6-步量-image_tokens核实收图片)） |
@@ -257,7 +261,10 @@ interface Env { now: Instant; memoryView: string; fresh?: { memoryView: string; 
 | 上一轮的说明：停止 | （上一轮被停止。上面还没回复的消息都已取消：不要回应它们，只回应下面的信。） | 上一轮以 `stopped` 结束时，下一条用户消息的开头 |
 | 上一轮的说明：步数用完 | （上一轮的步数用完了，停在中途。如果有进程在等你回信，它们已经收到上一轮的结束通知，之后的回复不会寄给它们。） | 以 `stepLimit` 结束时 |
 | 上一轮的说明：出错 | （上一轮出错，没有做完：<原因>。如果有进程在等你回信，它们已经收到上一轮的结束通知，之后的回复不会寄给它们。） | 以 `error` 结束时 |
-| `HANDOFF_INSTRUCTION` | 不调用工具，写交接说明：目标、做了什么和结果、下一步、没完成的事；写清还没回复完的用户请求要什么，最后几条还没处理的用户消息会原样附在后面。468 字节，估成 234 token | `buildContext` 加在末尾，不入库 |
+| `HANDOFF_INSTRUCTION` | 不调用工具，写交接说明：目标、做了什么和结果、下一步、没完成的事；写清还没回复完的用户请求要什么，最后几条还没处理的用户消息会原样附在后面。468 字节 | `buildContext` 加在末尾，不入库 |
+| `HANDOFF_RETRY` | 注意：你上一次回复没有写出交接说明。这一次不要调用任何工具，也不要写工具调用，只用文字写交接说明。147 字节 | 交接请求只要重发过（`turn.retry` 有值，不看失败的种类），就接在 `HANDOFF_INSTRUCTION` 后面，空一行，同一条消息，不入库 |
+| `EMPTY_REPLY_NOTE` | 你上一条回复是空的：没有文字，也没有工具调用。请继续做事；做完了就写出最终回复。 | 空回复后重发时加在请求末尾，不入库 |
+| `LENGTH_NOTE` | 你上一条回复太长，被截断，已经丢弃。请缩短思考和输出，把事情拆成小步，一步一步做。 | `length` 后重发时加在请求末尾，不入库 |
 
 ### 换段阈值
 
@@ -271,26 +278,27 @@ W 是 `preset.contextWindow`。快照里只存它和 `input`，不存模型的�
 - T0 = W − 2·OUT − R − `MARGIN_TOKENS`。阈值之上要放得下：一次回复、一个没检查的工具结果、交接说明的输出和余量。
 - T = `handoffThreshold` = min(T0, `preset.handoff`)。预设没写 `handoff` 时 T = T0。`handoff` 只能把阈值调低：写得比 T0 大就等于没写（[D51](kb-decisions.md#d51-预设加-handoff换段阈值只能调低)）。下面的证明只要求 T 不高于 T0，所以调低它不破坏证明；下面的表都是没写 `handoff` 的值。会话配置可以随时改 `handoff`（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)），每个值都不高于 T0，证明照旧；改了以后，已经存下的 `purpose` 可能和现算的阈值不一致，见[坑点](#坑点)。
 
-证明梗概。U 是用量估算，I = 234 是交接指令，S 是补的结果以及工具结果的 ID 和名称。
+证明梗概。U 是用量估算，I = 309 是交接请求末尾那条消息最大时的 token（`HANDOFF_REQUEST_MAX_BYTES` = 617 字节，D92 起含重试提示），S 是补的结果以及工具结果的 ID 和名称。
 
 1. 只有 U < T 时才发出用途 `turn` 的调用。写入的回复用量 ≤ 输入 + OUT。`length` 的回复不写入。
 2. 一条回复之后，下次检查前最多写入一个工具结果（≤ R）。之后每写一个结果都检查。
 3. 过了阈值，换段成功之前没有 `turn` 调用，只写补的结果和用户消息。
 4. 这些用户消息总在段末，交接请求不带它们。
-5. 所以交接请求不算指令时 < T + OUT + R + S。加上 I 和交接说明的 OUT：≤ W − `MARGIN_TOKENS` + I + S = W − 3,862 + S。
+5. 所以交接请求不算指令时 < T + OUT + R + S。加上 I 和交接说明的 OUT：≤ W − `MARGIN_TOKENS` + I + S = W − 3,787 + S。
 6. S + I 超过 `MARGIN_TOKENS` 的回复不写入（见[流程：模型回复](#流程模型回复用途-turn)），所以总量不超过 W。
-7. 停止、步数用完、交接失败多少次、后来的消息多大，都不改变这个上界。重试发的是同一个请求。
+7. 停止、步数用完、交接失败多少次、后来的消息多大，都不改变这个上界。重发的交接请求最多多一段 `HANDOFF_RETRY`，I 已经把它算进去；失败的回复不进段，重发期间段不变，所以上界照旧。
 8. `turn` 调用：T + OUT < W。
+9. `turn` 重发的请求多出 `EMPTY_REPLY_NOTE` 或 `LENGTH_NOTE`（约 60 token，不入库）。它只让这一次请求和回复用量里多这么多，由 2·OUT + R + `MARGIN_TOKENS` 里的余量吸收：下一次请求里提示已经没了，锚点多算的只会让换段早一点。
 
 前提：真实的分词至少 2 字节一个 token；`IMAGE_TOKENS` 不低于在用模型一张图的真实 token 数，图按入口允许的各种形状算，不只正方形；固定部分加记忆加上下文的上界低于阈值，由[启动检查](#启动检查和交接以后的检查)保证。
 
 | W | OUT | T（占 W） | 交接请求上界 T + OUT + R + I（不含 S） | 加交接说明 | 余下 | 提示词空间 |
 |---|---|---|---|---|---|---|
-| 65,536 | 8,192 | 28,672（43.8%） | 53,482 | 61,674 | 3,862 | 放不下最坏的新段，见坑点 |
-| 64,000 | 8,000 | 27,520（43.0%） | 52,138 | 60,138 | 3,862 | 放不下最坏的新段，见坑点 |
-| 128,000 | 16,000 | 75,520（59.0%） | 108,138 | 124,138 | 3,862 | 约 82 KB |
-| 200,000 | 25,000 | 129,520（64.8%） | 171,138 | 196,138 | 3,862 | 约 190 KB |
-| 1,000,000 | 125,000 | 729,520（73.0%） | 871,138 | 996,138 | 3,862 | 约 1.38 MB |
+| 65,536 | 8,192 | 28,672（43.8%） | 53,557 | 61,749 | 3,787 | 放不下最坏的新段，见坑点 |
+| 64,000 | 8,000 | 27,520（43.0%） | 52,213 | 60,213 | 3,787 | 放不下最坏的新段，见坑点 |
+| 128,000 | 16,000 | 75,520（59.0%） | 108,213 | 124,213 | 3,787 | 约 82 KB |
+| 200,000 | 25,000 | 129,520（64.8%） | 171,213 | 196,213 | 3,787 | 约 190 KB |
+| 1,000,000 | 125,000 | 729,520（73.0%） | 871,213 | 996,213 | 3,787 | 约 1.38 MB |
 
 收图片的预设（R = 26,384）：
 
@@ -302,7 +310,7 @@ W 是 `preset.contextWindow`。快照里只存它和 `input`，不存模型的�
 | 1,000,000 | 719,520（72.0%） | 约 1.34 MB |
 
 - 其余的列照式子代入 R，余下不变。
-- 余下总是 `MARGIN_TOKENS` − I = 3,862，先给 S。S 用不完的部分留给消息框架和估算误差。
+- 余下总是 `MARGIN_TOKENS` − I = 3,787，先给 S。S 用不完的部分留给消息框架和估算误差。
 - 提示词空间：最坏的新段（全部内置工具、32 KiB 的记忆视图、32 KiB 的第一条消息）里，预设提示词还能有多少字节而不立即再换段。32 KiB 的记忆视图占了 16,384 token，64K 及以下的窗口连这个最坏的新段都装不下，所以那两行写“放不下”（[D80](kb-decisions.md#d80-记忆视图的上限从-16-kib-放到-32-kib)）。表里不含工具定义：每个工具定义的说明和参数的 JSON 字节，都要从提示词空间里扣。一个预设最多 `TOOL_DEFS_MAX_BYTES`（64 KiB，按整个 `ToolDef` 算，所以是上界）。收图片时，最坏的第一条还带 `IMAGES_PER_MESSAGE` 张图，多算 2 × `IMAGE_TOKENS` × `BYTES_PER_TOKEN` = 20,000 字节，上表已扣除。声明了 `context` 的预设，最坏的新段还多一份最多 `CONTEXT_VIEW_MAX_BYTES`（24 KiB）的上下文视图，提示词空间要再扣这么多，上表没扣；小窗口可能因此通不过启动检查。
 
 ### 请求里的图片
@@ -479,22 +487,34 @@ W 是 `preset.contextWindow`。快照里只存它和 `input`，不存模型的�
 
 | `stopReason` | 写入段 | 处理 |
 |---|---|---|
-| `toolUse` 或 `stop`，调用太多、连第一个都放不下（先检查） | 否 | `endTurn(turn, { error: "一次回复的工具调用太多" })` |
-| `toolUse` 或 `stop`，调用太多但放得下前几个 | 是，只写留下的 | 后面的调用和文字截掉；`toolUse` 进 `awaitingTool`，`stop` 照常结束（留下的补 `SKIPPED`） |
-| `toolUse`，有工具调用 | 是 | 进入 `awaitingTool`，等第一个调用。这里不检查阈值 |
-| `toolUse`，没有工具调用 | 是 | `endTurn(turn, "done")` |
-| `stop` | 是 | `endTurn(turn, "done")`。带着工具调用时，它们都补 `SKIPPED` |
-| `length` | 否 | `endTurn(turn, { error: "输出被截断" })`。不看 `errorMessage` |
-| `error`、`aborted`、`pending`、`deferred` | 否 | `endTurn(turn, { error: errorMessage ?? stopReason })` |
+| `toolUse` 或 `stop`，没有非空白文字、没有工具调用（思考块不算）：空回复（先检查） | 否；重发用完后写入 | [重发](#重发d92)，`kind` 是 `empty`。次数用完仍空：写入，`endTurn(turn, "done")`，不改成出错 |
+| `toolUse` 或 `stop`，调用太多、连第一个都放不下 | 否 | `endTurn(turn, { error: "一次回复的工具调用太多" })` |
+| `toolUse` 或 `stop`，调用太多但放得下前几个 | 是，只写留下的 | 后面的调用和文字截掉；进 `awaitingTool` |
+| `toolUse` 或 `stop`，有工具调用 | 是 | 进入 `awaitingTool`，等第一个调用。这里不检查阈值。不看 `stopReason`：弱模型的 `stop` 常常带着调用 |
+| `toolUse` 或 `stop`，没有工具调用、有文字 | 是 | `endTurn(turn, "done")` |
+| `length` | 否 | 重发，`kind` 是 `length`。次数用完：`endTurn(turn, { error: "输出被截断" })`。不看 `errorMessage` |
+| `error` | 否 | 重发，`kind` 是 `error`。次数用完：`endTurn(turn, { error: errorMessage ?? stopReason })` |
+| `aborted`、`pending`、`deferred` | 否 | `endTurn(turn, { error: errorMessage ?? stopReason })`，不重发 |
 | pi-ai 之外的值 | 否 | 同上一行 |
 
-失败的回复不写入。所以错误不会被藏起来，最后一条助手消息的用量也不会变成 0。
+失败的回复不写入（空回复在重发用完后是例外：写入，和 D92 之前的行为一样）。所以错误不会被藏起来，最后一条助手消息的用量也不会变成 0。好的回复被接受时，`turn` 里的 `retry` 去掉。
 
-工具调用太多：每个调用按 2 × ID + 名称 + `未执行` 的字节算补的结果，换成 token 后加上交接指令的 234。超过 `MARGIN_TOKENS` 时只留放得下的前几个调用，后面的调用和它们后面的文字一起丢掉（[D87](kb-decisions.md#d87-一次回复的工具调用放不下时截断不再作废整条回复)）；连第一个都放不下才不写入、本轮出错。截断是静默的：模型看到自己只发了留下的那些，下一轮会重发没拿到结果的调用。留下几个用同一个口径算：把所有字节加起来再换成 token，不逐个取整，所以留的是“放得下的最长前缀”。
+### 重发（D92）
+
+可恢复的模型失败不结束这一轮：阶段仍是 `awaitingModel`，用途不变，`lastEffect` 加一（发出新的副作用），重发同一个请求。`retry(turn, purpose, kind, give)` 是 `decide` 里的一个函数：
+
+- `turn.retry` 的 `kind` 和这次的不同，次数 `n` 从 1 起；相同则加一。`n` 超过 `RETRIES_PER_REPLY`（2）就调用 `give`，也就是上表里“次数用完”的现状结束处理。
+- 重发和 `continueTurn` 一样计步：`turn.steps >= STEPS_PER_TURN` 时 `endTurn(turn, "stepLimit")`，否则步数加一。用途不重新判断，所以 `reconfigure` 改了 `handoff` 之后，存下的用途照旧，直到重发结束（[坑点](#坑点)）。`turn.queued` 原样保留：重发期间到的信照常排队，在之后的安全点或本轮结束时合并一次。
+- 请求末尾加什么，见[函数](#函数)里 `buildContext` 的消息一项：`empty` 加 `EMPTY_REPLY_NOTE`，`length` 加 `LENGTH_NOTE`，交接请求（用途 `handoff`）只要重发过就在交接指令后加 `HANDOFF_RETRY`，不看 `kind`；用途 `turn` 的 `error` 不加。提示不入库。
+- 失败的回复不入段，所以重发期间段、用量锚点、阈值都不变；累计用量照加（每个不丢弃的模型结果都加）。
+- 崩溃：重发中的 `awaitingModel` 被 `interrupted` 送回时，照旧 `endTurn(turn, { error: "服务重启，模型调用被中断" })`，不再重发。
+- 没做：文字里假装调用工具、死循环检测、流看门狗、重启后重发、窗口溢出（[D92](kb-decisions.md#d92-弱模型兜底可恢复的模型失败重试不结束这一轮)）。连续失败的次数不分种类，一起数。
+
+工具调用太多：每个调用按 2 × ID + 名称 + `未执行` 的字节算补的结果，换成 token 后加上交接请求末尾那条消息的 309（`HANDOFF_REQUEST_MAX_BYTES`）。超过 `MARGIN_TOKENS` 时只留放得下的前几个调用，后面的调用和它们后面的文字一起丢掉（[D87](kb-decisions.md#d87-一次回复的工具调用放不下时截断不再作废整条回复)）；连第一个都放不下才不写入、本轮出错。截断是静默的：模型看到自己只发了留下的那些，下一轮会重发没拿到结果的调用。留下几个用同一个口径算：把所有字节加起来再换成 token，不逐个取整，所以留的是“放得下的最长前缀”。
 
 - ID 算两次：它由服务端分配，不在回复的用量里；之后的请求里调用和结果各带一次。
 - 上限和窗口无关，只和 ID 的长度有关。以 `read` 为例（实测 2000 个调用二分）：2 字节的 ID 454 个，Anthropic 的 ID（30 字节）105 个，openai-responses 的 ID（81 字节）44 个。余量已经分给一次回复、一个没检查的工具结果和交接说明，挪不动；要让一次回复能带更多调用，只能改 `MARGIN_TOKENS` 或者换 ID 短的供应商。
-- 截断只发生在一条回复里；换段用途（`purpose` 是 `handoff`）的回复走 `onHandoff`，它的工具调用本来就不进段，没有这个问题。`stop` 的回复被截断时这一轮照常结束，没有“下一轮重发”。
+- 截断只发生在一条回复里；换段用途（`purpose` 是 `handoff`）的回复走 `onHandoff`，它的工具调用本来就不进段，没有这个问题。`stop` 的回复也一样被截断后进 `awaitingTool`（D92），留下的调用照常执行。
 
 ### 安全点投递
 
@@ -541,9 +561,10 @@ D64 第 7 组：外面也能要求换段（模型调 `handoff` 工具之外的�
    - 段末的用户消息两种形状都带：文本照上面接在后面，图片块原样带过去，按顺序。新段第一条按[张数和省略行](#张数和省略行)整理：留最后 `IMAGES_PER_MESSAGE` 张，文本连省略行不超过 `MESSAGE_MAX_BYTES`。没有图片时第一条仍是字符串，经 `clip` 截到 `MESSAGE_MAX_BYTES`。
    - 新段第一条带 `tau: { letters, handoff: true }`：`letters` 是带过去的信，位置平移（见 [`tau`](#tau消息带的结构)）。
    - 用同一个 `turn` 执行 `continueTurn`：步数和排队的消息带到新段。
-4. 其它情况（包括 `toolUse` 和空说明）：`endTurn(turn, { error: "交接失败：" + (errorMessage ?? stopReason) })`。不写交接回复，不开新段。排队的消息仍按 `endTurn` 合并写进旧段。
-5. 失败后再发一条消息：新的一轮，`continueTurn` 立即再换段。新消息在段末，不进交接请求，所以请求和上一次相同。一直失败时，每条消息只调用一次模型。
-6. 换段只发生在 `continueTurn` 里。这时所有工具调用都已有结果。
+4. 没有写出说明：`stopReason` 是 `toolUse`，或者是 `stop`、`length` 但说明为空。[重发](#重发d92)交接请求，用途仍是 `handoff`，`kind` 是 `handoff`，请求末尾在交接指令后加 `HANDOFF_RETRY`。次数用完才 `endTurn(turn, { error: "交接失败：" + (errorMessage ?? stopReason) })`。`stopReason` 是 `error`：同样重发，`kind` 是 `error`；用途 `turn` 时请求不变，交接请求只要重发过就带 `HANDOFF_RETRY`。接受时去掉 `turn.retry`。
+5. 其它情况（`aborted`、`pending`、`deferred`、pi-ai 之外的值），和 4 里次数用完的情形：`endTurn(turn, { error: "交接失败：" + (errorMessage ?? stopReason) })`。不写交接回复，不开新段。排队的消息仍按 `endTurn` 合并写进旧段。
+6. 失败后再发一条消息：新的一轮，`continueTurn` 立即再换段。新消息在段末，不进交接请求，所以请求和第一次相同。一直失败时，每条消息调用 1 + `RETRIES_PER_REPLY` 次模型（没有写出说明的重发请求多一段 `HANDOFF_RETRY`）。
+7. 换段只发生在 `continueTurn` 里。这时所有工具调用都已有结果。
 
 #### 换段时采用待换配置
 
@@ -636,9 +657,9 @@ D64 第 7 组：外面也能要求换段（模型调 `handoff` 工具之外的�
 
 消息形状（总是成立）：用户消息的 `content` 是字符串，或者一个可有可无的文本块加至少一张图片；工具结果最多一个文本块，在最前；工具结果和段号大于 1 的段的第一条，图片不超过 `IMAGES_PER_MESSAGE`。
 
-运行中的通用约束：`1 <= steps <= STEPS_PER_TURN`；`lastEffect >= steps`；`queued` 是信件数组；`hops` 是非负整数；`replyTo` 没有重复；段不空。
+运行中的通用约束：`1 <= steps <= STEPS_PER_TURN`；`retry` 有值时 `kind` 合法、`1 <= n <= RETRIES_PER_REPLY`、`n < steps`，并且阶段是 `awaitingModel`；`lastEffect >= steps`；`queued` 是信件数组；`hops` 是非负整数；`replyTo` 没有重复；段不空。
 
-`reconfigure` 改了 `handoff` 以后，上表里和阈值有关的三处可能不成立：`awaitingModel` 里“用量到阈值，用途是 `handoff`”和“用途是 `handoff` 而用量没到阈值，只能是换段信”，`awaitingTool` 的“已经写过至少一个结果时用量没到阈值”。`purpose` 是进入时的判断，不随新阈值重算（[坑点](#坑点)）。所以 `assertInvariants` 的第三个参数 `relaxed` 为真时，这三处不检查，两个方向的不一致都允许。与阈值无关的“最后一条助手消息里有成功的 `handoff` 调用，用途就是 `handoff`”照查，其余不变量也不放松。放宽的范围很窄：从进程在运行中（阶段不是 `idle`）收到一条把 `handoff` 改成不同值的 `reconfigure` 起，到发出下一个副作用（`lastEffect` 变了）或回到 `idle` 为止。测试辅助 `feed`（纯函数层）和 `assertStoreInvariants`（存储层，传一个进程 ID 的集合）各自记着这个范围。进程空闲时改 `handoff`，不放宽。
+`reconfigure` 改了 `handoff` 以后，上表里和阈值有关的三处可能不成立：`awaitingModel` 里“用量到阈值，用途是 `handoff`”和“用途是 `handoff` 而用量没到阈值，只能是换段信”，`awaitingTool` 的“已经写过至少一个结果时用量没到阈值”。`purpose` 是进入时的判断，不随新阈值重算（[坑点](#坑点)）。所以 `assertInvariants` 的第三个参数 `relaxed` 为真时，这三处不检查，两个方向的不一致都允许。与阈值无关的“最后一条助手消息里有成功的 `handoff` 调用，用途就是 `handoff`”照查，其余不变量也不放松。放宽的范围很窄：从进程在运行中（阶段不是 `idle`）收到一条把 `handoff` 改成不同值的 `reconfigure` 起，到发出下一个副作用（`lastEffect` 变了；[重发](#重发d92)保持原用途，不算）或回到 `idle` 为止。测试辅助 `feed`（纯函数层）和 `assertStoreInvariants`（存储层，传一个进程 ID 的集合）各自记着这个范围。进程空闲时改 `handoff`，不放宽。
 
 测试辅助另外检查：
 
@@ -707,6 +728,7 @@ type PhaseView =
 | `test/kernel/context-view.test.ts` | 上下文视图（D72）的纯函数部分：`CONTEXT_VIEW_MAX_BYTES`；系统提示词的三段顺序，没有视图时一字不变，模型请求带上下文一节，没有锚点的用量估算也算上它；`limits` 的 `contextMax` 和 `startError`，没声明 `context` 时数字和文字不变，声明了才多一项，窗口刚好够或差 1 token 的边界；`newSegmentUsed` 带 `contextView`，各部分分开报；`start`、`fork`（不带 `to` 复制、带 `to` 用新的）的视图；视图算进 `fork` 带 `to` 的估算 |
 | `test/kernel/letters.test.ts` | 信的头和合并、两种形状、工具结果和新段第一条的张数、换段带全部段末消息 |
 | `test/kernel/since.test.ts` | `since` 在各转移上的值，`fork` 的 `since`，投影带 `since` |
+| `test/kernel/retry.test.ts` | D92：五条重发路径（空回复、`length`、`stop` 带调用、换段、流出错）各自的重发、次数用完和计数；`retry` 的清除；请求末尾的提示；重发期间来信；崩溃；步数用完 |
 | `test/kernel/usage.test.ts` | 累计用量：每种回复都加，丢弃的和被中断的不加 |
 | `test/kernel/context.test.ts` | 系统提示词、工具描述、交接请求去掉段末用户消息 |
 | `test/kernel/acceptance.test.ts` | 换段不会无限循环；5 种窗口下，主路径和三条角落路径的交接请求加交接说明放得进窗口；工具调用太多时只留放得下的前几个，交接请求照样放得进窗口（D87） |
@@ -741,8 +763,8 @@ type PhaseView =
 - **失败的回复不能写进段。** 写进去会让最后一条助手消息的用量变成 0，上下文用量退回字节估算。
 - **`decide` 抛错会卡住整个信箱。** 事务回滚，输入留在信箱最前面，而处理输入总取全局最早的一条（见 [kb-store.md](kb-store.md)）。`decide` 只对不可能的状态抛错，外部来的怪值（未知 `stopReason`、巨大的结果）都要按普通失败处理。
 - **`clip` 不能拷贝整串。** 它只数一次全长字节，再扫描保留的头尾。拷贝过整串时，一亿多字符的结果在事务里让 V8 中止。它也不拆开代理对。上限小于省略说明那一行时，输出只有说明行，会超过上限。验证：`regressions.test.ts`。
-- **交接调用也带工具。** 这样请求前缀不变。代价是模型可能回 `toolUse`，这算交接失败。
-- **`purpose` 是进入时的判断。** `reconfigure` 改了 `handoff` 以后，已经存下的 `purpose` 可能和现算的阈值不一致，两个方向都可能：改低以后，用途 `turn` 的调用等着时用量已经到了新阈值；改高以后，用途 `handoff` 的调用等着时用量其实没到新阈值。不重算，`purpose` 就是进入等待时的决定（[D19](kb-decisions.md#d19-第四轮审查fable-52-复审-d18-之后的文档)）。下一次 `continueTurn` 起按新阈值判断。`assertInvariants` 从运行中改了 `handoff` 起，到发出下一个副作用或回到 `idle` 为止，不检查这几处（[不变量](#不变量)）。
+- **交接调用也带工具。** 这样请求前缀不变。代价是模型可能回 `toolUse`：重发交接请求，请求里的 `HANDOFF_RETRY` 要求这次不调工具、只写文字（请求仍带 `tools`）；重发用完才算交接失败。请求不去掉 `tools`：Bedrock、Anthropic 可能拒绝带工具调用历史却没有工具定义的请求，而且前缀会变（[D92](kb-decisions.md#d92-弱模型兜底可恢复的模型失败重试不结束这一轮)）。
+- **`purpose` 是进入时的判断。** `reconfigure` 改了 `handoff` 以后，已经存下的 `purpose` 可能和现算的阈值不一致，两个方向都可能：改低以后，用途 `turn` 的调用等着时用量已经到了新阈值；改高以后，用途 `handoff` 的调用等着时用量其实没到新阈值。不重算，`purpose` 就是进入等待时的决定（[D19](kb-decisions.md#d19-第四轮审查fable-52-复审-d18-之后的文档)）。下一次 `continueTurn` 起按新阈值判断；重发（D92）也保持原用途，所以不一致会保持到重发结束。`assertInvariants` 从运行中改了 `handoff` 起，到发出下一个副作用或回到 `idle` 为止，不检查这几处（[不变量](#不变量)）。
 - **`Input` 的字段名不能叫 `process`。** `test/kernel-imports.test.ts` 的扫描把 `.process.` 当成被禁用的全局，所以 `reconfigure` 带新快照的字段叫 `preset`。
 - **纯函数里遍历工具定义的 `parameters`，不能递归。** 工具定义只受 16 KB 的大小限制，嵌套的数组或对象能有几千层，递归会爆调用栈；`decide` 一抛错，这条输入就留在信箱队头，所有进程卡住，服务重启也起不来。`snapshot.ts` 的稳定序列化用显式的栈。`JSON.stringify` 自己有栈深限制（Node 24 上嵌套的数组约 4700 层），读工具定义时的大小检查就用它，所以更深的定义进不来，在读文件那一步报错，什么都没写。
 - **待换配置要等换段才生效。** 满足[直接采用的条件](#流程会话配置reconfigure)时直接采用，否则存 `next`，等下一次换段（到阈值、`handoff` 工具或[换段信](#换段信)）。要马上换，只能发换段信，它要段里已有助手消息才生效。

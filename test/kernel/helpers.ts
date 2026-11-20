@@ -1,6 +1,7 @@
 // 内核测试的辅助：把 decide 的结果应用到内存里的状态上，以及预设、消息和输入的构造器。
 import type { AssistantMessage, StopReason, ToolCall, Usage } from "@earendil-works/pi-ai";
 import { decide, effectOf, start } from "../../src/kernel/decide.ts";
+import { RETRIES_PER_REPLY } from "../../src/kernel/derive.ts";
 import { textContent, unreachable, userLetter } from "../../src/kernel/types.ts";
 import type { Content, Effect, Ended, Env, ImageContent, Input, Letter, Message, PresetSnapshot, Process } from "../../src/kernel/types.ts";
 import { assertInvariants } from "../invariants.ts";
@@ -135,7 +136,9 @@ export function feed(w: World, input: Input, e: Env = env(0)): Step {
   w.segments.set(seq, next);
   w.p = r.process;
   // purpose 是进入等待时的判断：运行中改了 handoff，存下的 purpose 和现算的阈值可以不一致，直到进入新的等待（或回到 idle）。
-  const entered = w.p.phase.tag === "idle" || w.p.lastEffect !== prev.lastEffect;
+  // D92：重发保持原来的 purpose，不重新判断，所以它不算进入新的等待。
+  const retried = prev.phase.tag === "awaitingModel" && w.p.phase.tag === "awaitingModel" && w.p.phase.turn.retry !== undefined;
+  const entered = w.p.phase.tag === "idle" || (w.p.lastEffect !== prev.lastEffect && !retried);
   w.relaxed = (w.relaxed === true || (input.kind === "reconfigure" && prev.phase.tag !== "idle" && prev.preset.handoff !== w.p.preset.handoff)) && !entered;
   assertInvariants(w.p, next, w.relaxed);
   return { prev, before, after: effectOf(w.p, next), append: r.append, out: r.out };
@@ -146,6 +149,16 @@ export function reply(w: World, m: AssistantMessage, e: Env = env(0)): Step {
   const eff = effectOf(w.p, current(w));
   if (eff?.kind !== "callModel") throw new Error(`进程没有在等模型：${JSON.stringify(eff)}`);
   return feed(w, modelOk(eff.n, m), e);
+}
+
+/** 同一种失败的回复一直给到进程不再等模型（D92：可恢复的失败先重发，次数用完才是现状的结束处理；不可恢复的第一次就结束），返回最后一步。 */
+export function giveUp(w: World, m: AssistantMessage | (() => AssistantMessage), e: Env = env(0)): Step {
+  let last: Step | undefined;
+  for (let i = 0; i <= RETRIES_PER_REPLY; i++) {
+    last = reply(w, typeof m === "function" ? m() : m, e);
+    if (w.p.phase.tag !== "awaitingModel") break;
+  }
+  return last!;
 }
 
 /** 回复进程正在等的工具调用。 */

@@ -7,7 +7,7 @@ import { estimatedUsed, handoffThreshold, startError } from "../../src/kernel/de
 import { observe } from "../../src/kernel/observe.ts";
 import { pendingFields, sameStructure } from "../../src/kernel/snapshot.ts";
 import type { Env, Input, PresetSnapshot, PresetTool, ToolDef } from "../../src/kernel/types.ts";
-import { assistant, call, current, env, feed, image, letterInput, preset, reply, stopInput, textOf, toolDone, userInput, userLetterWith, world } from "./helpers.ts";
+import { assistant, call, current, env, feed, giveUp, image, letterInput, preset, reply, stopInput, textOf, toolDone, userInput, userLetterWith, world } from "./helpers.ts";
 import type { World } from "./helpers.ts";
 
 const LOW = 1_000;
@@ -194,7 +194,7 @@ test("窗口换小、段里的消息放不进：不直接采用，存 next；当
   const w = idleFresh(wide);
   for (let i = 0; i < 4; i++) {
     feed(w, userInput(big));
-    reply(w, assistant({ usage: 0, stopReason: "error", errorMessage: "provider down" }));
+    giveUp(w, assistant({ usage: 0, stopReason: "error", errorMessage: "provider down" }));
   }
   assert.equal(current(w).filter((m) => m.role === "assistant").length, 0);
   const small = { ...wide, model: "faux/small", contextWindow: 40_000 };
@@ -372,7 +372,7 @@ test("别的原因的交接失败不丢 next：模型出错、空说明、带工
   for (const m of cases) {
     const w = pendingWorld();
     feed(w, marked("换"));
-    reply(w, m, withFresh("新记忆", "C"));
+    giveUp(w, m, withFresh("新记忆", "C"));
     const ended = w.p.phase.tag === "idle" ? w.p.phase.ended : undefined;
     assert.ok(typeof ended === "object" && ended.error.startsWith("交接失败："), JSON.stringify(ended));
     assert.ok(!(typeof ended === "object" && ended.error.includes("待换的配置已丢弃")));
