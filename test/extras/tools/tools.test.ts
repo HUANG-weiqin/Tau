@@ -1,4 +1,4 @@
-// 工具库（extras/tools）：六个工具里 peek、wait 的脚本在真的服务、真的 Git Bash 里跑（history_search、history_read 见 history.test.ts，web_search 见 web_search.test.ts）；桥的工具定义路由。
+// 工具库（extras/tools）：五个工具里 peek、wait 的脚本在真的服务、真的 Git Bash 里跑（history_dump 见 history.test.ts，web_search 见 web_search.test.ts）；桥的工具定义路由。
 // 全部用临时目录和测试管道。脚本的数据目录靠 USERPROFILE 指到临时目录，不碰真的 ~/.tau。
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -351,30 +351,30 @@ describe("桥：工具定义", () => {
 
     assert.equal((await post(port, "/api/tools/install", { name: "nope" })).status, 404);
     for (const e of CATALOG) assert.equal((await post(port, "/api/tools/install", { name: e.name })).status, 200, e.name);
-    const file = join(bhome, "tools", "history_read.json");
+    const file = join(bhome, "tools", "history_dump.json");
     const written = JSON.parse(readFileSync(file, "utf8"));
     assert.deepEqual(Object.keys(written).sort(), ["command", "description", "output", "parameters", "timeout"]);
-    assert.ok(written.command.includes(`${LIB}/history_read.ts`), written.command);
-    assert.equal(written.timeout, 30);
-    assert.deepEqual(Object.keys(written.parameters.properties).sort(), ["after", "at", "before", "offset"]);
-    assert.deepEqual(readdirSync(join(bhome, "tools")).sort(), ["history_read.json", "history_search.json", "list_presets.json", "peek.json", "wait.json", "web_search.json"]);
+    assert.ok(written.command.includes(`${LIB}/history_dump.ts`), written.command);
+    assert.equal(written.timeout, 60);
+    assert.deepEqual(Object.keys(written.parameters.properties), []);
+    assert.deepEqual(readdirSync(join(bhome, "tools")).sort(), ["history_dump.json", "list_presets.json", "peek.json", "wait.json", "web_search.json"]);
 
     l = await list();
     assert.deepEqual(l.library.map((x: any) => x.status), CATALOG.map(() => "installed"));
-    const hr = l.installed.find((x: any) => x.name === "history_read");
-    assert.deepEqual([hr.params, hr.timeout, hr.output, hr.usedBy], [["at", "before", "after", "offset"], 30, "text", []]);
-    assert.equal((await post(port, "/api/tools/install", { name: "history_read" })).status, 200, "内容一样：再装不报错");
+    const hd = l.installed.find((x: any) => x.name === "history_dump");
+    assert.deepEqual([hd.params, hd.timeout, hd.output, hd.usedBy], [[], 60, "text", []]);
+    assert.equal((await post(port, "/api/tools/install", { name: "history_dump" })).status, 200, "内容一样：再装不报错");
 
     // 用户改过：状态变成“不同”，不带 replace 就拒绝，文件不动。
     const mine = { ...written, timeout: 5 };
     writeFileSync(file, JSON.stringify(mine));
-    assert.equal((await list()).library.find((x: any) => x.name === "history_read").status, "differs");
-    const refused = await post(port, "/api/tools/install", { name: "history_read" });
+    assert.equal((await list()).library.find((x: any) => x.name === "history_dump").status, "differs");
+    const refused = await post(port, "/api/tools/install", { name: "history_dump" });
     assert.equal(refused.status, 409);
     assert.match(refused.json.error, /内容和工具库里的不同/);
     assert.equal(JSON.parse(readFileSync(file, "utf8")).timeout, 5);
-    assert.equal((await post(port, "/api/tools/install", { name: "history_read", replace: true })).status, 200);
-    assert.equal(JSON.parse(readFileSync(file, "utf8")).timeout, 30);
+    assert.equal((await post(port, "/api/tools/install", { name: "history_dump", replace: true })).status, 200);
+    assert.equal(JSON.parse(readFileSync(file, "utf8")).timeout, 60);
     assert.ok(!existsSync(`${file}.tmp`));
 
     // 读不出的定义列出来，带原因。
@@ -382,23 +382,23 @@ describe("桥：工具定义", () => {
     assert.equal((await list()).installed.find((x: any) => x.name === "broken").error, "不是合法的 JSON");
 
     // 预设用到它：拒删，说是哪些；去掉以后能删。
-    writeFileSync(join(bhome, "presets", "p1.md"), "---\nworkdir: C:/x\nmodel: a/b\ntools: read, history_read\n---\nx\n");
+    writeFileSync(join(bhome, "presets", "p1.md"), "---\nworkdir: C:/x\nmodel: a/b\ntools: read, history_dump\n---\nx\n");
     writeFileSync(join(bhome, "presets", "p2.md"), "---\nworkdir: C:/x\nmodel: a/b\ntools: peek\n---\nx\n");
-    assert.deepEqual((await list()).installed.find((x: any) => x.name === "history_read").usedBy, ["p1"]);
-    const busy = await post(port, "/api/tools/remove", { name: "history_read" });
+    assert.deepEqual((await list()).installed.find((x: any) => x.name === "history_dump").usedBy, ["p1"]);
+    const busy = await post(port, "/api/tools/remove", { name: "history_dump" });
     assert.equal(busy.status, 409);
     assert.match(busy.json.error, /p1/);
     assert.ok(existsSync(file));
     writeFileSync(join(bhome, "presets", "p1.md"), "---\nworkdir: C:/x\nmodel: a/b\ntools: read\n---\nx\n");
-    assert.equal((await post(port, "/api/tools/remove", { name: "history_read" })).status, 200);
+    assert.equal((await post(port, "/api/tools/remove", { name: "history_dump" })).status, 200);
     assert.ok(!existsSync(file));
-    assert.equal((await post(port, "/api/tools/remove", { name: "history_read" })).status, 404);
+    assert.equal((await post(port, "/api/tools/remove", { name: "history_dump" })).status, 404);
     assert.equal((await post(port, "/api/tools/remove", { name: "../x" })).status, 400);
     assert.equal((await post(port, "/api/tools/remove", { name: "peek" })).status, 409);
-    assert.equal((await list()).library.find((x: any) => x.name === "history_read").status, "none");
+    assert.equal((await list()).library.find((x: any) => x.name === "history_dump").status, "none");
   });
 
-  test("装进去的定义内核认：check 读得出，六个工具都在快照里", async () => {
+  test("装进去的定义内核认：check 读得出，五个工具都在快照里", async () => {
     const bhome = join(dir, "kernel-home");
     mkdirSync(join(bhome, "presets"), { recursive: true });
     const bridge = await createBridge({ port: 0, home: bhome, pipe: `\\\\.\\pipe\\tau-test-none-${process.pid}` });
@@ -407,18 +407,18 @@ describe("桥：工具定义", () => {
     } finally {
       await bridge.close();
     }
-    // 服务的工具目录是 home/.tau/tools：把装好的五个拷过去，让真的服务读。
+    // 服务的工具目录是 home/.tau/tools：把装好的五个拷贝过去，让真的服务读。
     for (const e of CATALOG) writeFileSync(join(home, ".tau", "tools", `${e.name}.json`), readFileSync(join(bhome, "tools", `${e.name}.json`)));
-    writeFileSync(join(home, ".tau", "presets", "all.md"), `---\nworkdir: ${work}\nmodel: ${model}\ntools: read, peek, wait, history_search, history_read, web_search, list_presets\n---\nx\n`);
+    writeFileSync(join(home, ".tau", "presets", "all.md"), `---\nworkdir: ${work}\nmodel: ${model}\ntools: read, peek, wait, history_dump, web_search, list_presets\n---\nx\n`);
     const [r] = await request({ op: "check", preset: "all" });
     assert.equal(r.type, "check", JSON.stringify(r));
     assert.equal(r.error, null);
-    assert.deepEqual(r.snapshot.toolDefs.map((d: ToolDef) => d.name).sort(), ["history_read", "history_search", "list_presets", "peek", "wait", "web_search"]);
+    assert.deepEqual(r.snapshot.toolDefs.map((d: ToolDef) => d.name).sort(), ["history_dump", "list_presets", "peek", "wait", "web_search"]);
   });
 });
 
 test("catalog：每个工具的名字合规，脚本存在，定义没有多余字段", () => {
-  assert.deepEqual(CATALOG.map((c) => c.name), ["peek", "wait", "history_search", "history_read", "web_search", "list_presets"]);
+  assert.deepEqual(CATALOG.map((c) => c.name), ["peek", "wait", "history_dump", "web_search", "list_presets"]);
   for (const e of CATALOG) {
     assert.match(e.name, /^[A-Za-z0-9_-]{1,64}$/);
     assert.ok(existsSync(join(LIB, e.script)), e.script);
