@@ -201,7 +201,7 @@ describe("说明、大小、命令、超时", () => {
     assert.equal(command, `node "${LIB_DIR}/call.ts" 'pixel-art' 'draw'`);
     assert.ok(LIB_DIR.endsWith("extras/mcp") && !LIB_DIR.includes("\\"), LIB_DIR);
     assert.deepEqual(parseCommand(command), { server: "pixel-art", tool: "draw" });
-    assert.equal(parseCommand("node E:/tau/extras/tools/shell.ts start"), null);
+    assert.equal(parseCommand("node E:/tau/extras/tools/peek.ts"), null);
     assert.equal(parseCommand(`${command} extra`), null);
     assert.equal(commandFor("s", "it's"), null);
     assert.equal(commandFor("s", "a\nb"), null);

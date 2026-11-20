@@ -86,7 +86,7 @@ v2 也不做的三张表，已移进[决策记录 D46](../../.knowledge/kb-decis
 
 ## 8. 上层建筑的做法
 
-上层建筑的做法已移进 [kb-extras](../../.knowledge/kb-extras.md)：[放在哪里](../../.knowledge/kb-extras.md#放在哪里)、[依赖规则](../../.knowledge/kb-extras.md#依赖规则)、[Pi Web 功能的做法和代价](../../.knowledge/kb-extras.md#pi-web-的功能在-v2-上的做法)、[`tx`](../../.knowledge/kb-extras.md#上层的命令行-tx)、[多 Agent 的等待](../../.knowledge/kb-extras.md#多-agent-的等待)、[后台命令的配方](../../.knowledge/kb-extras.md#后台命令和完成通知的配方)、[HTTP 桥的检查](../../.knowledge/kb-extras.md#http-桥要做的检查)。
+上层建筑的做法已移进 [kb-extras](../../.knowledge/kb-extras.md)：[放在哪里](../../.knowledge/kb-extras.md#放在哪里)、[依赖规则](../../.knowledge/kb-extras.md#依赖规则)、[Pi Web 功能的做法和代价](../../.knowledge/kb-extras.md#pi-web-的功能在-v2-上的做法)、[`tx`](../../.knowledge/kb-extras.md#上层的命令行-tx)、[多 Agent 的等待](../../.knowledge/kb-extras.md#多-agent-的等待)、[后台命令](../../.knowledge/kb-extras.md#后台命令)、[HTTP 桥的检查](../../.knowledge/kb-extras.md#http-桥要做的检查)。
 
 ## 9. 实现顺序
 

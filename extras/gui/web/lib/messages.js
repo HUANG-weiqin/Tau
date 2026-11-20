@@ -90,7 +90,7 @@ function tauText(m) {
 
 /**
  * 后台任务的完成通知的名字；不是这种信返回 null。
- * 内核里它不是进程寄的信，是带前缀的用户的信（kb-kernel 的“信的头和合并”），前缀由 `extras/tools/bg_run.ts` 的 `finish` 写。
+ * 内核里它不是进程寄的信，是带前缀的用户的信（kb-kernel 的“信的头和合并”），前缀由 `src/tools/notify.ts` 写（老的 bg_run 也是这个格式）。
  * @param {string} text
  */
 export function bgName(text) {
@@ -155,7 +155,7 @@ export function describeStart(m) {
 }
 
 /**
- * 工具调用的一行摘要：参数里有字符串 command 就取它（bash、shell、bg_run 和手写的工具定义都一样），
+ * 工具调用的一行摘要：参数里有字符串 command 就取它（bash 和手写的工具定义都一样），
  * 读写改取路径，其它取第一个字符串参数。
  * @param {string} name
  * @param {Record<string, unknown>} args

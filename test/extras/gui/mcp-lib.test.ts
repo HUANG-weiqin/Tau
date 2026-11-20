@@ -38,7 +38,7 @@ test("能装的字节数：对着 64 KiB；超了给警告", () => {
 });
 
 test("已装定义按服务器分组：MCP 生成的进组，别的进 others，组的顺序按第一次出现", () => {
-  const installed = [def("fake", "fake_count"), { name: "shell" }, def("pyd", "pyd_draw"), def("fake", "fake_picture"), { name: "手写的" }];
+  const installed = [def("fake", "fake_count"), { name: "peek" }, def("pyd", "pyd_draw"), def("fake", "fake_picture"), { name: "手写的" }];
   const { groups, others } = groupByServer(installed);
   assert.deepEqual(
     groups.map((g) => [g.server, g.defs.map((d) => d.name)]),
@@ -49,15 +49,15 @@ test("已装定义按服务器分组：MCP 生成的进组，别的进 others，
   );
   assert.deepEqual(
     others.map((d) => d.name),
-    ["shell", "手写的"],
+    ["peek", "手写的"],
   );
   assert.deepEqual(groupByServer([]), { groups: [], others: [] });
 });
 
 test("折成服务器：全选时一项写整个服务器", () => {
-  const defs = [def("fake", "fake_count"), def("fake", "fake_picture"), { name: "shell" }];
-  assert.deepEqual(foldTools(["shell", "fake_count", "fake_picture"], defs), [
-    { kind: "tool", name: "shell" },
+  const defs = [def("fake", "fake_count"), def("fake", "fake_picture"), { name: "peek" }];
+  assert.deepEqual(foldTools(["peek", "fake_count", "fake_picture"], defs), [
+    { kind: "tool", name: "peek" },
     { kind: "mcp", server: "fake", on: 2, total: 2, names: ["fake_count", "fake_picture"] },
   ]);
 });
@@ -69,12 +69,12 @@ test("折成服务器：只选一部分时 on 比 total 小，names 还是全部
 
 test("折成服务器：defs 里没有的名字当普通工具，服务器一个都没选就不出现", () => {
   const defs = [def("fake", "fake_a"), def("pyd", "pyd_draw")];
-  assert.deepEqual(foldTools(["shell", "fake_a", "gone_tool"], defs), [
-    { kind: "tool", name: "shell" },
+  assert.deepEqual(foldTools(["peek", "fake_a", "gone_tool"], defs), [
+    { kind: "tool", name: "peek" },
     { kind: "mcp", server: "fake", on: 1, total: 1, names: ["fake_a"] },
     { kind: "tool", name: "gone_tool" },
   ]);
-  assert.deepEqual(foldTools(["shell"], defs), [{ kind: "tool", name: "shell" }]);
+  assert.deepEqual(foldTools(["peek"], defs), [{ kind: "tool", name: "peek" }]);
 });
 
 test("折成服务器：服务器项在它第一个定义名的位置，其余保持原顺序", () => {
@@ -89,9 +89,9 @@ test("折成服务器：服务器项在它第一个定义名的位置，其余�
 test("折成服务器：空的名字和空的 defs", () => {
   assert.deepEqual(foldTools([], [def("fake", "fake_a")]), []);
   assert.deepEqual(foldTools([], []), []);
-  assert.deepEqual(foldTools(["read", "shell"], []), [
+  assert.deepEqual(foldTools(["read", "peek"], []), [
     { kind: "tool", name: "read" },
-    { kind: "tool", name: "shell" },
+    { kind: "tool", name: "peek" },
   ]);
   // 名字重复只算一项。
   assert.deepEqual(foldTools(["fake_a", "fake_a"], [def("fake", "fake_a")]), [

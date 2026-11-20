@@ -1,4 +1,4 @@
-// 后台命令的 log 有两处：配方跑的 extras/bg/<进程 ID>-<名字>.log；
+// 后台命令的 log 有两处：老 bg_run 留下的 extras/bg/<进程 ID>-<名字>.log（只为看还没结束的老进程）；
 // bash 工具转入后台的 extras/shell/<进程 ID>/<毫秒时间>-<任务号>.log（旁边有 .claim 文件才算转了后台，D90）。
 import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import path from "node:path";

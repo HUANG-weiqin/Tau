@@ -1,4 +1,4 @@
-// 工具库（extras/tools）：七个工具里 shell、bg_run、peek、wait 的脚本在真的服务、真的 Git Bash 里跑（history_search、history_read 见 history.test.ts，web_search 见 web_search.test.ts）；桥的工具定义路由。
+// 工具库（extras/tools）：五个工具里 peek、wait 的脚本在真的服务、真的 Git Bash 里跑（history_search、history_read 见 history.test.ts，web_search 见 web_search.test.ts）；桥的工具定义路由。
 // 全部用临时目录和测试管道。脚本的数据目录靠 USERPROFILE 指到临时目录，不碰真的 ~/.tau。
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -20,7 +20,6 @@ import { parseExit } from "../../../extras/gui/bridge/bg.ts";
 import { talk } from "../../../extras/tools/client.ts";
 import { CATALOG, definitionOf } from "../../../extras/tools/catalog.ts";
 import { phaseText } from "../../../extras/tools/wait.ts";
-import { KEEP_BYTES } from "../../../extras/tools/shell.ts";
 import { textOfResult } from "../../plain.ts";
 
 const LIB = join(import.meta.dirname, "..", "..", "..", "extras", "tools").replace(/\\/g, "/");
@@ -141,191 +140,11 @@ async function messages(id: string): Promise<string[]> {
   });
 }
 
-describe("shell", () => {
-  test("短输出原样回，加状态行；不留输出文件", async () => {
-    const r = await tool("shell", { command: "echo 你好 'q' \"d\"; echo err >&2" }, "sh-a");
-    assert.deepEqual(r, { text: "你好 q d\nerr\n[退出码 0]", isError: false });
-    const files = existsSync(extras("shell", "sh-a")) ? readdirSync(extras("shell", "sh-a")) : [];
-    assert.deepEqual(files, []);
-  });
-
-  test("退出码就是命令的退出码；命令里的 exit 也不丢它", async () => {
-    assert.deepEqual(await tool("shell", { command: "echo a; exit 3" }, "sh-b"), { text: "a\n[退出码 3]", isError: true });
-    assert.deepEqual(await tool("shell", { command: "false" }, "sh-b"), { text: "[退出码 1]", isError: true });
-  });
-
-  test("命令从空设备读标准输入，不读参数 JSON", async () => {
-    assert.deepEqual(await tool("shell", { command: "cat; echo done" }, "sh-c"), { text: "done\n[退出码 0]", isError: false });
-  });
-
-  test("命令在工具定义自己的 bash 里跑：TAU_PROCESS 看得到", async () => {
-    const r = await tool("shell", { command: "pwd; echo $TAU_PROCESS" }, "sh-d");
-    assert.equal(r.isError, false);
-    assert.match(r.text, /sh-d\n\[退出码 0\]$/);
-  });
-
-  test("输出太长：只回头尾，完整输出存文件，结果给出 Windows 路径；文件是完整的", async () => {
-    const r = await tool("shell", { command: "seq 1 30000; exit 2" }, "sh-e");
-    assert.equal(r.isError, true);
-    assert.ok(r.text.length < 16 * 1024, `结果太长：${r.text.length}`);
-    assert.match(r.text, /…（中间省略 \d+ 字节）…/);
-    assert.match(r.text, /\n\[退出码 2\]$/);
-    const file = /完整输出在 (.+?)，用 read 读/.exec(r.text)?.[1];
-    assert.ok(file !== undefined, r.text);
-    assert.match(file, /^[A-Za-z]:\\.*\\\.tau\\extras\\shell\\sh-e\\.+\.log$/);
-    const want = `${Array.from({ length: 30000 }, (_, i) => i + 1).join("\n")}\n`;
-    assert.equal(readFileSync(file, "utf8"), want);
-    assert.ok(r.text.startsWith("1\n2\n3\n"));
-    assert.ok(r.text.includes("\n30000\n"));
-    assert.ok(statSync(file).size > KEEP_BYTES * 2);
-  });
-
-  test("顺手删掉 7 天前的文件和空了的目录，新的不动", async () => {
-    mkdirSync(extras("shell", "old-proc"), { recursive: true });
-    mkdirSync(extras("shell", "new-proc"), { recursive: true });
-    const old = extras("shell", "old-proc", "a.log");
-    const fresh = extras("shell", "new-proc", "b.log");
-    writeFileSync(old, "x");
-    writeFileSync(fresh, "y");
-    const t = new Date(Date.now() - 8 * 24 * 3600 * 1000);
-    utimesSync(old, t, t);
-    await tool("shell", { command: "true" }, "sh-f");
-    assert.equal(existsSync(old), false);
-    assert.equal(existsSync(extras("shell", "old-proc")), false);
-    assert.equal(existsSync(fresh), true);
-  });
-
-  test("wait 用完还没跑完：命令留在后台继续跑，立刻返回输出文件；之后能读到新输出和退出码", async () => {
-    const id = "sh-j";
-    const go = join(dir, `go-sh-${id}`).replace(/\\/g, "/");
-    const out = await tool("shell", { command: `echo 第一行; while [ ! -e "${go}" ]; do sleep 0.1; done; echo 后来; exit 5`, wait: 1 }, id);
-    assert.equal(out.isError, false, out.text);
-    assert.match(out.text, /等了 1 秒还没跑完：命令已经转到后台继续跑/);
-    assert.match(out.text, /跑完会给你寄一封信/);
-    const file = /输出写到 (.+?)（还在增长/.exec(out.text)?.[1];
-    assert.ok(file !== undefined, out.text);
-    assert.ok(readFileSync(file, "utf8").includes("第一行"), "已经写出来的输出在文件里");
-    // 命令留在后台继续跑，没被结束：放它走，它能写完剩下的输出和退出码。
-    writeFileSync(go, "");
-    for (let i = 0; i < 300 && !existsSync(`${file}.exit`); i++) await sleep(100);
-    assert.ok(readFileSync(file, "utf8").includes("后来"));
-    assert.equal(readFileSync(`${file}.exit`, "utf8").trim(), "5");
-  });
-
-  test("转后台的命令跑完会寄信唤醒进程：信里有退出码和最后几行", async () => {
-    const id = await start("你好");
-    await untilIdle(id);
-    // 命令等一个文件才结束：不靠时间判断，机器慢也稳。
-    const go = join(dir, `go-wake-${id}`).replace(/\\/g, "/");
-    const r = await tool("shell", { command: `echo 一; while [ ! -e "${go}" ]; do sleep 0.1; done; echo 二; exit 4`, wait: 1 }, id);
-    assert.equal(r.isError, false, r.text);
-    assert.match(r.text, /转到后台继续跑/);
-    assert.match(r.text, /可以接着做别的事，也可以直接结束这一轮等这封信/);
-    writeFileSync(go, "");
-    let letter: string | undefined;
-    for (let i = 0; i < 300 && letter === undefined; i++) {
-      await sleep(100);
-      letter = (await messages(id)).find((m) => m.includes("[后台任务") && m.includes("退出码 4"));
-    }
-    assert.ok(letter !== undefined, "没有收到唤醒的信");
-    assert.ok(letter.includes("二"), letter);
-  });
-
-  test("wait 里跑完：和以前一样返回输出和退出码，不留输出文件", async () => {
-    const r = await tool("shell", { command: "echo 快; exit 7", wait: 20 }, "sh-k");
-    assert.deepEqual(r, { text: "快\n[退出码 7]", isError: true });
-    const files = existsSync(extras("shell", "sh-k")) ? readdirSync(extras("shell", "sh-k")) : [];
-    assert.deepEqual(files, [], "输出文件、.exit、.wait 都清掉");
-  });
-
-  test("wait 的值不对：清楚的错误，不跑命令", async () => {
-    for (const wait of [-1, 301, 1.5, "60"]) {
-      const r = await tool("shell", { command: "echo x", wait }, "sh-l");
-      assert.equal(r.isError, true, String(wait));
-      assert.match(r.text, /wait 是 0 到 300 的整数/, String(wait));
-    }
-  });
-
-  test("超时：内核按进程组结束命令，不挂着", async () => {
-    const t = Date.now();
-    const r = await tool("shell", { command: "sleep 60; echo late" }, "sh-g", { timeout: 2 });
-    assert.equal(r.isError, true);
-    assert.ok(Date.now() - t < 20_000, `用了 ${Date.now() - t} 毫秒`);
-    assert.ok(!r.text.includes("late"));
-    // 超时时结果里没有输出，描述必须告诉模型去哪个目录找。
-    assert.ok(CATALOG[0]!.description.includes("~/.tau/extras/shell/<进程 ID>/"), CATALOG[0]!.description);
-    // 超时留下的文件：输出文件加 <输出文件>.wait（模板读的秒数）。
-    const files = readdirSync(extras("shell", "sh-g"));
-    assert.deepEqual(files.filter((f) => !/\.(wait|sync|exit)$/.test(f)).length, 1, "超时留下的输出文件");
-  });
-
-  test("超时：命令里启动的后台进程也被结束，不会在超时以后继续写文件", async () => {
-    const marker = join(dir, "marker.txt").replace(/\\/g, "/");
-    const r = await tool("shell", { command: `(sleep 3; echo x > "${marker}") & sleep 3; echo y > "${marker}"` }, "sh-i", { timeout: 1 });
-    assert.equal(r.isError, true);
-    await sleep(4500);
-    assert.equal(existsSync(marker), false);
-  });
-
-  test("参数不对：清楚的错误", async () => {
-    const r = await tool("shell", { command: "  " }, "sh-h");
-    assert.equal(r.isError, true);
-    assert.match(r.text, /command 必须是非空字符串/);
-  });
-});
-
-describe("bg_run", () => {
-  test("立刻返回；跑完把退出码和 log 最后几行寄给自己；log 的命名和退出码行界面认得", async () => {
-    const id = await start("你好");
-    await untilIdle(id);
-    // 命令等一个文件出现才结束：工具返回时它一定还在跑，不靠时间判断“立刻”。
-    const go = join(dir, `go-${id}`).replace(/\\/g, "/");
-    const r = await tool("bg_run", { name: "job1", command: `while [ ! -e "${go}" ]; do sleep 0.1; done; echo 第一行; echo second >&2; exit 4` }, id);
-    assert.equal(r.isError, false, r.text);
-    const log = extras("bg", `${id}-job1.log`);
-    assert.ok(r.text.includes("已在后台运行：job1") && r.text.includes(log.replace(/\//g, "\\")), r.text);
-    assert.match(r.text, /跑完会给你寄一封信/);
-    assert.equal(parseExit(readFileSync(log, "utf8")), null, "跑完以前没有退出码行");
-
-    // 同名任务还在跑：拒绝，也没有清掉它的 log。
-    const again = await tool("bg_run", { name: "job1", command: "echo x" }, id);
-    assert.equal(again.isError, true);
-    assert.match(again.text, /还在运行/);
-    writeFileSync(go, "");
-
-    for (let i = 0; i < 300 && !(await messages(id)).some((m) => m.includes("[后台任务 job1] 完成")); i++) await sleep(100);
-    const letter = (await messages(id)).find((m) => m.includes("[后台任务 job1] 完成"));
-    assert.ok(letter !== undefined, "没有收到通知");
-    assert.match(letter, /\[后台任务 job1\] 完成，退出码 4/);
-    assert.ok(letter.includes("第一行") && letter.includes("second"));
-    assert.equal(parseExit(readFileSync(log, "utf8")), 4);
-    assert.ok(readFileSync(log, "utf8").includes("第一行"));
-    await untilIdle(id);
-
-    // 跑完以后同名可以再用：log 重新开始。输出不以换行结尾时，退出码行照样独占一行，认得出。
-    const third = await tool("bg_run", { name: "job1", command: "printf again" }, id);
-    assert.equal(third.isError, false, third.text);
-    for (let i = 0; i < 100 && parseExit(readFileSync(log, "utf8")) !== 0; i++) await sleep(100);
-    assert.equal(parseExit(readFileSync(log, "utf8")), 0);
-    assert.ok(!readFileSync(log, "utf8").includes("第一行"));
-    for (let i = 0; i < 100 && !(await messages(id)).some((m) => m.includes("完成，退出码 0")); i++) await sleep(100);
-    const fourth = await tool("bg_run", { name: "job1", command: "true" }, id);
-    assert.equal(fourth.isError, false, fourth.text);
-  });
-
-  test("名字不合规矩、命令为空：错误，不建 log", async () => {
-    for (const name of ["", "a b", "../x", "x".repeat(41)]) {
-      const r = await tool("bg_run", { name, command: "true" }, "bg-x");
-      assert.equal(r.isError, true, name);
-    }
-    assert.equal((await tool("bg_run", { name: "ok", command: " " }, "bg-x")).isError, true);
-    assert.equal(existsSync(extras("bg", "bg-x-ok.log")), false);
-  });
-
+describe("工具脚本", () => {
   test("没有 TAU_PROCESS 或 TAU_PIPE：清楚的错误", () => {
     const env = { ...process.env };
     for (const k of Object.keys(env)) if (k.toUpperCase().startsWith("TAU_")) delete env[k];
-    for (const s of ["shell.ts start", "bg_run.ts start", "peek.ts", "wait.ts"]) {
+    for (const s of ["peek.ts", "wait.ts"]) {
       const [file, ...rest] = s.split(" ");
       const r = spawnSync(process.execPath, [`${LIB}/${file}`, ...rest], { env, input: "{}", encoding: "utf8" });
       assert.equal(r.status, 1, s);
@@ -532,30 +351,30 @@ describe("桥：工具定义", () => {
 
     assert.equal((await post(port, "/api/tools/install", { name: "nope" })).status, 404);
     for (const e of CATALOG) assert.equal((await post(port, "/api/tools/install", { name: e.name })).status, 200, e.name);
-    const file = join(bhome, "tools", "shell.json");
+    const file = join(bhome, "tools", "history_read.json");
     const written = JSON.parse(readFileSync(file, "utf8"));
     assert.deepEqual(Object.keys(written).sort(), ["command", "description", "output", "parameters", "timeout"]);
-    assert.ok(written.command.includes(`${LIB}/shell.ts`), written.command);
-    assert.equal(written.timeout, 360, "shell 先等 60 秒、wait 最多 300 秒：工具自己的超时要更大，留出余量");
-    assert.deepEqual(Object.keys(written.parameters.properties).sort(), ["command", "wait"]);
-    assert.deepEqual(readdirSync(join(bhome, "tools")).sort(), ["bg_run.json", "history_read.json", "history_search.json", "peek.json", "shell.json", "wait.json", "web_search.json"]);
+    assert.ok(written.command.includes(`${LIB}/history_read.ts`), written.command);
+    assert.equal(written.timeout, 30);
+    assert.deepEqual(Object.keys(written.parameters.properties).sort(), ["after", "at", "before", "offset"]);
+    assert.deepEqual(readdirSync(join(bhome, "tools")).sort(), ["history_read.json", "history_search.json", "peek.json", "wait.json", "web_search.json"]);
 
     l = await list();
-    assert.deepEqual(l.library.map((x: any) => x.status), ["installed", "installed", "installed", "installed", "installed", "installed", "installed"]);
-    const shell = l.installed.find((x: any) => x.name === "shell");
-    assert.deepEqual([shell.params, shell.timeout, shell.output, shell.usedBy], [["command", "wait"], 360, "text", []]);
-    assert.equal((await post(port, "/api/tools/install", { name: "shell" })).status, 200, "内容一样：再装不报错");
+    assert.deepEqual(l.library.map((x: any) => x.status), ["installed", "installed", "installed", "installed", "installed"]);
+    const hr = l.installed.find((x: any) => x.name === "history_read");
+    assert.deepEqual([hr.params, hr.timeout, hr.output, hr.usedBy], [["at", "before", "after", "offset"], 30, "text", []]);
+    assert.equal((await post(port, "/api/tools/install", { name: "history_read" })).status, 200, "内容一样：再装不报错");
 
     // 用户改过：状态变成“不同”，不带 replace 就拒绝，文件不动。
     const mine = { ...written, timeout: 5 };
     writeFileSync(file, JSON.stringify(mine));
-    assert.equal((await list()).library.find((x: any) => x.name === "shell").status, "differs");
-    const refused = await post(port, "/api/tools/install", { name: "shell" });
+    assert.equal((await list()).library.find((x: any) => x.name === "history_read").status, "differs");
+    const refused = await post(port, "/api/tools/install", { name: "history_read" });
     assert.equal(refused.status, 409);
     assert.match(refused.json.error, /内容和工具库里的不同/);
     assert.equal(JSON.parse(readFileSync(file, "utf8")).timeout, 5);
-    assert.equal((await post(port, "/api/tools/install", { name: "shell", replace: true })).status, 200);
-    assert.equal(JSON.parse(readFileSync(file, "utf8")).timeout, 360);
+    assert.equal((await post(port, "/api/tools/install", { name: "history_read", replace: true })).status, 200);
+    assert.equal(JSON.parse(readFileSync(file, "utf8")).timeout, 30);
     assert.ok(!existsSync(`${file}.tmp`));
 
     // 读不出的定义列出来，带原因。
@@ -563,23 +382,23 @@ describe("桥：工具定义", () => {
     assert.equal((await list()).installed.find((x: any) => x.name === "broken").error, "不是合法的 JSON");
 
     // 预设用到它：拒删，说是哪些；去掉以后能删。
-    writeFileSync(join(bhome, "presets", "p1.md"), "---\nworkdir: C:/x\nmodel: a/b\ntools: read, shell\n---\nx\n");
+    writeFileSync(join(bhome, "presets", "p1.md"), "---\nworkdir: C:/x\nmodel: a/b\ntools: read, history_read\n---\nx\n");
     writeFileSync(join(bhome, "presets", "p2.md"), "---\nworkdir: C:/x\nmodel: a/b\ntools: peek\n---\nx\n");
-    assert.deepEqual((await list()).installed.find((x: any) => x.name === "shell").usedBy, ["p1"]);
-    const busy = await post(port, "/api/tools/remove", { name: "shell" });
+    assert.deepEqual((await list()).installed.find((x: any) => x.name === "history_read").usedBy, ["p1"]);
+    const busy = await post(port, "/api/tools/remove", { name: "history_read" });
     assert.equal(busy.status, 409);
     assert.match(busy.json.error, /p1/);
     assert.ok(existsSync(file));
     writeFileSync(join(bhome, "presets", "p1.md"), "---\nworkdir: C:/x\nmodel: a/b\ntools: read\n---\nx\n");
-    assert.equal((await post(port, "/api/tools/remove", { name: "shell" })).status, 200);
+    assert.equal((await post(port, "/api/tools/remove", { name: "history_read" })).status, 200);
     assert.ok(!existsSync(file));
-    assert.equal((await post(port, "/api/tools/remove", { name: "shell" })).status, 404);
+    assert.equal((await post(port, "/api/tools/remove", { name: "history_read" })).status, 404);
     assert.equal((await post(port, "/api/tools/remove", { name: "../x" })).status, 400);
     assert.equal((await post(port, "/api/tools/remove", { name: "peek" })).status, 409);
-    assert.equal((await list()).library.find((x: any) => x.name === "shell").status, "none");
+    assert.equal((await list()).library.find((x: any) => x.name === "history_read").status, "none");
   });
 
-  test("装进去的定义内核认：check 读得出，七个工具都在快照里", async () => {
+  test("装进去的定义内核认：check 读得出，五个工具都在快照里", async () => {
     const bhome = join(dir, "kernel-home");
     mkdirSync(join(bhome, "presets"), { recursive: true });
     const bridge = await createBridge({ port: 0, home: bhome, pipe: `\\\\.\\pipe\\tau-test-none-${process.pid}` });
@@ -588,18 +407,18 @@ describe("桥：工具定义", () => {
     } finally {
       await bridge.close();
     }
-    // 服务的工具目录是 home/.tau/tools：把装好的七个拷过去，让真的服务读。
+    // 服务的工具目录是 home/.tau/tools：把装好的五个拷过去，让真的服务读。
     for (const e of CATALOG) writeFileSync(join(home, ".tau", "tools", `${e.name}.json`), readFileSync(join(bhome, "tools", `${e.name}.json`)));
-    writeFileSync(join(home, ".tau", "presets", "all.md"), `---\nworkdir: ${work}\nmodel: ${model}\ntools: read, shell, bg_run, peek, wait, history_search, history_read, web_search\n---\nx\n`);
+    writeFileSync(join(home, ".tau", "presets", "all.md"), `---\nworkdir: ${work}\nmodel: ${model}\ntools: read, peek, wait, history_search, history_read, web_search\n---\nx\n`);
     const [r] = await request({ op: "check", preset: "all" });
     assert.equal(r.type, "check", JSON.stringify(r));
     assert.equal(r.error, null);
-    assert.deepEqual(r.snapshot.toolDefs.map((d: ToolDef) => d.name).sort(), ["bg_run", "history_read", "history_search", "peek", "shell", "wait", "web_search"]);
+    assert.deepEqual(r.snapshot.toolDefs.map((d: ToolDef) => d.name).sort(), ["history_read", "history_search", "peek", "wait", "web_search"]);
   });
 });
 
 test("catalog：每个工具的名字合规，脚本存在，定义没有多余字段", () => {
-  assert.deepEqual(CATALOG.map((c) => c.name), ["shell", "bg_run", "peek", "wait", "history_search", "history_read", "web_search"]);
+  assert.deepEqual(CATALOG.map((c) => c.name), ["peek", "wait", "history_search", "history_read", "web_search"]);
   for (const e of CATALOG) {
     assert.match(e.name, /^[A-Za-z0-9_-]{1,64}$/);
     assert.ok(existsSync(join(LIB, e.script)), e.script);

@@ -57,7 +57,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | 进程之间：`post`、`spawn`、`stop_process`、回信、跳数 | [kb-store 的进程之间的工具](kb-store.md#进程之间的工具)、[kb-kernel 的回信](kb-kernel.md#回信) | 不原子：用工具定义运行 `tau send`、`tau start`、`tau stop`，也能寄信、建进程、停进程。但它们是库外工具，在做完和写结果之间崩溃，模型看到“被中断”，再做一次。信就重复，子进程就多一个，停止就可能停掉对方后来的一轮。重做有害，所以不放上层。丢数据：回信要和一轮的结束在同一个事务里寄出。上层只能盯着 `watch`，它没在运行时，回信就漏了 |
 | 主动换段 | [kb-kernel 的主动换段](kb-kernel.md#主动换段handoff) | 做不到。换段只能由 `decide` 发起 |
 | 工具定义 | [kb-tools 的工具定义](kb-tools.md#工具定义) | 做不到。模型能调用哪些工具，只由内核给的工具描述决定。没有工具定义，上层的功能只能让模型自己拼 bash 命令：没有参数说明，没有 bash 的预设也用不了 |
-| bash 后台命令：先等、转后台、输出文件、跑完寄信 | [kb-tools 的 bash](kb-tools.md#bash)、[D90](kb-decisions.md#d90-bash-接管后台命令先等没跑完转后台输出写文件跑完寄信) | 两个工具并存：上层的 `shell` 和内置 `bash` 要在预设里二选一，选错出过事；每次调用多起 2 到 3 次 node；通知和 claim 要在内核的包装脚本里才抢得公平 |
+| bash 后台命令：先等、转后台、输出文件、跑完寄信 | [kb-tools 的 bash](kb-tools.md#bash)、[D90](kb-decisions.md#d90-bash-接管后台命令先等没跑完转后台输出写文件跑完寄信) | 以前两个工具并存：上层的 `shell` 和内置 `bash` 要在预设里二选一，选错出过事（`shell`、`bg_run` 已按 D90 退役）；`shell` 每次调用多起 2 到 3 次 node；通知和 claim 要在内核的包装脚本里才抢得公平 |
 | 内容块和图片 | [kb-service 的图片](kb-service.md#图片)、[kb-store 的图片](kb-store.md#图片)、[kb-kernel 的请求里的图片](kb-kernel.md#请求里的图片) | 做不到。上层没有办法把图片放进模型的上下文 |
 | 思考级别 | [kb-executor 的调用模型](kb-executor.md#调用模型actionsts) | 做不到。它是调用模型的参数 |
 | 重试 | [kb-executor 的调用模型](kb-executor.md#调用模型actionsts) | 丢数据。上层只能等这一轮出错结束，再寄“继续”。这时回信已经寄出，新的一轮没有 `replyTo`，等回信的父进程拿不到结果。上层没在运行时也不会重试 |

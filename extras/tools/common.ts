@@ -35,12 +35,6 @@ export function extrasDir(name: string): string {
   return path.join(homedir(), ".tau", "extras", name);
 }
 
-/** 给模型看的路径：Windows 的反斜杠写法。 */
-export const winPath = (p: string): string => path.resolve(p).replace(/\//g, "\\");
-
-/** 给 bash 用的路径：盘符加正斜杠，msys 认。 */
-export const bashPath = (p: string): string => path.resolve(p).replace(/\\/g, "/");
-
 /** 入口：出错写标准错误、退出码 1。不要在里面留着不关的连接，否则进程不退出。 */
 export function run(fn: () => Promise<void>): void {
   fn().catch((e: unknown) => {

@@ -357,9 +357,9 @@ test("messages: 找不到调用的结果单列", () => {
 
 test("messages: summarizeCall、describeNow、phaseStartedAt、forkPoints、turnStart", () => {
   assert.equal(summarizeCall("memory", { key: "k", value: "v" }), "k");
-  // 只要有字符串 command 就当命令：shell、bg_run 和自己写的工具定义都一样。
-  assert.equal(summarizeCall("shell", { command: "npm test", wait: 5 }), "npm test");
-  assert.equal(summarizeCall("bg_run", { name: "build", command: "npm run build" }), "npm run build");
+  // 只要有字符串 command 就当命令：bash 和自己写的工具定义都一样。
+  assert.equal(summarizeCall("bash", { command: "npm test", timeout: 5 }), "npm test");
+  assert.equal(summarizeCall("fake_build", { name: "build", command: "npm run build" }), "npm run build");
   assert.equal(summarizeCall("x", {}), "");
   assert.equal(summarizeCall("x", { n: 1 }), '{"n":1}');
   const msgs: Msg[] = [user("a"), asst([text("好的")], 2), user("b", 3), asst([text("读\n第二行"), call("c", "read", { path: "f.ts" })], 4), result("c", "ok", false, 5)];
@@ -1647,7 +1647,7 @@ test("新预设：更多设置收起时的一行摘要", () => {
   assert.equal(moreSummary(["read"], "docs/a.md"), "不带记忆 · read");
   assert.equal(moreSummary([], ""), "不带记忆 · 没有工具");
   assert.equal(moreSummary(["memory"], ""), "带记忆 · 没有工具");
-  assert.equal(moreSummary(["read", "write", "edit", "bash", "agents", "shell", "wait"], ""), "不带记忆 · read write edit bash …共 7 个");
+  assert.equal(moreSummary(["read", "write", "edit", "bash", "agents", "peek", "wait"], ""), "不带记忆 · read write edit bash …共 7 个");
 });
 
 test("新进程：默认选中的预设，指定的 > 最近有动静的进程的预设 > 第一个", () => {

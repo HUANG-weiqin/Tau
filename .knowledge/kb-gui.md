@@ -71,7 +71,7 @@
 | `presets/` | 预设 |
 | `extras/gui/state.json` | 界面数据 |
 | `extras/gui/*.log` | `start.ps1` 起的服务和桥的日志 |
-| `extras/bg/<进程 ID>-<名字>.log` | 后台命令的 log（[配方](kb-extras.md#后台命令和完成通知的配方)） |
+| `extras/bg/<进程 ID>-<名字>.log` | 老 `bg_run` 留下的后台命令 log（这个工具已退役，只为看没跑完的老进程还认；[kb-extras](kb-extras.md#后台命令)） |
 | `extras/shell/<进程 ID>/*.log` | bash 的输出；旁边有 `.claim` 的是转入后台的，“后台”页也列（D90） |
 
 ### GET 路由
@@ -337,7 +337,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
   - 一封信的发送者、跳数、`replyTo`（写信时它在等回信）、回信的结束原因来自 `tau.letters`；正文是消息文本里 `at` 指的那段。
   - 上一轮的说明来自 `tau.after`，换段后的第一条来自 `tau.handoff`（说明和带过来的信用 `at` 切），被中断和未执行的工具结果来自 `tau.filled`，一轮的开头看 `tau.after` 和 `tau.handoff`。
   - 没有 `tau` 的旧消息按普通用户消息显示，整段文字一封信。文字被截过的消息没有 `at`，整段文字当一封信，发送者取第一封。
-  - 后台任务的完成通知（`bg_run` 跑完寄的信）在 `tau` 里也是用户的信，界面靠正文开头的 `[后台任务 <名字>] ` 认出来，显示“后台任务 · 名字”，不显示“你”（`bgName`）。前缀由 `extras/tools/bg_run.ts` 的 `finish` 写，字符和空格要和它一致。消息流、这一轮的开头、详情栏的信箱都这样标。
+  - 后台任务的完成通知（`bash` 转入后台以后跑完寄的信，老的 `bg_run` 也一样）在 `tau` 里也是用户的信，界面靠正文开头的 `[后台任务 <名字>] ` 认出来，显示“后台任务 · 名字”，不显示“你”（`bgName`）。前缀由 `src/tools/notify.ts` 写，字符和空格要和它一致。消息流、这一轮的开头、详情栏的信箱都这样标。
   - 还认的固定文字是 `HANDOFF_HEADER`、`CARRY_HEADER`（只用来从新段第一条里切出交接说明）和上面那个后台任务前缀。别的不解析。
 - “换段”：`app.handoff` 用 `send` 带 `handoff: true` 寄 `HANDOFF_LETTER`（一封说明没有别的事要做的信）。段里已有助手消息才生效（`lib/messages.js` 的 `canHandoff`，[kb-kernel 的换段信](kb-kernel.md#换段信)）；进程在跑、或者段里还没有助手消息时按钮禁用。
 - 详情栏的数据（`lib/derive.js`，用 `inspect` 的原样记录和 `limits`，加 `update` 里的 `self`，不读别的）：
@@ -354,7 +354,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
 | 文件 | 测什么 |
 |---|---|
 | `test/extras/gui/bridge.test.ts` | 每条检查的反例；GET 不出目录；转发对着测试服务（临时目录、测试管道、faux 模型），含 `watch` 分块推送和浏览器断开；预设经 `check` 读（带 `options` 的读得出、读不出和装不下的错误文字和 `start` 一字不差、服务不在回 503）、新建不覆盖和删除；`inspect` 转发读到会话快照；换段信真的换段、信带进新段；`reconfigure` 经桥转发，回执 `reconfigured` 原样返回；git 带 `--no-optional-locks`、工作目录不对时拒绝；界面数据改名写入；模型目录和 pi-ai 一致、key 状态四种（含已登录）且值不进回复；填 key 遇 OAuth 拒绝，清掉就是登出，不认识的条目可换可删、auth.json 坏了或不存在、改了不用重启；改预设只换收到的字段（顺序、CRLF、BOM、正文原样，`null` 删行）、读不出或起不来改回旧文件、服务不在改回去、请求不合法；新建带 `handoff`、`options`、`context`，`context` 给 `null` 删行 |
-| `test/extras/tools/tools.test.ts` | 工具库：`shell`、`bg_run`、`peek`、`wait` 的脚本在真的服务和 Git Bash 里跑（截断和存文件、退出码、超时结束整个进程组、7 天清理；后台立刻返回、跑完寄信、同名拒绝；peek 的输出；wait 等到结束、超时、停止）；桥的列、装、改过后拒绝覆盖、更新、预设用到时拒删；库里全部的定义装好以后内核 `check` 读得出。历史检索的两个脚本和 `web_search` 不在这里，见 [kb-extras 的工具库](kb-extras.md#工具库) |
+| `test/extras/tools/tools.test.ts` | 工具库：`peek`、`wait` 的脚本在真的服务和 Git Bash 里跑（peek 的输出；wait 等到结束、超时、停止）；桥的列、装、改过后拒绝覆盖、更新、预设用到时拒删；库里全部的定义装好以后内核 `check` 读得出。历史检索的两个脚本和 `web_search` 不在这里，见 [kb-extras 的工具库](kb-extras.md#工具库) |
 | `test/extras/gui/service.test.ts` | 旧代码的判断（修改时间对比、服务不在、缓存和作废）；重启接口（有进程在跑回 409 且不动、`force`、只重启桥、参数不对）用假的 runner 和假的 `ps`，另有生成的重启命令行和真跑一次 powershell 的“父进程退出后孙进程还在”；`/web/` 的缓存头；只读凭据库；界面数据的字段和进程被清掉后的清理；助手文字第一行去标记 |
 | `test/extras/gui/agentsmd.test.ts` | 上下文文件和旧的拼接块：认出和去掉旧块（CRLF、BOM、手写的末尾空行字节不变）、给了 prompt 块留着、没有结束标记当没有块；接口：`/api/agents-md`、新建勾选写 `context: AGENTS.md` 而不拼块、CLAUDE.md 不认、列表里 `agentsMd` 只有 `none` 和 `legacy`、`agentsMd: false` 去块、`true` 回 400、转成上下文文件（去块加 `context`，已有不重复）、`context` 加上以后装不下窗口改回旧文件 |
 | `test/extras/gui/memory.test.ts` | 记忆页的纯逻辑（字节序排序、折叠、编辑状态、写回复的判读、冲突后字和版本的处理、摘要）；经桥对着真的服务：新键带摘要、改值不丢摘要、兄弟先写造成的冲突不覆盖、删、已删键的冲突、超限（含摘要超限） |
