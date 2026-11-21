@@ -1,6 +1,6 @@
 # 上层建筑
 
-`updated: 2026-11-18`
+`updated: 2026-11-21`
 
 ## 这个模块是干什么的
 
@@ -16,6 +16,7 @@
 - 派工隔离的配方：多个队友改同一个仓库时，各用一个 git worktree。
 - 工具库：七个现成的工具定义。
 - 换段以后查旧段：提示放在哪里，建议写进预设的话。
+- 共享手册：`~/.tau/handbook.md`，给所有 agent 共用的一页使用技巧，靠预设的 `context` 挂上去。
 - 备份：定期调 `backup` 请求的脚本和计划任务。
 - 认证：登录脚本和凭据库的拷贝，凭据文件由内核读写。
 - MCP 中转怎么做。
@@ -229,6 +230,23 @@ git -C $REPO branch -d wt/<名字>
 - 清理规则：数据放 `~/.tau/extras/history/<进程 ID>/`，不进库、不备份。每次调用先遍历这个目录，删修改时间超过 7 天的文件，删空了的进程目录也删；每步失败都跳过（文件可能被占用），清理出错不让工具失败。期限和内核清理 bash 输出文件一样是 7 天（[kb-tools 的输出文件](kb-tools.md#输出文件)）。清理放在工具自己里：内核只写 `extras/shell/` 一处（[D90](kb-decisions.md#d90-bash-接管后台命令先等没跑完转后台输出写文件跑完寄信)），而且 GUI 和计划任务都不常驻，不能指望上层有个程序一直跑（[D93](kb-decisions.md#d93-history_dump-取代-history_search-和-history_read)）。
 - 除 `web_search`、`list_presets` 外，都只在 tau 的工具调用里运行：没有 `TAU_PROCESS` 或 `TAU_PIPE` 时报错。这两个不连管道，不需要这两个变量。连管道的小客户端是 `extras/tools/client.ts`，发完请求不半关闭。
 - 测试：`test/extras/tools/web_search.test.ts`（`web_search`：脚本在子进程里跑，后端是本机的假 HTTP 服务，不碰真网络，也不读真的 `~/.tau`；后端的顺序和退路、错误文字、auth.json 的各种写法、输出的截断）。`test/extras/tools/list_presets.test.ts`（`list_presets`：纯函数，加一次指到临时目录的子进程）。`test/extras/tools/preset_crud.test.ts`（`create_preset`、`delete_preset`：参数检验、自动补装工具库定义、`check` 失败回滚、`ps` 在运行进程保护和大小写检查）。`test/extras/tools/tools.test.ts`（`peek`、`wait`，和桥的工具路由），真的服务、真的 Git Bash；数据目录靠 `USERPROFILE` 指到临时目录。`test/extras/tools/history.test.ts`（`history_dump`）：渲染、输出、清理、写文件的幂等不要服务，另有对着真的服务的集成测试。
+
+### 共享手册
+
+内核不读它，也不生成它。只是一个普通 Markdown，`~/.tau/handbook.md`，写跨项目、跨预设都会踩的坑：内置 `bash` 的先等再转后台、别 sleep 等信、路径写法、`read` 能直接看图、改文件用 `edit`、记忆摘要限长、这儿的 tau 用绝对路径 `E:/tau/tau`、派工走 worktree、测试绿不等于对。
+
+为什么放上层、放成一个文件：
+
+- 项目事实写在仓库里（`AGENTS.md`、`.knowledge/`），只服务那个仓库；记忆库按预设 ID 分，只有那个预设看得到。跨项目的坑原来没有地方放，只能靠人反复交代。
+- 靠已有的 `context`（[D72](kb-decisions.md#d72-上下文文件开段重读)）挂上去，不写代码、不改内核、不加工具。
+- 每个预设头写一行。路径要写 Windows 绝对路径：内核按工作目录解析 `context`，`~` 不展开。本机是 `C:/Users/weiqi/.tau/handbook.md`。
+
+代价和约定：
+
+- 每次开段每个挂在上面的 agent 都读一遍，算进 24 KB 的上下文视图额度（[kb-store](kb-store.md#上下文文件视图)）。所以它必须短：一句一条，只写“不知道就会做错”的。
+- 人维护。谁踩到新的坑就加一句；超过一页就删最不常用的那条，不攒成第二份 `AGENTS.md`。
+- 改文件以后，下一次开段生效；已经在跑的进程要换段才读得到。
+- 现在所有预设都挂了它。新建预设由 `create_preset` 写文件，要挂得自己在 `context` 里加。
 
 ### 换段以后查旧段
 
