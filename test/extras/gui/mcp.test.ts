@@ -44,6 +44,21 @@ const aliveServer = (pid: number): boolean => {
 
 const readPids = (file: string): number[] => (existsSync(file) ? readFileSync(file, "utf8").split("\n").filter((s) => s !== "").map(Number) : []);
 
+/** 杀掉记录里的孤儿进程。detached 的孙进程在父进程死后就脱离了进程树，relay 的 `taskkill /T` 收不到；
+ *  它们继承的工作目录是 proj，会把临时目录锁住，after 里删目录就报 EPERM。只杀命令行对得上的：Windows 的 PID 复用很快。 */
+const killRecorded = (): void => {
+  const mine = new Set([...readPids(pidFile), ...readPids(kidsFile)]);
+  if (mine.size === 0) return;
+  const out =
+    spawnSync("powershell", ["-NoProfile", "-Command", "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' } | ForEach-Object { \"$($_.ProcessId)|$($_.CommandLine)\" }"], { encoding: "utf8", windowsHide: true }).stdout ?? "";
+  for (const line of out.split(/\r?\n/)) {
+    const m = /^(\d+)\|(.*)$/.exec(line);
+    if (m === null || !mine.has(Number(m[1]))) continue;
+    if (!/fake-server\.ts|tau-mcp-grandchild/.test(m[2]!)) continue;
+    spawnSync("taskkill", ["/F", "/PID", String(m[1])], { stdio: "ignore", windowsHide: true });
+  }
+};
+
 function post(path: string, body: unknown): Promise<{ status: number; json: any }> {
   return new Promise((resolve, reject) => {
     const req = http.request({ host: "127.0.0.1", port, path, method: "POST", headers: JSON_H }, (res) => {
@@ -105,6 +120,7 @@ after(async () => {
     if (v !== undefined) process.env[k] = v;
   }
   await sleep(300);
+  killRecorded();
   rmSync(dir, { recursive: true, force: true, maxRetries: 15, retryDelay: 200 });
 });
 

@@ -221,13 +221,16 @@ describe("wait", () => {
 
   test("超时不算错误：写明还没结束的和它们的阶段", async () => {
     const fast = await start("好");
-    const slow = await start("veryslow 一直想");
+    // 用 hold（工具等 30 秒）而不是 veryslow（模型睡 6 秒）：全量并发时 spawn 一个工具子进程也可能要几秒，
+    // 6 秒的窗口会赶在 wait 读到状态之前关掉，这条测试就偶发地看到“全部结束”。
+    const slow = await start("hold 一直想");
+    await untilPhase(slow, "awaitingTool");
     const t = Date.now();
     const r = await tool("wait", { processes: [fast, slow], timeout: 1 }, "wt");
     assert.equal(r.isError, false, r.text);
     assert.ok(Date.now() - t < 10_000);
     assert.match(r.text, /^等了 1 秒，还没全部结束/);
-    assert.ok(r.text.includes(`- ${slow}：运行中，在等模型`), r.text);
+    assert.ok(r.text.includes(`- ${slow}：运行中，在等工具`), r.text);
     assert.ok(r.text.includes(`- ${fast}：已结束，完成`), r.text);
     await request({ op: "stop", process: slow });
     await untilIdle(slow);
