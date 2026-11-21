@@ -39,12 +39,16 @@ test("脚本：按 ID 排序，跳过非 .md 和不合法的文件名；没有�
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "b.md"), GOOD);
     writeFileSync(join(dir, "a.md"), GOOD);
+    writeFileSync(join(dir, "v1.coder.md"), GOOD);
     writeFileSync(join(dir, "notes.txt"), "x");
     writeFileSync(join(dir, "bad name.md"), GOOD);
+    writeFileSync(join(dir, "trailing..md"), GOOD);
     const out = run();
-    assert.match(out, /共 2 个预设/);
+    assert.match(out, /共 3 个预设/);
     assert.ok(out.indexOf("- a：") < out.indexOf("- b："));
+    assert.ok(out.includes("- v1.coder："));
     assert.ok(!out.includes("bad name"));
+    assert.ok(!out.includes("trailing."));
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

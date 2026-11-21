@@ -1,10 +1,9 @@
 // list_presets：列出 ~/.tau/presets 里的预设，给 spawn 选（kb-extras 的“工具库”）。只读文件，不连服务。
 import { readdir, readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
 import { cut, readArgs, run } from "./common.ts";
+import { isPresetId, presetsDir } from "./presets.ts";
 
-const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const SUMMARY_CHARS = 120;
 
 export interface Row {
@@ -37,14 +36,14 @@ export function format(rows: Row[]): string {
 }
 
 export async function listPresets(dir: string): Promise<Row[]> {
-  const names = (await readdir(dir)).filter((n) => n.endsWith(".md") && ID.test(n.slice(0, -3))).sort();
+  const names = (await readdir(dir)).filter((n) => n.endsWith(".md") && isPresetId(n.slice(0, -3))).sort();
   return Promise.all(names.map(async (n) => summarize(n.slice(0, -3), await readFile(path.join(dir, n), "utf8"))));
 }
 
 if (import.meta.main) {
   run(async () => {
     await readArgs();
-    const rows = await listPresets(path.join(homedir(), ".tau", "presets")).catch((e: NodeJS.ErrnoException) => {
+    const rows = await listPresets(presetsDir()).catch((e: NodeJS.ErrnoException) => {
       if (e.code === "ENOENT") return [];
       throw e;
     });

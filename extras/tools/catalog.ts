@@ -95,6 +95,55 @@ export const CATALOG: ToolEntry[] = [
     output: "text",
     command: node,
   },
+  {
+    name: "create_preset",
+    script: "create_preset.ts",
+    description:
+      "在 ~/.tau/presets/<id>.md 新建一个预设，并立刻向 tau 服务发 check 验证（校验不过会自动删回新建文件并报错）。" +
+      "同名预设已存在时拒绝，不覆盖；需要替换先调 delete_preset。引用的工具若属于工具库且尚未安装会自动安装。" +
+      "prompt 第一行建议写清一句话角色说明，方便 list_presets 展示。",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "预设 ID（也是文件名和记忆库命名空间）：1-64 个字母、数字、点、下划线或连字符，不能全是点或以点结尾" },
+        workdir: { type: "string", description: "默认工作目录，Windows 绝对路径且必须存在" },
+        model: { type: "string", description: "模型，格式 <provider>/<model-id>" },
+        tools: {
+          type: "array",
+          items: { type: "string" },
+          description: "工具名数组（内置：read、write、edit、bash、memory、agents；或 ~/.tau/tools/ 与工具库里的名字）。空数组表示只有 self 和 handoff",
+        },
+        prompt: { type: "string", description: "角色提示词正文，第一行建议写一句话角色定位" },
+        thinking: { type: "string", enum: ["minimal", "low", "medium", "high", "xhigh", "max"], description: "可选：思考强度" },
+        handoff: { type: "integer", minimum: 1, description: "可选：把换段阈值调低到这个 token 数" },
+        options: { type: "object", description: "可选：传给模型的附加参数对象（白名单键）" },
+        context: { type: "array", items: { type: "string" }, maxItems: 8, description: "可选：每次开段重读的上下文文件路径（最多 8 个）" },
+      },
+      required: ["id", "workdir", "model", "tools", "prompt"],
+      additionalProperties: false,
+    },
+    timeout: 30,
+    output: "text",
+    command: node,
+  },
+  {
+    name: "delete_preset",
+    script: "delete_preset.ts",
+    description:
+      "删除 ~/.tau/presets/<id>.md。只删预设文件，记忆库保留不动（以后用同 ID 重建仍可用）；已结束的历史进程仍保留各自的快照。" +
+      "若还有该预设的进程正在运行则拒绝删除，请先停掉它们。",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "要删除的预设 ID" },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    timeout: 30,
+    output: "text",
+    command: node,
+  },
 ];
 
 /** 写进 `~/.tau/tools/<name>.json` 的内容。键的顺序固定。`dir` 是本目录的绝对路径，正斜杠。 */

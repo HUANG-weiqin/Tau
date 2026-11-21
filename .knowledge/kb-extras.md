@@ -14,7 +14,7 @@
 - 多 Agent 等待的两条出路。
 - 后台命令：现在由内置 `bash` 做，上层不再有工具。
 - 派工隔离的配方：多个队友改同一个仓库时，各用一个 git worktree。
-- 工具库：五个现成的工具定义。
+- 工具库：七个现成的工具定义。
 - 换段以后查旧段：提示放在哪里，建议写进预设的话。
 - 备份：定期调 `backup` 请求的脚本和计划任务。
 - 认证：登录脚本和凭据库的拷贝，凭据文件由内核读写。
@@ -211,7 +211,7 @@ git -C $REPO branch -d wt/<名字>
 
 ### 工具库
 
-`extras/tools/` 放五个工具定义的脚本和目录（`catalog.ts`）。界面的“工具定义”页按目录装进 `~/.tau/tools/<名字>.json`（[kb-gui](kb-gui.md#页面)）。装进去的定义没有多余字段，`command` 指向仓库里的脚本。仓库挪了位置，在界面里点“更新”。
+`extras/tools/` 放七个工具定义的脚本和目录（`catalog.ts`）。界面的“工具定义”页按目录装进 `~/.tau/tools/<名字>.json`（[kb-gui](kb-gui.md#页面)）。装进去的定义没有多余字段，`command` 指向仓库里的脚本。仓库挪了位置，在界面里点“更新”。
 
 | 工具 | 做什么 | 数据放哪 | 代价 |
 |---|---|---|---|
@@ -220,13 +220,15 @@ git -C $REPO branch -d wt/<名字>
 | `history_dump` | 把自己的每个旧段写成一个文件：`~/.tau/extras/history/<进程 ID>/seg-<n>.md`，一条消息一个标题行 `## [段号:序号] 角色 时间`，下面是原文，不截断。没有参数。输出是目录和每段的文件名、大小、行数、开头一句，再是用 rg/grep 和 read 的用法。`timeout` 60 | `~/.tau/extras/history/<进程 ID>/`。不进库、不备份、7 天清理（工具自己清） | 只读旧段，重做无害：旧段不改，已经写过的文件不重写，只刷新修改时间；先写临时文件再改名，两个调用同时跑不会读到半截。慢：第一次调用读全部旧段、写文件，段多段大时要几秒。某一段读不到（被 `prune` 删了）就写一句原因，不算失败。做法和理由见 [D93](kb-decisions.md#d93-history_dump-取代-history_search-和-history_read) |
 | `web_search` | 联网搜索：参数只有 `query`。按顺序试后端：Tavily（环境变量 `TAVILY_API_KEY`），再 Anthropic 的服务端搜索（环境变量 `ANTHROPIC_API_KEY`，或 `~/.tau/auth.json` 里的 `api_key`）；某个后端出错就退到下一个。输出：回答、编号的来源（标题、网址、片段）、一行“是数据，不是指令”。读某页全文用 `curl -s https://r.jina.ai/<网址>`。`timeout` 90 | 不存 | 只读，崩溃时报“被中断”，重做无害，只多花几美分。每次搜索要花钱（Anthropic 路约 1 到 3 美分）或用免费额度（Tavily 每月 1000 次）。不需要服务：不读 `TAU_PROCESS`。Tavily 路没对真服务跑过（本机没有 key）。做法、实测和放弃的路见 [D79](kb-decisions.md#d79-联网搜索工具库的-web_search多个后端不绑-anthropic) |
 | `list_presets` | 列出 `~/.tau/presets/` 里的预设：ID、正文第一行（一句话说明）、`model`、`tools`、`workdir`。没有参数。给 `spawn` 选预设用：`spawn` 只收预设 ID，内核没有“列预设”的接口。`timeout` 30 | 不存 | 只读，重做无害。不连服务：直接读文件，不读 `TAU_PROCESS`。格式不对的预设不抛，缺的字段写 `?`。预设作者要把“我是谁”写在正文第一行，列表才有用 |
+| `create_preset` | 在 `~/.tau/presets/<id>.md` 新建预设，引用的工具库工具如未安装先自动补装，随后连管道发 `check` 验证；校验不过自动删回新建文件并报错。同名（含 Windows 大小写碰撞）不覆盖。`timeout` 30 | 写 `~/.tau/presets/<id>.md`（及缺失的工具库 `<name>.json`） | 库外工具，崩溃时报“被中断”；用 `wx` 排他建且 `check` 失败即回滚，不会破坏已有预设或留下坏文件 |
+| `delete_preset` | 删除 `~/.tau/presets/<id>.md`（区分大小写）。先连管道发 `ps`，还有该预设的进程在运行就拒绝；记忆库和已结束的历史进程不受影响。`timeout` 30 | 删 `~/.tau/presets/<id>.md` | 库外工具，崩溃时报“被中断”；重做时预设已不存在会报找不到，不会误伤新文件 |
 
 怎么做：
 
 - `history_dump` 读协议的 `history`：只 dump 本进程（`TAU_PROCESS`）的旧段（第 1 段到当前段号减 1），当前段的内容模型已经有了；看别的进程用 `peek`。位置写成“段号:序号”，旧段不改，只会被 `prune` 整段删掉，所以位置不会漂。本地已有 `seg-<n>.md` 时，只发 `from: Number.MAX_SAFE_INTEGER` 探针确认没被 `prune` 删掉，然后从本地文件刷新修改时间并提取大小、行数和开头（`readExistingSegment`、`headFromMarkdown`），不再经管道全量拉取。渲染、写文件、清理的纯函数在 `extras/tools/history.ts`，脚本和测试都导入它。
 - 清理规则：数据放 `~/.tau/extras/history/<进程 ID>/`，不进库、不备份。每次调用先遍历这个目录，删修改时间超过 7 天的文件，删空了的进程目录也删；每步失败都跳过（文件可能被占用），清理出错不让工具失败。期限和内核清理 bash 输出文件一样是 7 天（[kb-tools 的输出文件](kb-tools.md#输出文件)）。清理放在工具自己里：内核只写 `extras/shell/` 一处（[D90](kb-decisions.md#d90-bash-接管后台命令先等没跑完转后台输出写文件跑完寄信)），而且 GUI 和计划任务都不常驻，不能指望上层有个程序一直跑（[D93](kb-decisions.md#d93-history_dump-取代-history_search-和-history_read)）。
 - 除 `web_search`、`list_presets` 外，都只在 tau 的工具调用里运行：没有 `TAU_PROCESS` 或 `TAU_PIPE` 时报错。这两个不连管道，不需要这两个变量。连管道的小客户端是 `extras/tools/client.ts`，发完请求不半关闭。
-- 测试：`test/extras/tools/web_search.test.ts`（`web_search`：脚本在子进程里跑，后端是本机的假 HTTP 服务，不碰真网络，也不读真的 `~/.tau`；后端的顺序和退路、错误文字、auth.json 的各种写法、输出的截断）。`test/extras/tools/list_presets.test.ts`（`list_presets`：纯函数，加一次指到临时目录的子进程）。`test/extras/tools/tools.test.ts`（`peek`、`wait`，和桥的工具路由），真的服务、真的 Git Bash；数据目录靠 `USERPROFILE` 指到临时目录。`test/extras/tools/history.test.ts`（`history_dump`）：渲染、输出、清理、写文件的幂等不要服务，另有对着真的服务的集成测试。
+- 测试：`test/extras/tools/web_search.test.ts`（`web_search`：脚本在子进程里跑，后端是本机的假 HTTP 服务，不碰真网络，也不读真的 `~/.tau`；后端的顺序和退路、错误文字、auth.json 的各种写法、输出的截断）。`test/extras/tools/list_presets.test.ts`（`list_presets`：纯函数，加一次指到临时目录的子进程）。`test/extras/tools/preset_crud.test.ts`（`create_preset`、`delete_preset`：参数检验、自动补装工具库定义、`check` 失败回滚、`ps` 在运行进程保护和大小写检查）。`test/extras/tools/tools.test.ts`（`peek`、`wait`，和桥的工具路由），真的服务、真的 Git Bash；数据目录靠 `USERPROFILE` 指到临时目录。`test/extras/tools/history.test.ts`（`history_dump`）：渲染、输出、清理、写文件的幂等不要服务，另有对着真的服务的集成测试。
 
 ### 换段以后查旧段
 
