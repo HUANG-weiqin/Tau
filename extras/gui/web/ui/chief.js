@@ -9,6 +9,7 @@ import { useAttach, AttachBar, Thumbs } from "./attach.js";
 import { Typer, claim, pending, slotKey } from "./typer.js";
 import { Markdown } from "./mdview.js";
 import { Follower } from "./follow.js";
+import { askRemove } from "./remove.js";
 
 /** 草稿记着，关掉再开还在。 */
 let draft = "";
@@ -355,7 +356,8 @@ function Body({ app, close }) {
                 ${e && d && html`<span class="ch-state"><${Lamp} phase=${e.self.phase.tag} /><span>${d.label}</span></span>`}
                 <span class="mono dim" style="font-weight:400;font-size:11px">${chiefId}</span>
                 ${e && html`<button type="button" class="link dim" disabled=${e.status === "running" || !canHandoff(app.messages(e.id))} title=${e.status === "running" ? "总管在跑时不能换段" : !canHandoff(app.messages(e.id)) ? "这一段里还没有总管的回复，没有可交接的内容" : "寄一封换段信：下一轮只带交接说明"} onClick=${() => app.handoff(e.id)}>换段</button>`}
-                <button type="button" class="link dim" onClick=${() => setChoosing(true)}>换预设</button></h3>
+                <button type="button" class="link dim" onClick=${() => setChoosing(true)}>换预设</button>
+                ${e && html`<button type="button" class="link dim" title="删掉这个会话和它的全部段，下一句话就是新会话的第一句" onClick=${(/** @type {Event} */ ev) => askRemove(e.id, /** @type {Element} */ (ev.currentTarget))}>删除</button>`}</h3>
               ${e && e.status === "error" && html`<div class="callout ch-err">总管上一轮出错${ended && typeof ended === "object" ? "：" + clipText(ended.error, 120) : ""}。再给它写一封信，它会接着做。</div>`}
               ${e
                 ? html`<${Log} app=${app} e=${e} />`

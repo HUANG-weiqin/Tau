@@ -151,7 +151,7 @@ function RemoveBox({ app, id, rect, onClose }) {
         return html`<${TreeRow} key=${x} id=${x} who=${shown.who[x] ?? x} depth=${shown.depth[x] ?? 0} mark=${mark} tone=${tone} />`;
       })}
     </ul>
-    ${!run && html`<p class="dnote" style="color:var(--fg)">${total > 1 ? `连它开的进程一共删 ${total} 个，从最里面的删起。` : `当前段有 ${e?.self.messages ?? 0} 条消息。`}删了找不回。记忆不动。</p>`}
+    ${!run && html`<p class="dnote" style="color:var(--fg)">${total > 1 ? `连它开的进程一共删 ${total} 个，从最里面的删起。` : `一共 ${e?.self.segment ?? 1} 段，当前段有 ${e?.self.messages ?? 0} 条消息。`}删了找不回。记忆不动。</p>`}
     ${!run && live.running.length > 0 && html`<div class="callout" role="status" style="box-shadow:inset 3px 0 0 var(--warn)">在跑的：${live.running.map((x) => `${shown.who[x] ?? x} ${x}`).join("、")}。先停止它们，再来删。这里不替你停。</div>`}
     ${run && !run.over && html`<p class="dnote" style="color:var(--fg)" role="status">删到第 ${nth} 个，共 ${total} 个。关掉这个框就停在删完手上这个。</p>`}
     ${run?.over && html`<p class="dnote" style="color:var(--fg)" role="status">删了 ${run.done.length} 个，没删掉 ${total - run.done.length} 个。</p>`}

@@ -1,6 +1,6 @@
 # 图形界面的实现
 
-`updated: 2026-11-18`
+`updated: 2026-11-21`
 
 ## 这个模块是干什么的
 
@@ -311,7 +311,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
 - 地址栏的 hash 记聚焦的对象和开着的弹窗：`#p=<进程 ID>`、`#proj=<项目键>`、`#dlg=chief|newproc|newpreset|openproj|projects|clean|settings`，记忆页是 `#dlg=memory&ns=<预设 ID>`（没有 `ns` 就不开）。改预设、改这个会话和换模型的弹窗要靠打开时传的预设和进程，不进 hash；删除的确认框也不进 hash，可以用 `&` 连起来。项目键是 `lib/state.js` 的 `pathKey`。
 - 改界面数据时先重读文件，在新读到的内容上改，再写回去，几个页面同时开着也不互相覆盖。页面回到前台时和每 30 秒也重读一次。
 - 进程在 `ps` 里没了，就从 `titles`、`mine`、`forkedFrom`、`current` 里删掉它的键，文件不会一直长。例外：还在的分叉指着的那个标题留着（`lib/state.js` 的 `prunePatch`）。
-- 删进程：`ui/remove.js` 的确认框贴着点的按钮或行，状态不在 `app` 里，也不进 hash。确认框列出整棵子树，从叶子删起（`lib/remove.js` 的 `removePlan`、`skippedFor`）；子树里有在跑的就不让删；被服务拒绝的，只跳过它的祖先；框中途关掉就停在删完手上这个。删之前，子树里的临时进程和被分叉指着的进程，标题先缓存（`ui/titlecache.js`，清理旧进程共用）。`app.remove` 和 `app.deletePreset` 不弹提示，被拒绝时原因写在确认框里。收到 `removed` 时，删的是聚焦的进程就聚焦它的项目。
+- 删进程：`ui/remove.js` 的确认框贴着点的按钮或行，状态不在 `app` 里，也不进 hash。入口是详情栏铭牌、进程行右键菜单、总管对话头（[设计稿 7.1](../docs/design/gui.md#71-总管)）。确认框列出整棵子树，从叶子删起（`lib/remove.js` 的 `removePlan`、`skippedFor`）；子树里有在跑的就不让删；被服务拒绝的，只跳过它的祖先；框中途关掉就停在删完手上这个。删之前，子树里的临时进程和被分叉指着的进程，标题先缓存（`ui/titlecache.js`，清理旧进程共用）。`app.remove` 和 `app.deletePreset` 不弹提示，被拒绝时原因写在确认框里。收到 `removed` 时，删的是聚焦的进程就聚焦它的项目。
 - 模型选择：`lib/models.js` 放纯逻辑（窗口的写法、思考级别取最近一档、搜索、供应商排序、最近用过、默认模型、表单变成请求）；`ui/modelpicker.js` 是选择器和思考强度的按钮，共用；目录和 key 状态存在页面内存里（`app.models`），打开新预设、改预设、改这个会话、换模型、设置时重读。
 - 建预设：`ui/presetform.js` 是“新预设”、“改预设”和“改这个会话”共用的表。新建时给 `PresetFields` 传 `compact`：预设 ID、显示名（`idExtra`）、模型、提示词之外的字段折进“更多设置”，收起时的一行摘要是 `lib/models.js` 的 `moreSummary`，里面哪个字段填错（`create()` 不 ok）就自动展开。项目里还没有预设时，预设 ID 没填就取文件夹名（`suggestId`）。显示名写进 `names`，不写预设文件。新模型预填：先取调用方给的（新预设取项目里已有预设的），再取设置里的默认，再取最近用过的，最后是第一家配了 key 的第一个模型；不写死哪个模型。建完读一遍，起不来就弹出原因。从“新进程”弹窗进“新预设”时，建好以后回到“新进程”，选中新建的预设。
 - 打开项目和新进程只做一件事（[设计稿 7.2、7.3](../docs/design/gui.md#72-新进程)）：`ui/openproj.js` 只记文件夹（`addFolder`、`pinFolder`），不建预设，不碰预设表；项目里没有预设也没有进程时，主区的成员表换成空状态（`ui/project.js`，一句话加“新建预设”）。`ui/newproc.js` 是一行预设按钮加一个信框，默认选中的预设是 `lib/derive.js` 的 `defaultPreset`（指定的 > 项目里最近有动静的进程的预设 > 第一个，每次渲染重算，用户点过才存）；项目里没有预设时只有一句话和“新建预设”，建好以后回到它。预设列表是弹窗打开以后才读到的，所以信框出现时由 `useEffect` 补焦点。
