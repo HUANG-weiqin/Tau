@@ -77,7 +77,7 @@ export function observe(p: Process, segment: readonly Message[], siblings: reado
   };
 }
 
-const BG_START = /^\[转入后台 ([0-9a-f]{6})\] 命令还在运行，没有被结束。\n输出文件：/gm;
+const BG_START = /\[转入后台 ([0-9a-f]{6})\] 命令还在运行，没有被结束。\n输出文件：[^\n]*（还在增长，用 read 读，可带 offset 和 limit）\n(?:进程组号：\d+\n)?跑完会给你寄一封信，内容是退出码和最后几行；你可以接着做别的事，也可以结束这一轮等信。[ \t\r\n]*$/;
 const BG_DONE = /^\[后台任务 ([0-9a-f]{6})\] 退出码 -?\d+$/;
 
 function activeBgJobs(segment: readonly Message[], now: Instant): { id: string; age: number }[] {
@@ -85,7 +85,7 @@ function activeBgJobs(segment: readonly Message[], now: Instant): { id: string; 
   for (const m of segment) {
     const text = typeof m.content === "string" ? m.content : m.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("");
     if (m.role === "toolResult" && m.toolName === "bash" && !m.isError) {
-      const id = [...text.matchAll(BG_START)].at(-1)?.[1];
+      const id = BG_START.exec(text)?.[1];
       if (id !== undefined) jobs.set(id, Math.max(0, now - m.timestamp));
     } else if (m.role === "user") {
       const lines = m.tau?.letters ? m.tau.letters.flatMap((l) => (l.from.kind === "user" && l.at !== undefined ? [text.slice(l.at[0], l.at[1]).split("\n", 1)[0] ?? ""] : [])) : [text.split("\n", 1)[0] ?? ""];

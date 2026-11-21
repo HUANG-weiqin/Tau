@@ -25,7 +25,9 @@ if (import.meta.main) run(async () => {
     if (existsSync(segmentPath(dir, seg))) {
       const missing = await probeSegment(pipe, proc, seg);
       if (missing !== null) {
-        entries.push({ seg, missing });
+        // 被 prune 的段：本地文件还在，照样刷新修改时间、给出大小和开头，别让模型以为这段没了。
+        const local = readExistingSegment(dir, seg, now);
+        entries.push(local === null ? { seg, missing } : { seg, ...local, stale: true });
         continue;
       }
       const cached = readExistingSegment(dir, seg, now);

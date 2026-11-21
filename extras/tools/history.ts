@@ -208,6 +208,8 @@ export interface DumpEntry {
   seg: number;
   /** 读不到时的原因。有它就不写大小和行数。 */
   missing?: string;
+  /** 库里的这一段已经被 `prune` 删了，但本地文件还在：大小、行数和开头照样给，能读能搜。 */
+  stale?: true;
   bytes?: number;
   lines?: number;
   head?: string;
@@ -220,7 +222,7 @@ export function formatDump(dir: string, entries: readonly DumpEntry[]): string {
   if (count > LISTED) lines.push(`旧段共 ${count} 个，只列最近 ${LISTED} 个（第 ${entries[count - LISTED]!.seg}–${entries[count - 1]!.seg} 段），更旧的段也在目录里。`);
   for (const e of entries.slice(-LISTED)) {
     const name = `seg-${e.seg}.md`;
-    lines.push(e.missing !== undefined ? `${name}  读不到：${e.missing}` : `${name}  ${((e.bytes ?? 0) / 1024).toFixed(1)} KB  ${e.lines ?? 0}行  ${e.head ?? ""}`);
+    lines.push(e.missing !== undefined ? `${name}  读不到：${e.missing}` : `${name}  ${((e.bytes ?? 0) / 1024).toFixed(1)} KB  ${e.lines ?? 0}行  ${e.stale ? "（库里的这一段已 prune，本地文件还在）" : ""}${e.head ?? ""}`);
   }
   lines.push(usageOf(dir), NOTICE);
   return lines.join("\n");

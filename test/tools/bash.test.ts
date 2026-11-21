@@ -109,7 +109,7 @@ async function run(command: string, timeout?: number, signal: AbortSignal = new 
 
 const exists = (name: string): boolean => existsSync(path.join(dir, name));
 const filesLeft = (): string[] => (existsSync(shellDir) ? readdirSync(shellDir) : []);
-// 转后台的命令按设计留下 log 和 claim（7 天后清）。要查“没留下东西”的测试先清空。
+// 转后台的命令按设计留下 log（7 天后清；claim 在汇报完就删）。要查“没留下东西”的测试先清空。
 const clearShell = (): void => rmSync(shellDir, { recursive: true, force: true });
 const pgidFiles = (): string[] => readdirSync(os.tmpdir()).filter((f) => /^tau-bash-.*\.pgid$/.test(f));
 
@@ -246,7 +246,9 @@ test("超时转后台：及时返回，不是错误；命令跑完，log 有退�
   assert.equal(letter.text.match(/退出码/g)?.length, 1);
   assert.match(readFileSync(log, "utf8"), /^(before\n)?after\n\n\[后台任务 [0-9a-f]{6}\] 退出码 0\n$/);
   assert.deepEqual(pgidFiles(), files);
-  assert.equal(existsSync(`${log}.claim`), true, "claim 是内核抢到的标记，留给 7 天清理");
+  for (let i = 0; i < 40 && existsSync(`${log}.claim`); i++) await sleep(50);
+  assert.equal(existsSync(`${log}.claim`), false, "汇报完就删 claim，log 留到 7 天后清");
+  assert.equal(existsSync(log), true);
 });
 
 test("退出码不是 0 的后台命令：信里写退出码，log 里有退出码行", async () => {
@@ -352,7 +354,7 @@ test("claim 竞态：20 次命令在 timeout 前后结束，每次要么正常�
   assert.equal(letters.length, jobs.length, `转后台 ${jobs.length} 次、正常返回 ${normal} 次，信 ${letters.length} 封`);
   assert.deepEqual(new Set(letters.map((l) => /^\[后台任务 ([0-9a-f]{6})\]/.exec(l.text)?.[1])), new Set(jobs));
   assert.deepEqual(filesLeft().filter((n) => !jobs.some((j) => n.includes(j))), [], "正常返回的没留文件");
-  assert.equal(filesLeft().length, 2 * jobs.length, "转后台的各留一个 log 和一个 claim");
+  assert.equal(filesLeft().length, jobs.length, "转后台的各留一个 log；claim 汇报完就删");
   t.diagnostic(`转后台 ${jobs.length} 次，正常返回 ${normal} 次`);
 });
 
@@ -477,7 +479,7 @@ test("清理：8 天前的文件和 claim 被删，空目录被删；新文件�
   mkdirSync(shellDir, { recursive: true });
   writeFileSync(path.join(fresh, "keep.log"), "k");
   writeFileSync(path.join(fresh, "old.log"), "o");
-  // claim 只在同名 log 已经没了才清：log 还在，说明命令可能还在跑，它的 claim 不能删。
+  // claim 只在同名 log 已经没了才清；反过来，有 claim 的 log 也不清。
   writeFileSync(path.join(fresh, "x.log.claim"), "");
   writeFileSync(path.join(fresh, "live.log"), "l");
   writeFileSync(path.join(fresh, "live.log.claim"), "");
@@ -487,7 +489,7 @@ test("清理：8 天前的文件和 claim 被删，空目录被删；新文件�
   writeFileSync(path.join(shellDir, "mine-old.log"), "m");
   for (const p of [path.join(fresh, "old.log"), path.join(fresh, "x.log.claim"), path.join(fresh, "live.log.claim"), path.join(fresh, "pair.log"), path.join(fresh, "pair.log.claim"), path.join(stale, "old.log"), path.join(shellDir, "mine-old.log")]) utimesSync(p, old, old);
   await run("echo hi");
-  assert.deepEqual(readdirSync(fresh).sort(), ["keep.log", "live.log", "live.log.claim"], "log 和它的 claim 一起过期就一起删；log 还在的 claim 留着");
+  assert.deepEqual(readdirSync(fresh).sort(), ["keep.log", "live.log", "live.log.claim", "pair.log", "pair.log.claim"], "claim 和它的 log 都过期才一起删；有 claim 的 log 不清：转后台的命令可能只是安静，清掉它就寄不出信了");
   assert.equal(existsSync(stale), false, "文件删光，目录空了，也删");
   assert.equal(existsSync(empty), false);
   assert.equal(existsSync(shellDir), true, "当前进程的目录留着");

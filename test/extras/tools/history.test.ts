@@ -403,8 +403,9 @@ describe("真的服务", () => {
     const r = await tool("history_dump", {}, id);
     assert.equal(r.isError, false, r.text);
     const out = r.text.split("\n");
-    assert.match(out[1]!, /^seg-1\.md  读不到：.+/);
+    assert.match(out[1]!, /^seg-1\.md  \d+\.\d KB  \d+行  （库里的这一段已 prune，本地文件还在）/);
     assert.match(out[2]!, /^seg-2\.md  \d+\.\d KB  \d+行  /);
+    assert.ok(existsSync(join(dumpDir(id), "seg-1.md")));
     assert.ok(existsSync(join(dumpDir(id), "seg-2.md")));
   });
 

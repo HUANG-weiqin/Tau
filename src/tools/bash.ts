@@ -130,11 +130,11 @@ const BG_WRAPPER = [
   "c=$?",
   "LC_ALL=C.UTF-8",
   "set -C",
-  `if ! { : > "$TAU_CLAIM"; } 2>/dev/null && [ -e "$TAU_CLAIM" ]; then rm -f "$TAU_PGID"; printf '\\n[${hex("后台任务")} %s] ${hex("退出码")} %s\\n' "$TAU_JOB" $c; TAU_JOB="$TAU_JOB" TAU_LOG="$TAU_LOG" "$TAU_NODE" "$TAU_NOTIFY" $c; fi`,
+  `if ! { : > "$TAU_CLAIM"; } 2>/dev/null && [ -e "$TAU_CLAIM" ]; then rm -f "$TAU_PGID"; printf '\\n[${hex("后台任务")} %s] ${hex("退出码")} %s\\n' "$TAU_JOB" $c; TAU_JOB="$TAU_JOB" TAU_LOG="$TAU_LOG" "$TAU_NODE" "$TAU_NOTIFY" $c; rm -f "$TAU_CLAIM"; fi`,
   "exit $c",
 ].join("; ");
 
-/** 删 `root` 下 7 天前的文件和空了的进程目录（`keep` 除外）。claim 只在同名 log 已经没了才清：log 还在，命令可能还在跑。每一步失败都忽略。 */
+/** 删 `root` 下 7 天前的文件和空了的进程目录（`keep` 除外）。转了后台、还没汇报的（有 claim 的 log）不清：命令可能只是安静，清掉它，结束时就寄不出信了。claim 在同名 log 已经没了才清。每一步失败都忽略。 */
 function sweep(root: string, keep: string): void {
   try {
     for (const d of readdirSync(root, { withFileTypes: true })) {
@@ -143,6 +143,7 @@ function sweep(root: string, keep: string): void {
       for (const f of readdirSync(dir).sort()) {
         const file = path.join(dir, f);
         if (f.endsWith(".claim") && existsSync(file.slice(0, -".claim".length))) continue;
+        if (!f.endsWith(".claim") && existsSync(`${file}.claim`)) continue;
         if (Date.now() - statSync(file).mtimeMs > WEEK_MS) drop(file);
       }
       if (dir !== keep && readdirSync(dir).length === 0) rmdirSync(dir);

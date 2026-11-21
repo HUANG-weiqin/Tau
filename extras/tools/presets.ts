@@ -5,9 +5,9 @@ import { Fail } from "./common.ts";
 
 const PRESET_ID = /^[A-Za-z0-9._-]{1,64}$/;
 
-/** 预设 ID 校验（与 GUI 桥、内核规则兼容，上限 64 字）。 */
+/** 预设 ID 校验（与内核 `checkPresetId` 一致：不许路径分隔符、冒号和 `..`；上限 64 字）。 */
 export function isPresetId(id: string): boolean {
-  return PRESET_ID.test(id) && !/^\.+$/.test(id) && !id.endsWith(".");
+  return PRESET_ID.test(id) && !/^\.+$/.test(id) && !id.endsWith(".") && !id.includes("..");
 }
 
 export function checkPresetId(raw: unknown): string {

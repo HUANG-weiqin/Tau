@@ -95,6 +95,7 @@ describe("parseCreateArgs 与 formatPresetMarkdown", () => {
     assert.throws(() => parseCreateArgs({ ...base, id: ".." }), /预设 ID/);
     assert.throws(() => parseCreateArgs({ ...base, id: "foo." }), /预设 ID/);
     assert.throws(() => parseCreateArgs({ ...base, id: "a/b" }), /预设 ID/);
+    assert.throws(() => parseCreateArgs({ ...base, id: "a..b" }), /预设 ID/);
     assert.throws(() => parseCreateArgs({ ...base, workdir: "/rel/path" }), /Windows 绝对路径/);
     assert.throws(() => parseCreateArgs({ ...base, workdir: join(dir, "missing") }), /不是存在的目录/);
     assert.throws(() => parseCreateArgs({ ...base, model: "no-slash" }), /model 格式/);

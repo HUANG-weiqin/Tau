@@ -258,7 +258,7 @@ test("库内工具的参数先修正再检查：可选的 null 当没填、数�
   assert.deepEqual(run(toolCall("c", "self", { extra: 1 })), { text: "参数错误：self 没有参数 extra。不需要参数。", isError: true });
   assert.deepEqual(run(toolCall("c", "memory_edit", { key: "k", old: "1", new: "2", version: 2, replaceAll: true })), { text: "参数错误：memory_edit 没有参数 replaceAll。可用的参数：key, old, new, version, brief。", isError: true });
   // self 格式化当前段仍在运行的 bash 后台任务（D90 第 2 阶段）。
-  const withBg = runInStore(db, memory, p, [{ role: "toolResult", toolCallId: "b1", toolName: "bash", isError: false, timestamp: 1_000, content: [{ type: "text", text: "[转入后台 abcdef] 命令还在运行，没有被结束。\n输出文件：C:\\x.log" }] }], toolCall("c", "self", {}), 6_000);
+  const withBg = runInStore(db, memory, p, [{ role: "toolResult", toolCallId: "b1", toolName: "bash", isError: false, timestamp: 1_000, content: [{ type: "text", text: "[转入后台 abcdef] 命令还在运行，没有被结束。\n输出文件：C:\\x.log（还在增长，用 read 读，可带 offset 和 limit）\n跑完会给你寄一封信，内容是退出码和最后几行；你可以接着做别的事，也可以结束这一轮等信。" }] }], toolCall("c", "self", {}), 6_000);
   assert.match(plain(withBg).text, /当前段仍在运行的后台命令：\n- abcdef（已转后台 5 秒）/);
 });
 
