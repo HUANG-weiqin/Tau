@@ -1,6 +1,6 @@
 # Tau Knowledge Index
 
-`updated: 2026-11-19`
+`updated: 2026-11-21`
 
 知识库记录当前架构、已做的决定和容易破坏的不变量。源码和测试是实现证据。[MVP 设计稿](../docs/design/mvp.md)描述 MVP 要做成什么样。[内核 v2 设计稿](../docs/design/kernel-v2.md)已冻结，只留指向 kb 页的链接。[v2 执行清单](../docs/plan/kernel-v2-checklist.md)记录按什么顺序做。
 
@@ -27,6 +27,7 @@
 | 做图形界面（调度台） | [界面设计稿](../docs/design/gui.md)，再读 [kb-gui.md](kb-gui.md) 和 [kb-extras.md](kb-extras.md)；按什么顺序做见[界面执行清单](../docs/plan/gui-checklist.md) |
 | 改预设的格式和读取规则 | [设计稿第 2 节](../docs/design/mvp.md#2-预设) |
 | v2 为什么这样设计、冻结了什么、每个原语为什么在内核 | [kb-contract.md](kb-contract.md)、[D47](kb-decisions.md#d47-v2-的来由六个缺口和-v1v2-的对照) |
+| 管理运行环境：重启、查库、备份恢复、清理、排错 | [kb-ops.md](kb-ops.md) |
 | 下一步做什么 | [v2 执行清单](../docs/plan/kernel-v2-checklist.md) |
 
 ## 每类事实由谁负责
@@ -55,6 +56,7 @@
 | [kb-contract.md](kb-contract.md) | 冻结的内核契约清单、目标和不变量、每个原语为什么在内核、参与启动检查的量、改契约的程序、不算改契约的事、推导测试的做法、风险表 |
 | [kb-extras.md](kb-extras.md) | 上层建筑（`extras/`）放在哪、依赖规则、Pi Web 功能在 v2 上的做法和代价、上层命令行 `tx` 的约定、多 Agent 等待、后台命令（内置 `bash`）、派工隔离的配方（git worktree）、工具库（含换段以后查旧段的提示）、备份脚本和计划任务、认证（登录脚本和凭据库的拷贝）、HTTP 桥的检查 |
 | [kb-extending.md](kb-extending.md) | 扩展的核心原则、取舍顺序（放内核还是上层）、加功能的推导顺序、大致方向 |
+| [kb-ops.md](kb-ops.md) | 运维：服务和桥怎么起、改代码后重启什么、怎么只读查库、备份和恢复的顺序、清理的入口、排错顺序、哪些操作先问用户 |
 | [_template.md](_template.md) | 新页模板 |
 
 已建立的模块页：`kb-kernel.md`、`kb-store.md`、`kb-executor.md`、`kb-memory.md`、`kb-tools.md`、`kb-service.md`、`kb-contract.md`、`kb-extras.md`。计划中的模块页都已建立。预设和自省没有单独的模块页，细节留在设计稿第 2 节和第 9 节。
