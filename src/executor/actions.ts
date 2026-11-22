@@ -58,7 +58,7 @@ export function createActions(models: Models, onText: (id: ProcessId, n: number,
       const tools = toolDescriptions(job.process.preset);
       const tool = tools.find((t) => t.name === call.name);
       if (!tool) return { content: textContent(`工具 ${call.name} 不存在，或者预设里没有它。可用的工具：${tools.map((t) => t.name).join("、")}。`), isError: true };
-      const fixed = fixArgs(tool.parameters, call.arguments);
+      const fixed = fixArgs(tool.parameters, typeof call.arguments === "object" && call.arguments !== null ? call.arguments : {});
       if ("error" in fixed) return { content: textContent(fixed.error), isError: true };
       let args;
       try {

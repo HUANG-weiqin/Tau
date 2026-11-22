@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
-import type { JsonObject } from "@earendil-works/pi-ai";
+import type { JsonObject, ToolCall } from "@earendil-works/pi-ai";
 import { createActions } from "../../src/executor/actions.ts";
 import { createExecutor } from "../../src/executor/executor.ts";
 import { start } from "../../src/kernel/decide.ts";
@@ -266,4 +266,13 @@ test("库外工具的 null 参数：可选当作没填，必填报错，不会�
   assert.equal(await readFile(join(workdir, "a.txt"), "utf8"), "123");
   assert.deepEqual(await run("read", { path: "a.txt", offset: null }), { text: "     1\t123", isError: false }, "可选的 null 当作没填");
   assert.deepEqual(await run("bash", { command: "ls" }), { text: "工具 bash 不存在，或者预设里没有它。可用的工具：read、write、edit、self、handoff。", isError: true }, "不认识的工具名带上能用的");
+});
+
+test("库外工具的参数整体是 null（pi-ai 解析流式 JSON 'null' 的结果）：回参数错误，不是执行失败", async () => {
+  const process: Process = start("p1", PRESET, { now: 0, memoryView: "" });
+  const actions = createActions(createModels(), () => {}, "test-pipe", () => undefined);
+  const call = { type: "toolCall", id: "c1", name: "read", arguments: null } as unknown as ToolCall;
+  const got = plain(await actions.runTool({ process, segment: [], effect: { kind: "runTool", n: 1, call } }, call, new AbortController().signal));
+  assert.equal(got.isError, true);
+  assert.match(got.text, /^参数错误：/);
 });
