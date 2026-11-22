@@ -8,8 +8,8 @@
 export const THINK_KEEP = 100000;
 /** 参数只存最后这么多字；总字数另记。 */
 export const ARGS_KEEP = 2000;
-/** 命令输出只留最后这么多字。 */
-export const OUTPUT_KEEP = 20000;
+/** 命令输出只留最后这么多字。长命令跑到一半要能往回翻，留得太少就只剩尾巴。 */
+export const OUTPUT_KEEP = 200000;
 
 /** @typedef {{ n: number, text: string, thinking: string, args: string, argsLen: number, output: string }} Live */
 

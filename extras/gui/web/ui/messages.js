@@ -87,6 +87,7 @@ const Scan = () => html`<span class="scan" aria-hidden="true"></span>`;
 /** 一次工具调用：暗色条。`since` 是发出这批调用的助手消息的时间戳。 */
 function CallStrip({ call, running, app, since, out = "" }) {
   const [open, setOpen] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const r = call.result;
   const can = !!r && (r.text.trim() !== "" || r.images.length > 0);
   const st = call.status;
@@ -100,6 +101,7 @@ function CallStrip({ call, running, app, since, out = "" }) {
     : html`<span class="cr"><${Icon} name="check" size=${12} sw=${3.4} color="var(--acc-t)" /><span class="ell">${r?.summary ?? ""}</span></span>`;
   const head = html`<span class="clabel">${label}</span><span class="cbody"><span class="csum">${call.summary || call.name}</span>${right}</span>`;
   const live = st === "pending" && running;
+  const tail = out === "" ? null : tailLines(out, LIVE_LINES);
   return html`<li class=${`call ${st} ${live ? "run" : ""}`}>
     ${can ? html`<button type="button" class="chead" aria-expanded=${open} onClick=${() => setOpen(!open)}>${head}</button>` : html`<div class="chead">${head}</div>`}
     ${open && r && html`<div class="cout">
@@ -107,7 +109,10 @@ function CallStrip({ call, running, app, since, out = "" }) {
       ${r.images.length > 0 && html`<div class="thumbs" style="padding:8px 14px 0 14px">${r.images.map((im) => html`<${Thumb} hash=${im.hash} fetchBlob=${app.blob} />`)}</div>`}
       <pre>${r.text.length > 20000 ? r.text.slice(0, 20000) + `\n…（还有 ${formatBytes(r.text.length - 20000)}）` : r.text}</pre>
     </div>`}
-    ${live && out !== "" && html`<div class="cout live"><pre class="cls-out">${tailLines(out, 24).text}${tailLines(out, 24).hidden > 0 ? `\n…（上面还有 ${tailLines(out, 24).hidden} 行）` : ""}</pre><p class="cls-note">命令还在跑，这是它现在的输出，只是预览（跑完以工具结果为准）。</p></div>`}
+    ${live && tail && html`<div class="cout live">
+      <pre class="cls-out" style=${showAll ? "max-height:60vh" : ""}>${showAll ? out : tail.text}</pre>
+      <p class="cls-note">${tail.hidden > 0 || showAll ? html`<button type="button" class="link" aria-expanded=${showAll} onClick=${() => setShowAll(!showAll)}>${showAll ? "收起" : `展开（还有 ${tail.hidden} 行）`}</button> ` : ""}命令还在跑，这是它现在的输出，只是预览（跑完以工具结果为准）。</p>
+    </div>`}
     ${live && html`<${Scan} />`}
   </li>`;
 }
@@ -158,6 +163,8 @@ export function OrphanRow({ app, item }) {
 
 /** 思考块收起时留最后几行。 */
 const THINK_LINES = 6;
+/** 运行中的命令预览收起时留最后这么多行。 */
+const LIVE_LINES = 24;
 /** 工具调用参数的预览留最后这么多字。 */
 const ARGS_CHARS = 220;
 /** 一步写完、那条消息还没读到时，留住这一步的思考，免得思考块先消失再出现。 @type {Map<string, { text: string, at: number }>} */

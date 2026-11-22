@@ -27,7 +27,8 @@ function record(self, clientNow) {
 }
 
 /**
- * 流式文本只在等模型时有意义：离开 `awaitingModel` 就清掉。
+ * 流式文本只在两个阶段有意义：等模型时有正文和思考，等工具时有命令的实时输出（D88）。
+ * 别的阶段没有，`ps` 重连时清掉。
  * @param {Store["text"]} text
  * @param {Record<string, ProcRecord>} procs
  * @returns {Store["text"]}
@@ -36,8 +37,8 @@ function pruneText(text, procs) {
   /** @type {Store["text"]} */
   const out = {};
   for (const [id, t] of Object.entries(text)) {
-    const p = procs[id];
-    if (p && p.self.phase.tag === "awaitingModel") out[id] = t;
+    const tag = procs[id]?.self.phase.tag;
+    if (tag === "awaitingModel" || tag === "awaitingTool") out[id] = t;
   }
   return out;
 }

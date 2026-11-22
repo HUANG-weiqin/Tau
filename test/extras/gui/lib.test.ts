@@ -1351,6 +1351,9 @@ test("stream: 命令边跑边写的输出（D88）单独存，只留最后一段
   s = reduce(s, { type: "text", process: "a", n: 7, delta: "第二行\n", kind: "output" }, NOW);
   assert.equal(streamingOutput(s, "a"), "第一行\n第二行\n");
   assert.equal(streamingText(s, "a"), "", "命令输出不算正文");
+  // 等工具时又收到一次 ps（watch 重连）：实时输出不能被清掉。
+  s = reduce(s, { type: "ps", processes: [proj(self("a", { phase: tool }))] }, NOW);
+  assert.equal(streamingOutput(s, "a"), "第一行\n第二行\n");
   // 只留最后 OUTPUT_KEEP 字。
   const long = appendDelta(undefined, { n: 1, delta: "x".repeat(OUTPUT_KEEP), kind: "output" })!;
   assert.equal(appendDelta(long, { n: 1, delta: "yy", kind: "output" })!.output.length, OUTPUT_KEEP);
