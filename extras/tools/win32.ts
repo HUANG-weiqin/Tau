@@ -74,6 +74,30 @@ const DeleteDC = gdi32.func("int __stdcall DeleteDC(void *)");
 const OpenProcess = kernel32.func("void *__stdcall OpenProcess(uint32_t, int, uint32_t)");
 const QueryFullProcessImageNameW = kernel32.func("int __stdcall QueryFullProcessImageNameW(void *, uint32_t, void *, _Inout_ uint32_t *)");
 const CloseHandle = kernel32.func("int __stdcall CloseHandle(void *)");
+const CreateMutexW = kernel32.func("void *__stdcall CreateMutexW(void *, int, str16)");
+const WaitForSingleObject = kernel32.func("uint32_t __stdcall WaitForSingleObject(void *, uint32_t)");
+const ReleaseMutex = kernel32.func("int __stdcall ReleaseMutex(void *)");
+
+const MUTEX_NAME = "Local\\tau-computer-lease";
+const MUTEX_WAIT_MS = 5000;
+
+/** 在命名互斥量里跑 fn（给租约文件的读写用，几毫秒）。等 5 秒拿不到就抛 Fail。 */
+export function withLeaseMutex<T>(fn: () => T): T {
+  const h = CreateMutexW(null, 0, MUTEX_NAME);
+  if (h === null) throw new Fail("建不了桌面租约的互斥量。");
+  try {
+    const r = WaitForSingleObject(h, MUTEX_WAIT_MS);
+    // 0 是拿到；0x80 是前一个持有者崩了，互斥量仍归我们。
+    if (r !== 0 && r !== 0x80) throw new Fail("桌面租约正被占用，稍后再试。");
+    try {
+      return fn();
+    } finally {
+      ReleaseMutex(h);
+    }
+  } finally {
+    CloseHandle(h);
+  }
+}
 
 const PER_MONITOR_AWARE_V2 = -4;
 const LOCKED = "屏幕锁着、停在 UAC 提示上，或者会话断开了：拿不到输入桌面，截不了图也点不了。";

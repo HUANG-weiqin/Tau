@@ -2,13 +2,14 @@
 // 参数的 JSON 从标准输入来，输出是 `output: content` 的 JSON 数组：一段文字，一张图片（文件在 ~/.tau/extras/computer/<进程 ID>/）。
 // 坐标是截图里的像素；截图按 fitSize 缩过，每次调用按当前屏幕尺寸重算，不存状态。判断在 computer_lib.ts，系统调用在 win32.ts。
 import { randomBytes } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Fail, extrasDir, readArgs, run, tauEnv } from "./common.ts";
 import { checkBounds, describeWindow, doneText, encodeImage, fitSize, parseArgs, perform, pruneComputerImages, zoomRect, zoomText } from "./computer_lib.ts";
 import type { Io, Size } from "./computer_lib.ts";
-import { capture, checkDesktop, desktopProblem, foreground, initDpi, releaseStuck, screenSize, send, setCursor } from "./win32.ts";
+import { acquireLease, needsLease } from "./computer_lease.ts";
+import { capture, checkDesktop, desktopProblem, foreground, initDpi, releaseStuck, screenSize, send, setCursor, withLeaseMutex } from "./win32.ts";
 
 /** 动作做完等这么久，让界面反应过来再截图。 */
 const SETTLE_MS = 500;
@@ -35,12 +36,35 @@ function saveImage(proc: string, bgra: Buffer, size: Size): string {
   return file;
 }
 
+/** 租约文件：先写临时文件再改名，读的人不会看到写了一半的内容。 */
+function takeLease(proc: string): void {
+  const file = path.join(extrasDir("computer"), "lease.json");
+  acquireLease(proc, {
+    withMutex: withLeaseMutex,
+    read: () => {
+      try {
+        return readFileSync(file, "utf8");
+      } catch {
+        return null;
+      }
+    },
+    write: (text) => {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(`${file}.tmp`, text);
+      renameSync(`${file}.tmp`, file);
+    },
+    now: () => Date.now(),
+  });
+}
+
 const show = (items: unknown[]): void => void process.stdout.write(`${JSON.stringify(items)}
 `);
 
 if (import.meta.main) run(async () => {
   const { proc } = tauEnv();
   const a = parseArgs(await readArgs());
+  // 输入动作先拿租约：拿不到就在发出任何输入之前报错。
+  if (needsLease(a.action)) takeLease(proc);
   initDpi();
   checkDesktop();
   const screen = screenSize();
