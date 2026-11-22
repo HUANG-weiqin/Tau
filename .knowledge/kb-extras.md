@@ -93,7 +93,7 @@
 | grep、find、ls | 工具定义 | 没有：和内置的 `read`、`bash` 一样是库外工具，崩溃时一样报“被中断” | 3 |
 | 联网搜索（Pi Web 没有专门的工具，本机联网都是 bash 运行 curl：48 次） | 工具库的 `web_search`，后端用 Tavily 或 Anthropic 的服务端搜索，见 [D79](kb-decisions.md#d79-联网搜索工具库的-web_search多个后端不绑-anthropic)。抓页面仍是 curl（[D46](kb-decisions.md#d46-v2-也不做的)） | 没有：内核版也做不到，pi-ai 的 `Tool` 只有 function，带不了服务端搜索。只读，崩溃时报“被中断”，重做无害。第三方、按次付费或用免费额度 | 3 |
 | bash 截断时存完整输出（Pi 的 bash 存进临时目录，结果里给路径） | 已进内核：内置 `bash` 的输出太长时只回头尾，完整输出写进 `~/.tau/extras/shell/<进程 ID>/` 下的文件，结果里给路径，用 `read` 读（[kb-tools 的输出文件](kb-tools.md#输出文件)，[D90](kb-decisions.md#d90-bash-接管后台命令先等没跑完转后台输出写文件跑完寄信)） | 没有：和内置 `bash` 平时一样，崩溃时一样报“被中断”。本机带路径的截断 42 次，事后用到存下的文件 5 次（[D56](kb-decisions.md#d56-推导测试第二次)） | 3 |
-| 看图片文件、桌面截图、桌面控制 | 看图片文件已进内核：`read` 读图片（[D76](kb-decisions.md#d76-read-读图片)，不缩放，超限报错，要缩小先用 bash 调外部命令）。桌面截图和桌面控制是 `output: content` 的工具定义。图片先缩到宽和高都不超过 2000 像素，再压到 1.5 MiB 以内，例如存成 JPEG。点击、按键、输入也是工具定义，命令调外部程序，例如 PowerShell（本机 `computer` 163 次） | 没有：点击和输入也是库外工具，崩溃时报“被中断”，不自动重做，内核版也一样。图片照样走入口检查。`read` 读图片也是库外工具，同一条规矩。缩图要外部命令，例如 PowerShell 的 System.Drawing（见上面的依赖规则） | 3 |
+| 看图片文件、桌面截图、桌面控制 | 看图片文件已进内核：`read` 读图片（[D76](kb-decisions.md#d76-read-读图片)，不缩放，超限报错，要缩小先用 bash 调外部命令）。桌面截图和桌面控制已做成[工具库的 `computer`](#工具库)（[D100](kb-decisions.md#d100-桌面控制工具库的-computer)），本机 Pi Web 用过 `computer` 163 次 | 没有：点击和输入也是库外工具，崩溃时报“被中断”，不自动重做，内核版也一样。图片照样走入口检查，工具自己先缩小。`read` 读图片也是库外工具，同一条规矩 | 3 |
 | 列出、读取角色定义（Pi Web 的 `list_roles`、`read_role`） | 预设是 `~/.tau/presets/` 下的文件：用 `read`，或者一个列目录的工具定义（和 grep、find、ls 一类） | 没有：库外只读工具，崩溃时报“被中断”，重做无害。本机 `list_roles` 52 次、`read_role` 18 次（含脚本里） | 3 |
 | MCP | 见 [MCP 中转](#mcp-中转)。一个常驻的 relay 替 tau 进程持有有状态的 stdio 服务器，每个 MCP 工具一个 `output: content` 的工具定义 | 没有：内核版也要常驻的服务器进程，崩溃或服务重启时一样丢服务器的状态；工具清单在开段采用新快照时才变，已经在跑的进程要 `reconfigure`（重新保存一次工具列表可手动刷新，[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)），两边一样。每次调用多约 0.11 秒：本机 MCP 调用的中位数是 0.15 秒，两次模型调用相隔的中位数是 7.7 秒。本机用过 491 次（直接 321、脚本里 170），两个有状态的 stdio 服务器：godbrave 的 godbrave-game、pixel-art | 3 |
 | 外部程序寄信（如 Claude Code） | 直接连管道发 `send`，正文前加前缀，例如 `[Claude Code] `。发完请求不能半关闭（[5.9](kb-service.md#线协议srcprotocolts)） | 没有：内核里只差一行头，前缀就是这行头 | 3 |
@@ -214,7 +214,7 @@ git -C $REPO branch -d wt/<名字>
 
 ### 工具库
 
-`extras/tools/` 放七个工具定义的脚本和目录（`catalog.ts`）。界面的“工具定义”页按目录装进 `~/.tau/tools/<名字>.json`（[kb-gui](kb-gui.md#页面)）。装进去的定义没有多余字段，`command` 指向仓库里的脚本。仓库挪了位置，在界面里点“更新”。
+`extras/tools/` 放八个工具定义的脚本和目录（`catalog.ts`）。界面的“工具定义”页按目录装进 `~/.tau/tools/<名字>.json`（[kb-gui](kb-gui.md#页面)）。装进去的定义没有多余字段，`command` 指向仓库里的脚本。仓库挪了位置，在界面里点“更新”。
 
 | 工具 | 做什么 | 数据放哪 | 代价 |
 |---|---|---|---|
@@ -225,13 +225,14 @@ git -C $REPO branch -d wt/<名字>
 | `list_presets` | 列出 `~/.tau/presets/` 里的预设：ID、正文第一行（一句话说明）、`model`、`tools`、`workdir`。没有参数。给 `spawn` 选预设用：`spawn` 只收预设 ID，内核没有“列预设”的接口。`timeout` 30 | 不存 | 只读，重做无害。不连服务：直接读文件，不读 `TAU_PROCESS`。格式不对的预设不抛，缺的字段写 `?`。预设作者要把“我是谁”写在正文第一行，列表才有用 |
 | `create_preset` | 在 `~/.tau/presets/<id>.md` 新建预设，引用的工具库工具如未安装先自动补装，随后连管道发 `check` 验证；校验不过自动删回新建文件并报错。同名（含 Windows 大小写碰撞）不覆盖。`timeout` 30 | 写 `~/.tau/presets/<id>.md`（及缺失的工具库 `<name>.json`） | 库外工具，崩溃时报“被中断”；用 `wx` 排他建且 `check` 失败即回滚，不会破坏已有预设或留下坏文件 |
 | `delete_preset` | 删除 `~/.tau/presets/<id>.md`（区分大小写）。先连管道发 `ps`，还有该预设的进程在运行就拒绝；记忆库和已结束的历史进程不受影响。`timeout` 30 | 删 `~/.tau/presets/<id>.md` | 库外工具，崩溃时报“被中断”；重做时预设已不存在会报找不到，不会误伤新文件 |
+| `computer` | 操作主屏：`action` 是 `screenshot`、`zoom`、`click`、`move`、`drag`、`scroll`、`type`、`key`、`wait`。截图缩到长边不超过 1568、不超过 115 万像素，坐标按截图算，脚本换成屏幕坐标；`zoom` 按截图坐标取一块看原分辨率；动作做完等 0.5 秒自动截图返回。每次先查输入桌面，锁屏时报错。`output: content`，`timeout` 30 | `~/.tau/extras/computer/<进程 ID>/`：截图文件，内核读进库以后就没用了，工具每次调用删 1 小时前的 | 点击和输入崩溃或停止时报“被中断”，不重做，可能停在半截。和用户抢鼠标；约定只给一个预设。管理员权限的窗口点不动。做法和理由见 [D100](kb-decisions.md#d100-桌面控制工具库的-computer) |
 
 怎么做：
 
 - `history_dump` 读协议的 `history`：只 dump 本进程（`TAU_PROCESS`）的旧段（第 1 段到当前段号减 1），当前段的内容模型已经有了；看别的进程用 `peek`。位置写成“段号:序号”，旧段不改，只会被 `prune` 整段删掉，所以位置不会漂。本地已有 `seg-<n>.md` 时，只发 `from: Number.MAX_SAFE_INTEGER` 探针确认没被 `prune` 删掉，然后从本地文件刷新修改时间并提取大小、行数和开头（`readExistingSegment`、`headFromMarkdown`），不再经管道全量拉取。渲染、写文件、清理的纯函数在 `extras/tools/history.ts`，脚本和测试都导入它。
 - 清理规则：数据放 `~/.tau/extras/history/<进程 ID>/`，不进库、不备份。每次调用先遍历这个目录，删修改时间超过 7 天的文件，删空了的进程目录也删；每步失败都跳过（文件可能被占用），清理出错不让工具失败。期限和内核清理 bash 输出文件一样是 7 天（[kb-tools 的输出文件](kb-tools.md#输出文件)）。清理放在工具自己里：内核只写 `extras/shell/` 一处（[D90](kb-decisions.md#d90-bash-接管后台命令先等没跑完转后台输出写文件跑完寄信)），而且 GUI 和计划任务都不常驻，不能指望上层有个程序一直跑（[D93](kb-decisions.md#d93-history_dump-取代-history_search-和-history_read)）。
 - 除 `web_search`、`list_presets` 外，都只在 tau 的工具调用里运行：没有 `TAU_PROCESS` 或 `TAU_PIPE` 时报错。这两个不连管道，不需要这两个变量。连管道的小客户端是 `extras/tools/client.ts`，发完请求不半关闭。
-- 测试：`test/extras/tools/web_search.test.ts`（`web_search`：脚本在子进程里跑，后端是本机的假 HTTP 服务，不碰真网络，也不读真的 `~/.tau`；后端的顺序和退路、错误文字、auth.json 的各种写法、输出的截断）。`test/extras/tools/list_presets.test.ts`（`list_presets`：纯函数，加一次指到临时目录的子进程）。`test/extras/tools/preset_crud.test.ts`（`create_preset`、`delete_preset`：参数检验、自动补装工具库定义、`check` 失败回滚、`ps` 在运行进程保护和大小写检查）。`test/extras/tools/tools.test.ts`（`peek`、`wait`，和桥的工具路由），真的服务、真的 Git Bash；数据目录靠 `USERPROFILE` 指到临时目录。`test/extras/tools/history.test.ts`（`history_dump`）：渲染、输出、清理、写文件的幂等不要服务，另有对着真的服务的集成测试。
+- 测试：`test/extras/tools/web_search.test.ts`（`web_search`：脚本在子进程里跑，后端是本机的假 HTTP 服务，不碰真网络，也不读真的 `~/.tau`；后端的顺序和退路、错误文字、auth.json 的各种写法、输出的截断）。`test/extras/tools/list_presets.test.ts`（`list_presets`：纯函数，加一次指到临时目录的子进程）。`test/extras/tools/preset_crud.test.ts`（`create_preset`、`delete_preset`：参数检验、自动补装工具库定义、`check` 失败回滚、`ps` 在运行进程保护和大小写检查）。`test/extras/tools/tools.test.ts`（`peek`、`wait`，和桥的工具路由），真的服务、真的 Git Bash；数据目录靠 `USERPROFILE` 指到临时目录。`test/extras/tools/history.test.ts`（`history_dump`）：渲染、输出、清理、写文件的幂等不要服务，另有对着真的服务的集成测试。`test/extras/tools/computer.test.ts`（`computer`）：几何、键名、PNG 编码、参数检查、清理是纯函数；脚本端到端只跑 `screenshot` 和 `zoom`，屏幕锁着就跳过。不动鼠标和键盘：`npm test` 跑在用户正在用的桌面上。
 
 ### 共享手册
 
