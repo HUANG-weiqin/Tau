@@ -118,8 +118,8 @@ test("memory_edit：替换后超出上限，走 memory_set 的 over 分支，原
   assert.equal(long.memory.get(PRESET.id, "笔记")?.value, "x".repeat(4000));
   assert.equal(long.memory.get(PRESET.id, "笔记")?.version, 1);
   const brief = callTool(t, "memory_edit", { key: "笔记", old: "乙", new: "丁", version: 1, brief: "摘".repeat(70) }, { value: "甲乙丙", brief: "摘要" });
-  assert.deepEqual(brief.r, { text: "超出上限，没有写入：摘要有 210 字节，上限 200 字节。", isError: true });
-  assert.deepEqual(brief.memory.get(PRESET.id, "笔记")?.value, "甲乙丙");
+  assert.deepEqual(brief.r, { text: "已写入 笔记，版本 2。", isError: false }, "摘要 210 字节在缓冲带里，写得进");
+  assert.equal(brief.memory.get(PRESET.id, "笔记")?.brief, "摘".repeat(70));
 });
 
 test("memory_edit：成功时版本加一，updated 是这条输入的 now，brief 不传就保持原摘要，传了就换", (t) => {

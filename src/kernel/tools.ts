@@ -32,7 +32,10 @@ const BASH = tool("bash",
 /** 记忆的上限，按 UTF-8 字节算。由记忆的实现检查；视图按渲染后的文本算。 */
 export const MEMORY_KEY_MAX_BYTES = 128;
 export const MEMORY_VALUE_MAX_BYTES = 4096;
+/** 给模型看的上限：工具描述、文档、handbook 都写这个数（D96）。 */
 export const MEMORY_BRIEF_MAX_BYTES = 200;
+/** 摘要实际能存下的字节数（D96）。超过就按码点截到这个长度、末尾加 `…`，不拒绝写入。不参与启动检查。 */
+export const MEMORY_BRIEF_STORE_MAX_BYTES = 300;
 export const MEMORY_VIEW_MAX_BYTES = 32 * 1024;
 /** 上下文文件视图的上界（D72），按 UTF-8 字节算，整个视图都计入：标题行、段间空行和各种说明。参与启动检查，改它要先重算（见 kb-contract）。 */
 export const CONTEXT_VIEW_MAX_BYTES = 24 * 1024;

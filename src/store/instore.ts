@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { start } from "../kernel/decide.ts";
 import { endedText, HOPS_MAX, startError } from "../kernel/derive.ts";
 import { observe } from "../kernel/observe.ts";
-import { findBuiltin, MEMORY_BRIEF_MAX_BYTES, MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
+import { findBuiltin, MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
 import { textContent, unreachable } from "../kernel/types.ts";
 import { utcDate } from "../memory/kv.ts";
 import { fixArgs } from "../tools/args.ts";
@@ -235,14 +235,12 @@ function show(key: string, v: Versioned): string {
   return `${key}（版本 ${v.version}，更新 ${utcDate(v.updated)}）：\n摘要：${v.brief}\n${v.value}`;
 }
 
-function overText(over: "key" | "value" | "brief" | "view", bytes: number): string {
+function overText(over: "key" | "value" | "view", bytes: number): string {
   switch (over) {
     case "key":
       return `键有 ${bytes} 字节，上限 ${MEMORY_KEY_MAX_BYTES} 字节。`;
     case "value":
       return `值有 ${bytes} 字节，上限 ${MEMORY_VALUE_MAX_BYTES} 字节。一个汉字占 3 字节。把内容拆成几个键，或者写进文件。`;
-    case "brief":
-      return `摘要有 ${bytes} 字节，上限 ${MEMORY_BRIEF_MAX_BYTES} 字节。`;
     case "view":
       return `写入后记忆视图有 ${bytes} 字节，上限 ${MEMORY_VIEW_MAX_BYTES} 字节。先删掉不需要的键，或缩短键和摘要。`;
     default:

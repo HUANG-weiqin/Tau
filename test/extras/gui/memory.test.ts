@@ -75,12 +75,10 @@ test("memory: 读写回复：成功、冲突（带最新值和摘要，或键已
   assert.deepEqual(interpretWrite({ type: "memory_rejected", index: 0, result: { ok: false, current: cur } }), { kind: "conflict", current: cur });
   assert.deepEqual(interpretWrite({ type: "memory_rejected", index: 0, result: { ok: false, current: null } }), { kind: "conflict", current: null });
   assert.deepEqual(interpretWrite({ type: "memory_rejected", index: 0, result: { ok: false, over: "value", bytes: 5000 } }), { kind: "over", over: "value", bytes: 5000 });
-  assert.deepEqual(interpretWrite({ type: "memory_rejected", index: 0, result: { ok: false, over: "brief", bytes: 400 } }), { kind: "over", over: "brief", bytes: 400 });
   assert.deepEqual(interpretWrite({ type: "nope" }), { kind: "unknown" });
   assert.deepEqual(interpretWrite(null), { kind: "unknown" });
   assert.match(overText("key", 200), /键太长.*200/);
   assert.match(overText("value", 5000), /值太长.*5000/);
-  assert.match(overText("brief", 400), /摘要太长.*400/);
   assert.match(overText("view", 20000), /整个库.*20000/);
 });
 
@@ -185,8 +183,4 @@ test("memory: 经桥读写真的服务：新键、改、冲突不覆盖、删；
   const big = interpretWrite(await write(setOp("proj", { ...newEdit(), key: "big", draft: "字".repeat(2000), brief: "x" })));
   assert.equal(big.kind, "over");
   if (big.kind === "over") assert.equal(big.over, "value");
-  // 摘要超限：70 个汉字 210 字节，上限 200。
-  const longBrief = interpretWrite(await write(setOp("proj", { ...newEdit(), key: "big", draft: "x", brief: "字".repeat(70) })));
-  assert.deepEqual(longBrief, { kind: "over", over: "brief", bytes: 210 });
-  assert.match(overText("brief", 210), /摘要太长.*210/);
 });

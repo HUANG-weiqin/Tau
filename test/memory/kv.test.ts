@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import type { DatabaseSync } from "node:sqlite";
 import { start } from "../../src/kernel/decide.ts";
 import { utf8Bytes } from "../../src/kernel/derive.ts";
-import { MEMORY_BRIEF_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../../src/kernel/tools.ts";
+import { MEMORY_BRIEF_MAX_BYTES, MEMORY_BRIEF_STORE_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../../src/kernel/tools.ts";
 import type { Memory } from "../../src/kernel/types.ts";
 import { sqliteMemory, utcDate } from "../../src/memory/kv.ts";
 import { runInStore } from "../../src/store/instore.ts";
@@ -58,7 +58,7 @@ function fillLast(memory: Memory, value = "x".repeat(9), prefix = "k"): { key: s
   assert.fail(`没有长度能正好补满剩下的 ${room} 字节`);
 }
 
-test("键、值或摘要超出上限：给出确切的文本，库不变，版本号不前进", (t) => {
+test("键或值超出上限：给出确切的文本，库不变，版本号不前进", (t) => {
   const { db, memory, set } = setup(t);
   assert.deepEqual(set("a", "1"), { text: "已写入 a，版本 1。", isError: false });
   assert.deepEqual(set(MAX_KEY, "v"), { text: `已写入 ${MAX_KEY}，版本 2。`, isError: false }, "128 字节的键可以写");
@@ -68,14 +68,25 @@ test("键、值或摘要超出上限：给出确切的文本，库不变，版�
 
   assert.deepEqual(set("键".repeat(43), "v"), over("键有 129 字节，上限 128 字节。"));
   assert.deepEqual(set("c", "x".repeat(4097)), over("值有 4097 字节，上限 4096 字节。一个汉字占 3 字节。把内容拆成几个键，或者写进文件。"));
-  assert.deepEqual(set("c", "v", undefined, "b".repeat(201)), over("摘要有 201 字节，上限 200 字节。"));
-  assert.deepEqual(memory.set(NS, "c", { value: "v", brief: "b".repeat(201), now: NOW }, null), { ok: false, over: "brief", bytes: 201 });
   assert.deepEqual(memory.set(NS, "k".repeat(129), { value: "v", brief: "摘要", now: NOW }, null), { ok: false, over: "key", bytes: 129 });
   assert.deepEqual(memory.set(NS, "c", { value: "值".repeat(1366), brief: "摘要", now: NOW }, null), { ok: false, over: "value", bytes: 4098 });
 
   assert.deepEqual(rows(db), before, "被拒绝的写入什么都没改");
   const max = Math.max(...before.map((r) => r.version as number));
   assert.deepEqual(memory.set(NS, "g", { value: "小", brief: "摘要", now: NOW }, null), { ok: true, version: max + 1 }, "被拒绝的写入没有用掉版本号");
+});
+
+test("摘要分两层上限：201 到 300 字节原样存，超过 300 按码点截到 300 并加省略号（D96）", (t) => {
+  const { memory, set } = setup(t);
+  const mid = "b".repeat(250);
+  assert.deepEqual(set("m", "v", undefined, mid), { text: "已写入 m，版本 1。", isError: false }, "模型按「200」贴着写、多出一点，照样写得进去");
+  assert.equal(memory.get(NS, "m")!.brief, mid, "缓冲带里原样存，不截断");
+
+  const long = "摘".repeat(101); // 303 字节
+  assert.deepEqual(set("s", "v", undefined, long), { text: "已写入 s，版本 2。", isError: false }, "过了存储上限也不拒绝");
+  const got = memory.get(NS, "s")!.brief;
+  assert.equal(utf8Bytes(got), MEMORY_BRIEF_STORE_MAX_BYTES);
+  assert.equal(got, "摘".repeat(99) + "…", "截到 297 字节再加 3 字节的省略号，不切开汉字");
 });
 
 test(`视图正好 ${MEMORY_VIEW_MAX_BYTES} 字节可以写，多 1 字节拒绝：视图的上限量的是渲染后的索引`, (t) => {
@@ -187,13 +198,12 @@ test("get 和 entries 带摘要和更新时间；entries 按键的 UTF-8 字节�
   assert.equal(memory.view(NS), memory.entries(NS).map((e) => `${JSON.stringify(e.key)} | ${utcDate(e.updated)} | ${utf8Bytes(e.value)} B | ${JSON.stringify(e.brief)}`).join("\n"));
 });
 
-test("检查顺序：键、值、摘要、版本、视图", (t) => {
+test("检查顺序：键、值、版本、视图", (t) => {
   const { memory } = setup(t);
   for (const k of ["k1", "k2", "k3", "k4"]) memory.set(NS, k, { value: "x".repeat(4000), brief: "摘要", now: NOW }, null);
   const current = memory.get(NS, "k1");
   assert.deepEqual(memory.set(NS, "k".repeat(200), { value: "x".repeat(5000), brief: "b".repeat(300), now: NOW }, 99), { ok: false, over: "key", bytes: 200 });
   assert.deepEqual(memory.set(NS, "k1", { value: "x".repeat(5000), brief: "b".repeat(300), now: NOW }, 99), { ok: false, over: "value", bytes: 5000 }, "值太大且版本不对：报值的错");
-  assert.deepEqual(memory.set(NS, "k1", { value: "v", brief: "b".repeat(201), now: NOW }, 99), { ok: false, over: "brief", bytes: 201 }, "摘要太大且版本不对：报摘要的错");
   assert.deepEqual(memory.set(NS, "k5", { value: "x".repeat(4000), brief: "摘要", now: NOW }, 99), { ok: false, current: null }, "视图超出且版本不对：报冲突");
   assert.deepEqual(memory.set(NS, "k1", { value: "x".repeat(4096), brief: "摘要", now: NOW }, 99), { ok: false, current }, "冲突时带最新值");
 });

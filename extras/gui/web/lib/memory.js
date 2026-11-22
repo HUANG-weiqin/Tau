@@ -94,7 +94,7 @@ export function deleteOp(ns, entry) {
 /**
  * 读 `memory_write` 的回复。
  * @param {any} reply
- * @returns {{ kind: "ok", version: number | null } | { kind: "conflict", current: { value: string, brief: string, updated: number, version: number } | null } | { kind: "over", over: "key" | "value" | "brief" | "view", bytes: number } | { kind: "unknown" }}
+ * @returns {{ kind: "ok", version: number | null } | { kind: "conflict", current: { value: string, brief: string, updated: number, version: number } | null } | { kind: "over", over: "key" | "value" | "view", bytes: number } | { kind: "unknown" }}
  */
 export function interpretWrite(reply) {
   if (reply && reply.type === "memory_written") return { kind: "ok", version: reply.versions?.[0] ?? null };
@@ -117,10 +117,9 @@ export function afterConflict(e, current) {
   return { ...e, isNew: current ? false : e.isNew, base: current ? current.version : null, other: current ? { value: current.value, brief: current.brief } : { gone: true } };
 }
 
-/** 超出上限的说明。上限的数在服务那边，页面只说哪一项、多少字节。 @param {"key" | "value" | "brief" | "view"} over @param {number} bytes */
+/** 超出上限的说明。上限的数在服务那边，页面只说哪一项、多少字节。 @param {"key" | "value" | "view"} over @param {number} bytes */
 export function overText(over, bytes) {
   if (over === "key") return `键太长，${bytes} 字节，超出记忆库的上限`;
   if (over === "value") return `值太长，${bytes} 字节，超出记忆库的上限`;
-  if (over === "brief") return `摘要太长，${bytes} 字节，超出记忆库的上限`;
   return `写进去以后整个库有 ${bytes} 字节，超出记忆库的上限。先删掉一些，或者把值写短`;
 }

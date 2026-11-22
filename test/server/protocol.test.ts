@@ -1315,7 +1315,7 @@ test("memory_write：成功回 memory_written 和每项的版本；不要求预�
   assert.equal(e.svc.db.isTransaction, false);
 });
 
-test("memory_write：版本冲突、超限是正常回复不是 error，整批回滚；brief 超限也报 brief", async (t) => {
+test("memory_write：版本冲突、超限是正常回复不是 error，整批回滚", async (t) => {
   const e = await setup(t);
   await collect(e.pipe, w([setOp("m", "k", "旧", null, "旧的")]));
   const conflict = await collect(e.pipe, w([setOp("m", "new", "1", null), setOp("m", "k", "新", 7)]));
@@ -1326,8 +1326,6 @@ test("memory_write：版本冲突、超限是正常回复不是 error，整批�
   assert.deepEqual(rejected.result.current && { value: rejected.result.current.value, brief: rejected.result.current.brief, version: rejected.result.current.version, updated: rejected.result.current.updated > 1_600_000_000_000 }, { value: "旧", brief: "旧的", version: 1, updated: true });
   const over = await collect(e.pipe, w([setOp("m", "big", "x".repeat(5000), null)]));
   assert.deepEqual(over, [{ type: "memory_rejected", index: 0, result: { ok: false, over: "value", bytes: 5000 } }]);
-  const briefOver = await collect(e.pipe, w([setOp("m", "big", "v", null, "b".repeat(201))]));
-  assert.deepEqual(briefOver, [{ type: "memory_rejected", index: 0, result: { ok: false, over: "brief", bytes: 201 } }]);
   const gone = await collect(e.pipe, w([{ kind: "delete", ns: "m", key: "none", expected: 3 }]));
   assert.deepEqual(gone, [{ type: "memory_rejected", index: 0, result: { ok: false, current: null } }]);
   assert.deepEqual(entriesOf(await collect(e.pipe, { op: "memory", ns: "m" }), "m"), [{ key: "k", value: "旧", brief: "旧的", version: 1, updated: true }]);

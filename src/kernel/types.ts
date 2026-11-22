@@ -187,7 +187,7 @@ export interface Memory {
     key: string,
     put: { value: string; brief: string; now: Instant },
     expected: number | null,
-  ): { ok: true; version: number } | { ok: false; current: Versioned | null } | { ok: false; over: "key" | "value" | "brief" | "view"; bytes: number };
+  ): { ok: true; version: number } | { ok: false; current: Versioned | null } | { ok: false; over: "key" | "value" | "view"; bytes: number };
   delete(ns: string, key: string, expected: number): { ok: true } | { ok: false; current: Versioned | null };
 }
 

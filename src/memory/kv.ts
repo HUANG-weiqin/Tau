@@ -1,7 +1,7 @@
 // 记忆的键值实现（见 .knowledge/kb-memory.md）。版本号是全库自增 ID，永远不复用；每次写入 = 删掉旧行，插入新行。
 import type { DatabaseSync } from "node:sqlite";
-import { utf8Bytes } from "../kernel/derive.ts";
-import { MEMORY_BRIEF_MAX_BYTES, MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
+import { briefOf, utf8Bytes } from "../kernel/derive.ts";
+import { MEMORY_BRIEF_STORE_MAX_BYTES, MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
 import type { Memory, Versioned } from "../kernel/types.ts";
 
 /** 索引行：视图用得到的一切。值只读它的字节数，不读本体。 */
@@ -61,15 +61,16 @@ export function sqliteMemory(db: DatabaseSync): Memory {
       const valueBytes = utf8Bytes(value);
       if (valueBytes > MEMORY_VALUE_MAX_BYTES) return { ok: false, over: "value", bytes: valueBytes };
       const briefBytes = utf8Bytes(brief);
-      if (briefBytes > MEMORY_BRIEF_MAX_BYTES) return { ok: false, over: "brief", bytes: briefBytes };
+      // 摘要超了不拒绝：截到存储上限，末尾加 `…`。模型看到的上限更小，多出的是缓冲带（D96）。
+      const stored = briefBytes > MEMORY_BRIEF_STORE_MAX_BYTES ? briefOf(brief, MEMORY_BRIEF_STORE_MAX_BYTES - 3) + "…" : brief;
       const current = get(ns, key);
       if ((current?.version ?? null) !== expected) return { ok: false, current };
       // 旧的那一行（按版本号认）不算：在上限处用同样长的值覆盖可以写。字节数和行的顺序无关。
       const rows = indexRows(ns).filter((r) => r.version !== current?.version);
-      const viewBytes = utf8Bytes(render([...rows, { key, brief, updated: put.now, bytes: valueBytes }]));
+      const viewBytes = utf8Bytes(render([...rows, { key, brief: stored, updated: put.now, bytes: valueBytes }]));
       if (viewBytes > MEMORY_VIEW_MAX_BYTES) return { ok: false, over: "view", bytes: viewBytes };
       if (current) db.prepare("DELETE FROM memory WHERE version = ?").run(current.version);
-      const { lastInsertRowid } = db.prepare("INSERT INTO memory (ns, key, value, brief, updated) VALUES (?, ?, ?, ?, ?)").run(ns, key, value, brief, put.now);
+      const { lastInsertRowid } = db.prepare("INSERT INTO memory (ns, key, value, brief, updated) VALUES (?, ?, ?, ?, ?)").run(ns, key, value, stored, put.now);
       return { ok: true, version: Number(lastInsertRowid) };
     },
     delete(ns, key, expected) {

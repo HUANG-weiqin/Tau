@@ -50,11 +50,11 @@ test("writeMemory：删除失败也整批回滚；超限的失败带 over 和字
   assert.deepEqual(writeMemory(db, memory, [set("a", "k", "x".repeat(4097))], NOW), { ok: false, index: 0, result: { ok: false, over: "value", bytes: 4097 } });
 });
 
-test("writeMemory：brief 超限在第 2 项时整批回滚，第 1 项也没写", (t) => {
+test("writeMemory：键超限在第 2 项时整批回滚，第 1 项也没写", (t) => {
   const db = tempDb(t);
   const memory = sqliteMemory(db);
-  const r = writeMemory(db, memory, [set("a", "k", "1"), set("a", "k2", "2", null, "b".repeat(201))], NOW);
-  assert.deepEqual(r, { ok: false, index: 1, result: { ok: false, over: "brief", bytes: 201 } });
+  const r = writeMemory(db, memory, [set("a", "k", "1"), set("a", "k".repeat(129), "2")], NOW);
+  assert.deepEqual(r, { ok: false, index: 1, result: { ok: false, over: "key", bytes: 129 } });
   assert.deepEqual(memory.entries("a"), []);
   assert.equal(db.isTransaction, false);
 });
