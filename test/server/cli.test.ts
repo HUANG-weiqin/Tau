@@ -5,6 +5,7 @@ import { test } from "node:test";
 import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -502,6 +503,18 @@ test("思考和工具调用的流不到 CLI：start 的连接和 CLI 的输出�
   assert.equal(cap.out.join(""), "还是只有正文。\n");
   assert.deepEqual(cap.err, []);
   assertQuiet(e.svc);
+});
+
+test("只收到空的流式文本：CLI 仍打印最终回复", { timeout: 10_000 }, async (t) => {
+  const pipe = `\\\\.\\pipe\\tau-test-cli-empty-${process.pid}-${Math.random().toString(16).slice(2)}`;
+  const server = createServer((s) => {
+    s.on("data", () => s.end(`${[{ type: "receipt", process: "a" }, { type: "text", process: "a", n: 1, delta: "" }, { type: "final", reply: "hello", ended: "done" }].map((r) => JSON.stringify(r)).join("\n")}\n`));
+  });
+  await new Promise<void>((resolve) => server.listen(pipe, resolve));
+  t.after(() => void server.close());
+  const cap = capture(t);
+  assert.equal(await main(["send", "a", "你好"], pipe), 0);
+  assert.equal(cap.out.join(""), "hello\n");
 });
 
 test("模型在启动之后从目录里消失：本轮以“模型目录里没有”结束，进程照常可用", { timeout: 10_000 }, async (t) => {
