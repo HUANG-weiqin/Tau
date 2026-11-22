@@ -35,6 +35,12 @@ function findShell(): string | null {
   return shell;
 }
 
+const lineEnd = (body: string): string => (body === "" || body.endsWith("\n") ? "" : "\n");
+
+/** 头尾两段之间省略了 `dropped` 字节时的输出：没省略就是头接尾，省略了中段只留一行说明。 */
+const elide = (head: Buffer, tail: Buffer, dropped: number): string =>
+  dropped === 0 ? Buffer.concat([head, tail]).toString("utf8") : `${head.toString("utf8")}\n…（中间省略 ${dropped} 字节）…\n${tail.toString("utf8")}`;
+
 // stdout 和 stderr 按到达顺序进同一份输出。内存里最多留头尾各 KEEP_BYTES。
 function output() {
   let head: Buffer = Buffer.alloc(0);
@@ -49,11 +55,8 @@ function output() {
   };
   const raw = (): { text: string; truncated: boolean } => ({ text: Buffer.concat([head, tail]).toString("utf8"), truncated: dropped > 0 });
   const text = (status: string): string => {
-    const body =
-      dropped === 0
-        ? Buffer.concat([head, tail]).toString("utf8")
-        : `${head.toString("utf8")}\n…（中间省略 ${dropped} 字节）…\n${tail.toString("utf8")}`;
-    return clip(`${body}${body === "" || body.endsWith("\n") ? "" : "\n"}[${status}]`);
+    const body = elide(head, tail, dropped);
+    return clip(`${body}${lineEnd(body)}[${status}]`);
   };
   return { push, text, raw };
 }
@@ -176,12 +179,8 @@ function view(log: string): { body: string; size: number } {
     // 文件没了：当作没有输出。
   }
   if (size <= 2 * KEEP_BYTES) return { body: readAt(log, 0, size).toString("utf8"), size };
-  const head = readAt(log, 0, KEEP_BYTES).toString("utf8");
-  const tail = readAt(log, size - KEEP_BYTES, KEEP_BYTES).toString("utf8");
-  return { body: `${head}\n…（中间省略 ${size - 2 * KEEP_BYTES} 字节）…\n${tail}`, size };
+  return { body: elide(readAt(log, 0, KEEP_BYTES), readAt(log, size - KEEP_BYTES, KEEP_BYTES), size - 2 * KEEP_BYTES), size };
 }
-
-const lineEnd = (body: string): string => (body === "" || body.endsWith("\n") ? "" : "\n");
 
 /**
  * bash 工具（D90）：先等 `timeout` 秒，命令在这么久里跑完，结果就是输出和退出码；没跑完就转后台，命令不被结束，
@@ -247,13 +246,12 @@ export async function bash(args: { command: string; timeout?: number }, workdir:
       push(); // 轮询以后写的那几行，趁现在补上
       stopWatching();
       child.unref();
-      const pgid = (() => {
-        try {
-          return readFileSync(pgidFile, "utf8").trim();
-        } catch {
-          return "";
-        }
-      })();
+      let pgid = "";
+      try {
+        pgid = readFileSync(pgidFile, "utf8").trim();
+      } catch {
+        // bash 还没写 pgid：不写进程组号那一行。
+      }
       const { body } = view(log);
       const text = `${body}${lineEnd(body)}[转入后台 ${job}] 命令还在运行，没有被结束。\n输出文件：${winPath(log)}（还在增长，用 read 读，可带 offset 和 limit）\n${/^\d+$/.test(pgid) ? `进程组号：${pgid}\n` : ""}跑完会给你寄一封信，内容是退出码和最后几行；你可以接着做别的事，也可以结束这一轮等信。`;
       resolve({ content: textContent(clip(text)), isError: false });

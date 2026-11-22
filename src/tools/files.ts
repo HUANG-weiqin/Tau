@@ -45,13 +45,13 @@ export async function read(args: { path: string; offset?: number; limit?: number
       const fh = await open(file, "r");
       const head = Buffer.alloc(16);
       try {
-        const { bytesRead } = await fh.read(head, 0, 16, 0);
-        if (imageType(head.subarray(0, bytesRead))) return fail(`图片不合格：${file}（有 ${st.size} 字节，上限 ${IMAGE_MAX_BYTES} 字节）`);
+        await fh.read(head);
       } finally {
         await fh.close();
       }
-      if (st.size > READ_MAX_BYTES) return fail(`文件有 ${st.size} 字节（上限 ${READ_MAX_BYTES} 字节），不能整份读取：${file}。可以用 bash 配合 wc -l、sed 或 rg 查看。`);
+      if (imageType(head)) return fail(`图片不合格：${file}（有 ${st.size} 字节，上限 ${IMAGE_MAX_BYTES} 字节）`);
     }
+    if (st.size > READ_MAX_BYTES) return fail(`文件有 ${st.size} 字节（上限 ${READ_MAX_BYTES} 字节），不能整份读取：${file}。可以用 bash 配合 wc -l、sed 或 rg 查看。`);
     const buf = await readFile(file);
     if (imageType(buf)) return image(buf, file, accepts);
     const text = decode(buf);

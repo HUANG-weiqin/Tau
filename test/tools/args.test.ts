@@ -29,6 +29,11 @@ test("schema 里没有的键原样留着（库内工具和库外工具都由各�
   assert.deepEqual(fixArgs(schema, { path: "a", extra: 1 }), { args: { path: "a", extra: 1 } });
 });
 
+test("叫 __proto__ 的参数原样留着，让校验拒绝多余键", () => {
+  const fixed = fixArgs({ properties: { command: { type: "string" } }, required: ["command"] }, JSON.parse('{"command":"ls","__proto__":{"x":1}}'));
+  assert.deepEqual(Object.keys("args" in fixed ? fixed.args : {}), ["command", "__proto__"]);
+});
+
 test("字符串化的 JSON 数组和对象按 schema 解析；类型不对或不是合法 JSON 留着让校验报错", () => {
   assert.deepEqual(fixArgs(schema, { path: "a", items: '["p1","p2"]', meta: '{"k":1}' }), { args: { path: "a", items: ["p1", "p2"], meta: { k: 1 } } });
   assert.deepEqual(fixArgs(schema, { path: "a", items: '{"not":"array"}', meta: "[1,2]" }), { args: { path: "a", items: '{"not":"array"}', meta: "[1,2]" } });

@@ -14,19 +14,19 @@ function parseContainer(v: string, t: "array" | "object"): unknown {
 export function fixArgs(parameters: object, args: Record<string, unknown>): { args: Record<string, unknown> } | { error: string } {
   const schema = parameters as Schema;
   const required = schema.required ?? [];
-  const out: Record<string, unknown> = {};
+  const out = new Map<string, unknown>();
   for (const [k, v] of Object.entries(args)) {
     if (v === null) {
       if (required.includes(k)) return { error: `参数 ${k} 是 null，必须给出一个值。` };
       continue;
     }
     const t = schema.properties?.[k]?.type;
-    out[k] =
+    out.set(k,
       t === "string" && (typeof v === "number" || typeof v === "boolean") ? String(v)
       : t === "integer" && typeof v === "string" && /^-?\d+$/.test(v) ? Number(v)
       : t === "boolean" && (v === "true" || v === "false") ? v === "true"
       : (t === "array" || t === "object") && typeof v === "string" ? parseContainer(v, t)
-      : v;
+      : v);
   }
-  return { args: out };
+  return { args: Object.fromEntries(out) };
 }
