@@ -188,14 +188,9 @@ export function buildPreset(id: string, f: PresetFields, models: Models, toolsDi
   const found = models.getModel(provider, modelId);
   if (!found) throw new Error(`模型目录里没有 ${model}`);
 
-  const tools: PresetTool[] = [];
-  // 去重保序。用 Set：名字很多时数组的 includes 是平方级。
-  const defNames = new Set<string>();
-  for (const item of f.tools) {
-    if (isTool(item)) {
-      if (!tools.includes(item)) tools.push(item);
-    } else defNames.add(item);
-  }
+  // 去重保序：名字很多时数组的 includes 是平方级，用 Set 收敛。
+  const tools: PresetTool[] = [...new Set(f.tools.filter(isTool))];
+  const defNames = new Set(f.tools.filter((t) => !isTool(t)));
   const toolDefs = loadToolDefs(toolsDir, [...defNames]);
   const call = callParams(id, f);
   const context = f.context === undefined ? undefined : parseContext(id, f.context);
