@@ -48,6 +48,7 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 | 工具描述 | 请求里给模型看的工具名、说明和参数。 |
 | 副作用 | 纯函数层之外的动作。库内副作用（记忆工具、`self`、`handoff`、`post`、`spawn`、`stop_process`，以及工具定义在结果里声明的库内动作）在事务里执行；库外副作用（模型、read、write、edit、bash、工具定义）由执行器执行。 |
 | 记忆库 | 一个带版本号的键值存储，`ns` 等于预设 ID。 |
+| 领地 | 带记忆的 Agent 自己的目录：`~/.tau/extras/home/<预设 ID>/`。放什么、怎样组织由它定；别的 Agent 只读不写，这是约定，不是边界（[D98](.knowledge/kb-decisions.md#d98-领地带记忆的-agent-有一块自己的目录)）。 |
 | 投影 | 纯函数 `observe` 的结果。CLI 和 `self` 工具看的是同一份。 |
 
 ## 必须遵守的规则

@@ -3,7 +3,7 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -97,28 +97,28 @@ test("prune：刚做的那个永远不删，占一个名额；名字比它更靠
   const future = Array.from({ length: 14 }, (_, i) => `tau-20400101-0000${String(i + 1).padStart(2, "0")}.db`);
   const made = "tau-20261118-120000.db";
   const a = withFiles("prune-repro", [...future, made]);
-  assert.deepEqual(prune(a, 14, made), ["tau-20400101-000001.db"]);
+  assert.deepEqual(prune(a, 14, made).dbs, ["tau-20400101-000001.db"]);
   assert.deepEqual(names(a), [made, ...future.slice(1)]);
 
   // 保留数仍按 keep 算：刚做的一个，加其余里最新的 keep-1 个。
   const b = withFiles("prune-keep3", [made, "tau-20300101-000001.db", "tau-20300101-000002.db", "tau-20300101-000003.db", "tau-20300101-000004.db"]);
-  assert.deepEqual(prune(b, 3, made), ["tau-20300101-000002.db", "tau-20300101-000001.db"]);
+  assert.deepEqual(prune(b, 3, made).dbs, ["tau-20300101-000002.db", "tau-20300101-000001.db"]);
   assert.deepEqual(names(b), [made, "tau-20300101-000003.db", "tau-20300101-000004.db"]);
 });
 
 test("prune：keep 为 1 只留刚做的，不管它的名字排在哪；目录里只有它自己、或没超出，什么都不删", () => {
   const made = "tau-20261118-120000.db";
   const a = withFiles("prune-one", [made, "tau-20400101-000001.db", "tau-20200101-000001.db"]);
-  assert.deepEqual(prune(a, 1, made).sort(), ["tau-20200101-000001.db", "tau-20400101-000001.db"]);
+  assert.deepEqual(prune(a, 1, made).dbs.sort(), ["tau-20200101-000001.db", "tau-20400101-000001.db"]);
   assert.deepEqual(names(a), [made]);
 
   const alone = withFiles("prune-alone", [made]);
-  assert.deepEqual(prune(alone, 1, made), []);
-  assert.deepEqual(prune(alone, 14, made), []);
+  assert.deepEqual(prune(alone, 1, made).dbs, []);
+  assert.deepEqual(prune(alone, 14, made).dbs, []);
   assert.deepEqual(names(alone), [made]);
 
   const few = withFiles("prune-few", [made, "tau-20261118-115959.db"]);
-  assert.deepEqual(prune(few, 2, made), []);
+  assert.deepEqual(prune(few, 2, made).dbs, []);
   assert.deepEqual(names(few), ["tau-20261118-115959.db", made]);
 });
 
@@ -126,9 +126,9 @@ test("prune：同一秒前后的备份（时钟回拨）按名字排，刚做的
   const made = "tau-20261118-120000.db";
   const d = withFiles("prune-sec", [made, "tau-20261118-115959.db", "tau-20261118-120001.db", "notes.txt", "tau-20261118-120000.db.bak"]);
   mkdirSync(join(d, "tau-20200101-000000.db"));
-  assert.deepEqual(prune(d, 2, made), ["tau-20261118-115959.db"]);
+  assert.deepEqual(prune(d, 2, made).dbs, ["tau-20261118-115959.db"]);
   assert.deepEqual(names(d), ["notes.txt", made, "tau-20200101-000000.db", "tau-20261118-120000.db.bak", "tau-20261118-120001.db"].sort());
-  assert.deepEqual(prune(d, 1, made), ["tau-20261118-120001.db"]);
+  assert.deepEqual(prune(d, 1, made).dbs, ["tau-20261118-120001.db"]);
   assert.equal(existsSync(join(d, "tau-20200101-000000.db")), true, "同名的目录不碰");
   assert.equal(existsSync(join(d, "notes.txt")), true);
 });
@@ -299,4 +299,179 @@ test("退出码 3：服务收下请求就断开、或回的不是 JSON：不知�
       await new Promise((resolve) => server.close(resolve));
     }
   }
+});
+
+// ---- 领地备份 ----
+const HOME_SRC = (): string => join(home, ".tau", "extras", "home");
+
+test("领地：没有 extras/home 时只有库备份，什么都不打印，退出码 0", async () => {
+  rmSync(HOME_SRC(), { recursive: true, force: true });
+  const bk = fresh("home-none");
+  const r = await run(["--dir", bk], { now: "2031-06-01T10:00:00" });
+  assert.deepEqual([r.code, r.stderr], [0, ""]);
+  assert.deepEqual(names(bk), ["tau-20310601-100000.db"]);
+  assert.ok(!r.stdout.includes("领地"), r.stdout);
+});
+
+test("领地：整个拷到 <stem>.home/，内容逐字节相同，打印文件数", async () => {
+  const src = HOME_SRC();
+  mkdirSync(join(src, "a"), { recursive: true });
+  mkdirSync(join(src, "b", "sub"), { recursive: true });
+  writeFileSync(join(src, "a", "x.txt"), "你好");
+  const bin = Buffer.from([0, 1, 2, 255, 254, 0, 128]);
+  writeFileSync(join(src, "b", "sub", "y.bin"), bin);
+  try {
+    const bk = fresh("home-copy");
+    const r = await run(["--dir", bk], { now: "2031-06-02T10:00:00" });
+    assert.deepEqual([r.code, r.stderr], [0, ""]);
+    const dst = join(bk, "tau-20310602-100000.home");
+    assert.deepEqual(names(bk), ["tau-20310602-100000.db", "tau-20310602-100000.home"]);
+    assert.equal(readFileSync(join(dst, "a", "x.txt"), "utf8"), "你好");
+    assert.deepEqual(readFileSync(join(dst, "b", "sub", "y.bin")), bin);
+    assert.ok(r.stdout.includes(`已备份领地：${dst}（2 个文件）\n`), r.stdout);
+  } finally {
+    rmSync(src, { recursive: true, force: true });
+  }
+});
+
+test("领地：联接不拷，跳过的个数写在输出里；之后清理时联接的目标完好", async () => {
+  const src = HOME_SRC();
+  const target = fresh("home-link-target");
+  mkdirSync(target);
+  writeFileSync(join(target, "precious.txt"), "别删");
+  mkdirSync(join(src, "a"), { recursive: true });
+  writeFileSync(join(src, "a", "x.txt"), "x");
+  symlinkSync(target, join(src, "a", "link"), "junction");
+  try {
+    const bk = fresh("home-link");
+    const r = await run(["--dir", bk, "--keep", "1"], { now: "2031-06-03T10:00:00" });
+    assert.deepEqual([r.code, r.stderr], [0, ""]);
+    const dst = join(bk, "tau-20310603-100000.home");
+    assert.deepEqual(names(join(dst, "a")), ["x.txt"]);
+    assert.match(r.stdout, /（1 个文件，跳过 1 个链接）/);
+    // 再做一份，旧的 .home 被清理；联接目标不受影响。
+    const r2 = await run(["--dir", bk, "--keep", "1"], { now: "2031-06-03T10:00:01" });
+    assert.deepEqual([r2.code, r2.stderr], [0, ""]);
+    assert.deepEqual(names(bk), ["tau-20310603-100001.db", "tau-20310603-100001.home"]);
+    assert.deepEqual(readdirSync(target), ["precious.txt"]);
+    assert.equal(readFileSync(join(target, "precious.txt"), "utf8"), "别删");
+  } finally {
+    rmSync(src, { recursive: true, force: true });
+  }
+});
+
+test("领地：--keep 2 连跑三次，库和领地都只剩两份；孤儿 .home 删掉；名字不匹配的目录和同名普通文件不碰", async () => {
+  const src = HOME_SRC();
+  mkdirSync(join(src, "a"), { recursive: true });
+  writeFileSync(join(src, "a", "x.txt"), "x");
+  try {
+    const bk = fresh("home-keep");
+    mkdirSync(join(bk, "tau-20200101-000000.home", "inner"), { recursive: true });
+    mkdirSync(join(bk, "tau-notes.home"));
+    mkdirSync(join(bk, "other"));
+    writeFileSync(join(bk, "tau-20200202-000000.home"), "我是普通文件");
+    for (let s = 1; s <= 3; s++) {
+      const r = await run(["--dir", bk, "--keep", "2"], { now: `2031-06-04T10:00:0${s}` });
+      assert.deepEqual([r.code, r.stderr], [0, ""], r.stdout);
+      if (s === 1) assert.match(r.stdout, /已删除更旧的领地备份 1 个。/);
+    }
+    assert.deepEqual(names(bk), [
+      "other",
+      "tau-20200202-000000.home",
+      "tau-20310604-100002.db",
+      "tau-20310604-100002.home",
+      "tau-20310604-100003.db",
+      "tau-20310604-100003.home",
+      "tau-notes.home",
+    ]);
+    assert.equal(statSync(join(bk, "tau-20200202-000000.home")).isFile(), true);
+  } finally {
+    rmSync(src, { recursive: true, force: true });
+  }
+});
+
+test("领地：拷贝失败（目标 <stem>.home 已是个文件）：退出码 1，库备份还在，预置的文件不删，旧备份照常清理", async () => {
+  const src = HOME_SRC();
+  mkdirSync(join(src, "a"), { recursive: true });
+  writeFileSync(join(src, "a", "x.txt"), "x");
+  try {
+    const bk = fresh("home-fail");
+    mkdirSync(bk);
+    writeFileSync(join(bk, "tau-20310605-100000.home"), "预置的文件");
+    writeFileSync(join(bk, "tau-20000101-000000.db"), "旧备份");
+    const r = await run(["--dir", bk, "--keep", "1"], { now: "2031-06-05T10:00:00" });
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /领地没拷完/);
+    assert.equal(statSync(join(bk, "tau-20310605-100000.db")).isFile(), true);
+    assert.equal(readFileSync(join(bk, "tau-20310605-100000.home"), "utf8"), "预置的文件");
+    assert.equal(existsSync(join(bk, "tau-20000101-000000.db")), false, "清理照常做");
+  } finally {
+    rmSync(src, { recursive: true, force: true });
+  }
+});
+
+test("prune：返回库备份和领地备份各删了哪些；刚做的 .home 不删；名字匹配但不是目录的不碰", () => {
+  const made = "tau-20261118-120000.db";
+  const d = withFiles("prune-homes", [made, "tau-20300101-000001.db", "tau-20300101-000002.db", "tau-20300101-000003.home"]);
+  for (const h of ["tau-20261118-120000", "tau-20300101-000001", "tau-20300101-000002", "tau-20250101-000000"]) mkdirSync(join(d, `${h}.home`));
+  const r = prune(d, 2, made);
+  assert.deepEqual(r, { dbs: ["tau-20300101-000001.db"], homes: ["tau-20250101-000000.home", "tau-20300101-000001.home"] });
+  assert.deepEqual(names(d), [made, "tau-20261118-120000.home", "tau-20300101-000002.db", "tau-20300101-000002.home", "tau-20300101-000003.home"]);
+});
+
+test("领地：旧的 .home.partial 残留被清掉；拷贝成功和失败后都不留 .partial", async () => {
+  const src = HOME_SRC();
+  mkdirSync(join(src, "a"), { recursive: true });
+  writeFileSync(join(src, "a", "x.txt"), "x");
+  try {
+    const bk = fresh("home-partial");
+    mkdirSync(join(bk, "tau-20200101-000000.home.partial", "inner"), { recursive: true });
+    mkdirSync(join(bk, "tau-20310606-100000.home.partial"), { recursive: true }); // 同名残留：先删再拷
+    writeFileSync(join(bk, "tau-20310606-100000.home.partial", "junk"), "半截");
+    const r = await run(["--dir", bk], { now: "2031-06-06T10:00:00" });
+    assert.deepEqual([r.code, r.stderr], [0, ""], r.stdout);
+    assert.deepEqual(names(bk), ["tau-20310606-100000.db", "tau-20310606-100000.home"]);
+    assert.deepEqual(names(join(bk, "tau-20310606-100000.home")), ["a"]);
+
+    // 失败：目标 .home 已存在。不留 .partial。
+    mkdirSync(join(bk, "tau-20310606-100001.home"));
+    const f = await run(["--dir", bk], { now: "2031-06-06T10:00:01" });
+    assert.equal(f.code, 1);
+    assert.ok(!names(bk).some((n) => n.endsWith(".partial")), names(bk).join());
+  } finally {
+    rmSync(src, { recursive: true, force: true });
+  }
+});
+
+test("领地：这一次没拷成，不删任何旧的 .home（库照旧清理）；连着失败也不会删光", async () => {
+  const src = HOME_SRC();
+  mkdirSync(join(src, "a"), { recursive: true });
+  writeFileSync(join(src, "a", "x.txt"), "x");
+  try {
+    const bk = fresh("home-fail-keep");
+    for (const s of [1, 2]) {
+      const r = await run(["--dir", bk, "--keep", "2"], { now: `2031-06-07T10:00:0${s}` });
+      assert.deepEqual([r.code, r.stderr], [0, ""], r.stdout);
+    }
+    for (const s of [3, 4]) {
+      mkdirSync(join(bk, `tau-20310607-10000${s}.home`)); // 预置同名目录，让这一次拷贝失败
+      const r = await run(["--dir", bk, "--keep", "2"], { now: `2031-06-07T10:00:0${s}` });
+      assert.equal(r.code, 1, r.stderr);
+      assert.equal(existsSync(join(bk, "tau-20310607-100001.home")), true);
+      assert.equal(existsSync(join(bk, "tau-20310607-100002.home")), true);
+    }
+    assert.deepEqual(names(bk).filter((n) => n.endsWith(".db")), ["tau-20310607-100003.db", "tau-20310607-100004.db"]);
+  } finally {
+    rmSync(src, { recursive: true, force: true });
+  }
+});
+
+test("prune：dropHomes 为 false 不删 .home，但 .db 和 .home.partial 照旧清理", () => {
+  const made = "tau-20261118-120000.db";
+  const d = withFiles("prune-nohomes", [made, "tau-20250101-000000.db"]);
+  mkdirSync(join(d, "tau-20250101-000000.home"));
+  mkdirSync(join(d, "tau-20240101-000000.home.partial"));
+  const r = prune(d, 1, made, false);
+  assert.deepEqual(r, { dbs: ["tau-20250101-000000.db"], homes: [] });
+  assert.deepEqual(names(d), ["tau-20250101-000000.home", made]);
 });

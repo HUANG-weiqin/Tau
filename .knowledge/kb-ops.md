@@ -15,7 +15,7 @@
 - 服务：仓库根 `./tau serve`（`node src/main.ts serve`）。它监听命名管道 `\\.\pipe\tau`，监听成功才算持锁，同一时间只能有一个。
 - 看进程：`./tau ps`；发信：`./tau send <进程> "<信>"`；停一轮：`./tau stop <进程>`。
 - 界面桥：`node extras/gui/bridge/main.ts --port 4317`，浏览器开 `http://127.0.0.1:4317/`。桥不拉起服务；服务不在时界面只有历史，写不了。
-- 数据：`~/.tau/tau.db` 是库（`user_version` 6，表见 [kb-store](kb-store.md)）；`~/.tau/presets/`、`~/.tau/tools/` 是文件；`~/.tau/auth.json` 是凭据；`~/.tau/extras/` 是上层数据，不进库、不备份。
+- 数据：`~/.tau/tau.db` 是库（`user_version` 6，表见 [kb-store](kb-store.md)）；`~/.tau/presets/`、`~/.tau/tools/` 是文件；`~/.tau/auth.json` 是凭据；`~/.tau/extras/` 是上层数据，不进库；其中只有领地 `extras/home/` 由备份脚本拷走（[kb-extras 的领地](kb-extras.md#领地)）。
 - 一个进程 = 会话快照 + 信箱 + 状态，消息在库里。换段只加段，不删旧段（`prune` 才删）。
 
 ## 改完代码以后
@@ -35,9 +35,11 @@
 
 ## 备份与恢复
 
-- 备份：`node extras/backup.ts`。默认写到 `~/.tau/extras/backup/`，留 14 份，文件名按时间排序。参数和退出码见 [kb-extras 的备份](kb-extras.md#备份)。
+- 备份：`node extras/backup.ts`。默认写到 `~/.tau/extras/backup/`，留 14 份，文件名按时间排序。每份是库 `tau-<时间>.db`，加领地的拷贝 `tau-<时间>.home/`。参数和退出码见 [kb-extras 的备份](kb-extras.md#备份)。
+- 计划任务：本机还没有建（2026-11-22 查过，`tau-backup` 不存在）。命令见 [kb-extras 的备份](kb-extras.md#备份)。
 - 演练：`.smoke/rehearse.mjs` 在备份副本上开库，看 `user_version`、`integrity_check`、进程/消息/图片/记忆的行数。
 - 恢复：停服务 → 把备份复制成 `~/.tau/tau.db` → 删掉 `tau.db-wal` 和 `tau.db-shm` → 起服务。顺序反了会把旧库和旧 WAL 混在一起。
+- 恢复领地：不用停服务。把 `<备份目录>/tau-<时间>.home/<预设 ID>/` 拷回 `~/.tau/extras/home/`。先问用户：拷回会盖掉 Agent 之后写的东西。
 
 ## 清理
 
