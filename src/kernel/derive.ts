@@ -144,10 +144,9 @@ export function usageOf(m: AssistantMessage): number {
 
 /** 上下文用量（token）：最后一条用量不为 0 的助手消息，加上它之后的消息的估算。估算只在总字节数上取整一次。 */
 export function contextUsed(p: Process, segment: readonly Message[]): number {
-  const bytes = (ms: readonly Message[]) => sum(ms.map(messageBytes));
   for (let i = segment.length - 1; i >= 0; i--) {
     const m = segment[i]!;
-    if (m.role === "assistant" && usageOf(m) > 0) return usageOf(m) + tokens(bytes(segment.slice(i + 1)));
+    if (m.role === "assistant" && usageOf(m) > 0) return usageOf(m) + tokens(sum(segment.slice(i + 1).map(messageBytes)));
   }
   return estimatedUsed(p, segment);
 }
@@ -162,26 +161,24 @@ export function segmentStartedAt(segment: readonly Message[]): Instant | undefin
   return segment[0]?.timestamp;
 }
 
+/** 最后一条助手消息里的工具调用，和它之后的工具结果。按位置配对，不按 ID：结果总是按调用的顺序写入，而 ID 来自模型，可能重复或为空。 */
+function lastTurn(segment: readonly Message[]): { calls: ToolCall[]; results: Message[] } | undefined {
+  const i = segment.findLastIndex((m) => m.role === "assistant");
+  const last = segment[i];
+  if (last?.role !== "assistant") return undefined;
+  return { calls: last.content.filter((c): c is ToolCall => c.type === "toolCall"), results: segment.slice(i + 1).filter((m) => m.role === "toolResult") };
+}
+
 /** 待执行的工具调用：最后一条助手消息里，还没有结果的工具调用。 */
 export function pendingCalls(segment: readonly Message[]): ToolCall[] {
-  let i = segment.length - 1;
-  while (i >= 0 && segment[i]!.role !== "assistant") i--;
-  const last = segment[i];
-  if (last?.role !== "assistant") return [];
-  // 按位置配对，不按 ID：结果总是按调用的顺序写入，而 ID 来自模型，可能重复或为空。
-  const answered = segment.slice(i + 1).filter((m) => m.role === "toolResult").length;
-  return last.content.filter((c): c is ToolCall => c.type === "toolCall").slice(answered);
+  const t = lastTurn(segment);
+  return t === undefined ? [] : t.calls.slice(t.results.length);
 }
 
 /** 主动换段：最后一条助手消息里有 `handoff` 调用，并且它的结果不是错误。补的结果都是错误，所以没执行的 `handoff` 不算。不存状态，从段算。 */
 export function handoffRequested(segment: readonly Message[]): boolean {
-  let i = segment.length - 1;
-  while (i >= 0 && segment[i]!.role !== "assistant") i--;
-  const last = segment[i];
-  if (last?.role !== "assistant") return false;
-  const results = segment.slice(i + 1).filter((m) => m.role === "toolResult");
-  // 按位置配对，同 pendingCalls。
-  return last.content.filter((c): c is ToolCall => c.type === "toolCall").some((c, k) => c.name === "handoff" && results[k]?.role === "toolResult" && !results[k].isError);
+  const t = lastTurn(segment);
+  return t !== undefined && t.calls.some((c, k) => c.name === "handoff" && t.results[k]?.role === "toolResult" && !t.results[k].isError);
 }
 
 /** 最终回复：从段尾往前，遇到用户消息之前的最后一条助手消息的正文。 */

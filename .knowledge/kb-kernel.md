@@ -1,6 +1,6 @@
 # 纯函数层
 
-`updated: 2026-11-19`
+`updated: 2026-11-22`
 
 ## 这个模块是干什么的
 
@@ -197,7 +197,7 @@ interface Env { now: Instant; memoryView: string; fresh?: { memoryView: string; 
 | `memory_edit` | `key`、`old`、`new`、`version`、`brief?` | 是 | `tools` 含 `memory` |
 | `memory_delete` | `key`、`version` | 是 | `tools` 含 `memory` |
 | `post` | `to`、`text`、`reply?` | 是 | `tools` 含 `agents` |
-| `spawn` | `preset`、`text` | 是 | `tools` 含 `agents` |
+| `spawn` | `preset`、`text`、`workdir?` | 是 | `tools` 含 `agents` |
 | `stop_process` | `process` | 是 | `tools` 含 `agents` |
 | `self` | 无 | 是 | 总在 |
 | `handoff` | 无 | 是 | 总在 |
@@ -503,14 +503,14 @@ W 是 `preset.contextWindow`。快照里只存它和 `input`，不存模型的�
 
 可恢复的模型失败不结束这一轮：阶段仍是 `awaitingModel`，用途不变，`lastEffect` 加一（发出新的副作用），重发同一个请求。`retry(turn, purpose, kind, give)` 是 `decide` 里的一个函数：
 
-- `turn.retry` 的 `kind` 和这次的不同，次数 `n` 从 1 起；相同则加一。`n` 超过 `RETRIES_PER_REPLY`（2）就调用 `give`，也就是上表里“次数用完”的现状结束处理。
+- `turn.retry` 的 `n` 是连续失败的次数，不分种类；`kind` 只记最后一次的种类。`n` 超过 `RETRIES_PER_REPLY`（2）就调用 `give`，也就是上表里“次数用完”的现状结束处理。
 - 重发和 `continueTurn` 一样计步：`turn.steps >= STEPS_PER_TURN` 时 `endTurn(turn, "stepLimit")`，否则步数加一。用途不重新判断，所以 `reconfigure` 改了 `handoff` 之后，存下的用途照旧，直到重发结束（[坑点](#坑点)）。`turn.queued` 原样保留：重发期间到的信照常排队，在之后的安全点或本轮结束时合并一次。
 - 请求末尾加什么，见[函数](#函数)里 `buildContext` 的消息一项：`empty` 加 `EMPTY_REPLY_NOTE`，`length` 加 `LENGTH_NOTE`，交接请求（用途 `handoff`）只要重发过就在交接指令后加 `HANDOFF_RETRY`，不看 `kind`；用途 `turn` 的 `error` 不加。提示不入库。
 - 失败的回复不入段，所以重发期间段、用量锚点、阈值都不变；累计用量照加（每个不丢弃的模型结果都加）。
 - 崩溃：重发中的 `awaitingModel` 被 `interrupted` 送回时，照旧 `endTurn(turn, { error: "服务重启，模型调用被中断" })`，不再重发。
 - 没做：文字里假装调用工具、死循环检测、流看门狗、重启后重发、窗口溢出（[D92](kb-decisions.md#d92-弱模型兜底可恢复的模型失败重试不结束这一轮)）。连续失败的次数不分种类，一起数。
 
-工具调用太多：每个调用按 2 × ID + 名称 + `未执行` 的字节算补的结果，换成 token 后加上交接请求末尾那条消息的 309（`HANDOFF_REQUEST_MAX_BYTES`）。超过 `MARGIN_TOKENS` 时只留放得下的前几个调用，后面的调用和它们后面的文字一起丢掉（[D87](kb-decisions.md#d87-一次回复的工具调用放不下时截断不再作废整条回复)）；连第一个都放不下才不写入、本轮出错。截断是静默的：模型看到自己只发了留下的那些，下一轮会重发没拿到结果的调用。留下几个用同一个口径算：把所有字节加起来再换成 token，不逐个取整，所以留的是“放得下的最长前缀”。
+工具调用太多：每个调用按 2 × ID + 名称 + `未执行` 的字节算补的结果，换成 token 后加上交接请求末尾那条消息的 309（`HANDOFF_REQUEST_MAX_BYTES`）。超过 `MARGIN_TOKENS` 时只留放得下的前几个调用，后面的调用和它们后面的文字一起丢掉；留下的部分里没有文字块时，把被丢掉的部分里最后一个文字块接回来，免得回信正文是空串（[D87](kb-decisions.md#d87-一次回复的工具调用放不下时截断不再作废整条回复)）；连第一个都放不下才不写入、本轮出错。截断是静默的：模型看到自己只发了留下的那些，下一轮会重发没拿到结果的调用。留下几个用同一个口径算：把所有字节加起来再换成 token，不逐个取整，所以留的是“放得下的最长前缀”。
 
 - ID 算两次：它由服务端分配，不在回复的用量里；之后的请求里调用和结果各带一次。
 - 上限和窗口无关，只和 ID 的长度有关。以 `read` 为例（实测 2000 个调用二分）：2 字节的 ID 454 个，Anthropic 的 ID（30 字节）105 个，openai-responses 的 ID（81 字节）44 个。余量已经分给一次回复、一个没检查的工具结果和交接说明，挪不动；要让一次回复能带更多调用，只能改 `MARGIN_TOKENS` 或者换 ID 短的供应商。

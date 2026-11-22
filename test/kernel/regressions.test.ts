@@ -1,9 +1,9 @@
 // 审查确认的内核缺陷的最小反例。
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { effectOf, INTERRUPTED, SKIPPED } from "../../src/kernel/decide.ts";
+import { decide, effectOf, INTERRUPTED, SKIPPED } from "../../src/kernel/decide.ts";
 import { clip, utf8Bytes } from "../../src/kernel/derive.ts";
-import { assistant, call, current, feed, reply, stopInput, textOf, toolDone, userInput, world } from "./helpers.ts";
+import { assistant, call, current, env, feed, reply, stopInput, textOf, toolDone, userInput, world } from "./helpers.ts";
 
 test("同一条回复里工具调用 ID 重复（provider 不给 ID 时 pi-ai 填空串）：每个调用都执行、都有结果，然后继续本轮", () => {
   const w = world();
@@ -43,4 +43,17 @@ test("clip 不拆开代理对，极小上限也不超出", () => {
     assert.ok(utf8Bytes(out) <= Math.max(max, utf8Bytes(out.replace(/😀/g, ""))), `max=${max}`);
     assert.doesNotMatch(out, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/, `max=${max}`);
   }
+});
+
+test("排队的信多到十几万封：停止时算跳数不展开参数，不抛 RangeError，回信的跳数是最大值加一", () => {
+  const w = world();
+  feed(w, userInput("开始"));
+  const phase = w.p.phase;
+  assert.equal(phase.tag, "awaitingModel");
+  if (phase.tag !== "awaitingModel") return;
+  const queued = Array.from({ length: 200_000 }, (_, i) => ({ from: { kind: "user" as const }, content: [], hops: i === 7 ? 3 : 0 }));
+  const p = { ...w.p, phase: { ...phase, turn: { ...phase.turn, queued, replyTo: ["q"] } } };
+  const r = decide(p, current(w), stopInput(), env(0));
+  const hops = r.out.map((o) => o.letter.hops);
+  assert.deepEqual(hops, [4]);
 });

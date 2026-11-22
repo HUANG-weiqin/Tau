@@ -302,7 +302,7 @@ function atSafePoint(d: Draft, turn: Turn): void {
   push(d, userMessage(text, images, false, d.env.now, { letters: metas }));
   const handoff = wantsHandoff(d, turn.queued);
   const replyTo = [...new Set([...turn.replyTo, ...turn.queued.flatMap((l) => (l.replyTo === undefined ? [] : [l.replyTo]))])];
-  const hops = Math.max(turn.hops, ...turn.queued.map((l) => l.hops));
+  const hops = turn.queued.reduce((m, l) => Math.max(m, l.hops), turn.hops);
   return continueTurn(d, { ...turn, queued: [], hops, replyTo }, handoff);
 }
 
@@ -347,7 +347,7 @@ function endTurn(d: Draft, turn: Turn, ended: Ended): void {
  */
 function sendReplies(d: Draft, turn: Turn, ended: Ended, text: string): void {
   const extra = ended === "done" ? [] : turn.queued.flatMap((l) => (l.replyTo === undefined || turn.replyTo.includes(l.replyTo) ? [] : [l.replyTo]));
-  const hops = Math.max(turn.hops, ...turn.queued.map((l) => l.hops)) + 1;
+  const hops = turn.queued.reduce((m, l) => Math.max(m, l.hops), turn.hops) + 1;
   const reply = { ended: typeof ended === "object" ? { error: endedReason(ended.error) } : ended };
   const from = { kind: "process" as const, id: d.p.id, preset: d.p.preset.id, reply };
   for (const to of turn.replyTo) d.out.push({ to, letter: { from, content: text === "" ? [] : textContent(text), hops } });
@@ -357,7 +357,7 @@ function sendReplies(d: Draft, turn: Turn, ended: Ended, text: string): void {
 /** 新一轮：`hops` 和 `replyTo` 只取自开这一轮的信（设计稿第 5.3 节规则 2、5）。 */
 function newTurn(letters: readonly Letter[]): Turn {
   const replyTo = letters.flatMap((l) => (l.replyTo === undefined ? [] : [l.replyTo]));
-  return { steps: 0, queued: [], hops: Math.max(...letters.map((l) => l.hops)), replyTo: [...new Set(replyTo)] };
+  return { steps: 0, queued: [], hops: letters.reduce((m, l) => Math.max(m, l.hops), 0), replyTo: [...new Set(replyTo)] };
 }
 
 const textOf = (blocks: readonly Content[]): string => blocks.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("");
