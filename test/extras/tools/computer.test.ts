@@ -32,6 +32,7 @@ import {
   typeItems,
   wheelEvent,
   zoomRect,
+  zoomText,
 } from "../../../extras/tools/computer_lib.ts";
 
 const SCRIPT = join(import.meta.dirname, "..", "..", "..", "extras", "tools", "computer.ts");
@@ -87,6 +88,35 @@ test("zoomRect：向外取整、不出屏幕；输出尺寸用 fitSize", () => {
   // 一个像素宽也至少有 1 个屏幕像素。
   const tiny = zoomRect([5, 5, 6, 6], shot, screen);
   assert.ok(tiny.w >= 1 && tiny.h >= 1);
+});
+
+test("zoomText：完整文本，和从放大图点换回屏幕的往返", () => {
+  const screen = { w: 3440, h: 1440 };
+  const shot = fitSize(screen.w, screen.h);
+  const region: [number, number, number, number] = [10, 5, 110, 25];
+  const rect = zoomRect(region, shot, screen);
+  const out = fitSize(rect.w, rect.h);
+  const text = zoomText(region, rect, out);
+  assert.equal(
+    text,
+    `放大图：截图区域 (10, 5)–(110, 25)，对应屏幕 ${rect.w}×${rect.h} 像素，图 ${out.w}×${out.h}。放大图里的点 (u, v) 在截图里是 (10 + u × kx, 5 + v × ky)，kx = ${(100 / out.w).toFixed(3)}，ky = ${(20 / out.h).toFixed(3)}；点的时候先换成截图坐标。`,
+  );
+  assert.match(zoomText([0, 0, 200, 100], { w: 878, h: 440 }, { w: 878, h: 440 }), /kx = 0\.228，ky = 0\.227；/);
+  // 往返：按文本里的系数换成截图坐标，再换成屏幕坐标，离真实位置不超过一个截图像素的屏幕宽度。
+  const kx = Number(/kx = ([\d.]+)/.exec(text)![1]);
+  const ky = Number(/ky = ([\d.]+)/.exec(text)![1]);
+  const stepX = screen.w / shot.w;
+  const stepY = screen.h / shot.h;
+  for (let u = 0; u < out.w; u += 7) {
+    for (let v = 0; v < out.h; v += 5) {
+      const p = toScreen({ x: 10 + u * kx, y: 5 + v * ky }, shot, screen);
+      const trueX = rect.x + ((u + 0.5) * rect.w) / out.w;
+      const trueY = rect.y + ((v + 0.5) * rect.h) / out.h;
+      assert.ok(p.x >= rect.x - stepX && p.x < rect.x + rect.w + stepX, `x ${u}: ${p.x}`);
+      assert.ok(p.y >= rect.y - stepY && p.y < rect.y + rect.h + stepY, `y ${v}: ${p.y}`);
+      assert.ok(Math.abs(p.x - trueX) <= stepX && Math.abs(p.y - trueY) <= stepY, `(${u}, ${v}) -> ${p.x},${p.y} 真实 ${trueX},${trueY}`);
+    }
+  }
 });
 
 test("parseKeys：组合、序列、只有修饰键、大小写", () => {
@@ -198,10 +228,10 @@ test("parseArgs：每个动作的必填、类型、范围和默认值", () => {
   assert.ok(s.action === "scroll" && s.amount === 3);
 
   assert.match(failure(() => parseArgs({ action: "type" })), /^type 要 text/);
-  assert.match(failure(() => parseArgs({ action: "type", text: "" })), /1 到 4000/);
-  assert.match(failure(() => parseArgs({ action: "type", text: "a".repeat(4001) })), /1 到 4000/);
-  assert.match(failure(() => parseArgs({ action: "type", text: 5 })), /1 到 4000/);
-  assert.deepEqual(parseArgs({ action: "type", text: "a".repeat(4000) }).action, "type");
+  assert.match(failure(() => parseArgs({ action: "type", text: "" })), /1 到 1000/);
+  assert.match(failure(() => parseArgs({ action: "type", text: "a".repeat(1001) })), /1 到 1000.*分几次/);
+  assert.match(failure(() => parseArgs({ action: "type", text: 5 })), /1 到 1000/);
+  assert.deepEqual(parseArgs({ action: "type", text: "a".repeat(1000) }).action, "type");
 
   assert.match(failure(() => parseArgs({ action: "key" })), /^key 要 keys/);
   assert.match(failure(() => parseArgs({ action: "key", keys: 5 })), /keys 要是字符串/);
@@ -464,7 +494,7 @@ test("脚本：截图和放大（只读，不动鼠标键盘）", (t) => {
     assert.equal(zoom.status, 0, zoom.stderr);
     const zitems = JSON.parse(zoom.stdout) as Array<{ type: string; text?: string; path?: string }>;
     const zsize = checkImage(home, zitems);
-    const zm = /^放大图：截图区域 \(0, 0\)–\((\d+), (\d+)\)，对应屏幕 (\d+)×(\d+) 像素，图 (\d+)×(\d+)。这张图里的坐标不能拿去点/.exec(zitems[0]!.text!);
+    const zm = /^放大图：截图区域 \(0, 0\)–\((\d+), (\d+)\)，对应屏幕 (\d+)×(\d+) 像素，图 (\d+)×(\d+)。放大图里的点 \(u, v\) 在截图里是 \(0 \+ u × kx, 0 \+ v × ky\)，kx = [\d.]+，ky = [\d.]+；点的时候先换成截图坐标。$/.exec(zitems[0]!.text!);
     assert.ok(zm, zitems[0]!.text);
     assert.deepEqual({ w: Number(zm[5]), h: Number(zm[6]) }, zsize);
     assert.deepEqual(fitSize(Number(zm[3]), Number(zm[4])), zsize);
@@ -598,11 +628,15 @@ test("perform：带修饰键的点击和滚动只发一次，修饰键先按后�
   assert.deepEqual(scrollEvents("up", 2, []), [wheelEvent("up"), wheelEvent("up")]);
 });
 
-test("perform：type 分批不超过 64 个 INPUT，key 每个组合一次", async () => {
+test("perform：type 逐字发送，每个字一对按下松开、之后等 10 毫秒；key 每个组合一次", async () => {
   const t = fakeIo();
-  await perform(parseArgs({ action: "type", text: "x".repeat(70) }), SHOT, SCREEN, t.io);
-  assert.deepEqual(t.sends.map((s) => s.length), [64, 64, 12]);
-  assert.deepEqual(t.sleeps, [10, 10]);
+  await perform(parseArgs({ action: "type", text: "a中\r\nb\t😀" }), SHOT, SCREEN, t.io);
+  // a、中、换行（一个 Return 键）、b、Tab、两个代理单位：共 7 项。
+  assert.equal(t.sends.length, 7);
+  assert.ok(t.sends.every((e) => e.length === 2 && !(e[0] as { up: boolean }).up && (e[1] as { up: boolean }).up));
+  assert.deepEqual(t.sends[2], [{ kind: "key", vk: 0x0d, ext: false, up: false }, { kind: "key", vk: 0x0d, ext: false, up: true }]);
+  assert.deepEqual(t.sleeps, Array(7).fill(10));
+  assert.deepEqual(t.log, ["release", ...Array(7).fill(["send"]).flat()]);
   const k = fakeIo();
   await perform(parseArgs({ action: "key", keys: "ctrl+a BackSpace" }), SHOT, SCREEN, k.io);
   assert.deepEqual(k.sends.map((s) => s.length), [4, 2]);

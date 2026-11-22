@@ -225,7 +225,7 @@ git -C $REPO branch -d wt/<名字>
 | `list_presets` | 列出 `~/.tau/presets/` 里的预设：ID、正文第一行（一句话说明）、`model`、`tools`、`workdir`。没有参数。给 `spawn` 选预设用：`spawn` 只收预设 ID，内核没有“列预设”的接口。`timeout` 30 | 不存 | 只读，重做无害。不连服务：直接读文件，不读 `TAU_PROCESS`。格式不对的预设不抛，缺的字段写 `?`。预设作者要把“我是谁”写在正文第一行，列表才有用 |
 | `create_preset` | 在 `~/.tau/presets/<id>.md` 新建预设，引用的工具库工具如未安装先自动补装，随后连管道发 `check` 验证；校验不过自动删回新建文件并报错。同名（含 Windows 大小写碰撞）不覆盖。`timeout` 30 | 写 `~/.tau/presets/<id>.md`（及缺失的工具库 `<name>.json`） | 库外工具，崩溃时报“被中断”；用 `wx` 排他建且 `check` 失败即回滚，不会破坏已有预设或留下坏文件 |
 | `delete_preset` | 删除 `~/.tau/presets/<id>.md`（区分大小写）。先连管道发 `ps`，还有该预设的进程在运行就拒绝；记忆库和已结束的历史进程不受影响。`timeout` 30 | 删 `~/.tau/presets/<id>.md` | 库外工具，崩溃时报“被中断”；重做时预设已不存在会报找不到，不会误伤新文件 |
-| `computer` | 操作主屏：`action` 是 `screenshot`、`zoom`、`click`、`move`、`drag`、`scroll`、`type`、`key`、`wait`。截图缩到长边不超过 1568、不超过 115 万像素，坐标按截图算，脚本换成屏幕坐标；`zoom` 按截图坐标取一块看原分辨率；动作做完等 0.5 秒自动截图返回。每次先查输入桌面，锁屏时报错。`output: content`，`timeout` 30 | `~/.tau/extras/computer/<进程 ID>/`：截图文件，内核读进库以后就没用了，工具每次调用删 1 小时前的 | 点击和输入崩溃或停止时报“被中断”，不重做，可能停在半截。和用户抢鼠标；约定只给一个预设。管理员权限的窗口点不动。做法和理由见 [D100](kb-decisions.md#d100-桌面控制工具库的-computer) |
+| `computer` | 操作主屏：`action` 是 `screenshot`、`zoom`、`click`、`move`、`drag`、`scroll`、`type`、`key`、`wait`。截图缩到长边不超过 1568、不超过 115 万像素，坐标按截图算，脚本换成屏幕坐标；`zoom` 按截图坐标取一块看原分辨率，结果里给出换回截图坐标的公式；动作做完等 0.5 秒自动截图返回。`type` 逐字发，一次最多 1000 个字。每次先查输入桌面，锁屏时报错。`output: content`，`timeout` 60 | `~/.tau/extras/computer/<进程 ID>/`：截图文件，内核读进库以后就没用了，工具每次调用删 1 小时前的 | 点击和输入崩溃或停止时报“被中断”，不重做，可能停在半截。和用户抢鼠标；约定只给一个预设。管理员权限的窗口点不动。做法和理由见 [D100](kb-decisions.md#d100-桌面控制工具库的-computer) |
 
 怎么做：
 

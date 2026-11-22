@@ -6,7 +6,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Fail, extrasDir, readArgs, run, tauEnv } from "./common.ts";
-import { checkBounds, describeWindow, doneText, encodeImage, fitSize, parseArgs, perform, pruneComputerImages, zoomRect } from "./computer_lib.ts";
+import { checkBounds, describeWindow, doneText, encodeImage, fitSize, parseArgs, perform, pruneComputerImages, zoomRect, zoomText } from "./computer_lib.ts";
 import type { Io, Size } from "./computer_lib.ts";
 import { capture, checkDesktop, desktopProblem, foreground, initDpi, releaseStuck, screenSize, send, setCursor } from "./win32.ts";
 
@@ -51,9 +51,7 @@ if (import.meta.main) run(async () => {
     const rect = zoomRect(a.region, shot, screen);
     const out = fitSize(rect.w, rect.h);
     const file = saveImage(proc, capture(rect, out), out);
-    const [x0, y0, x1, y1] = a.region;
-    const text = `放大图：截图区域 (${x0}, ${y0})–(${x1}, ${y1})，对应屏幕 ${rect.w}×${rect.h} 像素，图 ${out.w}×${out.h}。这张图里的坐标不能拿去点，点的时候用截图的坐标。`;
-    show([{ type: "text", text }, { type: "image", path: file }]);
+    show([{ type: "text", text: zoomText(a.region, rect, out) }, { type: "image", path: file }]);
     return;
   }
   await perform(a, shot, screen, io);

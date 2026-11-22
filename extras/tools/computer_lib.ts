@@ -52,6 +52,14 @@ export function zoomRect(region: [number, number, number, number], shot: Size, s
   return { x: left, y: top, w: right - left, h: bottom - top };
 }
 
+/** zoom 结果的文字：放大图里的点 (u, v) 换成截图坐标的公式和系数，免得模型自己算。 */
+export function zoomText(region: Quad, rect: Size, out: Size): string {
+  const [x0, y0, x1, y1] = region;
+  const kx = ((x1 - x0) / out.w).toFixed(3);
+  const ky = ((y1 - y0) / out.h).toFixed(3);
+  return `放大图：截图区域 (${x0}, ${y0})–(${x1}, ${y1})，对应屏幕 ${rect.w}×${rect.h} 像素，图 ${out.w}×${out.h}。放大图里的点 (u, v) 在截图里是 (${x0} + u × kx, ${y0} + v × ky)，kx = ${kx}，ky = ${ky}；点的时候先换成截图坐标。`;
+}
+
 // ---------- 键盘 ----------
 
 export interface Key {
@@ -212,8 +220,8 @@ export function typeItems(text: string): TypeItem[] {
   return out;
 }
 
-/** 每批最多 64 个 INPUT，一项是按下和松开两个。 */
-export const TYPE_BATCH_ITEMS = 32;
+/** 输入文字，每个字之间等这么久。成批一次发出时，新版记事本偶尔丢字或换字；逐字间隔约 15 毫秒实测全对。 */
+export const TYPE_GAP_MS = 10;
 
 export function typeEvents(items: TypeItem[]): InputEvent[] {
   const out: InputEvent[] = [];
@@ -333,7 +341,7 @@ export function parseArgs(raw: Record<string, unknown>): Action {
     case "type": {
       const t = raw["text"];
       if (t === undefined || t === null) throw new Fail("type 要 text：要输入的文字。");
-      if (typeof t !== "string" || t.length < 1 || t.length > 4000) throw new Fail("type 的 text 要是 1 到 4000 个字的字符串。");
+      if (typeof t !== "string" || t.length < 1 || t.length > 1000) throw new Fail("type 的 text 要是 1 到 1000 个字的字符串；长文字分几次输入。");
       return { action, text: t };
     }
     case "key": {
@@ -473,9 +481,9 @@ export async function perform(a: Action, shot: Size, screen: Size, io: Io): Prom
     case "type": {
       io.releaseStuck();
       const items = typeItems(a.text);
-      for (let i = 0; i < items.length; i += TYPE_BATCH_ITEMS) {
-        if (i > 0) await io.sleep(10);
-        io.send(typeEvents(items.slice(i, i + TYPE_BATCH_ITEMS)));
+      for (const it of items) {
+        io.send(typeEvents([it]));
+        await io.sleep(TYPE_GAP_MS);
       }
       return;
     }
