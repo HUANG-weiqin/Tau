@@ -1,6 +1,6 @@
 # Tau Knowledge Index
 
-`updated: 2026-11-22`
+`updated: 2026-11-23`
 
 知识库记录当前架构、已做的决定和容易破坏的不变量。源码和测试是实现证据。[MVP 设计稿](../docs/design/mvp.md)描述 MVP 要做成什么样。[内核 v2 设计稿](../docs/design/kernel-v2.md)已冻结，只留指向 kb 页的链接。[v2 执行清单](../docs/plan/kernel-v2-checklist.md)记录按什么顺序做。
 
@@ -15,7 +15,7 @@
 | 加功能：接在哪里，按什么原则接 | [kb-extending.md 的推导顺序](kb-extending.md#推导顺序) |
 | 某个设计为什么是这样，当初放弃过什么 | [决策记录](kb-decisions.md) |
 | 想加一个看起来合理的机制（压缩、wait 工具、只读 bash 审查、按项目存数据） | 先读 [Pi Web 的教训](kb-piweb-lessons.md) |
-| 改纯函数层：类型、`decide`、`fork` 的复制规则、会话配置（`reconfigure`、待换配置）、上下文文件的系统提示词和启动检查、流程、换段和换段阈值、用量估算、投影的字段 | [kb-kernel.md](kb-kernel.md) |
+| 改纯函数层：类型、`decide`、`fork` 的复制规则、会话配置（`reconfigure`、待换配置）、上下文文件的系统提示词和启动检查、流程、换段和换段阈值、旧段的简略视图、用量估算、投影的字段 | [kb-kernel.md](kb-kernel.md) |
 | 改存储：表、处理输入的事务、库内工具的结果、上下文视图的读取 | [kb-store.md](kb-store.md) |
 | 改执行器、启动恢复、崩溃注入测试；升级 pi-ai | [kb-executor.md](kb-executor.md)、[升级 pi-ai](kb-executor.md#升级-pi-ai) |
 | 改 `read`、`write`、`edit`、`bash`：路径、编码、shell、结束进程、输出；改工具定义的格式、读取和运行（标准输入、text 和 content 输出、带图的结果，契约原文） | [kb-tools.md](kb-tools.md) |
@@ -44,7 +44,7 @@
 | [界面执行清单](../docs/plan/gui-checklist.md) | 图形界面的步骤顺序、每步的任务和验收、要用户点头的地方、当前进度 |
 | [MVP 执行清单](../docs/plan/mvp-checklist.md) | 已完成，留作记录 |
 | [kb-overview.md](kb-overview.md) | 产品边界、运行循环、状态分层、最小心智模型（含模型知道事情的三个入口）、源码入口 |
-| [kb-kernel.md](kb-kernel.md) | 纯函数层的类型（含段里消息的 `tau`、进程的 `since` 和 `next`）、预设的 `options`、换段信、会话配置（`reconfigure` 的 `decide` 规则、换段时采用待换配置、会话快照的比较 `snapshot.ts`）、上下文文件在纯函数层的部分（系统提示词、启动检查）、`start`、`fork`、`decide`、`effectOf`、`buildContext`、`observe` 和投影的字段（含 `self.pending`）、派生值、常量、工具描述、第 5 节的流程、纯函数层不变量 |
+| [kb-kernel.md](kb-kernel.md) | 纯函数层的类型（含段里消息的 `tau`、进程的 `since` 和 `next`）、预设的 `options`、换段信、会话配置（`reconfigure` 的 `decide` 规则、换段时采用待换配置、会话快照的比较 `snapshot.ts`）、换段时的旧段简略视图（D103）、上下文文件在纯函数层的部分（系统提示词、启动检查）、`start`、`fork`、`decide`、`effectOf`、`buildContext`、`observe` 和投影的字段（含 `self.pending`）、派生值、常量、工具描述、第 5 节的流程、纯函数层不变量 |
 | [kb-store.md](kb-store.md) | 库的位置、表结构和 PRAGMA、八个存储事务（含 fork、三个删除和写记忆的事务；`send` 带 `from`），工具定义声明的库内动作、图片（`blobs`）的存取、待办副作用表的同步、处理一条输入读什么（含 `fresh` 何时算）、上下文视图的拼法、存储层不变量、库内工具的参数、结果和文字格式 |
 | [kb-executor.md](kb-executor.md) | 待办副作用表一行的一生、执行器的三个事务、中止、失败怎样变成结果、模型和库外工具的调用、启动恢复、崩溃窗口、崩溃注入和竞态测试 |
 | [kb-memory.md](kb-memory.md) | `Memory` 接口的语义和契约、谁有记忆库、四个上限和 `set` 的检查顺序、视图的格式（索引）、版本号、键和值的编码 |
