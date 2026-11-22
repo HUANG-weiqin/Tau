@@ -80,7 +80,7 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 **边界与存储**（第 2 节、第 7 节、第 9 到 11 节）
 
 - `self` 只读，这是接口的范围，不是权限边界。没有沙箱。不做能被 bash 绕过的假边界。
-- 预设是 `~/.tau/presets/` 下的文件，工具定义是 `~/.tau/tools/` 下的文件，上层的数据在 `~/.tau/extras/<名字>/`，凭据（api key 和 OAuth 令牌）在 `~/.tau/auth.json`（[D83](.knowledge/kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)，这是不进库的内核数据之一）。另一个是 bash 工具的输出文件：写在 `~/.tau/extras/shell/<进程 ID>/`（[D90](.knowledge/kb-decisions.md#d90-bash-接管后台命令先等没跑完转后台输出写文件跑完寄信)），不进库、不备份、7 天清理，这是内核唯一写 `extras/` 的地方。其余数据都在 `~/.tau/tau.db`，包括图片（`blobs` 表）。项目目录里不写任何东西。
+- 预设是 `~/.tau/presets/` 下的文件，工具定义是 `~/.tau/tools/` 下的文件，上层的数据在 `~/.tau/extras/<名字>/`（例外：共享手册装在 `~/.tau/handbook.md`，原型在仓库 `extras/handbook/`，[D99](.knowledge/kb-decisions.md#d99-共享手册的原型进仓库安装脚本装到-tauhandbookmd)），凭据（api key 和 OAuth 令牌）在 `~/.tau/auth.json`（[D83](.knowledge/kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)，这是不进库的内核数据之一）。另一个是 bash 工具的输出文件：写在 `~/.tau/extras/shell/<进程 ID>/`（[D90](.knowledge/kb-decisions.md#d90-bash-接管后台命令先等没跑完转后台输出写文件跑完寄信)），不进库、不备份、7 天清理，这是内核唯一写 `extras/` 的地方。其余数据都在 `~/.tau/tau.db`，包括图片（`blobs` 表）。项目目录里不写任何东西。
 - 服务只在命名管道上监听，监听成功才算持锁。MVP 只支持 Windows。
 
 ## 准入规则

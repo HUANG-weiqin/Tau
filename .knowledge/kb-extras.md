@@ -16,7 +16,7 @@
 - 派工隔离的配方：多个队友改同一个仓库时，各用一个 git worktree。
 - 工具库：七个现成的工具定义。
 - 换段以后查旧段：提示放在哪里，建议写进预设的话。
-- 共享手册：`~/.tau/handbook.md`，给所有 agent 共用的一页使用技巧，靠预设的 `context` 挂上去。
+- 共享手册：给所有 agent 共用的一页使用技巧。原型在仓库 `extras/handbook/`，装到 `~/.tau/handbook.md`，靠预设的 `context` 挂上去。
 - 技能库：`~/.agents/skills`，跨预设可复用的做法，Agent 可写，进 Git。
 - 领地：带记忆的 Agent 自己的目录 `~/.tau/extras/home/<预设 ID>/`。
 - 备份：定期调 `backup` 请求的脚本和计划任务。
@@ -235,7 +235,18 @@ git -C $REPO branch -d wt/<名字>
 
 ### 共享手册
 
-内核不读它，也不生成它。只是一个普通 Markdown，`~/.tau/handbook.md`，写跨项目、跨预设都会踩的坑：内置 `bash` 的先等再转后台、别 sleep 等信、路径写法、`read` 能直接看图、改文件用 `edit`、记忆摘要限长、这儿的 tau 用绝对路径 `E:/tau/tau`、派工走 worktree、测试绿不等于对。
+内核不读它，也不生成它。只是一个普通 Markdown，装在 `~/.tau/handbook.md`，写跨项目、跨预设都会踩的坑：内置 `bash` 的先等再转后台、别 sleep 等信、路径写法、`read` 能直接看图、改文件用 `edit`、记忆摘要限长、这儿的 tau 用绝对路径、派工走 worktree、领地和技能库在哪、测试绿不等于对。
+
+原型在仓库里，由仓库管（[D99](kb-decisions.md#d99-共享手册的原型进仓库安装脚本装到-tauhandbookmd)）：
+
+- 原型是 `extras/handbook/handbook.md`。机器相关的路径写成占位符：`{{TAU_HOME}}`（`~/.tau`）、`{{SKILLS}}`（`~/.agents/skills`）、`{{REPO}}`（仓库根），全用正斜杠。
+- 装：`node extras/handbook/install.ts`，在主仓库里跑（git worktree 里拒绝）。按本机路径渲染原型，写到 `~/.tau/handbook.md`（临时文件改名），再把装进去的内容的哈希记在 `~/.tau/extras/handbook/installed.sha256`。
+  - 状态四种：`没装`、`已是最新`、`原型有更新`、`装着的被改过`。没装和原型有更新就装；已是最新不写手册，只在缺记录时补上。
+  - 装着的被改过（和记录的哈希不一样，或者没有记录）：拒绝，退出码 1。先把要留的改动搬进原型，再加 `--force` 覆盖。
+  - `--check` 只报状态，什么都不写；`已是最新` 退出码 0，其余 1。
+- 改手册只改原型，提交，再装。装着的那份不直接改；谁直接改了，先把要留的改动搬回原型，再 `--force`。
+- 新机器装 tau：跑一次安装脚本，再在预设的 `context` 里挂 `~/.tau/handbook.md` 的绝对路径。
+- 测试：`test/extras/handbook.test.ts`。
 
 为什么放上层、放成一个文件：
 
@@ -246,8 +257,8 @@ git -C $REPO branch -d wt/<名字>
 代价和约定：
 
 - 每次开段每个挂在上面的 agent 都读一遍，算进 24 KB 的上下文视图额度（[kb-store](kb-store.md#上下文文件视图)）。所以它必须短：一句一条，只写“不知道就会做错”的。
-- 人维护。谁踩到新的坑就加一句；超过一页就删最不常用的那条，不攒成第二份 `AGENTS.md`。
-- 改文件以后，下一次开段生效；已经在跑的进程要换段才读得到。
+- 人维护。谁踩到新的坑就在原型里加一句；超过一页就删最不常用的那条，不攒成第二份 `AGENTS.md`。
+- 装上以后，下一次开段生效；已经在跑的进程要换段才读得到。
 - 除了 `tau-tree-lead`、`tau-tree-lead-lite`、`tau-tree-leaf`，现在的预设都挂了它。新建预设由 `create_preset` 写文件，要挂得自己在 `context` 里加。
 
 ### 技能库

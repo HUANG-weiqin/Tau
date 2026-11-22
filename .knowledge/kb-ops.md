@@ -15,7 +15,7 @@
 - 服务：仓库根 `./tau serve`（`node src/main.ts serve`）。它监听命名管道 `\\.\pipe\tau`，监听成功才算持锁，同一时间只能有一个。
 - 看进程：`./tau ps`；发信：`./tau send <进程> "<信>"`；停一轮：`./tau stop <进程>`。
 - 界面桥：`node extras/gui/bridge/main.ts --port 4317`，浏览器开 `http://127.0.0.1:4317/`。桥不拉起服务；服务不在时界面只有历史，写不了。
-- 数据：`~/.tau/tau.db` 是库（`user_version` 6，表见 [kb-store](kb-store.md)）；`~/.tau/presets/`、`~/.tau/tools/` 是文件；`~/.tau/auth.json` 是凭据；`~/.tau/extras/` 是上层数据，不进库；其中只有领地 `extras/home/` 由备份脚本拷走（[kb-extras 的领地](kb-extras.md#领地)）。
+- 数据：`~/.tau/tau.db` 是库（`user_version` 6，表见 [kb-store](kb-store.md)）；`~/.tau/presets/`、`~/.tau/tools/` 是文件；`~/.tau/auth.json` 是凭据；`~/.tau/handbook.md` 是共享手册，由仓库里的原型装出来；`~/.tau/extras/` 是上层数据，不进库；其中只有领地 `extras/home/` 由备份脚本拷走（[kb-extras 的领地](kb-extras.md#领地)）。
 - 一个进程 = 会话快照 + 信箱 + 状态，消息在库里。换段只加段，不删旧段（`prune` 才删）。
 
 ## 改完代码以后
@@ -23,6 +23,7 @@
 - 改 `src/`（内核、服务）：要重启服务才生效。
 - 改 `extras/gui/bridge/` 或它的预设/工具定义读取：重启桥。
 - 改 `extras/gui/web/` 的静态文件：刷新浏览器就生效。
+- 改共享手册：改仓库里的原型 `extras/handbook/handbook.md`，再 `node extras/handbook/install.ts` 装到 `~/.tau/handbook.md`。各进程下一次开段读到（[kb-extras 的共享手册](kb-extras.md#共享手册)）。
 - 重启会中断正在跑的一轮：它们以“被中断”结束，进程和信都还在，库外副作用不会重做。重启前先 `./tau ps`，有进程在跑先问用户。
 - 重启：界面设置页的“重启”（桥转发 `extras/gui/restart.ps1`），或者手动结束 `node src/main.ts serve` 再起。
 
