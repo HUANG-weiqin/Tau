@@ -50,3 +50,18 @@ export function acquireLease(proc: string, io: LeaseIo): void {
     io.write(JSON.stringify({ holder: proc, at: now } satisfies Lease));
   });
 }
+
+/** 续租的间隔：上次成功拿租约到现在超过这么久才再拿。租约 30 秒过期，10 秒续一次有余量。 */
+export const LEASE_RENEW_MS = 10000;
+
+/** 返回一个“确保持有租约”的函数：第一次一定调 take，之后每隔 everyMs 再调一次。
+ *  take 抛错就不记成功时间，错误往外抛，下次还会调。 */
+export function leaseKeeper(take: () => void, now: () => number, everyMs = LEASE_RENEW_MS): () => void {
+  let last: number | null = null;
+  return () => {
+    const t = now();
+    if (last !== null && t >= last && t - last <= everyMs) return;
+    take();
+    last = t;
+  };
+}

@@ -10,6 +10,13 @@
 - 输出太长只回头尾，完整输出在返回的文件里，用 read 读。
 - `| tail`、`| grep` 会吞掉退出码。要退出码就写成 `cmd > log 2>&1; code=$?; echo $code; exit $code`。
 
+## 编排
+
+- 一串要连续、快速做完的动作（连续截图、点一下再看某处变没变、反复试同一个操作），写成一个 node 脚本用 bash 跑一次，别拆成很多次工具调用：每次调用都要等模型往返，几秒一次。
+- node 直接跑 TypeScript，脚本文件名用 `.mts`（用 `.ts` 在仓库外会多一段警告）。工具库的脚本在 `{{REPO}}/extras/tools/`，可以导入，写成 `import { … } from "file:///{{REPO}}/extras/tools/<文件>.ts"`（不加 `file:///` 会报错）。
+- 桌面：导入 `desktop.ts`，坐标和 computer 一样按截图算。发鼠标、键盘只用它的 `leasedIo`，否则绕过桌面租约，和别的 agent 抢鼠标。
+- 脚本把结果写成文件，打印路径和要点。要看的图先拼成一张再 read：一次结果最多两张图。
+
 ## 文件
 
 - read 能直接看 png、jpeg、gif、webp。要判断界面就截图存 png 再 read，别靠猜。

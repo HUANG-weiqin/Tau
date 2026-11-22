@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Fail } from "../../../extras/tools/common.ts";
 import { pruneComputerImages } from "../../../extras/tools/computer_lib.ts";
-import { LEASE_TTL_MS, acquireLease, needsLease, parseLease } from "../../../extras/tools/computer_lease.ts";
+import { LEASE_TTL_MS, acquireLease, leaseKeeper, needsLease, parseLease } from "../../../extras/tools/computer_lease.ts";
 import type { LeaseIo } from "../../../extras/tools/computer_lease.ts";
 
 const NOW = 1_000_000;
@@ -87,4 +87,51 @@ test("pruneComputerImages：不删 root 下的 lease.json 和 lease.json.tmp", (
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("leaseKeeper：第一次一定拿；10 秒内不重拿；超过 10 秒再拿；拿失败后下次还拿", () => {
+  let t = 5_000_000;
+  let takes = 0;
+  const ensure = leaseKeeper(() => void takes++, () => t);
+  ensure();
+  assert.equal(takes, 1);
+  t += 9_999;
+  ensure();
+  ensure();
+  assert.equal(takes, 1);
+  t += 1; // 刚好 10 秒：还不重拿
+  ensure();
+  assert.equal(takes, 1);
+  t += 1;
+  ensure();
+  assert.equal(takes, 2);
+  ensure();
+  assert.equal(takes, 2);
+
+  // 续期的时间从上次成功算；失败不记成功时间。
+  let fail = true;
+  let calls = 0;
+  const flaky = leaseKeeper(() => {
+    calls++;
+    if (fail) throw new Fail("占着");
+  }, () => t);
+  assert.throws(() => flaky(), /占着/);
+  assert.throws(() => flaky(), /占着/);
+  assert.equal(calls, 2);
+  fail = false;
+  flaky();
+  assert.equal(calls, 3);
+  flaky();
+  assert.equal(calls, 3);
+
+  // 自定义间隔；时钟往回调就重拿。
+  const short = leaseKeeper(() => void takes++, () => t, 100);
+  const before = takes;
+  short();
+  t += 101;
+  short();
+  assert.equal(takes, before + 2);
+  t -= 1000;
+  short();
+  assert.equal(takes, before + 3);
 });

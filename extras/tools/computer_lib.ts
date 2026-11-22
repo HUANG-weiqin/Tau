@@ -184,6 +184,12 @@ export function clickEvents(button: Button, count: number, mods: Key[]): InputEv
   return out;
 }
 
+/** 事件全是“松开”：键盘（含 unit）up 为真，鼠标是左、中、右键的 UP。空数组算是（什么也不按下，不需要租约）；混入按下、滚轮、移动都不算。
+ *  只松开的输入不经过租约：续租失败时，补发的松开不能被挡住，否则键会卡在按下状态。 */
+export function onlyReleases(events: InputEvent[]): boolean {
+  return events.every((e) => (e.kind === "mouse" ? Object.values(MOUSE_FLAGS).some(([, up]) => e.flags === up) : e.up));
+}
+
 export const buttonDown = (b: Button): InputEvent => ({ kind: "mouse", flags: MOUSE_FLAGS[b][0], data: 0 });
 export const buttonUp = (b: Button): InputEvent => ({ kind: "mouse", flags: MOUSE_FLAGS[b][1], data: 0 });
 
@@ -575,7 +581,8 @@ export function encodePng(bgra: Uint8Array, width: number, height: number): Buff
   ]);
 }
 
-function encodeJpeg(bgra: Uint8Array, width: number, height: number, quality: number): Buffer {
+/** 32 位 BGRA 编成 JPEG。 */
+export function encodeJpeg(bgra: Uint8Array, width: number, height: number, quality: number): Buffer {
   const rgba = Buffer.alloc(width * height * 4);
   for (let i = 0; i < width * height; i++) {
     rgba[i * 4] = bgra[i * 4 + 2]!;
