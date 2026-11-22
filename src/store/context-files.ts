@@ -2,7 +2,7 @@
 // 同步读，在事务里调用。绝不抛错：事务里抛错会让信箱卡住，读不到的文件只变成视图里的一行说明。
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { resolve } from "node:path";
-import { utf8Bytes } from "../kernel/derive.ts";
+import { briefOf, utf8Bytes } from "../kernel/derive.ts";
 import { CONTEXT_VIEW_MAX_BYTES } from "../kernel/tools.ts";
 import type { PresetSnapshot } from "../kernel/types.ts";
 
@@ -61,7 +61,7 @@ function readBody(path: string, room: number): Body | null {
     const mark = `…（已截，文件共 ${got > room ? Math.max(stat.size, got) : got} 字节）`;
     const left = room - utf8Bytes(mark);
     // 按字符截：读了 room + 1 字节，末尾可能是半个字符的替换符，它总在被截掉的部分里（说明至少有几十字节）。
-    return left < 0 ? null : { text: cutBytes(text, left) + mark, cut: true };
+    return left < 0 ? null : { text: briefOf(text, left) + mark, cut: true };
   } catch (e) {
     return unreadable(e instanceof Error ? e.message : String(e), room);
   } finally {
@@ -80,17 +80,5 @@ const note = (text: string, room: number): Body | null => (utf8Bytes(text) <= ro
 /** `（读不到：<原因>）`，原因压成一行，太长就截。 */
 function unreadable(reason: string, room: number): Body | null {
   const room1 = room - utf8Bytes("（读不到：）");
-  return room1 < 0 ? null : { text: `（读不到：${cutBytes(reason.replace(/\s+/g, " ").trim(), Math.min(room1, REASON_MAX_BYTES))}）`, cut: false };
-}
-
-/** 取不超过 `budget` 字节的最长前缀，不拆开字符。 */
-function cutBytes(s: string, budget: number): string {
-  let bytes = 0;
-  let end = 0;
-  for (const ch of s) {
-    bytes += utf8Bytes(ch);
-    if (bytes > budget) break;
-    end += ch.length;
-  }
-  return s.slice(0, end);
+  return room1 < 0 ? null : { text: `（读不到：${briefOf(reason.replace(/\s+/g, " ").trim(), Math.min(room1, REASON_MAX_BYTES))}）`, cut: false };
 }

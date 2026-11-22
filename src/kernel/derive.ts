@@ -123,14 +123,14 @@ export function utf8Bytes(s: string): number {
   return n;
 }
 
-/** 摘要：值的 UTF-8 字节数不超过上限时原样返回，否则取前 `MEMORY_BRIEF_MAX_BYTES` 字节，按码点累加，不切断字符和代理对。 */
-export function briefOf(value: string): string {
-  if (utf8Bytes(value) <= MEMORY_BRIEF_MAX_BYTES) return value;
+/** 摘要：值的 UTF-8 字节数不超过 `budget` 字节时原样返回，否则取前 `budget` 字节（缺省 `MEMORY_BRIEF_MAX_BYTES`），按码点累加，不切断字符和代理对。 */
+export function briefOf(value: string, budget = MEMORY_BRIEF_MAX_BYTES): string {
+  if (utf8Bytes(value) <= budget) return value;
   let bytes = 0;
   let out = "";
   for (const ch of value) {
     const w = utf8Bytes(ch);
-    if (bytes + w > MEMORY_BRIEF_MAX_BYTES) break;
+    if (bytes + w > budget) break;
     bytes += w;
     out += ch;
   }

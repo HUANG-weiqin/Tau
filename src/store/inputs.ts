@@ -51,18 +51,12 @@ function checkFreeId(db: DatabaseSync, id: ProcessId): void {
   if (loadProcess(db, id)) throw new Error(`进程 ID 已存在：${id}`);
 }
 
-/** 带 `from` 的信：以进程 `id` 的名义寄出，`reply` 为真时要回信（D64 第 8 组）。 */
-export interface SendFrom {
-  id: ProcessId;
-  reply: boolean;
-}
-
 /**
  * 把信、停止或新的会话快照（`reconfigure`，D71）放进一个已有进程的信箱。提交之后才能发回执。`images` 只能跟着信：按目标进程的模型收不收图片，存进 `blobs` 或换成说明。
  * 带 `from`（只对信）：发送者、跳数、`replyTo` 都从 `from.id` 的记录构造，和它调用 `post` 寄出的信同形，永远不带 `reply`，所以不能伪造回信。
  * 拒绝（什么都不写）：`from.id` 不存在、等于目标、跳数超过 `HOPS_MAX`。
  */
-export function send(db: DatabaseSync, id: ProcessId, input: Extract<Input, { kind: "letter" | "stop" | "reconfigure" }>, images: readonly Image[] = [], from?: SendFrom): void {
+export function send(db: DatabaseSync, id: ProcessId, input: Extract<Input, { kind: "letter" | "stop" | "reconfigure" }>, images: readonly Image[] = [], from?: { id: ProcessId; reply: boolean }): void {
   tx(db, () => {
     const p = loadProcess(db, id);
     if (!p) throw new Error(`没有这个进程：${id}`);

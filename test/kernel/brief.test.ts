@@ -16,6 +16,7 @@ test("briefOf：不超过上限时原样返回", () => {
 test("briefOf：超过上限时取前 200 字节", () => {
   assert.equal(briefOf("x".repeat(201)), "x".repeat(200));
   assert.equal(utf8Bytes(briefOf("x".repeat(4096))), 200);
+  assert.equal(briefOf("x".repeat(10), 4), "xxxx", "第二个参数指定预算");
 });
 
 test("briefOf：不切断汉字", () => {

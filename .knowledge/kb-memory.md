@@ -1,6 +1,6 @@
 # 记忆
 
-`updated: 2026-11-19`
+`updated: 2026-11-22`
 
 ## 这个模块是干什么的
 
@@ -153,7 +153,7 @@ interface Memory {
 
 ### `briefOf`
 
-`briefOf(value)` 在 `src/kernel/derive.ts`：取值的前 `MEMORY_BRIEF_MAX_BYTES` 字节，不切断字符。值不超过时原样返回。两处用它：协议 `memory_write` 的 `set` 没带 `brief` 时，和表结构升级（5 到 6）时给旧行填摘要（[kb-store](kb-store.md#表)）。模型写入时不走它：`memory_set` 的 `brief` 必填。
+`briefOf(value, budget = MEMORY_BRIEF_MAX_BYTES)` 在 `src/kernel/derive.ts`：取值的前 `budget` 字节（缺省 `MEMORY_BRIEF_MAX_BYTES`），不切断字符。值不超过时原样返回。记忆里两处用它：协议 `memory_write` 的 `set` 没带 `brief` 时，和表结构升级（5 到 6）时给旧行填摘要（[kb-store](kb-store.md#表)）。模型写入时不走它：`memory_set` 的 `brief` 必填。
 
 ### 版本号
 
@@ -257,7 +257,7 @@ interface Memory {
 - U+0000 原样存取；孤立的代理项按替换字符存。
 - 视图的格式和排序：索引行里没有值，字节数是值的 UTF-8 字节数，日期是 `put.now` 的 UTC 日期；`memory_get` 给原值、摘要和更新时间。
 - 值从 999 字节变成 1000 字节，索引行多 1 字节：上限处的检查按新行渲染。
-- `briefOf`：短值原样，长值取前 200 字节，不切断多字节字符，不切断代理对。
+- `briefOf`：短值原样，长值取前 200 字节（第二个参数能改这个预算），不切断多字节字符，不切断代理对。
 - 检查顺序。
 - `entries`：字节序（和 UTF-16 码元序不同的字符）、只给这个 ns、空库；`namespaces`：去重、按字节序、键删光后消失、空库；键、值、ns 里的 U+0000 不截断。
 - 第 4 步的验收：两个进程写同一个键，后写的得到冲突和最新值，重试后成功；删掉再重建持有最大版本号的键，拿旧版本号写入失败。
