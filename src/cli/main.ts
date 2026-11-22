@@ -35,7 +35,7 @@ async function command(pipe: string, req: Request): Promise<number> {
         if (req.op === "stop") code = 0;
         return;
       case "text":
-        streamed = true;
+        if (r.delta !== "") streamed = true;
         process.stdout.write(r.delta);
         return;
       case "final":

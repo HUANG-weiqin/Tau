@@ -59,24 +59,14 @@ export async function serve(opts: ServeOptions): Promise<Service> {
   /** watch 的订阅，和观察者表分开。 */
   const subscriptions = new Set<Subscription>();
   let closing = false;
-  const exec = createExecutor(
-    db,
-    createActions(
-      opts.models,
-      (id, n, delta, kind) => {
-        // 带 kind 的（思考、工具调用）只推给带 messages 的订阅：start、send 的连接和普通订阅只收正文。
-        const text: Reply = { type: "text", process: id, n, delta, ...(kind === undefined ? {} : { kind }) };
-        if (kind === undefined) watchers.get(id)?.forEach((s) => reply(s, text));
-        push(id, text, kind !== undefined);
-      },
-      opts.pipe,
-      (hash) => readBlob(db, hash),
-      (id, n, delta) => {
-        // 命令边跑边写的输出（D88）：和带 kind 的模型预览一样，只推给带 messages 的订阅，不进库。
-        push(id, { type: "text", process: id, n, delta, kind: "output" }, true);
-      },
-    ),
-  );
+  /** 流式预览：正文推给观察者和订阅；带 kind 的（思考、工具调用参数、命令输出 D88）只推给带 messages 的订阅，不进库。 */
+  function onText(id: ProcessId, n: number, delta: string, kind?: "thinking" | "toolCall" | "output"): void {
+    const text: Reply = { type: "text", process: id, n, delta, ...(kind === undefined ? {} : { kind }) };
+    if (kind === undefined) watchers.get(id)?.forEach((s) => reply(s, text));
+    push(id, text, kind !== undefined);
+  }
+  const exec = createExecutor(db, createActions(opts.models, onText, opts.pipe, (hash) => readBlob(db, hash), (id, n, delta) => onText(id, n, delta, "output")));
+  const mustLoad = (id: ProcessId): Process => { const p = loadProcess(db, id); if (!p) throw new Error(`没有这个进程：${id}`); return p; };
 
   /** `workdir` 顶掉预设文件里的工作目录（`spawn`、`start`、`check` 用）。 */
   const readPreset = (id: string, workdir?: string) => loadPreset(opts.presetsDir, id, opts.models, opts.toolsDir, workdir);
@@ -160,8 +150,7 @@ export async function serve(opts: ServeOptions): Promise<Service> {
       }
       case "reconfigure": {
         // 同步做完（D71）：读记录、造新快照、过启动检查、放进信箱、处理，再读一次记录发回执。不用 awaitFinal：不开轮，没有最终回复可等；空闲的进程不会被唤醒。
-        const record = loadProcess(db, req.process);
-        if (!record) throw new Error(`没有这个进程：${req.process}`);
+        const record = mustLoad(req.process);
         const snapshot = req.fields === undefined ? record.preset : reconfigured(record.next ?? record.preset, req.fields, opts.models, opts.toolsDir);
         // 两份都要过启动检查：新快照 S，和立即生效的那份（当前快照带上 S 的调用参数；S 要等换段才生效时，它和 S 不同）。
         const tooBig = startError(snapshot);
@@ -180,9 +169,8 @@ export async function serve(opts: ServeOptions): Promise<Service> {
       }
       case "inspect": {
         // 同步读完，中间没有别的输入被处理：记录和条数是同一刻的。
-        const all = req.process === undefined ? loadProcesses(db) : [loadProcess(db, req.process)];
+        const all = req.process === undefined ? loadProcesses(db) : [mustLoad(req.process)];
         for (const p of all) {
-          if (!p) throw new Error(`没有这个进程：${req.process}`);
           reply(s, { type: "process", process: p, messages: countMessages(db, p.id, p.segment.seq), limits: limits(p.preset) });
         }
         reply(s, { type: "inspected", count: all.length, now }).end();
@@ -203,8 +191,7 @@ export async function serve(opts: ServeOptions): Promise<Service> {
         return;
       }
       case "history": {
-        const p = loadProcess(db, req.process);
-        if (!p) throw new Error(`没有这个进程：${req.process}`);
+        const p = mustLoad(req.process);
         const segment = req.segment ?? p.segment.seq;
         if (segment < 1 || segment > p.segment.seq) throw new Error(`进程 ${p.id} 没有第 ${segment} 段，现在是第 ${p.segment.seq} 段。`);
         const { rows, count } = readSegment(db, p.id, segment, req.from ?? 0);
@@ -250,9 +237,8 @@ export async function serve(opts: ServeOptions): Promise<Service> {
       }
       case "watch": {
         if (closing) throw new Error("服务正在退出，不接受订阅。");
-        const all = req.process === undefined ? loadProcesses(db) : [loadProcess(db, req.process)];
+        const all = req.process === undefined ? loadProcesses(db) : [mustLoad(req.process)];
         for (const p of all) {
-          if (!p) throw new Error(`没有这个进程：${req.process}`);
           reply(s, { type: "update", self: observe(p, loadSegment(db, p), [p], now).self });
         }
         if (s.destroyed) return;
