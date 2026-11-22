@@ -186,6 +186,7 @@ test("burstText：全屏，连续没变合成一行", () => {
       "帧 1→2：变了 1.23%，范围 (10, 20)–(30, 40)",
       "帧 2→5 之间都没变",
       "单帧：C:\\x\\1-burst-01.jpg 到 1-burst-05.jpg，要细看用 read 打开。",
+      "网格图同上：C:\\x\\1-burst-sheet.png",
     ].join("\n"),
   );
 });
@@ -209,7 +210,8 @@ test("burstText：区域、单独一对没变、提前停、挑帧", () => {
   assert.ok(!lines.some((l) => l.startsWith("格 3")));
   assert.ok(lines.includes("帧 1→2：没变"));
   assert.ok(lines.includes("帧 2→3：变了 50.00%，范围 (200, 100)–(398, 198)"));
-  assert.equal(lines.at(-1), "单帧：C:\\x\\1-burst-01.jpg 到 1-burst-03.jpg，要细看用 read 打开。");
+  assert.equal(lines.at(-2), "单帧：C:\\x\\1-burst-01.jpg 到 1-burst-03.jpg，要细看用 read 打开。");
+  assert.equal(lines.at(-1), "网格图同上：C:\\x\\1-burst-sheet.png");
 });
 
 test("burstText：只有一帧没有变化段", () => {
@@ -312,5 +314,5 @@ test("encodeFrame：80 够就停；超过依次 60、40；还超就照存并标 
 
 test("burstText：太大的帧提一句", () => {
   const t = burstText(info({ oversize: [1, 3] }));
-  assert.ok(t.endsWith("第 2 帧太大，read 看不了。\n第 4 帧太大，read 看不了。"));
+  assert.ok(t.endsWith("第 2 帧太大，read 看不了。\n第 4 帧太大，read 看不了。\n网格图同上：C:\\x\\1-burst-sheet.png"));
 });

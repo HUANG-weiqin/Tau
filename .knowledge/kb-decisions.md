@@ -2611,7 +2611,10 @@ fork 原来在这张表里，已进内核，见 [D49](#d49-fork-进内核)。
   - 脚本直接导入 `win32.ts` 的 `send` 就能绕过租约。没有沙箱，这是约定，写在手册和技能里。
   - 脚本里租约记的是上次续租的时间，可能比最后一次输入早 10 秒。所以脚本停顿超过约 20 秒，别人就可能拿走租约；再发输入时报错，界面可能停在半截，但不会和别人的输入交错。
   - 比约 48 毫秒更快的变化抓不到。
-- 写在这里的页：[kb-extras 的工具库](kb-extras.md#工具库)。测试 `test/extras/tools/burst.test.ts`、`test/extras/tools/computer_lease.test.ts`。
+- 验收（2026-11-22）：模型 deepseek-v4.1-flash，临时预设带 `read`、`bash`、`computer`，上下文是共享手册。屏幕上放一个 PowerShell 写的动画窗口，提示里不提连拍、技能和脚本。
+  - A：蓝方块 2 秒从左走到右，到头跳回，循环。问它怎么动。模型截一张图，直接 `ls` 技能目录、读 desktop-burst，用 `--region` 只拍窗口 5 秒，`read` 网格图。答“向右匀速，一趟约 1.9 秒，到头瞬间跳回左边循环”，对。7 次调用，38 秒。它第一次用 `| tail -40` 截输出，丢了开头的网格图路径，只好再拍一次；所以输出末尾也写一次网格图路径。
+  - B：点“开始”后方块红 0.3 秒、绿 0.5 秒、回灰，一共 0.8 秒。点完再连拍一定错过。模型读了技能和 `burst.ts`，自己写了 81 行的脚本：用 `leasedIo` 和 `perform` 点按钮，同一进程里连续截图，读方块中心的颜色，点了 4 次，还拼了一张只放变化帧的网格图。答“红约 0.30 秒、绿约 0.50 秒，回到灰”，连 RGB 都对。租约文件里的持有者是它。
+- 写在这里的页：[kb-extras 的工具库](kb-extras.md#工具库)。测试 `test/extras/tools/burst.test.ts`、`test/extras/tools/desktop.test.ts`、`test/extras/tools/computer_lease.test.ts`。
 
 ## 未确认的默认值
 

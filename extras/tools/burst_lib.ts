@@ -208,6 +208,8 @@ export function burstText(i: BurstInfo): string {
   }
   lines.push(`单帧：${i.dir}\\${i.prefix}-01.jpg 到 ${i.prefix}-${pad2(n)}.jpg，要细看用 read 打开。`);
   for (const j of i.oversize ?? []) lines.push(`第 ${j + 1} 帧太大，read 看不了。`);
+  // 输出有几十行，模型常用 head 或 tail 截一段：网格图的路径首尾各写一次。
+  lines.push(`网格图同上：${i.sheetPath}`);
   return lines.join("\n");
 }
 
