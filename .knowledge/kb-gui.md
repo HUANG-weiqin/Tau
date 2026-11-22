@@ -327,7 +327,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
 - 待换段条：概况页顶上（`ui/inspector.js` 的 `PendingBar`）。数据只有 `update.self.pending`（`watch` 的 `update` 只带 `self`，有它才出现，字段取 `pending.fields`），写“待换段：模型、提示词……”，不读 `inspect` 的 `process.next`；待换的内容在“改这个会话”里看，那个弹窗的初值取 `next`。两个键：“现在换段”走 `app.handoff`，可用条件同铭牌上的“换段”；“取消”发 `reconfigure` 带 `revert: true`。
 - 换模型：`ui/switchmodel.js`。第一种换法先 `app.updatePreset`，再 `app.fork(id, undefined, preset)`；第二种直接带另一个预设分叉。`fork` 带 `preset` 时，新进程属于那个预设，带记忆的成为它的当前进程。进程 ID 会变；不想换 ID 用“改这个会话”，旧模型出故障时它换不了模型，用这里。
 - 工具定义页：`ui/tools.js`，入口在设置里，hash 是 `#dlg=tools`。已装的在上，工具库在下；删和覆盖在行里确认。预设表（`ui/presetform.js`）打开时读 `/api/tools`，把已装的定义列成第二组工具开关。
-- 记忆页：`ui/memory.js`，数据走 `/api/tau` 转发 `memory`、`memory_write`（`api.js` 的 `memoryRead`、`memoryWrite`），桥不用改。纯逻辑在 `lib/memory.js`：排序、折叠、编辑状态（值和摘要）、读写回复（`interpretWrite`）、冲突（`afterConflict`，带别处的摘要）。值只能是字符串；键、值、摘要的字节上限由服务查，页面不抄。保存的 `set` 总是带 `brief`，不用服务的缺省（D81）。
+- 记忆页：`ui/memory.js`，数据走 `/api/tau` 转发 `memory`、`memory_write`（`api.js` 的 `memoryRead`、`memoryWrite`），桥不用改。纯逻辑在 `lib/memory.js`：排序、折叠、编辑状态（值和摘要）、读写回复（`interpretWrite`）、冲突（`afterConflict`，带别处的摘要）。值只能是字符串；键、值、摘要的字节上限由服务查，页面不抄。保存的 `set` 总是带 `brief`，不用服务的缺省（D81）。摘要超 300 字节时服务截断写入、不报错（D96），页面照旧显示成功，列表里是截断后的摘要；`overText` 不认识的 `over` 走兜底文案，不冒充成视图超限。
   - 写冲突时服务回的 `current`（别处现在的值和版本号，或键已被删的 `null`）就是新的 `base`：用户写的字留着，别处的值列在文本框下，再按保存才覆盖。删除冲突不重试，只重读。
   - 一次只开一个编辑；编辑开着时其它行的“改”“删”不可用。
   - 页面不显示给模型看的视图，只显示库里的键值。

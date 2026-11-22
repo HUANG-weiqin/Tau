@@ -44,7 +44,7 @@ const MEMORY = [
   tool("memory_get", "读取记忆库里一个键现在的值、摘要、更新日期和版本号。系统提示词里的记忆索引是开段时的快照，每行只有摘要；要看值，或拿到最新版本号，用这个工具。", { key: str("键") }, ["key"]),
   tool("memory_set",
     "写入一个键。version 是你读到的版本号；省略 version 表示这个键现在必须不存在。版本对不上时写入失败，结果里带最新值。" +
-      `键最多 ${MEMORY_KEY_MAX_BYTES} 字节，值最多 ${MEMORY_VALUE_MAX_BYTES} 字节，摘要最多 ${MEMORY_BRIEF_MAX_BYTES} 字节，整个记忆视图最多 ${MEMORY_VIEW_MAX_BYTES} 字节（按 UTF-8 算）；超出时不写入。` +
+      `键最多 ${MEMORY_KEY_MAX_BYTES} 字节，值最多 ${MEMORY_VALUE_MAX_BYTES} 字节，摘要最多 ${MEMORY_BRIEF_MAX_BYTES} 字节，整个记忆视图最多 ${MEMORY_VIEW_MAX_BYTES} 字节（按 UTF-8 算）。` +
       "摘要显示在每次开段的记忆索引里，值改了就一起改摘要。" +
       "临时的内容（只对眼下这件事有用），键用 tmp. 开头，用完自己 memory_delete，索引里的更新日期能看出哪些过期了；长期的知识不用这个前缀。",
     { key: str("键"), value: str("值"), brief: str("摘要，一句话说清这个值是什么、什么时候该读它"), version: int("读到的版本号。新键没有，不要填") }, ["key", "value", "brief"]),

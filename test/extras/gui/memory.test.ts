@@ -80,6 +80,8 @@ test("memory: 读写回复：成功、冲突（带最新值和摘要，或键已
   assert.match(overText("key", 200), /键太长.*200/);
   assert.match(overText("value", 5000), /值太长.*5000/);
   assert.match(overText("view", 20000), /整个库.*20000/);
+  // 旧服务可能发来新内核不再产生的 over（D96 删了 brief）：走兜底，不能冒充成 view 的说明。
+  assert.match(overText("brief" as never, 300), /有一项超出记忆库的上限.*300/);
 });
 
 test("memory: 版本冲突：用户写的字和摘要原样留着，版本号换成别处现在的，别处的值和摘要给他对照", () => {

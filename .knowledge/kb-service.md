@@ -168,7 +168,7 @@ D64 第 6 组。服务不直接写 SQL，也不直接调 `memory.set`：读经 `
 
 - `ops` 是非空数组。每项是 `{ kind: "set", ns, key, value, brief?, expected }`（`brief` 可以没有，有就要是字符串，没有时用 `briefOf(value)`；`expected` 是 `null` 或正整数）或 `{ kind: "delete", ns, key, expected }`（`expected` 是正整数，不能是 `null`）。没有不带版本号的强写。
 - 整批在 `writeMemory` 一个事务里，按顺序执行，所以顺序有关（库满时先删后写才行）。更新时间是服务处理这个请求时的 `now`，一批里都一样。成功回 `memory_written`（`versions`：每项的版本，`delete` 是 `null`）。
-- 失败回 `memory_rejected`（`index` 是第一个失败的项，`result` 是 `Memory` 的失败形状：版本冲突带 `current`，超出上限带 `over`（`key`、`value`、`brief`、`view`）和 `bytes`）。整批已回滚。版本冲突和超出上限是正常回复，不是 `error`。
+- 失败回 `memory_rejected`（`index` 是第一个失败的项，`result` 是 `Memory` 的失败形状：版本冲突带 `current`，超出上限带 `over`（`key`、`value`、`view`）和 `bytes`）。整批已回滚。版本冲突和超出上限是正常回复，不是 `error`。
 - 请求不合格（形状不对、`ns` 不合法、`ops` 为空）回 `error`，什么都不写：整批先校验，再执行。
 - `ns` 要过 `checkPresetId`（和 `loadPreset` 同一个函数），不要求预设存在。
 

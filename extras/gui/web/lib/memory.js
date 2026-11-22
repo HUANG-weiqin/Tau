@@ -121,5 +121,6 @@ export function afterConflict(e, current) {
 export function overText(over, bytes) {
   if (over === "key") return `键太长，${bytes} 字节，超出记忆库的上限`;
   if (over === "value") return `值太长，${bytes} 字节，超出记忆库的上限`;
-  return `写进去以后整个库有 ${bytes} 字节，超出记忆库的上限。先删掉一些，或者把值写短`;
+  if (over === "view") return `写进去以后整个库有 ${bytes} 字节，超出记忆库的上限。先删掉一些，或者把值写短`;
+  return `有一项超出记忆库的上限（${bytes} 字节）`;
 }

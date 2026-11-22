@@ -43,7 +43,7 @@ interface Memory {
   set(ns: string, key: string, put: { value: string; brief: string; now: Instant }, expected: number | null):
     | { ok: true; version: number }
     | { ok: false; current: Versioned | null }
-    | { ok: false; over: "key" | "value" | "brief" | "view"; bytes: number };
+    | { ok: false; over: "key" | "value" | "view"; bytes: number };
   delete(ns: string, key: string, expected: number):
     { ok: true } | { ok: false; current: Versioned | null };
 }
@@ -91,7 +91,7 @@ interface Memory {
 
 - 都按 UTF-8 字节算（`utf8Bytes`）。
 - 视图的上限量的是渲染后的索引文本，转义也算在内。不是键和摘要的字节数之和。
-- 视图永远是这个 `ns` 全部键的索引，没有截断规则。库的容量由条数乘值的上限决定：一行最短约 28 字节，条数理论上界约 1,170，值的总量理论上界约 4.6 MB；典型的一行约 200 字节，约 160 条。
+- 视图永远是这个 `ns` 全部键的索引，没有截断规则。库的容量由条数乘值的上限决定：一行最短约 28 字节，条数理论上界约 1,170，值的总量理论上界约 4.6 MB；典型的一行约 200 字节，约 160 条；摘要最多 300 字节，最长的一行约 460 字节。
 - `delete` 没有上限。
 - 常量放在 `src/kernel/tools.ts`，因为 `memory_set` 的工具描述要引用它们。
 
@@ -154,7 +154,7 @@ interface Memory {
 
 ### `briefOf`
 
-`briefOf(value, budget = MEMORY_BRIEF_MAX_BYTES)` 在 `src/kernel/derive.ts`：取值的前 `budget` 字节（缺省 `MEMORY_BRIEF_MAX_BYTES`），不切断字符。值不超过时原样返回。记忆里两处用它：协议 `memory_write` 的 `set` 没带 `brief` 时，和表结构升级（5 到 6）时给旧行填摘要（[kb-store](kb-store.md#表)）。模型写入时不走它：`memory_set` 的 `brief` 必填。
+`briefOf(value, budget = MEMORY_BRIEF_MAX_BYTES)` 在 `src/kernel/derive.ts`：取前 `budget` 字节，按码点累加，不切断字符和代理对。不超过时原样返回。记忆里三处用它：协议 `memory_write` 的 `set` 没带 `brief` 时；表结构升级（5 到 6）时给旧行填摘要（[kb-store](kb-store.md#表)）；`set` 里摘要超过 `MEMORY_BRIEF_STORE_MAX_BYTES` 时截断（[D96](kb-decisions.md#d96-摘要的上限分两层给模型看-200实际存-300超了截断)，传的是 `300 - 3`，末尾补 `…`）。
 
 ### 版本号
 

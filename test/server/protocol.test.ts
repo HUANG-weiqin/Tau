@@ -1326,6 +1326,10 @@ test("memory_write：版本冲突、超限是正常回复不是 error，整批�
   assert.deepEqual(rejected.result.current && { value: rejected.result.current.value, brief: rejected.result.current.brief, version: rejected.result.current.version, updated: rejected.result.current.updated > 1_600_000_000_000 }, { value: "旧", brief: "旧的", version: 1, updated: true });
   const over = await collect(e.pipe, w([setOp("m", "big", "x".repeat(5000), null)]));
   assert.deepEqual(over, [{ type: "memory_rejected", index: 0, result: { ok: false, over: "value", bytes: 5000 } }]);
+  // 摘要超过存储上限：不拒，写截断后的（D96）。
+  const truncated = await collect(e.pipe, w([setOp("n", "long", "v", null, "b".repeat(301))]));
+  assert.equal(truncated[0]?.type, "memory_written");
+  assert.equal(entriesOf(await collect(e.pipe, { op: "memory", ns: "n" }), "n")[0]?.brief, "b".repeat(297) + "…");
   const gone = await collect(e.pipe, w([{ kind: "delete", ns: "m", key: "none", expected: 3 }]));
   assert.deepEqual(gone, [{ type: "memory_rejected", index: 0, result: { ok: false, current: null } }]);
   assert.deepEqual(entriesOf(await collect(e.pipe, { op: "memory", ns: "m" }), "m"), [{ key: "k", value: "旧", brief: "旧的", version: 1, updated: true }]);

@@ -87,6 +87,17 @@ test("摘要分两层上限：201 到 300 字节原样存，超过 300 按码点
   const got = memory.get(NS, "s")!.brief;
   assert.equal(utf8Bytes(got), MEMORY_BRIEF_STORE_MAX_BYTES);
   assert.equal(got, "摘".repeat(99) + "…", "截到 297 字节再加 3 字节的省略号，不切开汉字");
+
+  const exact = "b".repeat(300);
+  assert.deepEqual(set("e", "v", undefined, exact), { text: "已写入 e，版本 3。", isError: false }, "正好 300 字节：原样存");
+  assert.equal(memory.get(NS, "e")!.brief, exact, "300 字节不截断，末尾没有省略号");
+
+  assert.deepEqual(set("t", "v", undefined, "b".repeat(301)), { text: "已写入 t，版本 4。", isError: false }, "301 字节：截断，也写入");
+  assert.equal(memory.get(NS, "t")!.brief, "b".repeat(297) + "…", "301 字节截到 297 再加省略号");
+
+  const emoji = "x".repeat(295) + "😀" + "yyyyy"; // 304 字节，表情跨 297 的边界
+  assert.deepEqual(set("u", "v", undefined, emoji), { text: "已写入 u，版本 5。", isError: false });
+  assert.equal(memory.get(NS, "u")!.brief, "x".repeat(295) + "…", "按码点停，不切开表情：按 UTF-16 切片会留下半个代理对");
 });
 
 test(`视图正好 ${MEMORY_VIEW_MAX_BYTES} 字节可以写，多 1 字节拒绝：视图的上限量的是渲染后的索引`, (t) => {
