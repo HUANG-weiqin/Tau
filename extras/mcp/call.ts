@@ -20,7 +20,7 @@ export const IMAGE_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
 /** 标准输出最多这么多字节（结尾的换行也算）。内核的上限约 32 KiB，超了整份不合法。 */
 const OUT_MAX_BYTES = 30 * 1024 - 2;
 /** 等中转连上的上限。 */
-const CONNECT_MS = 10_000;
+const CONNECT_MS = 60_000;
 
 /** 给模型看的错误：消息原样写到标准错误，退出码 1。 */
 class Fail extends Error {}
@@ -245,7 +245,7 @@ async function launchRelay(): Promise<void> {
   });
 }
 
-/** 给中转发一个请求。连不上就拉起中转再重试，最多等 10 秒。 */
+/** 给中转发一个请求。连不上就拉起中转再重试，最多等 60 秒（机器忙时中转进程起来要十几秒；真正的上限是工具定义的 `timeout`）。 */
 async function ask(request: Record<string, unknown>): Promise<Record<string, unknown>> {
   const pipe = pipeName();
   const deadline = Date.now() + CONNECT_MS;

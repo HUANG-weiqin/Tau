@@ -220,12 +220,12 @@ test("launchArgv：父进程退出以后，Start-Process 起的孙进程照样�
   const script = join(dir, "write.ps1");
   writeFileSync(script, `Set-Content -Path '${out}' -Value ok`, "utf8");
   const argv = launchArgv(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script]);
-  // 中间这层 node 相当于桥：spawn 完过一会儿退出，孙进程得自己活下来。
-  // 立刻退出的话 powershell 还没机会执行 Start-Process（非 detached 的子进程会被带走）；
-  // 真实的桥也活到这几百毫秒，restart.ps1 最后才停桥。
-  const js = `const{spawn}=require("node:child_process");const c=spawn("powershell.exe",${JSON.stringify(argv)},{stdio:"ignore",windowsHide:true});c.on("error",()=>{});c.unref();setTimeout(()=>process.exit(0),1500);`;
+  // 中间这层 node 相当于桥：等 powershell 做完 Start-Process 退出，它也退出，孙进程得自己活下来。
+  // 不能按固定时间退：机器忙时 powershell 起来要好几秒，没做完就被一起带走（非 detached 的子进程会被带走）。
+  // 30 秒是兜底；真实的桥也活到这几百毫秒，restart.ps1 最后才停桥。
+  const js = `const{spawn}=require("node:child_process");const c=spawn("powershell.exe",${JSON.stringify(argv)},{stdio:"ignore",windowsHide:true});c.on("error",()=>process.exit(0));c.on("exit",()=>process.exit(0));setTimeout(()=>process.exit(0),30000);`;
   spawn(process.execPath, ["-e", js], { stdio: "ignore" }).unref();
-  for (let i = 0; i < 150 && !existsSync(out); i++) await new Promise((r) => setTimeout(r, 100));
+  for (let i = 0; i < 450 && !existsSync(out); i++) await new Promise((r) => setTimeout(r, 100));
   assert.equal(existsSync(out), true, "孙进程没写出文件：Start-Process 这条链断了");
   assert.equal(readFileSync(out, "utf8").trim(), "ok");
 });

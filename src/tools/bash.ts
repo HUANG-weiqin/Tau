@@ -222,11 +222,11 @@ export async function bash(args: { command: string; timeout?: number }, workdir:
     let offset = 0;
     let settled = false;
     let killing: Promise<string> | undefined;
-    // 预览（D88）：从上次读到的位置继续读。
-    const push = (): void => {
+    // 预览（D88）：从上次读到的位置继续读。`end` 是最后那次的上限：补到结果读到的位置为止，不多不少。
+    const push = (end = Infinity): void => {
       if (!ctx.onData) return;
       for (let sent = 0; sent < PUSH_MAX; ) {
-        const chunk = readAt(log, offset, 65536);
+        const chunk = readAt(log, offset, Math.max(0, Math.min(65536, end - offset)));
         if (chunk.length === 0) return;
         offset += chunk.length;
         sent += chunk.length;
@@ -243,7 +243,6 @@ export async function bash(args: { command: string; timeout?: number }, workdir:
         return;
       }
       settled = true;
-      push(); // 轮询以后写的那几行，趁现在补上
       stopWatching();
       child.unref();
       let pgid = "";
@@ -252,7 +251,8 @@ export async function bash(args: { command: string; timeout?: number }, workdir:
       } catch {
         // bash 还没写 pgid：不写进程组号那一行。
       }
-      const { body } = view(log);
+      const { body, size } = view(log);
+      push(size); // 轮询以后写的那几行，补到结果读到的位置
       const text = `${body}${lineEnd(body)}[转入后台 ${job}] 命令还在运行，没有被结束。\n输出文件：${winPath(log)}（还在增长，用 read 读，可带 offset 和 limit）\n${/^\d+$/.test(pgid) ? `进程组号：${pgid}\n` : ""}跑完会给你寄一封信，内容是退出码和最后几行；你可以接着做别的事，也可以结束这一轮等信。`;
       resolve({ content: textContent(clip(text)), isError: false });
     }, seconds * 1000);
@@ -277,8 +277,8 @@ export async function bash(args: { command: string; timeout?: number }, workdir:
       signal.removeEventListener("abort", onAbort);
       const why = await killing;
       stopWatching();
-      push();
       const { body, size } = view(log);
+      push(size);
       const keep = size > 2 * KEEP_BYTES;
       const note = keep ? `输出共 ${size} 字节，只显示了头尾。完整输出在 ${winPath(log)}，用 read 读（可带 offset 和 limit）。\n` : "";
       const text = clip(`${body}${lineEnd(body)}${note}[${why ?? `退出码 ${code ?? -1}`}]`);

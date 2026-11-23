@@ -412,9 +412,11 @@ schtasks /Create /TN "tau-backup" /SC DAILY /ST 03:30 /TR "node \"<仓库>\extra
 - 一个实例空闲超过 `TAU_MCP_IDLE_MS`（默认 30 分钟），关掉它的服务器。
 - 一个实例都没有、又没有在途的 `call`/`list`、且空闲超过 `TAU_MCP_EXIT_MS`（默认 10 分钟），relay 自己退出。起服务器要几秒，这几秒里实例表还是空的，所以在途的请求也算“在用”。
 - 关服务器时先 `taskkill /F /T /PID` 结束进程树，再 `client.close()`。父进程先没了，`taskkill /T` 就找不到它的子孙：回 128，孙进程留着。SDK 的 close 只结束直接子进程。
+- 所以要等 `taskkill` 真的退出才往下走。上限 60 秒，到了记一行日志（`relay.log`）再往下。机器忙时 `taskkill` 中位 0.8 秒，最长测到近 6 秒；以前只等 5 秒，超了就先 `client.close()`，还在跑的 `taskkill` 找不到父进程，孙进程成了孤儿。
+- 中转进程退出前要等正在关的实例关完。实例一开始关就离开了实例表，所以 relay 另记着“正在关的”：退出检查要求它也是空的，`shutdown` 也等它们。不然 relay 退出把服务器带走，还在跑的 `taskkill /T` 同样找不到父进程。
 - 只在服务器还活着时结束进程树（没收到过它的 close）。已经自己退出的不碰：PID 很快会被复用，按进程树杀会误伤别人。
 - 起服务器失败时也一样：PID 要在 `connect` 之前记下。`connect` 失败时 SDK 已经关掉了 transport，那时 `transport.pid` 是 null，按进程树结束就成了空操作。
-- 本机以前有 88 个 python 进程、约 3.8 GB 没人回收，这三条要做实。
+- 本机以前有 88 个 python 进程、约 3.8 GB 没人回收，这几条要做实。
 
 **怎样脱离进程树**
 
@@ -440,7 +442,8 @@ schtasks /Create /TN "tau-backup" /SC DAILY /ST 03:30 /TR "node \"<仓库>\extra
 - 服务器状态在 relay 或服务器重启时丢：游戏状态、画布都没了，只能重来。
 - 每次调用多一次管道往返。本机 MCP 调用的中位数是 0.15 秒，两次模型调用相隔的中位数是 7.7 秒，这一份基本看不见。
 - 工具清单在开段采用新快照时才变，relay 重起也不会让已经开始的进程看到新清单。已经在跑的进程要 `reconfigure` 带上 `tools`（重新保存一次工具列表可手动刷新），换段时生效（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。
-- 测试：`test/extras/mcp/mcp.test.ts`（范围、图片、分页、重起、回收、并发拉起）、`test/extras/mcp/detach.test.ts`（内核超时结束命令以后 relay 还活着）。
+- 连中转：`call.ts` 连不上就拉起中转再重试，最多等 60 秒。机器忙时中转进程起来要十几秒；真正的上限是工具定义的 `timeout`，不是这里。
+- 测试：`test/extras/mcp/mcp.test.ts`（范围、图片、分页、重起、回收、并发拉起、`taskkill` 很慢时关服务器仍收干净）、`test/extras/mcp/detach.test.ts`（内核超时结束命令以后 relay 还活着）。
 
 **工具定义**
 
@@ -504,6 +507,7 @@ schtasks /Create /TN "tau-backup" /SC DAILY /ST 03:30 /TR "node \"<仓库>\extra
 - **相对路径也能越界。** `../src/…`、`file:` 和绝对路径，扫描测试都会查。npm 包名不查：上层的依赖随便加（D63）。
 - **上层没在运行时，它的功能不生效。** 提醒、续跑、HTTP 桥都是这样。信在库里，不丢。
 - **`start` 起来的进程拿不到调用者的标准输出。** `cmd /c start /b` 里写 `1>文件` 不起作用：重定向留在 start 那一层。所以 relay 自己打开日志文件写，代码里别再用 `console.log` 打日志。
+- **测试里收进程按创建时间和标记认人，不只看进程号。** Windows 的进程号复用很快（实测 20 个死掉的号里，有 3 个在 300 个新进程内被复用）。只看进程号会把别人的新进程当成泄漏，还会用 `taskkill /T` 误杀。`test/extras/mcp/own.ts` 的做法：假服务器的命令行和它起的孙进程带每个测试文件唯一的标记（`FAKE_MARK`）；第一次看到一个进程号时核对命令行并记下创建时间，之后只认进程号和创建时间都对得上的。真的泄漏不会自己消失，照样抓得住。逐字比对输出的测试各用一个没用过的 `TAU_PROCESS`：空闲回收的短设置（8 秒）会收掉共用的实例，下一次调用就多出“服务器重启过”一行。
 - **cmd 的重定向独占文件。** 谁在 cmd 里 `1>>x.log`，别的进程再打开 `x.log` 写就是 `EBUSY`。relay 的日志只有一个写者，就是这个原因。
 
 ## 关联模块

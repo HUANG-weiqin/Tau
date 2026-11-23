@@ -38,8 +38,10 @@ function recordPid(): void {
 /** 起一个一直跑的孙进程，把它的 PID 记进 `FAKE_GRANDCHILD_FILE`（测试用它查回收收没收干净）。
  *  `detached` 是为了让它像 python 起的子进程那样：父进程死了它还活着，只有按进程树结束才收得掉。 */
 function startGrandchild(): void {
-  // 命令行的最后一段是标记：测试查“这个 PID 还是不是那个孙进程”用得上（PID 会被复用）。
-  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "tau-mcp-grandchild"], { stdio: "ignore", windowsHide: true, detached: true });
+  // 命令行的最后一段是标记：测试认“这是不是那个孙进程”用得上（PID 会被复用）。
+  // 每个测试文件在环境变量 FAKE_MARK 里给一个唯一的值，别的文件的进程不会被认成自己的。
+  const mark = process.env["FAKE_MARK"];
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", mark === undefined ? "tau-mcp-grandchild" : `tau-mcp-grandchild-${mark}`], { stdio: "ignore", windowsHide: true, detached: true });
   child.unref();
   const file = process.env["FAKE_GRANDCHILD_FILE"];
   if (file !== undefined && child.pid !== undefined) appendFileSync(file, `${child.pid}\n`);

@@ -218,7 +218,7 @@ export function credentialSuite(name: string, make: Make, moduleUrl: URL): void 
     })();
     let reads = 0;
     while (!done) {
-      await sleep(20); // 界面和服务读它是偶尔的。读得比这密，文件几乎一直被打开着，改名会一直被挡在门外，那不是真实的读法
+      await sleep(50); // 界面和服务读它是偶尔的。读得比这密，文件几乎一直被打开着，改名会一直被挡在门外，那不是真实的读法
       const c = (await make(path).read("x")) as OAuthCredential;
       assert.equal(c.type, "oauth");
       reads++;

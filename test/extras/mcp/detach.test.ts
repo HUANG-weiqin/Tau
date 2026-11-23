@@ -3,7 +3,7 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -13,6 +13,7 @@ import { sqliteMemory } from "../../../src/memory/kv.ts";
 import { serve } from "../../../src/server/serve.ts";
 import type { Service } from "../../../src/server/serve.ts";
 import { talk } from "../../../extras/tools/client.ts";
+import { createOwn } from "./own.ts";
 
 const MCP = join(import.meta.dirname, "..", "..", "..", "extras", "mcp").replace(/\\/g, "/");
 const FAKE = join(import.meta.dirname, "fake-server.ts").replace(/\\/g, "/");
@@ -23,8 +24,9 @@ let work = "";
 let pipe = "";
 let svc: Service;
 const saved: Record<string, string | undefined> = {};
-const seen = new Set<number>();
-
+/** 按创建时间和标记认中转进程和服务器，不只看进程号（own.ts）。 */
+const own = createOwn();
+const RELAY_OR_SERVER = new RegExp(`relay\\.ts|fake-server\\.ts.*${own.mark}`);
 const alive = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
@@ -32,14 +34,6 @@ const alive = (pid: number): boolean => {
   } catch {
     return false;
   }
-};
-const killPid = (pid: number): void => void spawnSync("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
-
-/** 确认还是我们的进程才杀：全量测试并行跑，旧 PID 可能已经属于别人了。 */
-const killOwn = (pid: number): void => {
-  if (!alive(pid)) return;
-  const cmd = spawnSync("powershell", ["-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`], { encoding: "utf8", windowsHide: true }).stdout ?? "";
-  if (cmd.toLowerCase().includes("mcp")) killPid(pid);
 };
 
 /** 模型的回话：第一次让模型调 mcp_slow，之后收工。 */
@@ -68,7 +62,7 @@ before(async () => {
   pipe = `\\\\.\\pipe\\tau-test-mcp-detach-${process.pid}-${Math.random().toString(16).slice(2)}`;
   process.env["TAU_MCP_PIPE"] = pipe;
 
-  writeFileSync(join(work, ".pi", "mcp.json"), JSON.stringify({ mcpServers: { fake: { command: process.execPath, args: [FAKE, "basic"] } } }));
+  writeFileSync(join(work, ".pi", "mcp.json"), JSON.stringify({ mcpServers: { fake: { command: process.execPath, args: [FAKE, "basic", own.mark], env: { FAKE_MARK: own.mark, FAKE_GRANDCHILD_FILE: join(dir, "kids.txt").replace(/\\/g, "/") } } } }));
   // 工具定义：10 秒超时（测试机忙的时候，拉起 relay、起服务器、把调用发出去要好几秒），
   // 慢工具一分钟才回，所以调用一定发出去过，内核也在它回来之前结束了命令。
   writeFileSync(
@@ -90,9 +84,12 @@ before(async () => {
 });
 
 after(async () => {
-  const s = await ask({ op: "status" }).catch(() => null);
-  if (s !== null) for (const pid of [s.pid, ...s.instances.map((i: any) => i.pid)]) if (typeof pid === "number") killOwn(pid);
-  for (const pid of seen) killOwn(pid);
+  const s = await ask({ op: "status" }, 2_000).catch(() => null);
+  if (s !== null) for (const pid of [s.pid, ...s.instances.map((i: any) => i.pid)]) if (typeof pid === "number") own.kill(pid);
+  // 假服务器的孙进程是 detached 的，按进程树收不到：从它记下的文件里找，认得出来才杀。
+  const kidsFile = join(dir, "kids.txt");
+  if (existsSync(kidsFile)) for (const pid of readFileSync(kidsFile, "utf8").split("\n").filter((x) => x !== "").map(Number)) own.note(pid, new RegExp(`tau-mcp-grandchild-${own.mark}`));
+  for (const pid of own.known()) own.kill(pid);
   await svc.close();
   for (const [k, v] of Object.entries(saved)) {
     if (v !== undefined) process.env[k] = v;
@@ -112,8 +109,9 @@ async function request(req: Record<string, unknown>): Promise<any[]> {
 }
 
 /** 给中转发请求。 */
-async function ask(req: Record<string, unknown>): Promise<any> {
-  for (let i = 0; i < 100; i++) {
+async function ask(req: Record<string, unknown>, waitMs = 60_000): Promise<any> {
+  // 机器忙时中转进程起来要十几秒：等得和 call.ts 一样久。
+  for (const deadline = Date.now() + waitMs; Date.now() < deadline; ) {
     let reply: any;
     try {
       await talk(pipe, req, (r) => {
@@ -124,8 +122,8 @@ async function ask(req: Record<string, unknown>): Promise<any> {
       await sleep(100);
       continue;
     }
-    if (typeof reply?.pid === "number") seen.add(reply.pid);
-    if (Array.isArray(reply?.instances)) for (const x of reply.instances) if (typeof x?.pid === "number") seen.add(x.pid);
+    if (typeof reply?.pid === "number") own.note(reply.pid, RELAY_OR_SERVER);
+    if (Array.isArray(reply?.instances)) for (const x of reply.instances) if (typeof x?.pid === "number") own.note(x.pid, RELAY_OR_SERVER);
     return reply;
   }
   throw new Error("连不上中转进程");

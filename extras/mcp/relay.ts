@@ -82,7 +82,7 @@ function serialize<T>(key: string, fn: () => Promise<T>): Promise<T> {
 }
 
 async function create(key: string, proc: string, workdir: string, server: string): Promise<Instance> {
-  const running = await startServer(workdir, server, { onStderr: (text) => log(`[${server} stderr] ${text}`) });
+  const running = await startServer(workdir, server, { onStderr: (text) => log(`[${server} stderr] ${text}`), onLog: log });
   everAlive.add(key);
   log(`起了服务器 ${server}（进程 ${proc}，PID ${running.pid}）：${running.config.command} ${running.config.args.join(" ")}`);
   return { key, process: proc, workdir, server, running, busy: 0, last: Date.now(), closing: false };
@@ -99,15 +99,24 @@ async function acquire(key: string, proc: string, workdir: string, server: strin
   return { inst, restarted };
 }
 
-async function closeInstance(inst: Instance): Promise<void> {
-  if (inst.closing) return;
+/** 正在关的实例。实例一开始关就离开了实例表，退出检查和 shutdown 要看这里，等它们关完才能退。 */
+const closings = new Set<Promise<void>>();
+
+function closeInstance(inst: Instance): Promise<void> {
+  if (inst.closing) return Promise.resolve();
   if (instances.get(inst.key) === inst) instances.delete(inst.key);
   inst.closing = true;
   lastActive = Date.now();
   const pid = inst.running.pid;
   // 里面先按进程树结束、再关连接；已经自己退出的不碰 PID。
-  await inst.running.close();
-  log(`关了服务器 ${inst.server}（进程 ${inst.process}，PID ${pid}）`);
+  const done = inst.running.close().then(() => {
+    // 空闲时间从关完算起：关要几秒，刚关完就退出，会撞上这时刚到的请求。
+    lastActive = Date.now();
+    log(`关了服务器 ${inst.server}（进程 ${inst.process}，PID ${pid}）`);
+  });
+  closings.add(done);
+  void done.finally(() => closings.delete(done));
+  return done;
 }
 
 /** 同一个键的请求排在同一条队里；`fn` 跑的时候实例算在用，回收要让开。 */
@@ -257,7 +266,8 @@ function onSocket(socket: Socket): void {
 
 /** 退出前关掉所有服务器；关不干净也要走。 */
 async function shutdown(code: number): Promise<never> {
-  await Promise.all([...instances.values()].map((i) => closeInstance(i)));
+  for (const i of [...instances.values()]) void closeInstance(i);
+  await Promise.all([...closings]);
   server.close();
   log("退出");
   process.exit(code);
@@ -280,7 +290,7 @@ server.listen(PIPE, () => {
       if (inst.busy > 0 || now - inst.last <= IDLE_MS) continue;
       void closeInstance(inst);
     }
-    if (instances.size === 0 && inflight === 0 && now - lastActive > EXIT_MS) void shutdown(0);
+    if (instances.size === 0 && closings.size === 0 && inflight === 0 && now - lastActive > EXIT_MS) void shutdown(0);
   }, Math.max(20, Math.min(IDLE_MS, EXIT_MS) / 4));
   timer.unref();
 });

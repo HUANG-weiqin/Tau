@@ -1,8 +1,7 @@
 // MCP 页的桥（extras/gui/bridge/mcp.ts）：四个接口 + 装完的状态变化 + 不留下服务器进程。
-// 临时家目录、临时项目目录、临时管道；进程检查用 `process.kill(pid, 0)`。
+// 临时家目录、临时项目目录、临时管道；进程按创建时间和标记认（mcp/own.ts）。
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
@@ -11,6 +10,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { createBridge } from "../../../extras/gui/bridge/server.ts";
 import type { Bridge } from "../../../extras/gui/bridge/server.ts";
 import { LIB_DIR, parseCommand } from "../../../extras/mcp/gen.ts";
+import { createOwn } from "../mcp/own.ts";
 
 const FAKE = join(import.meta.dirname, "..", "mcp", "fake-server.ts").replace(/\\/g, "/");
 const JSON_H = { "Content-Type": "application/json" };
@@ -26,37 +26,24 @@ let kidsFile = "";
 let relayPipe = "";
 const saved: Record<string, string | undefined> = {};
 
-const alive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
+/** 按创建时间和标记认假服务器和它的孙进程，不只看进程号（mcp/own.ts）。 */
+const own = createOwn();
+const SERVER = new RegExp(`fake-server\\.ts.*${own.mark}`);
+const KID = new RegExp(`tau-mcp-grandchild-${own.mark}`);
 
-/** 这个 PID 还是不是那个假服务器（Windows 的 PID 复用很快，只看 PID 会把别人当成它）。 */
-const aliveServer = (pid: number): boolean => {
-  if (!alive(pid)) return false;
-  const cmd = spawnSync("powershell", ["-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`], { encoding: "utf8", windowsHide: true }).stdout ?? "";
-  return cmd.includes("fake-server.ts");
+/** 读记录里的进程号；第一次看到时核对命令行并记下创建时间。 */
+const readPids = (file: string, expect: RegExp): number[] => {
+  const pids = existsSync(file) ? readFileSync(file, "utf8").split("\n").filter((x) => x !== "").map(Number) : [];
+  for (const pid of pids) own.note(pid, expect);
+  return pids;
 };
-
-const readPids = (file: string): number[] => (existsSync(file) ? readFileSync(file, "utf8").split("\n").filter((s) => s !== "").map(Number) : []);
 
 /** 杀掉记录里的孤儿进程。detached 的孙进程在父进程死后就脱离了进程树，relay 的 `taskkill /T` 收不到；
- *  它们继承的工作目录是 proj，会把临时目录锁住，after 里删目录就报 EPERM。只杀命令行对得上的：Windows 的 PID 复用很快。 */
+ *  它们继承的工作目录是 proj，会把临时目录锁住，after 里删目录就报 EPERM。只杀记下的那个进程（创建时间对得上）。 */
 const killRecorded = (): void => {
-  const mine = new Set([...readPids(pidFile), ...readPids(kidsFile)]);
-  if (mine.size === 0) return;
-  const out =
-    spawnSync("powershell", ["-NoProfile", "-Command", "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' } | ForEach-Object { \"$($_.ProcessId)|$($_.CommandLine)\" }"], { encoding: "utf8", windowsHide: true }).stdout ?? "";
-  for (const line of out.split(/\r?\n/)) {
-    const m = /^(\d+)\|(.*)$/.exec(line);
-    if (m === null || !mine.has(Number(m[1]))) continue;
-    if (!/fake-server\.ts|tau-mcp-grandchild/.test(m[2]!)) continue;
-    spawnSync("taskkill", ["/F", "/PID", String(m[1])], { stdio: "ignore", windowsHide: true });
-  }
+  readPids(pidFile, SERVER);
+  readPids(kidsFile, KID);
+  for (const pid of own.known()) own.kill(pid);
 };
 
 function post(path: string, body: unknown): Promise<{ status: number; json: any }> {
@@ -96,13 +83,13 @@ before(async () => {
   mkdirSync(join(home, "presets"), { recursive: true });
   mkdirSync(join(proj, ".pi"), { recursive: true });
   mkdirSync(other, { recursive: true });
-  const env = { FAKE_PID_FILE: pidFile.replace(/\\/g, "/"), FAKE_GRANDCHILD_FILE: kidsFile.replace(/\\/g, "/") };
+  const env = { FAKE_PID_FILE: pidFile.replace(/\\/g, "/"), FAKE_GRANDCHILD_FILE: kidsFile.replace(/\\/g, "/"), FAKE_MARK: own.mark };
   writeFileSync(
     join(proj, ".pi", "mcp.json"),
     JSON.stringify({
       mcpServers: {
-        fake: { command: process.execPath, args: [FAKE, "basic"], env, description: "假服务器", timeout: 60 },
-        pyd: { command: process.execPath, args: [FAKE, "pydantic"], env, timeout: 900 },
+        fake: { command: process.execPath, args: [FAKE, "basic", own.mark], env, description: "假服务器", timeout: 60 },
+        pyd: { command: process.execPath, args: [FAKE, "pydantic", own.mark], env, timeout: 900 },
         broken: { type: "http", command: "x" },
       },
     }),
@@ -154,7 +141,7 @@ describe("服务器列表", () => {
 
 describe("列工具并生成定义", () => {
   test("起一次服务器、列完就关掉：定义、状态、总量都对，进程没留下", async () => {
-    const before = readPids(pidFile).length;
+    const before = readPids(pidFile, SERVER).length;
     const r = await post("/api/mcp/tools", { workdir: proj, server: "fake" });
     assert.equal(r.status, 200, JSON.stringify(r.json));
     assert.equal(r.json.instructions, undefined);
@@ -169,10 +156,12 @@ describe("列工具并生成定义", () => {
     assert.ok(r.json.totalBytes > 0);
 
     // 生成的命令能认出服务器名和工具名。
-    const started = readPids(pidFile).slice(before);
+    const started = readPids(pidFile, SERVER).slice(before);
     assert.equal(started.length, 1, "起过一个服务器进程");
-    assert.equal(aliveServer(started[0]!), false, "服务器进程应该已经结束");
-    assert.equal([...readPids(kidsFile)].every((p) => !alive(p)), true, "孙进程也收掉了");
+    assert.equal(own.isOwn(started[0]!), false, "服务器进程应该已经结束");
+    // 孙进程由 taskkill 收，关完应该已经没了；给一点余量，轮询到约 10 秒。
+    for (let i = 0; i < 100 && readPids(kidsFile, KID).some((p) => own.isOwn(p)); i++) await sleep(100);
+    assert.equal(readPids(kidsFile, KID).every((p) => !own.isOwn(p)), true, "孙进程也收掉了");
   });
 
   test("$defs、$ref 展开：pydantic 风格的参数规整好，说明里带服务器", async () => {
@@ -272,11 +261,11 @@ describe("装定义", () => {
   });
 
   test("装的时候重新列一次：每次都不留下服务器进程", async () => {
-    const before = readPids(pidFile).length;
+    const before = readPids(pidFile, SERVER).length;
     await post("/api/mcp/install", { workdir: proj, server: "fake", tools: ["count"] });
-    const started = readPids(pidFile).slice(before);
+    const started = readPids(pidFile, SERVER).slice(before);
     assert.equal(started.length, 1);
-    assert.equal(aliveServer(started[0]!), false);
+    assert.equal(own.isOwn(started[0]!), false);
   });
 });
 

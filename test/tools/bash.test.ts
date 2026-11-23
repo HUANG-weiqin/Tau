@@ -246,7 +246,8 @@ test("超时转后台：及时返回，不是错误；命令跑完，log 有退�
   assert.equal(letter.text.match(/退出码/g)?.length, 1);
   assert.match(readFileSync(log, "utf8"), /^(before\n)?after\n\n\[后台任务 [0-9a-f]{6}\] 退出码 0\n$/);
   assert.deepEqual(pgidFiles(), files);
-  for (let i = 0; i < 40 && existsSync(`${log}.claim`); i++) await sleep(50);
+  // 包装脚本等通知脚本退出才删 claim；msys 程序启动可能卡约 5 秒。
+  for (let i = 0; i < 300 && existsSync(`${log}.claim`); i++) await sleep(100);
   assert.equal(existsSync(`${log}.claim`), false, "汇报完就删 claim，log 留到 7 天后清");
   assert.equal(existsSync(log), true);
 });
@@ -299,12 +300,25 @@ test("转后台前最后推一次：预览收到的，和结果里已有的输�
     const text = plain(r).text;
     const job = jobOf(text);
     assert.ok(job, text);
+    await letterOf(job); // 先等命令跑完、信寄到：断言失败也不留下还在跑的后台命令
     const body = text.slice(0, text.indexOf("[转入后台"));
     assert.equal(Buffer.concat(chunks).toString(), body);
-    await letterOf(job);
     return job;
   };
-  await Promise.all([one(), one(), one(), one()]);
+  const settled = await Promise.allSettled([one(), one(), one(), one()]);
+  for (const s of settled) if (s.status === "rejected") throw s.reason;
+});
+
+// 命令按路径重新打开输出文件（`> /dev/stderr`）会把它截短：预览已经推过的位置比文件还大，不能崩。
+test("预览推过以后输出文件被命令截短：正常退出和转后台都不崩", { timeout: 60_000 }, async () => {
+  const cmd = `echo ${"a".repeat(40)}; sleep 1; echo err > /dev/stderr`;
+  const go = (command: string, timeout: number) => bash({ command, timeout }, dir, new AbortController().signal, { ...CTX, onData: () => {} });
+  const normal = plain(await go(cmd, 30));
+  assert.equal(normal.isError, false, normal.text);
+  const bg = plain(await go(`${cmd}; sleep 4`, 3));
+  const job = jobOf(bg.text);
+  assert.ok(job, bg.text);
+  await letterOf(job);
 });
 
 // 一次轮询最多读 1 MiB：写得快的命令不能让一次推送占住事件循环。轮询和命令退出的回调可能落在同一轮事件循环里
@@ -336,13 +350,15 @@ test("预览每次读最多 1 MiB", async () => {
 // 汇报只能有一个赢家：抢到 claim 的内核转后台、脚本寄信；脚本先抢到，就正常返回、不寄信。
 // 命令的 sleep 取 0.40 到 0.97 秒，加上 bash 的启动和收尾（0.2 到 0.4 秒，随机器忙闲），结束时刻跨过 1 秒的 timeout，两种结果都会出现。
 // 每次必居其一：转后台就恰好一封信，正常返回就一封也没有。
+// 用自己的进程 ID：只看自己的目录和信，别的测试留下的后台命令不相干。
 test("claim 竞态：20 次命令在 timeout 前后结束，每次要么正常返回没有信，要么转后台恰好一封信", { timeout: 180_000 }, async (t) => {
-  letters.length = 0;
-  clearShell();
+  const ctx = { ...CTX, process: "p-claim" };
+  const mine = path.join(shellRoot, ctx.process);
+  const left = (): string[] => (existsSync(mine) ? readdirSync(mine) : []);
   const jobs: string[] = [];
   let normal = 0;
   for (let i = 0; i < 20; i++) {
-    const r = await run(`sleep 0.${40 + i * 3}; echo done${i}`, 1);
+    const r = plain(await bash({ command: `sleep 0.${40 + i * 3}; echo done${i}`, timeout: 1 }, dir, new AbortController().signal, ctx));
     const job = jobOf(r.text);
     if (job === undefined) {
       assert.deepEqual(r, { text: `done${i}\n[退出码 0]`, isError: false });
@@ -350,11 +366,13 @@ test("claim 竞态：20 次命令在 timeout 前后结束，每次要么正常�
     } else jobs.push(job);
   }
   for (const job of jobs) await letterOf(job);
+  for (let i = 0; i < 300 && left().some((n) => n.endsWith(".claim")); i++) await sleep(100); // 脚本等通知脚本退出才删 claim
   await sleep(2000); // 正常返回的那几次若还寄了信，早该到了
-  assert.equal(letters.length, jobs.length, `转后台 ${jobs.length} 次、正常返回 ${normal} 次，信 ${letters.length} 封`);
-  assert.deepEqual(new Set(letters.map((l) => /^\[后台任务 ([0-9a-f]{6})\]/.exec(l.text)?.[1])), new Set(jobs));
-  assert.deepEqual(filesLeft().filter((n) => !jobs.some((j) => n.includes(j))), [], "正常返回的没留文件");
-  assert.equal(filesLeft().length, jobs.length, "转后台的各留一个 log；claim 汇报完就删");
+  const mineLetters = letters.filter((l) => l.process === ctx.process);
+  assert.equal(mineLetters.length, jobs.length, `转后台 ${jobs.length} 次、正常返回 ${normal} 次，信 ${mineLetters.length} 封`);
+  assert.deepEqual(new Set(mineLetters.map((l) => /^\[后台任务 ([0-9a-f]{6})\]/.exec(l.text)?.[1])), new Set(jobs));
+  assert.deepEqual(left().filter((n) => !jobs.some((j) => n.includes(j))), [], "正常返回的没留文件");
+  assert.equal(left().length, jobs.length, "转后台的各留一个 log；claim 汇报完就删");
   t.diagnostic(`转后台 ${jobs.length} 次，正常返回 ${normal} 次`);
 });
 
@@ -458,7 +476,7 @@ test("输出刚好 2*KEEP_BYTES：整个回、删文件；多一个字节：头�
 });
 
 test("转后台时已有的输出也只回头尾，路径在固定那段话里", async () => {
-  const r = await run(`head -c ${2 * KEEP + 100} /dev/zero | tr '\\0' b; sleep 3`, 2);
+  const r = await run(`head -c ${2 * KEEP + 100} /dev/zero | tr '\\0' b; sleep 12`, 8); // 超时要盖过 bash 启动卡住的约 5 秒，输出才赶得上被截
   const job = jobOf(r.text);
   assert.ok(job, r.text.slice(-300));
   assert.match(r.text, /\n…（中间省略 \d+ 字节）…\n/);
