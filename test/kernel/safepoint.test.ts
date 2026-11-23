@@ -5,7 +5,7 @@ import { buildContext, CARRY_HEADER, HANDOFF_HEADER } from "../../src/kernel/con
 import { effectOf } from "../../src/kernel/decide.ts";
 import { finalReply, handoffThreshold, pendingCalls, STEPS_PER_TURN } from "../../src/kernel/derive.ts";
 import type { Message } from "../../src/kernel/types.ts";
-import { assistant, call, current, feed, giveUp, image, letter, letterInput, preset, processLetter, reply, stopInput, textOf, toolDone, toolInterrupted, userInput, userLetterWith, world } from "./helpers.ts";
+import { assistant, call, current, feed, giveUp, image, letter, letterInput, preset, processLetter, reply, plainText, stopInput, textOf, toolDone, toolInterrupted, userInput, userLetterWith, world } from "./helpers.ts";
 import type { World } from "./helpers.ts";
 
 const P = preset({ contextWindow: 100_000 });
@@ -165,7 +165,7 @@ describe("5.2 安全点投递", () => {
     assert.ok(!req.some((m) => m.role === "user" && m.content === "插话"), "交接请求不带段末的信");
     reply(w, assistant({ usage: 10, text: "说明" }));
     assert.equal(w.p.segment.seq, 2);
-    assert.equal(textOf(current(w)[0]!), `${HANDOFF_HEADER}说明\n\n${CARRY_HEADER}\n\n插话`);
+    assert.equal(plainText(current(w)[0]!), `${HANDOFF_HEADER}说明\n\n${CARRY_HEADER}\n\n插话`);
   });
 
   test("安全点之后这一轮异常结束：并入的信已经在段里，最终回复是空串", () => {
@@ -211,7 +211,7 @@ describe("5.4 handoff", () => {
     reply(w, assistant({ usage: 10, text: "说明" }));
     assert.equal(w.p.segment.seq, 2);
     assert.deepEqual(phase(w), { tag: "awaitingModel", turn: { steps: 3, queued: [], hops: 0, replyTo: [] }, purpose: "turn" });
-    assert.equal(textOf(current(w)[0]!), `${HANDOFF_HEADER}说明`);
+    assert.equal(plainText(current(w)[0]!), `${HANDOFF_HEADER}说明`);
   });
 
   test("同一批里 handoff 之前和之后的工具照常执行，批做完才换段", () => {
@@ -240,7 +240,7 @@ describe("5.4 handoff", () => {
     toolDone(w, "ok");
     assert.deepEqual(phase(w), { tag: "awaitingModel", turn: { steps: 2, queued: [], hops: 2, replyTo: ["x"] }, purpose: "handoff" });
     reply(w, assistant({ usage: 10, text: "说明" }));
-    assert.equal(textOf(current(w)[0]!), `${HANDOFF_HEADER}说明\n\n${CARRY_HEADER}\n\n（来自进程 x，预设 other。它在等回信：你这一轮结束时，最终回复会寄给它，之后的几轮不会。）\n来信`);
+    assert.equal(plainText(current(w)[0]!), `${HANDOFF_HEADER}说明\n\n${CARRY_HEADER}\n\n（来自进程 x，预设 other。它在等回信：你这一轮结束时，最终回复会寄给它，之后的几轮不会。）\n来信`);
     assert.deepEqual(turnOf(w)?.replyTo, ["x"]);
   });
 

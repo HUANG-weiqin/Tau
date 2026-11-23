@@ -418,7 +418,10 @@ test("换段按钮：send 带 handoff 换段，信带进新段；信、段号、
   const first = hist[0].message;
   assert.equal(first.tau.handoff, true);
   const parsed = parseUser(first);
-  assert.deepEqual(parsed.handoff, { note: "目标是 X，做到一半。", carried: HANDOFF_LETTER });
+  assert.equal(parsed.handoff?.note, "目标是 X，做到一半。");
+  assert.equal(parsed.handoff?.carried, HANDOFF_LETTER);
+  assert.equal(typeof parsed.handoff?.brief, "string", "新段第一条带旧段的简略视图");
+  assert.ok(!parsed.handoff!.note.includes(parsed.handoff!.brief!), "说明里没有混进简略视图");
   // 在新段里，换段信读不出“用户的信”以外的东西；canHandoff 此时还要等助手说话。
   assert.equal(canHandoff([first]), false);
   assert.equal(canHandoff(hist.map((h) => h.message)), true);

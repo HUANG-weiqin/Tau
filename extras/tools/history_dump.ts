@@ -1,9 +1,9 @@
 // history_dump：把本进程的每个旧段写成 `~/.tau/extras/history/<进程 ID>/seg-<n>.md`，给模型一个能用 rg/grep 搜、用 read 读的目录
-// （kb-extras 的“工具库”和“换段以后查旧段”）。没有参数。只读旧段，顺手清掉 7 天前的文件。
+// （kb-extras 的“工具库”和“换段以后查旧段”），每段再写一份简略视图 `seg-<n>.brief.md`（D103）。没有参数。只读旧段，顺手清掉 7 天前的文件。
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { extrasDir, run, tauEnv } from "./common.ts";
-import { currentSegment, fetchSegment, formatDump, headOf, probeSegment, pruneOld, readExistingSegment, renderSegment, segmentPath, writeSegment } from "./history.ts";
+import { currentSegment, fetchSegment, formatDump, headOf, probeSegment, pruneOld, readExistingBrief, readExistingSegment, renderBrief, renderSegmentParts, segmentPath, writeBrief, writeSegment } from "./history.ts";
 import type { DumpEntry } from "./history.ts";
 
 if (import.meta.main) run(async () => {
@@ -25,14 +25,24 @@ if (import.meta.main) run(async () => {
     if (existsSync(segmentPath(dir, seg))) {
       const missing = await probeSegment(pipe, proc, seg);
       if (missing !== null) {
-        // 被 prune 的段：本地文件还在，照样刷新修改时间、给出大小和开头，别让模型以为这段没了。
+        // 被 prune 的段：本地文件还在，照样刷新修改时间、给出大小和开头，别让模型以为这段没了。简略视图有就带上，没有只列原文。
         const local = readExistingSegment(dir, seg, now);
-        entries.push(local === null ? { seg, missing } : { seg, ...local, stale: true });
+        const brief = readExistingBrief(dir, seg, now) ?? undefined;
+        entries.push(local === null ? { seg, missing } : { seg, ...local, stale: true, ...(brief === undefined ? {} : { brief }) });
         continue;
       }
       const cached = readExistingSegment(dir, seg, now);
       if (cached !== null) {
-        entries.push({ seg, ...cached });
+        let brief = readExistingBrief(dir, seg, now) ?? undefined;
+        if (brief === undefined) {
+          // 以前写的段没有简略视图：库里还有，就拉一次补写（原文已在，不重写）。
+          const rows = await fetchSegment(pipe, proc, seg);
+          if (typeof rows !== "string") {
+            const w = writeBrief(dir, seg, renderBrief(seg, renderSegmentParts(seg, rows)), now);
+            brief = { bytes: w.bytes, lines: w.lines };
+          }
+        }
+        entries.push({ seg, ...cached, ...(brief === undefined ? {} : { brief }) });
         continue;
       }
     }
@@ -41,8 +51,10 @@ if (import.meta.main) run(async () => {
       entries.push({ seg, missing: rows });
       continue;
     }
-    const { bytes, lines } = writeSegment(dir, seg, renderSegment(seg, rows), now);
-    entries.push({ seg, bytes, lines, head: headOf(rows) });
+    const parts = renderSegmentParts(seg, rows);
+    const { bytes, lines } = writeSegment(dir, seg, parts.text, now);
+    const w = writeBrief(dir, seg, renderBrief(seg, parts), now);
+    entries.push({ seg, bytes, lines, head: headOf(rows), brief: { bytes: w.bytes, lines: w.lines } });
   }
   process.stdout.write(`${formatDump(dir, entries)}\n`);
 });

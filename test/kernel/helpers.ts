@@ -203,8 +203,22 @@ export function deepFreeze<T>(x: T): T {
 
 /** 去掉消息上内核写的 `tau`：比较消息的内容时用。 */
 export function stripTau<T extends Message>(ms: readonly T[]): Message[] {
-  return ms.map((m) => {
+  return ms.map((m0) => {
+    const m = withoutBrief(m0);
     const { tau: _, ...rest } = m as Message & { tau?: unknown };
     return rest as Message;
   });
 }
+
+/** 去掉新段第一条里简略视图那一块（D103）和它前面的空行：比较交接说明和带过去的信时用。没有这一块的消息原样。 */
+export function withoutBrief(m: Message): Message {
+  const brief = m.role === "user" ? m.tau?.brief : undefined;
+  if (m.role !== "user" || brief === undefined) return m;
+  const drop = (s: string) => s.slice(0, brief[0] - 2) + s.slice(brief[1]);
+  if (typeof m.content === "string") return { ...m, content: drop(m.content) };
+  let done = false;
+  return { ...m, content: m.content.map((c) => (c.type === "text" && !done && (done = true) ? { ...c, text: drop(c.text) } : c)) };
+}
+
+/** 消息的文字，不含简略视图那一块。 */
+export const plainText = (m: Message): string => textOf(withoutBrief(m));

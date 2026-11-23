@@ -29,7 +29,7 @@ import {
   world,
 } from "./helpers.ts";
 import type { World } from "./helpers.ts";
-import { stripTau } from "./helpers.ts";
+import { plainText, stripTau } from "./helpers.ts";
 
 // 设计稿里写明的文本。
 const INTERRUPTED = "被中断，结果未知";
@@ -554,7 +554,7 @@ describe("5.4 换段", () => {
     const first = s.append[0]!;
     assert.equal(first.role, "user");
     assert.equal(first.timestamp, 777);
-    assert.ok(textOf(first).endsWith(note), textOf(first));
+    assert.ok(plainText(first).endsWith(note), plainText(first));
     assert.ok(!textOf(first).includes("想一想"), "思考不是正文");
     assert.deepEqual(current(w), s.append);
     assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 3, queued: [], hops: 0, replyTo: [] }, purpose: "turn" });
@@ -565,7 +565,7 @@ describe("5.4 换段", () => {
     const w = atHandoff();
     reply(w, assistant({ usage: 3_000, text: "截断的交接说明……", stopReason: "length" }));
     assert.equal(w.p.segment.seq, 2);
-    assert.ok(textOf(current(w)[0]!).endsWith("截断的交接说明……"));
+    assert.ok(plainText(current(w)[0]!).endsWith("截断的交接说明……"));
     assert.deepEqual(w.p.phase, { tag: "awaitingModel", turn: { steps: 3, queued: [], hops: 0, replyTo: [] }, purpose: "turn" });
   });
 

@@ -7,7 +7,7 @@ import { estimatedUsed, handoffThreshold, startError } from "../../src/kernel/de
 import { observe } from "../../src/kernel/observe.ts";
 import { pendingFields, sameStructure } from "../../src/kernel/snapshot.ts";
 import type { Env, Input, PresetSnapshot, PresetTool, ToolDef } from "../../src/kernel/types.ts";
-import { assistant, call, current, env, feed, giveUp, image, letterInput, preset, reply, stopInput, textOf, toolDone, userInput, userLetterWith, world } from "./helpers.ts";
+import { assistant, call, current, env, feed, giveUp, image, letterInput, preset, reply, stopInput, textOf, toolDone, userInput, userLetterWith, withoutBrief, world } from "./helpers.ts";
 import type { World } from "./helpers.ts";
 
 const LOW = 1_000;
@@ -395,7 +395,7 @@ test("采用 next 时新模型不收图片：带过去的用户消息里的图�
   feed(w, letterInput({ ...userLetterWith("看这张图", [image("x")]), handoff: true }));
   reply(w, assistant({ usage: LOW, text: "交接说明" }), withFresh("M", "C"));
   assert.deepEqual(w.p.preset, NEW);
-  const first = current(w)[0]!;
+  const first = withoutBrief(current(w)[0]!);
   assert.equal(first.role, "user");
   assert.equal(first.role === "user" && first.content, `${HANDOFF_HEADER}交接说明\n\n${CARRY_HEADER}\n\n看这张图\n${IMAGE_UNSUPPORTED}`);
   // 对照：新模型收图片，图原样带过去。

@@ -77,6 +77,7 @@ export function HandoffRow({ app, item, segment }) {
       <div class="hh"><span class="tag">交接说明</span><span class="mono dim">第 ${segment - 1} 段写的 · ${chars} 字</span>
         <button type="button" class="link" style="margin-left:auto" aria-expanded=${open} onClick=${() => setOpen(!open)}>${open ? "收起" : "展开"}<${Icon} name=${open ? "up" : "down"} size=${12} sw=${2.8} /></button></div>
       <p class=${`hbody ${open ? "" : "clamp"}`}>${item.note}</p>
+      ${open && item.brief && html`<details class="carried"><summary class="tag">上一段的简略视图</summary><p class="hbody">${item.brief}</p></details>`}
       ${open && item.carried && html`<div class="carried"><span class="tag">带过来的用户消息</span><p class="hbody">${item.carried}</p></div>`}
     </article>`;
 }

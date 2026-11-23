@@ -35,7 +35,7 @@
 
 /** 发信的人：用户，或者另一个进程；`reply` 有值表示是回信（`src/kernel/types.ts` 的 `Sender`）。 @typedef {{ kind: "user" } | { kind: "process", id: string, preset: string, reply?: { ended: Ended } }} Sender */
 /** 一封信在用户消息里的结构；`at` 是正文在消息文本里的起止位置（UTF-16），文本被截过的消息没有。 @typedef {{ from: Sender, hops: number, replyTo?: string, handoff?: true, at?: [number, number] }} LetterMeta */
-/** 内核写的用户消息带的结构；旧消息没有。`after` 是上一轮的结束原因，`handoff` 表示换段后的第一条。 @typedef {{ letters: LetterMeta[], after?: Ended, handoff?: true }} UserTau */
+/** 内核写的用户消息带的结构；旧消息没有。`after` 是上一轮的结束原因，`handoff` 表示换段后的第一条，`brief` 是其中旧段简略视图那一块的起止位置（UTF-16）。 @typedef {{ letters: LetterMeta[], after?: Ended, handoff?: true, brief?: [number, number] }} UserTau */
 /** @typedef {{ role: "user", content: string | (TextBlock | ImageBlock)[], timestamp: number, tau?: UserTau }} UserMessage */
 /** @typedef {{ role: "assistant", content: (TextBlock | ThinkingBlock | ToolCallBlock)[], timestamp: number, stopReason?: string, errorMessage?: string }} AssistantMessage */
 /** @typedef {{ role: "toolResult", toolCallId: string, toolName: string, content: (TextBlock | ImageBlock)[], isError: boolean, timestamp: number, tau?: { filled: "interrupted" | "skipped" } }} ToolResultMessage */

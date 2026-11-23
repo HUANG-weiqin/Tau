@@ -16,7 +16,7 @@ import type { Service } from "../../../src/server/serve.ts";
 import { runToolDef } from "../../../src/tools/tooldef.ts";
 import { talk } from "../../../extras/tools/client.ts";
 import { CATALOG, definitionOf } from "../../../extras/tools/catalog.ts";
-import { bodyOf, fmtTime, formatDump, headFromMarkdown, headOf, KEEP_MS, LISTED, NOTICE, pruneOld, readExistingSegment, renderSegment, titleOf, writeSegment } from "../../../extras/tools/history.ts";
+import { bodyOf, fmtTime, formatDump, headFromMarkdown, headOf, KEEP_MS, LISTED, NOTICE, pruneOld, readExistingSegment, clipBytes, renderBrief, renderSegment, renderSegmentParts, titleOf, usageOf, writeBrief, writeSegment } from "../../../extras/tools/history.ts";
 import type { Row } from "../../../extras/tools/history.ts";
 import { textOfResult } from "../../plain.ts";
 
@@ -118,8 +118,24 @@ describe("输出的样子", () => {
     assert.equal(out[0], "C:/x/history/p1");
     assert.equal(out[1], "seg-1.md  2.0 KB  42行  开工 alpha");
     assert.equal(out[2], "seg-2.md  0.0 KB  1行  ");
-    assert.ok(out[3]!.startsWith('用 rg -n -i -C2 "关键词" C:/x/history/p1 搜；用 read 带 offset 和 limit 读文件。标题里的 [段号:序号] 是位置。'), out[3]);
+    assert.equal(out[3], usageOf("C:/x/history/p1"));
     assert.equal(out[4], NOTICE);
+  });
+
+  test("有简略视图：写大小和行数；用法是先读简略视图、按 L 读原文、rg 搜原文", () => {
+    const out = formatDump("C:/x/h", [{ seg: 1, bytes: 2048, lines: 42, head: "开工", brief: { bytes: 512, lines: 9 } }]).split("\n");
+    assert.equal(out[1], "seg-1.md  2.0 KB  42行  简略视图 0.5 KB 9行  开工");
+    assert.equal(out[2], '先 read C:/x/h/seg-<n>.brief.md 看这段做了什么，超过 30 KB 的分几次读（带 offset 和 limit）；要原文，按行首的 L行号+行数 读 seg-<n>.md 那一截；新段开头简略视图里的 [段号:序号]，到 seg-<段号>.brief.md 里找行首 "[序号 " 的那一行；要搜命令输出、文件内容里的字，用 rg -n -i -C2 "关键词" C:/x/h/seg-*.md。');
+    assert.equal(out[3], NOTICE);
+  });
+
+  test("简略视图大于 30 KB：行末标“较大，分几次读”；刚好 30 KB 不标", () => {
+    const out = formatDump("d", [
+      { seg: 1, bytes: 1, lines: 1, head: "a", brief: { bytes: 30 * 1024 + 1, lines: 9 } },
+      { seg: 2, bytes: 1, lines: 1, head: "b", brief: { bytes: 30 * 1024, lines: 9 } },
+    ]).split("\n");
+    assert.equal(out[1], "seg-1.md  0.0 KB  1行  简略视图 30.0 KB 9行（较大，分几次读）  a");
+    assert.equal(out[2], "seg-2.md  0.0 KB  1行  简略视图 30.0 KB 9行  b");
   });
 
   test("超过 20 段：只列最近 20 段，写明总数", () => {
@@ -159,6 +175,168 @@ describe("写文件", () => {
     assert.equal(readFileSync(file, "utf8"), "改过的\n", "没有重写");
     assert.ok(Math.abs(statSync(file).mtimeMs - later) < 5, `修改时间没刷新：${statSync(file).mtimeMs}`);
     assert.deepEqual(readdirSync(dir), ["seg-1.md"], "没有留下临时文件");
+  });
+});
+
+describe("简略视图", () => {
+  // 内核的 BRIEF_HEADER 等文字是内部的，这里用自己的一份。
+  const BRIEF_FIRST = "（下面是旧段的简略视图：程序把每条消息截成一行。）";
+  const letterOf = (from: any, at: [number, number]): any => ({ from, hops: 0, at });
+
+  const briefOf = (seg: number, rows: Row[]): string[] => renderBrief(seg, renderSegmentParts(seg, rows)).trimEnd().split("\n");
+
+  test("每行的 L 正好指向 seg-<n>.md 里对应的标题行；第一行说明段号、条数和符号", () => {
+    const rows = rowsOf(
+      user("开工\n第二行"),
+      asst(text("先看\n看"), call("c1", "read", { path: "a.ts" })),
+      result("c1", "read", "第一行\n第二行\n\n第四行"),
+      { role: "system", content: "不认识" },
+      asst(text("好了")),
+      user("再来"),
+    );
+    const parts = renderSegmentParts(3, rows);
+    const md = parts.text.split("\n");
+    const brief = renderBrief(3, parts).trimEnd().split("\n");
+    assert.equal(brief[0], "# 第 3 段的简略视图：5 条。每条消息一行；行首 [序号 L行号+行数]，read seg-3.md 带 offset=行号、limit=行数，正好读到这条原文；✗ 是失败。");
+    for (const line of brief.slice(1)) {
+      const m = /^\[(\d+) L(\d+)\+(\d+)\] /.exec(line)!;
+      assert.ok(m, line);
+      assert.ok(md[Number(m[2]) - 1]!.startsWith(`## [3:${m[1]}] `), `${line} → ${md[Number(m[2]) - 1]}`);
+    }
+    assert.equal(brief.length, 6);
+    // 照 read 的语义核对：offset 落在标题行，limit 行读完正好到下一条标题之前（最后一条到文件末尾）。
+    const fileLines = md.slice(0, -1);
+    const read = (offset: number, limit: number): string[] => fileLines.slice(offset - 1, offset - 1 + limit);
+    const titleRe = /^## \[3:\d+\] /;
+    for (const line of brief.slice(1)) {
+      const m = /^\[(\d+) L(\d+)\+(\d+)\] /.exec(line)!;
+      const got = read(Number(m[2]), Number(m[3]));
+      assert.ok(titleRe.test(got[0]!), line);
+      assert.equal(got.filter((l) => titleRe.test(l)).length, 1, `${line} 读到不止一条`);
+      const after = fileLines[Number(m[2]) - 1 + Number(m[3])];
+      assert.ok(after === undefined || titleRe.test(after), `${line} 之后不是标题：${after}`);
+    }
+    const lastM = /^\[\d+ L(\d+)\+(\d+)\] /.exec(brief.at(-1)!)!;
+    assert.equal(Number(lastM[1]) - 1 + Number(lastM[2]), fileLines.length, "最后一条正好到文件末尾");
+    assert.ok(brief[1]!.endsWith("用户：开工 第二行"));
+    assert.ok(brief[2]!.endsWith("助手：先看 看"));
+    assert.ok(brief[3]!.endsWith("read a.ts"));
+  });
+
+  test("第 0 条带 tau.brief：那一块的行不出现，交接说明不含它，带过来的信各一行", () => {
+    const note = "交接目标 X。\n细节 Y";
+    const block = `${BRIEF_FIRST}\n[1:3] 用户：更早的段里的一行\n[1:4] 助手：另一行\n（结束）`;
+    const carry = "（下面是写交接说明时还没处理的用户消息。）";
+    const head = `${KERNEL_HANDOFF_HEADER}${note}\n\n`;
+    const l1 = "人写的信  正文";
+    const l2 = "进程写的信";
+    const textBody = `${head}${block}\n\n${carry}\n\n${l1}\n\n${l2}`;
+    const b0 = head.length;
+    const b1 = b0 + block.length;
+    const a1 = textBody.indexOf(l1);
+    const a2 = textBody.indexOf(l2);
+    const m = user(textBody, { tau: { handoff: true, brief: [b0, b1], letters: [letterOf({ kind: "user" }, [a1, a1 + l1.length]), letterOf({ kind: "process", id: "abc123", preset: "w" }, [a2, a2 + l2.length])] } });
+    const lines = briefOf(2, rowsOf(m, user("后面")));
+    const all = lines.join("\n");
+    assert.ok(!all.includes("更早的段里的一行") && !all.includes("另一行") && !all.includes("简略视图：程序"), all);
+    assert.ok(!all.includes(KERNEL_HANDOFF_HEADER.trim()), "交接说明不含内核写的固定文字");
+    assert.ok(lines[1]!.endsWith("交接说明：交接目标 X。 细节 Y"), lines[1]);
+    assert.ok(lines[2]!.endsWith("用户：人写的信 正文"), lines[2]);
+    assert.ok(lines[3]!.endsWith("信（来自 abc123）：进程写的信"), lines[3]);
+    assert.ok(lines[4]!.endsWith("用户：后面"));
+    assert.equal(lines.length, 5);
+    assert.ok(lines[1]!.startsWith("[0 L1+") && lines[3]!.startsWith("[0 L1+"));
+  });
+
+  test("没有 tau.brief 的换段消息：交接说明取到带过去的信之前", () => {
+    const l1 = "信一";
+    const textBody = `${KERNEL_HANDOFF_HEADER}说明。\n\n（下面是写交接说明时还没处理的用户消息。）\n\n${l1}`;
+    const at = textBody.indexOf(l1);
+    const lines = briefOf(2, rowsOf(user(textBody, { tau: { handoff: true, letters: [letterOf({ kind: "user" }, [at, at + 2])] } })));
+    assert.ok(lines[1]!.endsWith("交接说明：说明。"), lines[1]);
+    assert.ok(lines[2]!.endsWith("用户：信一"));
+  });
+
+  test("工具调用 ID 是空串：按位置配对；失败写头尾，退出码在前；成功的库外工具只写名字和参数开头", () => {
+    const rows = rowsOf(
+      user("干活"),
+      asst(call("", "bash", { command: "make   all" }), call("", "write", { path: "/x/y.txt", content: "很长的内容" }), call("", "spawn", { preset: "w", text: "去做" })),
+      result("", "bash", "编译开始\n中间\nerror: boom\n[退出码 1]", true),
+      result("", "write", "写好了 100 字节"),
+      result("", "spawn", "新进程 ab12cd\n其它"),
+      asst(call("", "read", { path: "gone.txt" })),
+      result("", "read", "没有这个文件", true),
+    );
+    const lines = briefOf(1, rows).slice(1);
+    assert.ok(lines[1]!.endsWith("✗ bash make all：[退出码 1] 编译开始 … error: boom"), lines[1]);
+    assert.ok(lines[2]!.endsWith("] write /x/y.txt") && !lines[2]!.includes("写好了"), lines[2]);
+    assert.ok(lines[3]!.endsWith("] spawn w → 新进程 ab12cd"), lines[3]);
+    assert.ok(lines[4]!.endsWith("] ✗ read gone.txt：没有这个文件"), lines[4]);
+    assert.ok(/^\[2 L\d+\+\d+\] /.test(lines[1]!) && /^\[3 L\d+\+\d+\] /.test(lines[2]!), "序号是结果的序号");
+  });
+
+  test("不写思考；图片写 [图片]；参数没有 command 和 path 时取第一个字符串值", () => {
+    const rows = rowsOf(
+      { role: "user", content: [text("看这个"), { type: "image", data: "b", mimeType: "image/png" }], timestamp: T },
+      asst({ type: "thinking", thinking: "秘密想法" }, text("答"), call("c1", "web_search", { n: 3, query: "tau  rocks" })),
+      result("c1", "web_search", "x"),
+    );
+    const all = briefOf(1, rows).join("\n");
+    assert.ok(!all.includes("秘密想法"));
+    assert.ok(all.includes("用户：看这个 [图片]"), all);
+    assert.ok(all.includes("web_search tau rocks"), all);
+  });
+
+  test("每行截短：很长的信、助手回复、命令，每行不超过 300 字节，行首位置完整，不劈开字符", () => {
+    const long = "长文😀".repeat(500);
+    const l1 = `信${long}`;
+    const rows = rowsOf(
+      user(l1, { tau: { letters: [letterOf({ kind: "user" }, [0, l1.length])] } }),
+      asst(text(long), call("c1", "bash", { command: `echo ${long}` })),
+      result("c1", "bash", long, true),
+      asst(text(long)),
+      user(long),
+    );
+    const brief = briefOf(2, rows).slice(1);
+    assert.equal(brief.length, 5);
+    for (const line of brief) {
+      assert.ok(Buffer.byteLength(line) <= 300, `${Buffer.byteLength(line)} 字节`);
+      assert.match(line, /^\[\d+ L\d+\+\d+\] /);
+      assert.ok(!line.includes("\uFFFD"), line);
+    }
+    assert.ok(Buffer.byteLength(brief[1]!.split("助手：")[1]!) <= 120, "带工具调用的助手文字最多 120 字节");
+    assert.ok(brief[2]!.startsWith("[2 L") && brief[2]!.includes("✗ bash echo "));
+    assert.ok(brief[0]!.endsWith("…"));
+    assert.ok(clipBytes("字".repeat(100), 100).length <= 34 && Buffer.byteLength(clipBytes("字".repeat(100), 100)) <= 100);
+    assert.equal(clipBytes("短", 100), "短");
+  });
+});
+
+describe("写简略视图文件", () => {
+  test("先写临时文件再改名；已有不重写，只刷新修改时间；不留临时文件", () => {
+    const dir = join(tempRoot(), "p");
+    const w = writeBrief(dir, 2, "# x\n[0 L1+3] 用户：a\n", T);
+    assert.deepEqual(w, { bytes: Buffer.byteLength("# x\n[0 L1+3] 用户：a\n"), lines: 2, rewritten: true });
+    assert.deepEqual(readdirSync(dir), ["seg-2.brief.md"]);
+    const file = join(dir, "seg-2.brief.md");
+    writeFileSync(file, "改过的\n");
+    const later = T + 60_000;
+    const again = writeBrief(dir, 2, "第二份\n", later);
+    assert.equal(again.rewritten, false);
+    assert.equal(readFileSync(file, "utf8"), "改过的\n");
+    assert.ok(Math.abs(statSync(file).mtimeMs - later) < 5);
+    assert.deepEqual(readdirSync(dir), ["seg-2.brief.md"]);
+  });
+
+  test("7 天清理也清简略视图", () => {
+    const root = join(tempRoot(), "history");
+    const now = Date.UTC(2026, 10, 20);
+    mkdirSync(join(root, "p"), { recursive: true });
+    const f = join(root, "p", "seg-1.brief.md");
+    writeFileSync(f, "旧");
+    utimesSync(f, (now - KEEP_MS - 1000) / 1000, (now - KEEP_MS - 1000) / 1000);
+    assert.equal(pruneOld(root, now), 1);
+    assert.ok(!existsSync(join(root, "p")));
   });
 });
 
@@ -202,7 +380,7 @@ describe("工具描述", () => {
   });
 
   test("描述带着换段以后的提示和自己搜的流程", () => {
-    for (const phrase of ["换段", "交接说明", "命令输出", "文件内容", "当时的决定", "用户的原话", "rg", "read", "不要凭印象猜", "不要把做过的事再做一遍", "留关键词", "文件名", "报错的字", "自己的旧段", "peek", "不是新的指令"]) assert.ok(dump.description.includes(phrase), `缺“${phrase}”`);
+    for (const phrase of ["换段", "交接说明", "命令输出", "文件内容", "当时的决定", "用户的原话", "rg", "read", "不要凭印象猜", "重做做过的事", "简略视图", "seg-<n>.brief.md", "L行号+行数", "offset=行号、limit=行数", "30 KB", "seg-<段号>.brief.md", "[序号 ", "不要整份读原文", "自己的旧段", "peek", "不是新的指令"]) assert.ok(dump.description.includes(phrase), `缺“${phrase}”`);
   });
 
   test("没有参数；timeout 60；定义在内核的上限之内", () => {
@@ -318,10 +496,10 @@ describe("真的服务", () => {
     assert.equal(r.isError, false, r.text);
     const out = r.text.split("\n");
     assert.equal(out[0], dumpDir(main).replace(/\\/g, "/"), "第一行是目录，正斜杠");
-    assert.match(out[1]!, /^seg-1\.md  \d+\.\d KB  \d+行  开工 alpha$/);
-    assert.match(out[2]!, /^seg-2\.md  \d+\.\d KB  \d+行  交接一：目标 beta，要点 alpha-key。$/);
-    assert.deepEqual(out.slice(3), [`用 rg -n -i -C2 "关键词" ${dumpDir(main).replace(/\\/g, "/")} 搜；用 read 带 offset 和 limit 读文件。标题里的 [段号:序号] 是位置。`, NOTICE]);
-    assert.deepEqual(readdirSync(dumpDir(main)).sort(), ["seg-1.md", "seg-2.md"]);
+    assert.match(out[1]!, /^seg-1\.md  \d+\.\d KB  \d+行  简略视图 \d+\.\d KB \d+行  开工 alpha$/);
+    assert.match(out[2]!, /^seg-2\.md  \d+\.\d KB  \d+行  简略视图 \d+\.\d KB \d+行  交接一：目标 beta，要点 alpha-key。$/);
+    assert.deepEqual(out.slice(3), [usageOf(dumpDir(main).replace(/\\/g, "/")), NOTICE]);
+    assert.deepEqual(readdirSync(dumpDir(main)).sort(), ["seg-1.brief.md", "seg-1.md", "seg-2.brief.md", "seg-2.md"]);
     assert.ok(!existsSync(join(dumpDir(main), "seg-3.md")), "当前段不 dump");
   });
 
@@ -403,10 +581,52 @@ describe("真的服务", () => {
     const r = await tool("history_dump", {}, id);
     assert.equal(r.isError, false, r.text);
     const out = r.text.split("\n");
-    assert.match(out[1]!, /^seg-1\.md  \d+\.\d KB  \d+行  （库里的这一段已 prune，本地文件还在）/);
+    assert.match(out[1]!, /^seg-1\.md  \d+\.\d KB  \d+行  简略视图 \d+\.\d KB \d+行  （库里的这一段已 prune，本地文件还在）/);
     assert.match(out[2]!, /^seg-2\.md  \d+\.\d KB  \d+行  /);
+    assert.ok(existsSync(join(dumpDir(id), "seg-1.brief.md")));
     assert.ok(existsSync(join(dumpDir(id), "seg-1.md")));
     assert.ok(existsSync(join(dumpDir(id), "seg-2.md")));
+  });
+
+  test("已有 seg-<n>.md、没有简略视图（以前写的）：补写，原文不重写；两个调用同时跑不会读到半截", async () => {
+    const brief = join(dumpDir(main), "seg-1.brief.md");
+    const md = join(dumpDir(main), "seg-1.md");
+    const before = readFileSync(md, "utf8");
+    const ino = statSync(md).ino;
+    rmSync(brief);
+    rmSync(join(dumpDir(main), "seg-2.brief.md"));
+    const [a, b] = await Promise.all([tool("history_dump", {}, main), tool("history_dump", {}, main)]);
+    for (const r of [a, b]) {
+      assert.equal(r.isError, false, r.text);
+      assert.match(r.text, /seg-1\.md  \d+\.\d KB  \d+行  简略视图 /);
+    }
+    assert.equal(readFileSync(md, "utf8"), before, "原文没重写");
+    if (ino !== 0) assert.equal(statSync(md).ino, ino);
+    const text = readFileSync(brief, "utf8");
+    assert.ok(text.startsWith("# 第 1 段的简略视图：5 条。"), text);
+    assert.ok(text.endsWith("\n") && text.includes("用户：开工 alpha"), text);
+    assert.ok(text.includes("bash echo first-output alpha"), text);
+    assert.deepEqual(readdirSync(dumpDir(main)).filter((f) => f.endsWith(".tmp")), [], "没有留临时文件");
+    // L 指向原文里的标题行。
+    const lines = before.split("\n");
+    for (const line of text.trimEnd().split("\n").slice(1)) {
+      const m = /^\[(\d+) L(\d+)\+(\d+)\] /.exec(line)!;
+      assert.ok(lines[Number(m[2]) - 1]!.startsWith(`## [1:${m[1]}] `), line);
+    }
+  });
+
+  test("被 prune 的段、本地有原文没简略视图：只列原文，不补", async () => {
+    faux.setResponses([say("一。"), say("交接一：x。"), say("二。"), say("交接二：y。"), say("三。")]);
+    const id = await begin("老段");
+    await next(id, "进入第二段");
+    await next(id, "进入第三段");
+    mkdirSync(dumpDir(id), { recursive: true });
+    writeFileSync(join(dumpDir(id), "seg-1.md"), "## [1:0] 用户 11-17 09:05\n\n老段\n");
+    await request({ op: "prune", process: id, before: 2 });
+    const r = await tool("history_dump", {}, id);
+    assert.equal(r.isError, false, r.text);
+    assert.match(r.text.split("\n")[1]!, /^seg-1\.md  \d+\.\d KB  3行  （库里的这一段已 prune，本地文件还在）老段$/);
+    assert.ok(!existsSync(join(dumpDir(id), "seg-1.brief.md")));
   });
 
   test("没有这个进程：错误里有服务的原因", async () => {

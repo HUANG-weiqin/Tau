@@ -1,6 +1,7 @@
 // start、decide、effectOf：纯函数（见 .knowledge/kb-kernel.md）。
+import { briefBlock, briefLines, BRIEF_FIXED_BYTES, BRIEF_MAX_BYTES } from "./brief.ts";
 import { CARRY_HEADER, HANDOFF_HEADER, IMAGE_UNSUPPORTED, tailStart } from "./context.ts";
-import { clip, contextUsed, endedReason, endedText, estimatedUsed, finalReply, HANDOFF_REQUEST_MAX_BYTES, handoffRequested, handoffThreshold, IMAGES_PER_MESSAGE, MARGIN_TOKENS, MESSAGE_MAX_BYTES, newSegmentUsed, pendingCalls, RETRIES_PER_REPLY, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
+import { BYTES_PER_TOKEN, clip, contextUsed, endedReason, endedText, estimatedUsed, finalReply, HANDOFF_REQUEST_MAX_BYTES, handoffRequested, handoffThreshold, IMAGES_PER_MESSAGE, MARGIN_TOKENS, MESSAGE_MAX_BYTES, newSegmentUsed, pendingCalls, RETRIES_PER_REPLY, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
 import { sameStructure, withCallParams } from "./snapshot.ts";
 import { textContent, unreachable } from "./types.ts";
 import type { AssistantMessage, Content, Effect, Ended, Env, ImageContent, Input, Instant, Letter, LetterMeta, Message, Phase, PresetSnapshot, Process, ProcessId, Purpose, ToolCall, ToolResultContent, Turn, Usage, UserTau } from "./types.ts";
@@ -251,13 +252,22 @@ function onHandoff(d: Draft, turn: Turn, m: AssistantMessage): void {
       return endTurn(d, turn, { error: `交接失败：新段一开头就到阈值（固定部分 ${fixed}、记忆 ${memory}${context > 0 ? `、上下文 ${context}` : ""}、交接说明 ${used - fixed - memory - context}，共 ${used} / ${threshold} token）${next === undefined ? "" : "；待换的配置已丢弃"}` });
     }
     // 交接请求没带段末的用户消息（见 buildContext），把它们原样附在交接说明后面：文本接在说明后，图片块原样带过去。采用的待换配置的模型不收图片时，图换成说明，和 fork 带 preset 同一段代码。
-    const carriedMessages = d.seg.slice(tailStart(d.seg)).map((u) => (next === undefined || next.input.includes("image") ? u : withoutImages(u)));
+    const tail0 = tailStart(d.seg);
+    const carriedMessages = d.seg.slice(tail0).map((u) => (next === undefined || next.input.includes("image") ? u : withoutImages(u)));
     const users = carriedMessages.flatMap((u) => (u.role === "user" ? [u] : []));
     const tail = users.map((u) => (typeof u.content === "string" ? textContent(u.content) : u.content));
     const carriedText = tail.map(textOf).filter((t) => t !== "").join("\n\n");
     const carried = tail.length === 0 ? "" : `\n\n${CARRY_HEADER}${carriedText === "" ? "" : `\n\n${carriedText}`}`;
+    // 简略视图（D103）：预算取三项最小，放得下至少一行才写。第一条不被 clip 截，交接以后的检查也不会因它失败。
+    const images = tail.flatMap(imagesOf);
+    const head = HANDOFF_HEADER + note;
+    const imageNote = images.length > IMAGES_PER_MESSAGE ? utf8Bytes(`[图片：省略了 ${images.length - IMAGES_PER_MESSAGE} 张较早的图片]`) + 1 : 0;
+    const { used: usedWithCarried } = newSegmentUsed({ ...d.p, preset: to }, memoryView, userMessage(head + carried, images, true, d.env.now), contextView);
+    const budget = Math.min(BRIEF_MAX_BYTES, MESSAGE_MAX_BYTES - utf8Bytes(head + carried) - imageNote, Math.floor((threshold - usedWithCarried) / 2) * BYTES_PER_TOKEN) - BRIEF_FIXED_BYTES;
+    const block = briefBlock(briefLines(d.seg, tail0, d.p.segment.seq), budget);
+    const brief = block === "" ? "" : `\n\n${block}`;
     // 带过去的信，位置平移到新段第一条的文本里：每条消息的文本在 carriedText 里的起点。没有文本的消息不进 carriedText，它的信没有位置。
-    let offset = (HANDOFF_HEADER + note + `\n\n${CARRY_HEADER}\n\n`).length;
+    let offset = (head + brief + `\n\n${CARRY_HEADER}\n\n`).length;
     const letters = users.flatMap((u, i) => {
       const text = textOf(tail[i]!);
       const metas = u.tau?.letters ?? [];
@@ -268,7 +278,7 @@ function onHandoff(d: Draft, turn: Turn, m: AssistantMessage): void {
     });
     d.p = { ...kept, preset: to, segment: { seq: d.p.segment.seq + 1, memoryView, ...(contextView === "" ? {} : { contextView }) } };
     d.seg = [];
-    push(d, userMessage(HANDOFF_HEADER + note + carried, tail.flatMap(imagesOf), true, d.env.now, { letters, handoff: true }));
+    push(d, userMessage(head + brief + carried, images, true, d.env.now, { letters, handoff: true, ...(block === "" ? {} : { brief: [head.length + 2, head.length + 2 + block.length] as [number, number] }) }));
     // 交接已经做了：交接调用进行中到的信，标记用掉了，合并它们时不再换段。
     const { retry: _, ...clean } = turn;
     return continueTurn(d, { ...clean, queued: clean.queued.map(unmarked) });
@@ -455,8 +465,10 @@ function userMessage(text: string, images: readonly ImageContent[], limit: boole
   const content = images.length === 0 ? clip(text) : fit(text === "" ? undefined : text, images, limit);
   if (tau === undefined) return { role: "user", content, timestamp: now };
   const shown = typeof content === "string" ? content : content.find((c) => c.type === "text")?.text ?? "";
-  return { role: "user", content, timestamp: now, tau: shown.startsWith(text) ? tau : { ...tau, letters: tau.letters.map(unlocated) } };
+  return { role: "user", content, timestamp: now, tau: shown.startsWith(text) ? tau : { ...omitBrief(tau), letters: tau.letters.map(unlocated) } };
 }
+
+const omitBrief = ({ brief: _, ...rest }: UserTau): UserTau => rest;
 
 /** 工具结果：文本和图片都经 `fit`，图片张数受限。 */
 function toolResult(call: ToolCall, content: readonly Content[], isError: boolean, now: number, filled?: "interrupted" | "skipped"): Message {

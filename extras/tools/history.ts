@@ -15,7 +15,11 @@ export const KEEP_MS = 7 * 24 * 60 * 60 * 1000;
 export const LISTED = 20;
 
 /** 输出最后那句用法：怎么用这个目录。 */
-export const usageOf = (dir: string): string => `用 rg -n -i -C2 "关键词" ${dir} 搜；用 read 带 offset 和 limit 读文件。标题里的 [段号:序号] 是位置。`;
+export const usageOf = (dir: string): string =>
+  `先 read ${dir}/seg-<n>.brief.md 看这段做了什么，超过 30 KB 的分几次读（带 offset 和 limit）；要原文，按行首的 L行号+行数 读 seg-<n>.md 那一截；新段开头简略视图里的 [段号:序号]，到 seg-<段号>.brief.md 里找行首 "[序号 " 的那一行；要搜命令输出、文件内容里的字，用 rg -n -i -C2 "关键词" ${dir}/seg-*.md。`;
+
+/** 简略视图超过这么多字节，输出里标“较大，分几次读”。 */
+export const BRIEF_LARGE_BYTES = 30 * 1024;
 
 /** 库里的一条消息：段内序号加原样的 JSON。 */
 export interface Row {
@@ -86,16 +90,152 @@ export function bodyOf(m: any): string {
   return out.join("\n");
 }
 
-/** 一段的全部消息渲染成 Markdown：一条一个标题行，下面接正文，消息之间空一行。全文，不截断。 */
-export function renderSegment(seg: number, rows: readonly Row[]): string {
+export interface Rendered {
+  text: string;
+  /** 每条渲染了的消息：序号、标题行在 `text` 里的行号（从 1 起）、到下一条标题之前的行数（最后一条到文件末尾）、消息本身。`read offset=line limit=count` 正好读到这一条。 */
+  items: { seq: number; line: number; count: number; message: any }[];
+}
+
+/** 一段的全部消息渲染成 Markdown，同时给出每条标题的行号。一条一个标题行，下面接正文，消息之间空一行。全文，不截断。 */
+export function renderSegmentParts(seg: number, rows: readonly Row[]): Rendered {
   const blocks: string[] = [];
+  const items: Rendered["items"] = [];
+  let line = 1;
   for (const { seq, message } of rows) {
     const title = titleOf(seg, seq, message);
     if (title === null) continue;
     const body = bodyOf(message);
-    blocks.push(body === "" ? title : `${title}\n\n${body}`);
+    const block = body === "" ? title : `${title}\n\n${body}`;
+    // 到下一条标题之前的行数：本条的行加后面空的一行；最后一条没有空行。
+    const count = block.split("\n").length;
+    items.push({ seq, line, count: count + 1, message });
+    blocks.push(block);
+    line += count + 1;
   }
-  return blocks.length === 0 ? "" : `${blocks.join("\n\n")}\n`;
+  const last = items[items.length - 1];
+  if (last !== undefined) last.count -= 1;
+  return { text: blocks.length === 0 ? "" : `${blocks.join("\n\n")}\n`, items };
+}
+
+/** 一段的全部消息渲染成 Markdown（`renderSegmentParts` 的文字）。 */
+export const renderSegment = (seg: number, rows: readonly Row[]): string => renderSegmentParts(seg, rows).text;
+
+// ---------- 简略视图：每条消息一行 ----------
+// 写法照内核的简略视图（kb-kernel 的“旧段的简略视图”），但只渲染这一段、不限长度、不取舍、不往下带。extras 不导入 src/，这份是抄的。
+
+const CARRY_MARK = "（下面是写交接说明时还没处理的用户消息。）";
+
+/** 库内工具：成功时多写结果第一行。 */
+const LIBRARY_TOOLS: ReadonlySet<string> = new Set(["memory_get", "memory_set", "memory_edit", "memory_delete", "self", "handoff", "post", "spawn", "stop_process"]);
+
+const squash = (s: string): string => s.replace(/\s+/g, " ").trim();
+
+/** 每行上限（含行首位置）、带工具调用的助手文字上限、参数开头和失败头尾的上限，单位字节（和内核的简略视图同数）。 */
+export const LINE_MAX_BYTES = 300;
+export const NARRATION_MAX_BYTES = 120;
+export const ARG_MAX_BYTES = 100;
+
+/** 最多 `max` 个 UTF-8 字节（含省略号），不劈开字符。 */
+export function clipBytes(s: string, max: number): string {
+  if (Buffer.byteLength(s) <= max) return s;
+  let out = "";
+  let used = Buffer.byteLength("…");
+  for (const ch of s) {
+    const n = Buffer.byteLength(ch);
+    if (used + n > max) break;
+    out += ch;
+    used += n;
+  }
+  return `${out}…`;
+}
+
+/** 消息文本：`content` 是字符串就是它，是数组就是第一个文本块（`tau.letters[].at` 指的就是它）。 */
+function messageText(m: any): string {
+  if (typeof m?.content === "string") return m.content;
+  if (!Array.isArray(m?.content)) return "";
+  const b = m.content.find((x: any) => x?.type === "text");
+  return b === undefined ? "" : String(b.text ?? "");
+}
+
+/** 工具调用的参数开头：`command`，没有就 `path`，再没有就第一个字符串值。 */
+function argHead(args: unknown): string {
+  if (args === null || typeof args !== "object") return "";
+  const a = args as Record<string, unknown>;
+  if (typeof a.command === "string") return clipBytes(squash(a.command), ARG_MAX_BYTES);
+  if (typeof a.path === "string") return clipBytes(squash(a.path), ARG_MAX_BYTES);
+  const first = Object.values(a).find((v) => typeof v === "string");
+  return typeof first === "string" ? clipBytes(squash(first), ARG_MAX_BYTES) : "";
+}
+
+/** 一条用户消息的行。第 0 条换段消息：交接说明一行（只取到 `tau.brief` 或第一封带位置的信之前），再是带过来的信各一行。 */
+function userLines(m: any): string[] {
+  const text = messageText(m);
+  const letters: any[] = Array.isArray(m?.tau?.letters) ? m.tau.letters : [];
+  const placed = letters.filter((l) => Array.isArray(l?.at) && l.at.length === 2);
+  const out: string[] = [];
+  if (m?.tau?.handoff === true) {
+    const brief = Array.isArray(m.tau.brief) ? Number(m.tau.brief[0]) : undefined;
+    const firstAt = placed.length > 0 ? Number(placed[0].at[0]) : undefined;
+    let note = text.slice(0, brief ?? firstAt ?? text.length);
+    const carry = note.indexOf(CARRY_MARK);
+    if (carry >= 0) note = note.slice(0, carry);
+    const gap = note.indexOf("\n\n");
+    if (gap >= 0) note = note.slice(gap + 2);
+    out.push(`交接说明：${squash(note)}`);
+  }
+  if (placed.length === 0) {
+    if (m?.tau?.handoff !== true) out.push(`用户：${squash(textOf(m?.content))}`);
+    return out;
+  }
+  for (const l of placed) {
+    const body = squash(text.slice(Number(l.at[0]), Number(l.at[1])));
+    out.push(l.from?.kind === "user" ? `用户：${body}` : `信（来自 ${String(l.from?.id)}）：${body}`);
+  }
+  return out;
+}
+
+const firstLine = (t: string): string => squash(t.split("\n").find((l) => l.trim() !== "") ?? "");
+
+/** 一条工具结果的行：工具名加参数开头；库内工具成功再加第一行；失败写头尾。 */
+function resultLine(m: any, call: any): string {
+  const name = String(call?.name ?? m.toolName);
+  const arg = argHead(call?.arguments);
+  const head = arg === "" ? name : `${name} ${arg}`;
+  const text = textOf(m.content);
+  if (m.isError !== true) return LIBRARY_TOOLS.has(name) && firstLine(text) !== "" ? `${head} → ${firstLine(text)}` : head;
+  const lines = text.split("\n").map((l) => l.trim()).filter((l) => l !== "");
+  let code = "";
+  const exit = /^\[退出码 -?\d+\]$/;
+  if (lines.length > 0 && exit.test(lines[lines.length - 1]!)) code = `${lines.pop()!} `;
+  const first = clipBytes(squash(lines[0] ?? ""), ARG_MAX_BYTES);
+  const last = clipBytes(squash(lines[lines.length - 1] ?? ""), ARG_MAX_BYTES);
+  const body = first === last ? first : `${first} … ${last}`;
+  return `✗ ${head}：${code}${body}`.trimEnd();
+}
+
+/** 一段的简略视图：第一行说明，之后每条消息一行或几行，行首 `[序号 L行号+行数] `。`items` 来自 `renderSegmentParts`。 */
+export function renderBrief(seg: number, parts: Rendered): string {
+  const out = [`# 第 ${seg} 段的简略视图：${parts.items.length} 条。每条消息一行；行首 [序号 L行号+行数]，read seg-${seg}.md 带 offset=行号、limit=行数，正好读到这条原文；✗ 是失败。`];
+  let calls: any[] = [];
+  let k = 0;
+  for (const { seq, line, count, message: m } of parts.items) {
+    const at = `[${seq} L${line}+${count}] `;
+    const lines: string[] = [];
+    if (m.role === "user") lines.push(...userLines(m));
+    else if (m.role === "assistant") {
+      calls = Array.isArray(m.content) ? m.content.filter((b: any) => b?.type === "toolCall") : [];
+      k = 0;
+      const said = squash(textOf((Array.isArray(m.content) ? m.content : []).filter((b: any) => b?.type === "text")));
+      if (said !== "") lines.push(`助手：${calls.length > 0 ? clipBytes(said, NARRATION_MAX_BYTES) : said}`);
+    } else if (m.role === "toolResult") {
+      const id = typeof m.toolCallId === "string" ? m.toolCallId : "";
+      const call = (id !== "" ? calls.find((c) => c?.id === id) : undefined) ?? calls[k];
+      k++;
+      lines.push(resultLine(m, call));
+    }
+    for (const l of lines) out.push(clipBytes(at + l, LINE_MAX_BYTES));
+  }
+  return `${out.join("\n")}\n`;
 }
 
 /** 一段的第一句话：第一条消息正文的第一行，最多 60 字。交接说明跳过内核写的那行固定文字。 */
@@ -142,18 +282,18 @@ export interface Written {
 const lineCount = (text: string): number => (text === "" ? 0 : text.split("\n").length - (text.endsWith("\n") ? 1 : 0));
 
 /**
- * 写一段：`dir/seg-<n>.md`。旧段不会改，所以目标已经在了就只刷新修改时间（`now`，毫秒）；
+ * 写 `dir/<name>`。旧段不会改，所以目标已经在了就只刷新修改时间（`now`，毫秒）；
  * 要写时先写同目录的临时文件再改名，两个调用同时跑不会读到半截。
  */
-export function writeSegment(dir: string, seg: number, text: string, now: number): Written {
+function writeOnce(dir: string, name: string, text: string, now: number): Written {
   mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, `seg-${seg}.md`);
+  const file = path.join(dir, name);
   const existing = (): Written => {
     utimesSync(file, now / 1000, now / 1000);
     return { bytes: statSync(file).size, lines: lineCount(readFileSync(file, "utf8")), rewritten: false };
   };
   if (existsSync(file)) return existing();
-  const tmp = path.join(dir, `.seg-${seg}.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`);
+  const tmp = path.join(dir, `.${name}.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`);
   writeFileSync(tmp, text);
   try {
     renameSync(tmp, file);
@@ -166,7 +306,22 @@ export function writeSegment(dir: string, seg: number, text: string, now: number
   return { bytes: Buffer.byteLength(text), lines: lineCount(text), rewritten: true };
 }
 
+/** 写一段的原文：`dir/seg-<n>.md`。 */
+export const writeSegment = (dir: string, seg: number, text: string, now: number): Written => writeOnce(dir, `seg-${seg}.md`, text, now);
+
+/** 写一段的简略视图：`dir/seg-<n>.brief.md`。 */
+export const writeBrief = (dir: string, seg: number, text: string, now: number): Written => writeOnce(dir, `seg-${seg}.brief.md`, text, now);
+
 export const segmentPath = (dir: string, seg: number): string => path.join(dir, `seg-${seg}.md`);
+export const briefPath = (dir: string, seg: number): string => path.join(dir, `seg-${seg}.brief.md`);
+
+/** 已写的简略视图在时：刷新修改时间，给大小和行数；不在返回 null。 */
+export function readExistingBrief(dir: string, seg: number, now: number): { bytes: number; lines: number } | null {
+  const file = briefPath(dir, seg);
+  if (!existsSync(file)) return null;
+  utimesSync(file, now / 1000, now / 1000);
+  return { bytes: statSync(file).size, lines: lineCount(readFileSync(file, "utf8")) };
+}
 
 /** 已导出的段文件存在时：刷新修改时间，直接从本地文件算大小、行数和开头一句，免去经管道全量拉取。 */
 export function readExistingSegment(dir: string, seg: number, now: number): { bytes: number; lines: number; head: string } | null {
@@ -213,16 +368,18 @@ export interface DumpEntry {
   bytes?: number;
   lines?: number;
   head?: string;
+  /** 简略视图文件的大小和行数；没有就不写。 */
+  brief?: { bytes: number; lines: number };
 }
 
-/** 输出：目录一行，每段一行（文件名、大小 KB、行数、这一段的开头），再是用法和 NOTICE。 */
+/** 输出：目录一行，每段一行（文件名、大小 KB、行数、简略视图的大小和行数、这一段的开头），再是用法和 NOTICE。 */
 export function formatDump(dir: string, entries: readonly DumpEntry[]): string {
   const lines = [dir];
   const count = entries.length;
   if (count > LISTED) lines.push(`旧段共 ${count} 个，只列最近 ${LISTED} 个（第 ${entries[count - LISTED]!.seg}–${entries[count - 1]!.seg} 段），更旧的段也在目录里。`);
   for (const e of entries.slice(-LISTED)) {
     const name = `seg-${e.seg}.md`;
-    lines.push(e.missing !== undefined ? `${name}  读不到：${e.missing}` : `${name}  ${((e.bytes ?? 0) / 1024).toFixed(1)} KB  ${e.lines ?? 0}行  ${e.stale ? "（库里的这一段已 prune，本地文件还在）" : ""}${e.head ?? ""}`);
+    lines.push(e.missing !== undefined ? `${name}  读不到：${e.missing}` : `${name}  ${((e.bytes ?? 0) / 1024).toFixed(1)} KB  ${e.lines ?? 0}行  ${e.brief === undefined ? "" : `简略视图 ${(e.brief.bytes / 1024).toFixed(1)} KB ${e.brief.lines}行${e.brief.bytes > BRIEF_LARGE_BYTES ? "（较大，分几次读）" : ""}  `}${e.stale ? "（库里的这一段已 prune，本地文件还在）" : ""}${e.head ?? ""}`);
   }
   lines.push(usageOf(dir), NOTICE);
   return lines.join("\n");

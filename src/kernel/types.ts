@@ -20,6 +20,8 @@ export interface UserTau {
   letters: LetterMeta[];
   after?: Ended;
   handoff?: true;
+  /** 新段第一条里简略视图那一块的起止位置，UTF-16，和 `at` 一样（D103）。 */
+  brief?: [number, number];
 }
 
 /** `decide` 补的工具结果：被中断，或者未执行。 */

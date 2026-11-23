@@ -284,17 +284,30 @@ test("messages: 上一轮的说明读 tau.after，不看文字", () => {
 
 test("messages: 换段后的第一条读 tau.handoff：说明，和带过来的信", () => {
   const plain = { role: "user", content: HANDOFF_HEADER + "目标是 X\n\n第二行", timestamp: 1, tau: { letters: [], handoff: true } } as any;
-  assert.deepEqual(parseUser(plain).handoff, { note: "目标是 X\n\n第二行", carried: null });
+  assert.deepEqual(parseUser(plain).handoff, { note: "目标是 X\n\n第二行", carried: null, brief: null });
   assert.deepEqual(parseUser(plain).letters, []);
   const head = HANDOFF_HEADER + "目标是 X\n\n第二行\n\n" + CARRY_HEADER + "\n\n";
   const text = head + "用户又说了\n\n还有一句";
   const carried = { role: "user", content: text, timestamp: 1, tau: { handoff: true, letters: [{ from: U, hops: 0, at: [head.length, head.length + 5] }, { from: P("ab", "w"), hops: 1, at: [head.length + 7, text.length] }] } } as any;
   const p = parseUser(carried);
-  assert.deepEqual(p.handoff, { note: "目标是 X\n\n第二行", carried: "用户又说了\n\n还有一句" });
+  assert.deepEqual(p.handoff, { note: "目标是 X\n\n第二行", carried: "用户又说了\n\n还有一句", brief: null });
   assert.equal(toItems([carried])[0]!.kind, "handoff");
   // 带过来的消息只有图片：说明后面有标题，没有正文。
   const noBody = { role: "user", content: HANDOFF_HEADER + "说明\n\n" + CARRY_HEADER, timestamp: 1, tau: { handoff: true, letters: [{ from: U, hops: 0 }] } } as any;
-  assert.deepEqual(parseUser(noBody).handoff, { note: "说明", carried: null });
+  assert.deepEqual(parseUser(noBody).handoff, { note: "说明", carried: null, brief: null });
+});
+
+test("messages: 换段后的第一条带 tau.brief：说明不含简略视图，brief 原样；和带过来的信同时在时三者都对", () => {
+  const BRIEF = "（简略视图的第一行）\n[1:0] 用户：开工\n[1:2] ✗ bash x\n（结束）";
+  const head = HANDOFF_HEADER + "目标是 X\n\n第二行\n\n";
+  const only = { role: "user", content: head + BRIEF, timestamp: 1, tau: { letters: [], handoff: true, brief: [head.length, head.length + BRIEF.length] } } as any;
+  assert.deepEqual(parseUser(only).handoff, { note: "目标是 X\n\n第二行", carried: null, brief: BRIEF });
+  const mid = head + BRIEF + "\n\n" + CARRY_HEADER + "\n\n";
+  const text = mid + "用户又说了\n\n还有一句";
+  const both = { role: "user", content: text, timestamp: 1, tau: { handoff: true, brief: [head.length, head.length + BRIEF.length], letters: [{ from: U, hops: 0, at: [mid.length, mid.length + 5] }, { from: P("ab", "w"), hops: 1, at: [mid.length + 7, text.length] }] } } as any;
+  assert.deepEqual(parseUser(both).handoff, { note: "目标是 X\n\n第二行", carried: "用户又说了\n\n还有一句", brief: BRIEF });
+  const item = toItems([both])[0] as any;
+  assert.deepEqual([item.kind, item.note, item.brief, item.carried], ["handoff", "目标是 X\n\n第二行", BRIEF, "用户又说了\n\n还有一句"]);
 });
 
 test("messages: 后台任务的完成通知认前缀，不当成人的信", () => {

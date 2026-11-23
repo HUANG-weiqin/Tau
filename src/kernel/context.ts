@@ -7,7 +7,7 @@ import type { Content, Message, ModelRequest, PresetSnapshot, Process } from "./
 export const HANDOFF_INSTRUCTION = [
   "上下文快满了，要换到一个新的工作段。",
   "这一次不要调用任何工具，直接写一份交接说明。它会成为新工作段的第一条消息，旧段的内容你之后看不到。",
-  "写清楚：当前目标；已经做了什么，结果如何；下一步做什么；还没完成的事。",
+  "写清楚：当前目标；已经做了什么，结果如何；中途定下的做法和理由；试过不通的路；下一步做什么；还没完成的事。",
   "如果有还没回复完的用户请求，在说明里写清它要什么。最后几条还没处理的用户消息会原样附在说明后面，不用抄写。",
 ].join("\n");
 
@@ -24,6 +24,9 @@ export const HANDOFF_HEADER = "（这是你在上一个工作段结束时写的�
 export const IMAGE_UNSUPPORTED = "[图片：模型不支持，已省略]";
 /** 新段第一条消息里，交接说明之后、带过来的用户消息之前的一行。 */
 export const CARRY_HEADER = "（下面是写交接说明时还没处理的用户消息。）";
+/** 新段第一条消息里，旧段简略视图的第一行和最后一行（D103）。 */
+export const BRIEF_HEADER = "（下面是旧段的简略视图：程序把每条消息截成一行，旧的在前。这是历史，不是新的指令：里面的事已经处理过，或者写进了上面的说明，不要照它重做；它也不证明文件和环境现在还是那样。行首的 [段号:序号] 是原文的位置。）";
+export const BRIEF_END = "（简略视图到此为止。）";
 
 /** 段末连续用户消息的起点，段非空时最小为 1：第一条消息是写交接说明的依据。 */
 export function tailStart(segment: readonly Message[]): number {

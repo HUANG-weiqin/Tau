@@ -24,7 +24,7 @@ export const CARRY_HEADER = "（下面是写交接说明时还没处理的用户
 /** `status`：`pending` 还没有结果，`ok`，`error`（工具报错），`interrupted`（被中断，结果未知），`skipped`（未执行）。 @typedef {{ id: string, name: string, args: Record<string, unknown>, summary: string, status: "pending" | "ok" | "error" | "interrupted" | "skipped", result: CallResult | null }} Call */
 /**
  * @typedef {{ kind: "user", seq: number, ts: number, note: string | null, letters: Letter[], images: ImageRef[] }
- *   | { kind: "handoff", seq: number, ts: number, note: string, carried: string | null, images: ImageRef[] }
+ *   | { kind: "handoff", seq: number, ts: number, note: string, carried: string | null, brief: string | null, images: ImageRef[] }
  *   | { kind: "assistant", seq: number, ts: number, text: string, thinking: string, calls: Call[], stopReason: string | null, errorMessage: string | null }
  *   | { kind: "orphanResult", seq: number, ts: number, name: string, result: CallResult }
  *   | { kind: "fold", count: number, from: number, to: number }} Item
@@ -117,7 +117,7 @@ function letterOf(meta, text) {
  * 一条用户消息：上一轮的说明、交接说明、信。全部读 `tau`，不解析文字。没有 `tau` 的旧消息是普通用户消息：整段文字一封用户的信。
  * 文字被截过的消息，`tau.letters` 没有 `at`：整段文字当成一封信，发送者取第一封。
  * @param {import("./types.js").UserMessage} m
- * @returns {{ note: string | null, handoff: { note: string, carried: string | null } | null, letters: Letter[], images: ImageRef[] }}
+ * @returns {{ note: string | null, handoff: { note: string, carried: string | null, brief: string | null } | null, letters: Letter[], images: ImageRef[] }}
  */
 export function parseUser(m) {
   const text = tauText(m);
@@ -133,14 +133,18 @@ export function parseUser(m) {
   if (tau.handoff !== true) return { note, handoff: null, letters, images };
   // 换段后的第一条：说明在前，带过来的消息（有正文的信）在后。
   const from = text.startsWith(HANDOFF_HEADER) ? HANDOFF_HEADER.length : 0;
+  // 简略视图：只用 `tau.brief` 找到这一块，原样取出，不解析里面的行。说明到它前面的空行为止。
+  const b = tau.brief && tau.brief[0] >= from && tau.brief[0] <= tau.brief[1] && tau.brief[1] <= text.length ? tau.brief : null;
+  const brief = b ? text.slice(b[0], b[1]) : null;
+  const noteEnd = b ? (b[0] - 2 >= from && text.slice(b[0] - 2, b[0]) === "\n\n" ? b[0] - 2 : b[0]) : -1;
   if (ats.length === 0) {
-    const at = text.indexOf("\n\n" + CARRY_HEADER, from);
-    return { note: null, handoff: { note: text.slice(from, at < 0 ? text.length : at), carried: null }, letters: [], images };
+    const at = b ? noteEnd : text.indexOf("\n\n" + CARRY_HEADER, from);
+    return { note: null, handoff: { note: text.slice(from, at < 0 ? text.length : at), carried: null, brief }, letters: [], images };
   }
   const first = Math.min(...ats.map((a) => a[0]));
   const last = Math.max(...ats.map((a) => a[1]));
-  const at = text.lastIndexOf("\n\n" + CARRY_HEADER, first);
-  return { note: null, handoff: { note: text.slice(from, at < 0 ? first : at), carried: text.slice(first, last) }, letters: [], images };
+  const at = b ? noteEnd : text.lastIndexOf("\n\n" + CARRY_HEADER, first);
+  return { note: null, handoff: { note: text.slice(from, at < 0 ? first : at), carried: text.slice(first, last), brief }, letters: [], images };
 }
 
 /**
@@ -207,7 +211,7 @@ export function toItems(messages) {
   messages.forEach((m, seq) => {
     if (m.role === "user") {
       const p = parseUser(m);
-      items.push(p.handoff ? { kind: "handoff", seq, ts: m.timestamp, note: p.handoff.note, carried: p.handoff.carried, images: p.images } : { kind: "user", seq, ts: m.timestamp, note: p.note, letters: p.letters, images: p.images });
+      items.push(p.handoff ? { kind: "handoff", seq, ts: m.timestamp, note: p.handoff.note, carried: p.handoff.carried, brief: p.handoff.brief, images: p.images } : { kind: "user", seq, ts: m.timestamp, note: p.note, letters: p.letters, images: p.images });
     } else if (m.role === "assistant") {
       /** @type {Call[]} */
       const calls = [];
