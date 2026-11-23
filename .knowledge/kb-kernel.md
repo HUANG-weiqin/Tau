@@ -528,6 +528,7 @@ W 是 `preset.contextWindow`。快照里只存它和 `input`，不存模型的�
 2. `queued` 不空：经 `userMessage` 合并成一条用户消息写进段（头和形状见[信的头和合并](#信的头和合并)，不限张数），时间戳 `env.now`。这批信的 `replyTo` 并进 `turn.replyTo`（去重），`hops` 取 `turn.hops` 和这批信的最大值，`queued` 清空。
 3. `continueTurn`。这批信带[换段信](#换段信)标记且段里有助手消息时，传标记。
 
+- 合并的信不比工具结果晚：下一次请求里，这一批的工具结果后面紧跟着就是这条信，中间不再调用模型。模型看到工具结果的同时，就看到了是谁、写了什么。
 - 信排在安全点之前的这段时间里，正在前台等的 bash 会被催：最多再等 1 秒就转后台，好让这一批尽快到安全点（[D104](kb-decisions.md#d104-bash-前台等待时有信排队最多再等-1-秒就转后台)）。
 - 写入不计步，下一次调用模型才计。
 - 换段成功以后、等模型回复时到的信，都等下一个安全点或者本轮结束；`turn.queued` 到那时才写进段。
@@ -765,10 +766,12 @@ type PhaseView =
 | `test/kernel/flow.test.ts` | 第 5 节每一行流程和丢弃规则 |
 | `test/kernel/derive.test.ts` | 字节估算、只取整一次、输出上限和阈值、`clip`、`finalReply`、`endedText` |
 | `test/kernel/safepoint.test.ts` | 安全点投递和 `handoff` |
+| `test/kernel/hurried.test.ts` | D104：`hurried` 只在 `awaitingTool` 且 `queued` 不空时为真；`awaitingModel` 里有排队的信不算，进了 `awaitingTool` 才算；工具运行中来信变真，批没做完仍真，安全点信并进段后变假 |
 | `test/kernel/handoff-letter.test.ts` | 换段信：三个时机各生效一次；段里没有助手消息、非 `done` 结束、步数用完时作废；和阈值或 `handoff` 工具同时成立只换一次；交接中到的信去掉标记 |
 | `test/kernel/reconfigure.test.ts` | 会话配置：调用参数在三个阶段都立即换；结构性字段在空闲、段里没有助手消息、新模型收图或段里没有图、段放得下新快照时直接采用并重取视图，否则存 `next`（段里有图而新模型不收图、窗口换小而段放不进，也存 `next`；`>=` 算放不下，和 `fork` 带 `preset` 一致）；嵌套 5000 层的快照比较不爆栈；`next` 被再次 `reconfigure` 替换，换回和当前一样就取消；换段采用 `next`（快照、阈值、记忆视图、上下文视图、系统提示词都是新的）；交接以后的检查在 `next` 上失败：丢弃 `next`、旧快照不变、不死循环；别的原因的交接失败不丢 `next`；新模型不收图片时带过去的图换成说明；`fork` 不带 `next`；投影的 `self.pending` |
 | `test/kernel/context-view.test.ts` | 上下文视图（D72）的纯函数部分：`CONTEXT_VIEW_MAX_BYTES`；系统提示词的三段顺序，没有视图时一字不变，模型请求带上下文一节，没有锚点的用量估算也算上它；`limits` 的 `contextMax` 和 `startError`，没声明 `context` 时数字和文字不变，声明了才多一项，窗口刚好够或差 1 token 的边界；`newSegmentUsed` 带 `contextView`，各部分分开报；`start`、`fork`（不带 `to` 复制、带 `to` 用新的）的视图；视图算进 `fork` 带 `to` 的估算 |
 | `test/kernel/letters.test.ts` | 信的头和合并、两种形状、工具结果和新段第一条的张数、换段带全部段末消息 |
+| `test/kernel/observe.test.ts` | 投影；`self.bgJobs` 认得催出来的转后台结果（D104：说明一行在固定的一段前面） |
 | `test/kernel/since.test.ts` | `since` 在各转移上的值，`fork` 的 `since`，投影带 `since` |
 | `test/kernel/retry.test.ts` | D92：五条重发路径（空回复、`length`、`stop` 带调用、换段、流出错）各自的重发、次数用完和计数；`retry` 的清除；请求末尾的提示；重发期间来信；崩溃；步数用完 |
 | `test/kernel/usage.test.ts` | 累计用量：每种回复都加，丢弃的和被中断的不加 |

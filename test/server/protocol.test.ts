@@ -1958,3 +1958,39 @@ test("reconfigure：空闲、段里没有助手消息、但段放不进新窗口
   assert.equal(q.preset.contextWindow, 100_000);
   assert.equal("next" in q, false);
 });
+
+test("等 bash 的时候来了信（D104）：前台的 bash 约 1 秒后转后台，结果多一行说明，信在安全点并进段，完成信照常寄到", async (t) => {
+  const e = await setup(t);
+  writeFileSync(join(e.presetsDir, "sh.md"), `---
+workdir: ${e.work}
+model: ${e.faux.getModel().provider}/m
+tools: read, bash
+---
+你是测试助手。
+`);
+  e.faux.appendResponses([
+    fauxAssistantMessage([fauxToolCall("bash", { command: "echo 开始; sleep 5", timeout: 60 })], { stopReason: "toolUse" }),
+    fauxAssistantMessage(fauxText("看到插话了。")),
+    fauxAssistantMessage(fauxText("收到完成信。")),
+  ]);
+  const starter = open(e.pipe, { op: "start", preset: "sh", text: "你好" });
+  await until(() => starter.replies.some((x) => x.type === "receipt"), "回执");
+  const id = starter.replies.find((x) => x.type === "receipt")!.process;
+  await until(() => segmentOf(e, id).some((m) => m.role === "assistant"), "bash 的调用进段");
+  await sleep(300);
+  const sent = Date.now();
+  const letter = open(e.pipe, { op: "send", process: id, text: "插话" });
+  await until(() => segmentOf(e, id).some((m) => m.role === "toolResult"), "bash 的结果", 8_000);
+  assert.ok(Date.now() - sent < 4_000, `用了 ${Date.now() - sent} 毫秒`);
+  const text = (m: Message | undefined): string => (m?.role === "toolResult" ? m.content.map((c) => (c.type === "text" ? c.text : "")).join("") : "");
+  const at = segmentOf(e, id).findIndex((m) => m.role === "toolResult");
+  assert.match(text(segmentOf(e, id)[at]), /^(开始\n)?有新的信在排队，没等满 timeout 就转了后台。\n\[转入后台 [0-9a-f]{6}\] 命令还在运行，没有被结束。\n/);
+  // 完成信（约 5 秒后）把进程再唤醒一次，回复完才算收尾：不留 notify.ts 在跑。
+  await until(() => segmentOf(e, id).some((m) => m.role === "assistant" && JSON.stringify(m.content).includes("收到完成信")), "完成信的回复", 15_000);
+  const seg = segmentOf(e, id);
+  assert.equal(seg[at + 1]?.role, "user", "信在安全点紧跟工具结果");
+  assert.match(JSON.stringify(seg[at + 1]?.content), /插话/);
+  assert.match(JSON.stringify(seg.at(-2)?.content), /\[后台任务 [0-9a-f]{6}\] 退出码 0/);
+  starter.socket.destroy();
+  letter.socket.destroy();
+});

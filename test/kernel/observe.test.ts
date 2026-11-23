@@ -238,3 +238,19 @@ test("D90 第 2 阶段：self 投影列出当前段仍在运行的 bash 后台�
   const v = observe(me, seg, [me], 10_000);
   assert.deepEqual(v.self.bgJobs, [{ id: "d4e5f6", age: 8_000 }]);
 });
+
+// D104：催出来的后台结果多一行说明在固定的一段前面，self.bgJobs 照样认得。
+test("催出来的转后台结果：bgJobs 照样认得", () => {
+  const me = proc("me");
+  const lines = [
+    "输出",
+    "有新的信在排队，没等满 timeout 就转了后台。",
+    "[转入后台 abc123] 命令还在运行，没有被结束。",
+    "输出文件：C:\\Users\\x\\.tau\\extras\\shell\\me\\1000-abc123.log（还在增长，用 read 读，可带 offset 和 limit）",
+    "进程组号：4242",
+    "跑完会给你寄一封信，内容是退出码和最后几行；你可以接着做别的事，也可以结束这一轮等信。",
+  ];
+  const hurried: Message = { role: "toolResult", toolCallId: "c-h", toolName: "bash", isError: false, timestamp: 1_000, content: [{ type: "text", text: lines.join("\n") }] };
+  const seg: Message[] = [{ role: "user", content: "跑", timestamp: 100 }, hurried];
+  assert.deepEqual(observe(me, seg, [me], 10_000).self.bgJobs, [{ id: "abc123", age: 9_000 }]);
+});

@@ -15,7 +15,7 @@ async function runRead(dir: string, input: Array<"text" | "image">) {
   const call = toolCall("c1", "read", { path: "pic.png" });
   const job = { process, segment: [], effect: { kind: "runTool" as const, n: 1, call } };
   const actions = createActions({} as Models, () => {}, "test-pipe", () => undefined);
-  return actions.runTool(job, call, new AbortController().signal);
+  return actions.runTool(job, call, new AbortController().signal, new AbortController().signal);
 }
 
 test("read：模型收图片时图片块带 blob 引用，字节交给执行器存", async (t) => {

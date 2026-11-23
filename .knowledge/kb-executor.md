@@ -266,6 +266,8 @@ pi-ai 会经常升级（[D84](kb-decisions.md#d84-pi-ai-升级版本不再写死
 | 竞态：停止时还是 `pending` | 执行器绝不会再开始它 |
 | 竞态：库外工具结果排在用户消息后面 | 先处理用户消息不会再插行，工具只执行一次 |
 | 竞态：库内工具结果排在用户消息后面 | `memory_set` 只执行一次 |
+| 催（D104）：`hurry(id, n)` | 拨到运行中的工具的催的开关；别的 `n` 和不在运行的进程什么都不做；催了不改 `busy`；动作已结束再催不抛错。开始时进程没有排队的信，开关没拨 |
+| 催（D104）：开始时就有排队的信 | 工具开始前进程已经收到信，开关一开始就是催过的 |
 | 调用模型前换成真数据 | `test/store/blobs.test.ts`：10 张图的段，请求里最早的 4 张是省略说明，其余 6 张是真数据，只读了这 6 张；引用对不上时拒绝、不发请求；`test/server/protocol.test.ts`：faux 模型收到的是 base64，库里仍是引用 |
 | 调用模型的 `maxTokens`、`reasoning`、`maxRetries` | `model-call.test.ts` 的六个模型；另有真的 `createActions` 加 faux 模型，几组接近真实目录的窗口和上限：轮次调用和交接调用都请求 `min(model.maxTokens, floor(W/8))` |
 

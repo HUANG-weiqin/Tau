@@ -20,11 +20,12 @@ export const MODEL_RETRIES = 5;
 /** `onText` 收到模型的流式文本和产生它的副作用编号；思考和工具调用参数的流带 `kind`，正文不带；它只是预览，不进库。`pipe` 是服务实际监听的管道名，bash 工具把它交给命令（TAU_PIPE）。`readBlob` 读 blobs 表：调用模型之前，请求里的 `blob:<hash>` 换成真数据。 */
 export function createActions(models: Models, onText: (id: ProcessId, n: number, delta: string, kind?: "thinking" | "toolCall") => void, pipe: string, readBlob: (hash: string) => Buffer | undefined, onOutput: (id: ProcessId, n: number, delta: string) => void = () => {}): Actions {
   /** 命令边跑边写出来的输出（D88）：`StringDecoder` 让跨块的半个汉字不会变成替换符。 */
-  const live = (job: Job): BashContext => {
+  const live = (job: Job, hurry?: AbortSignal): BashContext => {
     const decoder = new StringDecoder("utf8");
     return {
       process: job.process.id,
       pipe,
+      ...(hurry ? { hurry } : {}),
       onData: (chunk) => {
         const delta = decoder.write(chunk);
         if (delta !== "") onOutput(job.process.id, job.effect.n, delta);
@@ -53,7 +54,7 @@ export function createActions(models: Models, onText: (id: ProcessId, n: number,
       }
       return stream.result();
     },
-    async runTool(job, call, signal) {
+    async runTool(job, call, signal, hurry) {
       const { workdir } = job.process.preset;
       const tools = toolDescriptions(job.process.preset);
       const tool = tools.find((t) => t.name === call.name);
@@ -76,7 +77,7 @@ export function createActions(models: Models, onText: (id: ProcessId, n: number,
         case "edit":
           return edit(args, workdir);
         case "bash":
-          return bash(args, workdir, signal, live(job));
+          return bash(args, workdir, signal, live(job, hurry));
         default: {
           const def = job.process.preset.toolDefs.find((d) => d.name === call.name);
           if (!def) return { content: textContent(`工具 ${call.name} 不由执行器运行。`), isError: true };

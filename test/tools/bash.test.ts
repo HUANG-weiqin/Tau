@@ -526,6 +526,73 @@ test("后台进程占着管道也不会让调用挂住，临时文件已删", as
   assert.deepEqual(pgidFiles(), files);
 });
 
+// 催（D104）：有信排队，前台的 bash 最多再等 HURRY_MS 转后台。催是 ctx.hurry 的信号。
+const NOTE = "有新的信在排队，没等满 timeout 就转了后台。\n";
+const hurryRun = (command: string, timeout: number, hurry: AbortSignal, signal: AbortSignal = new AbortController().signal) =>
+  bash({ command, timeout }, dir, signal, { ...CTX, hurry }).then(plain);
+const hurriedAt = (ms: number): AbortSignal => {
+  const ac = new AbortController();
+  setTimeout(() => ac.abort(), ms);
+  return ac.signal;
+};
+
+describe("有信排队时催前台的 bash", { timeout: 60_000 }, () => {
+  test("等的时候被催：1 秒左右转后台，多一行说明在固定的一段前面，完成信照常寄到", async () => {
+    const start = Date.now();
+    const r = await hurryRun("echo out; sleep 5", 60, hurriedAt(300));
+    assert.ok(Date.now() - start < 4000, `用了 ${Date.now() - start} 毫秒`);
+    assert.equal(r.isError, false);
+    const job = jobOf(r.text);
+    assert.ok(job, r.text);
+    assert.match(r.text, /^(out\n)?有新的信在排队，没等满 timeout 就转了后台。\n\[转入后台 [0-9a-f]{6}\] 命令还在运行，没有被结束。\n输出文件：/);
+    assert.match((await letterOf(job)).text, /^\[后台任务 [0-9a-f]{6}\] 退出码 0\n/);
+  });
+
+  test("一开始就催过：快命令照常返回，没有说明，不寄信", async () => {
+    const r = await hurryRun("echo hi", 60, AbortSignal.abort());
+    const job = jobOf(r.text);
+    if (job) {
+      // bash 启动卡住超过 1 秒：催的截止时间先到，转了后台。
+      assert.ok(r.text.includes(NOTE + "[转入后台 "), r.text);
+      await letterOf(job);
+    } else {
+      assert.deepEqual(r, { text: "hi\n[退出码 0]", isError: false });
+    }
+  });
+
+  test("一开始就催过：慢命令约 1 秒转后台", async () => {
+    const start = Date.now();
+    const r = await hurryRun("sleep 3", 60, AbortSignal.abort());
+    assert.ok(Date.now() - start < 2500, `用了 ${Date.now() - start} 毫秒`);
+    assert.ok(r.text.includes(`${NOTE}[转入后台 `), r.text);
+    await letterOf(jobOf(r.text)!);
+  });
+
+  test("timeout 0：照旧立刻转后台，没有说明", async () => {
+    const r = await hurryRun("sleep 2", 0, AbortSignal.abort());
+    assert.ok(r.text.includes("[转入后台 ") && !r.text.includes(NOTE), r.text);
+    await letterOf(jobOf(r.text)!);
+  });
+
+  test("原来的截止时间更早：不多说明", async () => {
+    const r = await hurryRun("sleep 3", 1, hurriedAt(500));
+    assert.ok(r.text.includes("[转入后台 ") && !r.text.includes(NOTE), r.text);
+    await letterOf(jobOf(r.text)!);
+  });
+
+  test("正在结束进程时被催：照旧是中止的结果", async () => {
+    const ac = new AbortController();
+    const hurry = new AbortController();
+    void probe("hf").start.promise.then(() => {
+      ac.abort();
+      hurry.abort();
+    });
+    const r = await hurryRun(nativeGrandchild("hf"), 60, hurry.signal, ac.signal);
+    assert.deepEqual(r, { text: "[已中止，结束了命令启动的进程]", isError: true });
+    await assertKilled("hf");
+  });
+});
+
 // 通知脚本 notify.ts：包装脚本在后台命令跑完后运行它。参数：退出码、重试间隔（毫秒，省略是 5000）。
 // 任务号和 log 路径经环境变量 TAU_JOB、TAU_LOG 传：非 UTF-8 的 LANG 下，命令行里的非 ASCII 会走样。
 const NOTIFY = path.join(import.meta.dirname, "..", "..", "src", "tools", "notify.ts");

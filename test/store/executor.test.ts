@@ -259,7 +259,7 @@ test("库外工具的 null 参数：可选当作没填，必填报错，不会�
   const actions = createActions(createModels(), () => {}, "test-pipe", () => undefined);
   const run = async (name: string, args: JsonObject) => {
     const call = toolCall("c1", name, args);
-    return plain(await actions.runTool({ process, segment: [], effect: { kind: "runTool", n: 1, call } }, call, new AbortController().signal));
+    return plain(await actions.runTool({ process, segment: [], effect: { kind: "runTool", n: 1, call } }, call, new AbortController().signal, new AbortController().signal));
   };
   assert.deepEqual(await run("edit", { path: "a.txt", old: "x", new: null }), { text: "参数 new 是 null，必须给出一个值。", isError: true });
   assert.deepEqual(await run("write", { path: "a.txt", content: 123 }), { text: `已写入 3 字节：${join(workdir, "a.txt")}`, isError: false }, "数字和布尔照旧转成字符串");
@@ -272,7 +272,63 @@ test("库外工具的参数整体是 null（pi-ai 解析流式 JSON 'null' 的�
   const process: Process = start("p1", PRESET, { now: 0, memoryView: "" });
   const actions = createActions(createModels(), () => {}, "test-pipe", () => undefined);
   const call = { type: "toolCall", id: "c1", name: "read", arguments: null } as unknown as ToolCall;
-  const got = plain(await actions.runTool({ process, segment: [], effect: { kind: "runTool", n: 1, call } }, call, new AbortController().signal));
+  const got = plain(await actions.runTool({ process, segment: [], effect: { kind: "runTool", n: 1, call } }, call, new AbortController().signal, new AbortController().signal));
   assert.equal(got.isError, true);
   assert.match(got.text, /^参数错误：/);
+});
+
+// D104：催。执行器给每个运行中的副作用一个催的开关；hurry(id, n) 拨它；开始时进程已有排队的信就是催过的。
+function toolWorld(t: Parameters<typeof tempDb>[0]) {
+  const db = tempDb(t);
+  const memory = fakeMemory();
+  const hurries: AbortSignal[] = [];
+  const finishers: (() => void)[] = [];
+  const exec = createExecutor(db, {
+    callModel: async () => use(toolCall("c1", "read", { path: "a" })),
+    runTool: (_job, _call, _signal, hurry) =>
+      new Promise((resolve) => {
+        hurries.push(hurry);
+        finishers.push(() => resolve(okTool()));
+      }),
+  });
+  return { db, memory, exec, hurries, finishers };
+}
+
+/** 跑到工具的副作用在等开始：模型回复已处理。 */
+async function toToolEffect(w: ReturnType<typeof toolWorld>): Promise<void> {
+  startProcess(w.db, w.memory, "p1", PRESET, "a", 0);
+  handleNext(w.db, w.memory, 0);
+  await w.exec.startNext();
+  handleNext(w.db, w.memory, 0);
+}
+
+test("催：hurry(id, n) 拨到运行中的工具的开关；别的 n 和不在运行的什么都不做；busy 不受影响", async (t) => {
+  const w = toolWorld(t);
+  await toToolEffect(w);
+  const done = w.exec.startNext();
+  assert.equal(w.hurries.length, 1);
+  assert.equal(w.hurries[0]?.aborted, false, "进程没有排队的信，开始时不催");
+  w.exec.hurry("p1", 99);
+  w.exec.hurry("nobody", 2);
+  assert.equal(w.hurries[0]?.aborted, false);
+  assert.equal(w.exec.busy("p1"), true);
+  w.exec.hurry("p1", 2);
+  assert.equal(w.hurries[0]?.aborted, true);
+  assert.equal(w.exec.busy("p1"), true, "催了不改 busy");
+  w.finishers[0]?.();
+  await done;
+  assert.equal(w.exec.busy("p1"), false);
+  w.exec.hurry("p1", 2); // 已经结束：不抛错
+});
+
+test("催：开始时进程已经有排队的信，开关一开始就是催过的", async (t) => {
+  const w = toolWorld(t);
+  await toToolEffect(w);
+  send(w.db, "p1", userLetter("插话"));
+  handleNext(w.db, w.memory, 0);
+  assert.equal(loadProcess(w.db, "p1")?.phase.tag, "awaitingTool");
+  const done = w.exec.startNext();
+  assert.equal(w.hurries[0]?.aborted, true);
+  w.finishers[0]?.();
+  await done;
 });

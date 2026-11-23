@@ -12,6 +12,9 @@ import type { ToolResultContent } from "../kernel/types.ts";
 
 const DEFAULT_SECONDS = 60;
 const MAX_SECONDS = 600;
+// 前台等的时候进程有排队的信（D104）：最多再等这么久就转后台。
+const HURRY_MS = 1000;
+const HURRY_NOTE = "有新的信在排队，没等满 timeout 就转了后台。\n";
 // 输出过长时只留头尾各这么多字节，中段只计数。两段加上说明行仍在工具结果上限内。
 const KEEP_BYTES = MESSAGE_MAX_BYTES / 2 - 256;
 // bash 退出后，它留下的后台进程（如 `sleep 100 &`）还占着输出管道，close 要等它们结束。所以 exit 后
@@ -90,6 +93,8 @@ export interface BashContext {
   pipe: string;
   /** 边跑边把输出推出去，只是预览、不进库（D88）。 */
   onData?: (chunk: Buffer) => void;
+  /** 催的开关（D104）：已经或者以后被中止，前台就最多再等 HURRY_MS 转后台。 */
+  hurry?: AbortSignal;
 }
 
 // MSYS_NO_PATHCONV 是 tau 脚本为 exec node 设的，会留在服务的环境里（kb-service 坑点）。命令要照常转换路径，所以去掉。
@@ -235,7 +240,8 @@ export async function bash(args: { command: string; timeout?: number }, workdir:
     };
     const kill = (why: string): void => void (killing ??= killAll(exe, child.pid, pgidFile).then(() => why));
     const onAbort = (): void => kill("已中止，结束了命令启动的进程");
-    const timer = setTimeout(() => {
+    // 转后台和到时间走同一条路：抢 claim。`hurried` 为真是催出来的，结果多一行说明。
+    const expire = (hurried: boolean): void => {
       if (killing) return;
       try {
         closeSync(openSync(claim, "wx")); // 已存在就抛错：包装脚本先抢到了，命令正好跑完，继续等 bash 退出。
@@ -253,15 +259,26 @@ export async function bash(args: { command: string; timeout?: number }, workdir:
       }
       const { body, size } = view(log);
       push(size); // 轮询以后写的那几行，补到结果读到的位置
-      const text = `${body}${lineEnd(body)}[转入后台 ${job}] 命令还在运行，没有被结束。\n输出文件：${winPath(log)}（还在增长，用 read 读，可带 offset 和 limit）\n${/^\d+$/.test(pgid) ? `进程组号：${pgid}\n` : ""}跑完会给你寄一封信，内容是退出码和最后几行；你可以接着做别的事，也可以结束这一轮等信。`;
+      const text = `${body}${lineEnd(body)}${hurried ? HURRY_NOTE : ""}[转入后台 ${job}] 命令还在运行，没有被结束。\n输出文件：${winPath(log)}（还在增长，用 read 读，可带 offset 和 limit）\n${/^\d+$/.test(pgid) ? `进程组号：${pgid}\n` : ""}跑完会给你寄一封信，内容是退出码和最后几行；你可以接着做别的事，也可以结束这一轮等信。`;
       resolve({ content: textContent(clip(text)), isError: false });
-    }, seconds * 1000);
+    };
+    const deadline = Date.now() + seconds * 1000;
+    let timer = setTimeout(() => expire(false), seconds * 1000);
+    // 催：截止时间取原来的和现在加 HURRY_MS 里早的；原来的不晚于它就不动。正在结束进程时不理。
+    const onHurry = (): void => {
+      if (settled || killing || Date.now() + HURRY_MS >= deadline) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => expire(true), HURRY_MS);
+    };
     const ticker = ctx.onData ? setInterval(push, POLL_MS) : undefined;
     signal.addEventListener("abort", onAbort, { once: true });
+    if (ctx.hurry?.aborted) onHurry();
+    else ctx.hurry?.addEventListener("abort", onHurry, { once: true });
     const stopWatching = (): void => {
       clearTimeout(timer);
       clearInterval(ticker);
       signal.removeEventListener("abort", onAbort);
+      ctx.hurry?.removeEventListener("abort", onHurry);
     };
     const finish = (result: ToolResultContent, keep = false): void => {
       settled = true;

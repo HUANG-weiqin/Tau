@@ -91,6 +91,9 @@ export function effectOf(p: Process, segment: readonly Message[]): Effect | null
   }
 }
 
+/** 进程在等工具、而且有信在排队：前台的 bash 最多再等一会儿就转后台（D104）。 */
+export const hurried = (p: Process): boolean => p.phase.tag === "awaitingTool" && p.phase.turn.queued.length > 0;
+
 function step(d: Draft, input: Input): void {
   const { phase } = d.p;
   switch (input.kind) {

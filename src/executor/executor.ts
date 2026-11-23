@@ -1,5 +1,5 @@
 // 执行器：库外副作用的开始、中止、上报（见 .knowledge/kb-executor.md）。不做决策，不重试。
-import { effectOf } from "../kernel/decide.ts";
+import { effectOf, hurried } from "../kernel/decide.ts";
 import { textContent, unreachable } from "../kernel/types.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { AssistantMessage, DeclaredCall, Effect, Input, Message, Process, ProcessId, ToolCall, ToolResultContent } from "../kernel/types.ts";
@@ -22,7 +22,8 @@ export type ToolOutput = ToolResultContent & { images?: readonly Image[]; calls?
 /** 真正的动作。抛出或拒绝时，执行器把它上报为失败的结果。 */
 export interface Actions {
   callModel(job: Job, signal: AbortSignal): Promise<AssistantMessage>;
-  runTool(job: Job, call: ToolCall, signal: AbortSignal): Promise<ToolOutput>;
+  /** `hurry` 被中止就是“有信在排队”（D104）：只有内置 bash 理它，别的工具忽略。 */
+  runTool(job: Job, call: ToolCall, signal: AbortSignal, hurry: AbortSignal): Promise<ToolOutput>;
 }
 
 export interface Executor {
@@ -30,6 +31,8 @@ export interface Executor {
   startNext(): Promise<void> | null;
   /** 中止一个正在运行的副作用；它不在运行时什么都不做。 */
   abort(id: ProcessId, n: number): void;
+  /** 催一个正在运行的副作用（D104）；它不在运行时什么都不做。 */
+  hurry(id: ProcessId, n: number): void;
   /** 这个进程在执行器里还有没收尾的动作（包括已被中止、还没结束的）。只读。服务删进程之前用它。 */
   busy(id: ProcessId): boolean;
 }
@@ -37,22 +40,26 @@ export interface Executor {
 /** 启动执行器。先做启动恢复，所以每次服务启动只能建一个。 */
 export function createExecutor(db: DatabaseSync, actions: Actions): Executor {
   recover(db);
-  /** 执行器唯一的活状态：正在运行的副作用的中止开关。 */
-  const running = new Map<string, AbortController>();
+  /** 执行器唯一的活状态：正在运行的副作用的中止开关和催的开关。 */
+  const running = new Map<string, { abort: AbortController; hurry: AbortController }>();
   const key = (id: ProcessId, n: number) => JSON.stringify([id, n]);
   return {
     startNext() {
       const job = claim(db);
       if (!job) return null;
       const k = key(job.process.id, job.effect.n);
-      const ac = new AbortController();
-      running.set(k, ac);
-      return act(actions, job, ac.signal)
+      const live = { abort: new AbortController(), hurry: new AbortController() };
+      if (hurried(job.process)) live.hurry.abort();
+      running.set(k, live);
+      return act(actions, job, live.abort.signal, live.hurry.signal)
         .then((outcome) => complete(db, job, outcome))
         .finally(() => running.delete(k));
     },
     abort(id, n) {
-      running.get(key(id, n))?.abort();
+      running.get(key(id, n))?.abort.abort();
+    },
+    hurry(id, n) {
+      running.get(key(id, n))?.hurry.abort();
     },
     busy(id) {
       const prefix = `${JSON.stringify([id]).slice(0, -1)},`;
@@ -115,7 +122,7 @@ function complete(db: DatabaseSync, job: Job, { input, images }: Outcome): void 
 }
 
 /** 同步开始动作，返回它的结果。失败也是结果。 */
-function act(actions: Actions, job: Job, signal: AbortSignal): Promise<Outcome> {
+function act(actions: Actions, job: Job, signal: AbortSignal, hurry: AbortSignal): Promise<Outcome> {
   const e = job.effect;
   switch (e.kind) {
     case "callModel":
@@ -124,7 +131,7 @@ function act(actions: Actions, job: Job, signal: AbortSignal): Promise<Outcome> 
         (err: unknown): Outcome => ({ input: { kind: "modelResult", n: e.n, outcome: { status: "ok", message: failedReply(job.process, err) } }, images: [] }),
       );
     case "runTool":
-      return attempt(() => actions.runTool(job, e.call, signal)).then(
+      return attempt(() => actions.runTool(job, e.call, signal, hurry)).then(
         ({ images = [], calls, ...content }): Outcome => ({ input: { kind: "toolResult", n: e.n, outcome: { status: "ok", content, ...(calls ? { calls: [...calls] } : {}) } }, images }),
         (err: unknown): Outcome => ({ input: { kind: "toolResult", n: e.n, outcome: { status: "ok", content: { content: textContent(`工具执行失败：${message(err)}`), isError: true } } }, images: [] }),
       );

@@ -7,6 +7,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { Models } from "@earendil-works/pi-ai";
 import { createActions } from "../executor/actions.ts";
 import { createExecutor } from "../executor/executor.ts";
+import { hurried } from "../kernel/decide.ts";
 import { finalReply, limits, startError } from "../kernel/derive.ts";
 import { observe } from "../kernel/observe.ts";
 import { withCallParams } from "../kernel/snapshot.ts";
@@ -77,6 +78,7 @@ export async function serve(opts: ServeOptions): Promise<Service> {
       const h = handleNext(db, memory, now, readPreset);
       if (!h) break;
       if (h.abort !== null) exec.abort(h.process.id, h.abort);
+      if (hurried(h.process)) exec.hurry(h.process.id, h.process.lastEffect);
       if (subscriptions.size > 0) {
         push(h.process.id, update(h, now));
         h.appended.messages.forEach((message, i) => push(h.process.id, { type: "message", process: h.process.id, segment: h.process.segment.seq, seq: h.appended.from + i, message }, true));
