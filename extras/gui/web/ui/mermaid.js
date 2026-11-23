@@ -1,6 +1,7 @@
 // @ts-check
 // mermaid 图：回复里 ```mermaid 的代码块画成图。数学在 lib/panzoom.js，这里只管 DOM、事件和加载。
-// 库（`mermaid` 包）只在页面上真有 mermaid 块时才加载，加载和初始化只做一次；包不在或出错时显示原代码块。
+// 库（`@mermaid-js/tiny` 包）只在页面上真有 mermaid 块时才加载（插一次 <script>），加载和初始化只做一次；包不在或出错时显示原代码块。
+// 精简版画不了 mindmap、architecture（lib/panzoom.js 的 `unsupportedType` 认出，不去渲染）。
 // 图总是放在一张浅色的“纸”上（暗色主题、总管弹窗里也一样，像一张印出来的图）；颜色写死，不跟主题走（css/mermaid.css 同）。
 import DOMPurify from "dompurify";
 import { render } from "preact";
@@ -8,8 +9,8 @@ import { useMemo } from "preact/hooks";
 import { html, useState, useEffect, useLayoutEffect, useRef, useCallback, copyText, useFlash } from "./common.js";
 import * as pz from "../lib/panzoom.js";
 
-/** 模块名放进变量：`import()` 的参数不是字面量，tsc 就不去找它的类型。 @type {string} */
-const MERMAID = "mermaid";
+/** 官方精简版（`@mermaid-js/tiny`，IIFE 单文件，没有依赖）。桥的 `/vendor/` 送它。 */
+const TINY = "/vendor/@mermaid-js/tiny/dist/mermaid.tiny.js";
 /** 纸边：图四周的留白（内容像素）。存出的图一样。 */
 const PAD = 16;
 /** 视口里适应时离边的距离。 */
@@ -84,21 +85,40 @@ const CONFIG = {
 /** 库没装上或加载失败。 */
 class LibError extends Error {}
 
+/** 精简版画不了的图。`type` 是认出的类型。 */
+class Unsupported extends Error {
+  /** @param {string} type */
+  constructor(type) {
+    super(type);
+    this.type = type;
+  }
+}
+
 /** @type {Promise<any> | null} */
 let lib = null;
 
-/** 加载并初始化 mermaid，全页只做一次。失败也记住，不反复去试。 */
+/**
+ * 加载并初始化 mermaid，全页只做一次，并发调用共用同一个 promise。失败也记住，不反复去试。
+ * 精简版是 IIFE 的单个文件：插一次 `<script>`，load 以后从 `globalThis.mermaid` 取。
+ */
 function loadLib() {
-  lib ??= import(MERMAID).then(
-    (m) => {
-      const mm = m.default ?? m;
-      mm.initialize(CONFIG);
-      return mm;
-    },
-    () => {
-      throw new LibError("画图的库没装上");
-    },
-  );
+  lib ??= new Promise((ok, no) => {
+    const s = document.createElement("script");
+    s.src = TINY;
+    s.async = true;
+    s.onload = () => {
+      const mm = /** @type {any} */ (globalThis).mermaid;
+      if (mm && typeof mm.initialize === "function" && typeof mm.render === "function") {
+        mm.initialize(CONFIG);
+        ok(mm);
+      } else no(new LibError("画图的库没装上"));
+    };
+    s.onerror = () => {
+      s.remove();
+      no(new LibError("画图的库没装上"));
+    };
+    document.head.append(s);
+  });
   return lib;
 }
 
@@ -143,6 +163,8 @@ function clean(svg) {
 
 /** @param {string} code @returns {Promise<Diagram>} */
 function draw(code) {
+  const type = pz.unsupportedType(code);
+  if (type) return Promise.reject(new Unsupported(type));
   const hit = cache.get(code);
   if (hit) {
     cache.delete(code);
@@ -175,7 +197,7 @@ function draw(code) {
   return p;
 }
 
-/** @typedef {{ tag: "load" } | { tag: "nolib" } | { tag: "err", msg: string } | { tag: "ok", d: Diagram }} State */
+/** @typedef {{ tag: "load" } | { tag: "nolib" } | { tag: "unsup", type: string } | { tag: "err", msg: string } | { tag: "ok", d: Diagram }} State */
 
 /** @param {string} code @returns {State} */
 function useDiagram(code) {
@@ -193,7 +215,7 @@ function useDiagram(code) {
     setS({ tag: "load" });
     draw(code).then(
       (d) => alive && setS({ tag: "ok", d }),
-      (e) => alive && setS(e instanceof LibError ? { tag: "nolib" } : { tag: "err", msg: errText(e) }),
+      (e) => alive && setS(e instanceof LibError ? { tag: "nolib" } : e instanceof Unsupported ? { tag: "unsup", type: e.type } : { tag: "err", msg: errText(e) }),
     );
     return () => {
       alive = false;
@@ -476,6 +498,7 @@ function MermaidBlock({ code }) {
   const [src, setSrc] = useState(false);
   if (s.tag === "ok") return src ? html`<${Source} code=${code} onBack=${() => setSrc(false)} />` : html`<${Picture} d=${s.d} onSource=${() => setSrc(true)} />`;
   if (s.tag === "load") return html`<${Source} code=${code} note="正在画图…" />`;
+  if (s.tag === "unsup") return html`<${Source} code=${code} note=${`这种图（${s.type}）精简版 mermaid 画不了`} warn=${true} />`;
   if (s.tag === "nolib") return html`<${Source} code=${code} note="画图的库没装上" warn=${true} />`;
   return html`<${Source} code=${code} error=${s.msg} />`;
 }

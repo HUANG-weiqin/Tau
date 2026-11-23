@@ -80,7 +80,7 @@
 |---|---|
 | `/` | `extras/gui/web/index.html` |
 | `/web/<路径>` | `extras/gui/web/` 下的文件 |
-| `/vendor/<包>/<路径>` | `extras/node_modules/<包>/` 下的文件。包只认 `preact`、`htm`、`@fontsource-variable/archivo`、`@fontsource-variable/jetbrains-mono`、`@fontsource-variable/noto-sans-sc`、`marked`、`dompurify`、`mermaid` |
+| `/vendor/<包>/<路径>` | `extras/node_modules/<包>/` 下的文件。包只认 `preact`、`htm`、`@fontsource-variable/archivo`、`@fontsource-variable/jetbrains-mono`、`@fontsource-variable/noto-sans-sc`、`marked`、`dompurify`、`@mermaid-js/tiny` |
 
 - 路径解析以后不许出对应的目录。找不到回 404。
 - 缓存头：`/web/` 和 `/` 是 `Cache-Control: no-cache`，浏览器每次都校验，改了代码不用强制刷新；`/vendor/` 是 `public, max-age=86400`。
@@ -290,9 +290,11 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
   - `AssistantRow` 和总管弹窗的 `Said` 用它：`caught`（吐字追平，或本来就没有记录）为真才渲染 Markdown，之前仍是 `Typer`，吐字衔接不变。总管的 `.ch-bot` 是暗面，`markdown.css` 里单独一段覆盖配色。
 - 整条回复的复制：`ui/mdview.js` 的 `CopyReply`，`AssistantRow` 和总管的 `Said` 在 `Markdown` 后面放它（吐字期间不放）。复制和按钮上的临时反馈共用 `ui/common.js` 的 `copyText`（没有 `navigator.clipboard` 回 `false`）和 `useFlash`；代码块的复制、MCP 说明的复制、存图键都用它们。悬停才显示在 `css/markdown.css` 的 `@media (hover: hover)`。
 - mermaid 图（设计稿第 5.1 节）：
-  - 文件：`ui/mermaid.js`（卡片、查看器、加载、存图），`lib/panzoom.js`（平移缩放和存图的数学，纯函数），`css/mermaid.css`。依赖 `mermaid`（`extras/package.json` 精确锁定，`VENDOR_PACKAGES` 和 import map 都有，CSP 哈希随 import map 自动算）。
+  - 文件：`ui/mermaid.js`（卡片、查看器、加载、存图），`lib/panzoom.js`（平移缩放和存图的数学，纯函数），`css/mermaid.css`。依赖官方精简版 `@mermaid-js/tiny`（`extras/package.json` 精确锁定，`VENDOR_PACKAGES` 有它）。
+  - 为什么用精简版：完整的 `mermaid` 连依赖 169 MB、113 个包；精简版只有一个 2.9 MB 的文件（`dist/mermaid.tiny.js`），没有依赖。完整版第一张图浏览器本来就要加载约 2.4 MB（入口加按需的块），精简版一次 2.8 MB，差不多。
+  - 精简版画不了三类图：`mindmap`、`architecture`、`architecture-beta`（去掉了 mindmap、architecture、KaTeX 公式和按需加载，其余 API 和完整版一样）。`lib/panzoom.js` 的 `unsupportedType` 按源码第一行有效内容认出它们（跳过空行、`%%` 注释、跨行的 `%%{init}%%`、`---` 的 frontmatter），认出就不渲染、不加载库，显示原代码块，下面写“这种图（类型）精简版 mermaid 画不了”。标签里的公式（`$$…$$`）不报错，原样显示成这串字（2026-11-23 在浏览器里核实）。
   - 占位：`lib/markdown.js` 的 code 渲染器遇到 `mermaid` 输出 `<div class="md-mermaid" data-md-mermaid>` 加转义后的 `<pre><code>`，`PURIFY_CONFIG` 放行这个属性。`Markdown` 在 `useLayoutEffect`（依赖渲染出的 HTML）里调 `mountDiagrams`：清空占位块，用 Preact 的 `render` 挂 `MermaidBlock`；HTML 变了或卸载时 `render(null, node)` 收掉。
-  - 按需加载：`const MERMAID = "mermaid"; import(MERMAID)`，变量名让 `tsc` 不去找类型；页面上没有 mermaid 块就不加载。加载和 `initialize` 只做一次，失败的结果也缓存（不反复试）。包不在或加载失败：显示原代码块，下面写“画图的库没装上”。渲染出错写“图画不出来：”，下面用等宽字显示整段报错（`lib/panzoom.js` 的 `errorText`，最多 8 行，保留行首空格），并清掉 mermaid 留在 body 里的临时元素（`sweep`，配置里还开了 `suppressErrorRendering`）。
+  - 按需加载：精简版是 IIFE，不是 ES 模块，不进 import map。`loadLib` 只插一次 `<script src="/vendor/@mermaid-js/tiny/dist/mermaid.tiny.js">`（CSP 的 `script-src 'self'` 允许），load 以后取 `globalThis.mermaid` 再 `initialize`；并发调用共用同一个 promise。页面上没有 mermaid 块就不加载。失败（script 报 error，或 load 了却没有 `globalThis.mermaid`）的结果也缓存（不反复试）。包不在或加载失败：显示原代码块，下面写“画图的库没装上”。渲染出错写“图画不出来：”，下面用等宽字显示整段报错（`lib/panzoom.js` 的 `errorText`，最多 8 行，保留行首空格），并清掉 mermaid 留在 body 里的临时元素（`sweep`，配置里还开了 `suppressErrorRendering`）。
   - 配置：`securityLevel: "strict"`、`theme: "base"`、颜色取调度台的纸和墨（写死，暗色主题也是浅色的纸）。`htmlLabels: false`（根上和 `flowchart` 里都设）：带 foreignObject 的 SVG 画到 canvas 上会污染 canvas，存不成 PNG。字体只用系统字体：SVG 当图片画时加载不了网页字体，屏幕和存出的图要一致。
   - 缓存：按源码，最多 50 条，当 LRU；同样的源码在画时不画第二遍。同一张图同时在卡片、查看器、小地图里，每份把 SVG 里的 id 换成不同的（`domSvg`），免得 marker 按 id 找错。存图用缓存里原始的 SVG，不读页面里的。
   - 手势在 `usePanZoom`：原生监听挂在视口上（滚轮要 `passive: false`）。卡片里 `wheel: "ctrl"`、`touch: "pinch"`（`touch-action: pan-y`，单指留给页面），查看器里 `wheel: "free"`、`touch: "pan"`（`touch-action: none`）。拖动和滚轮用 `set`（跟手），按钮、双击、搜索跳转、小地图点击用 `go`（给 `.mm-sheet` 加 `.go`，200ms 过渡）。动效关闭靠 `base.css` 的全局规则停掉过渡，不读 `prefers-reduced-motion`（见外观一条）。

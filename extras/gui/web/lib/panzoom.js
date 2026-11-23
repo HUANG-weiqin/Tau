@@ -184,5 +184,36 @@ export function errorText(msg, max = 8) {
   return lines.length > max ? [...lines.slice(0, max), "…"].join("\n") : lines.join("\n");
 }
 
+/** 精简版 mermaid（`@mermaid-js/tiny`）画不了的图。 */
+const UNSUPPORTED = ["mindmap", "architecture-beta", "architecture"];
+
+/**
+ * 按源码第一行有效内容认出精简版画不了的图（mindmap、architecture、architecture-beta），认不出回 null。
+ * 跳过空行、`%%` 注释、`%%{init}%%` 指令和 `---` 包起来的 frontmatter。
+ * @param {string} code @returns {string | null}
+ */
+export function unsupportedType(code) {
+  const lines = code.replace(/^﻿/, "").split(/\r?\n/);
+  let i = 0;
+  while (i < lines.length) {
+    const t = (lines[i] ?? "").trim();
+    if (t.startsWith("%%{") && !t.includes("}%%")) {
+      // 跨行的 init 指令：跳到带 `}%%` 的那一行。
+      while (i < lines.length && !(lines[i] ?? "").includes("}%%")) i++;
+      i++;
+    } else if (t === "" || t.startsWith("%%")) {
+      i++;
+    } else if (t === "---") {
+      // frontmatter：跳到下一个 `---`；没有结束就当整段都是它，没有图。
+      i++;
+      while (i < lines.length && (lines[i] ?? "").trim() !== "---") i++;
+      i++;
+    } else break;
+  }
+  const first = (lines[i] ?? "").trim().toLowerCase();
+  for (const t of UNSUPPORTED) if (first === t || first.startsWith(t + " ") || first.startsWith(t + "\t")) return t;
+  return null;
+}
+
 /** @param {number} n */
 const round = (n) => Math.round(n * 100) / 100;

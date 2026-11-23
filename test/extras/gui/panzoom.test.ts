@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { centerAt, centerOn, covers, cycle, errorText, exportName, exportScale, fitHeight, fitView, LIMITS, matchIndexes, miniFit, panBy, parseViewBox, pinch, sizedSvg, visibleRect, zoomAt } from "../../../extras/gui/web/lib/panzoom.js";
+import { centerAt, centerOn, covers, cycle, errorText, exportName, exportScale, fitHeight, fitView, LIMITS, matchIndexes, miniFit, panBy, parseViewBox, pinch, sizedSvg, unsupportedType, visibleRect, zoomAt } from "../../../extras/gui/web/lib/panzoom.js";
 import { markdownToHtml } from "../../../extras/gui/web/lib/markdown.js";
 
 const near = (a: number, b: number, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} 应接近 ${b}`);
@@ -151,4 +151,21 @@ test("报错文字：保留换行和行首空格，去头尾空行，最多 8 �
   assert.equal(errorText(long).split("\n").length, 9);
   assert.ok(errorText(long).endsWith("\n…"));
   assert.equal(errorText("  \n "), "未知错误");
+});
+
+test("精简版画不了的图：按第一行有效内容认出，跳过空行、注释、init 指令和 frontmatter", () => {
+  assert.equal(unsupportedType("mindmap\n  root"), "mindmap");
+  assert.equal(unsupportedType("architecture-beta\n  group api(cloud)[API]"), "architecture-beta");
+  assert.equal(unsupportedType("architecture\n x"), "architecture");
+  assert.equal(unsupportedType("\n\n%% 注释\n  Mindmap\n root"), "mindmap");
+  assert.equal(unsupportedType("---\ntitle: x\nconfig:\n  theme: dark\n---\nmindmap\n root"), "mindmap");
+  assert.equal(unsupportedType('%%{init: {"theme": "dark"}}%%\nmindmap\n root'), "mindmap");
+  assert.equal(unsupportedType("%%{init: {\n  \"theme\": \"dark\"\n}}%%\narchitecture-beta"), "architecture-beta");
+  assert.equal(unsupportedType("\uFEFFmindmap"), "mindmap");
+  // 认得出的图、名字只是前缀、frontmatter 没结束，都不算。
+  assert.equal(unsupportedType("graph TD\n A --> B"), null);
+  assert.equal(unsupportedType("flowchart LR\n mindmap --> A"), null);
+  assert.equal(unsupportedType("mindmapper"), null);
+  assert.equal(unsupportedType("---\ntitle: mindmap"), null);
+  assert.equal(unsupportedType(""), null);
 });
