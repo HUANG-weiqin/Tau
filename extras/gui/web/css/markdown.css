@@ -71,6 +71,32 @@
 .ch-bot .md th, .ch-bot .md td { border-bottom-color: var(--ink4); }
 .ch-bot .md th { background: var(--ink3); border-bottom-color: var(--ink5); }
 
+/* 整条回复的“复制”：小、安静，和代码块的 .md-copy 同一家族。有悬停的设备上悬停才显示，触屏一直显示。 */
+/* 不占高度：绝对定位在回复右下角，压在它和下一条之间原有的间隙里。 */
+.reply { position: relative; min-width: 0; }
+.reply-copy { position: absolute; z-index: 1; right: 0; top: calc(100% - 3px); }
+.rc {
+  height: 16px;
+  padding: 0 6px;
+  line-height: 1;
+  border: 1px solid rgb(var(--k) / .24);
+  background: transparent;
+  color: var(--tx2);
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  transition: opacity var(--t-fast) var(--ease-in), color var(--t-fast) var(--ease-in), background-color var(--t-fast) var(--ease-in), border-color var(--t-fast) var(--ease-in);
+}
+.rc:hover { border-color: var(--acc); background: var(--acc); color: var(--on-fill); }
+.rc:active { transform: translateY(1px); }
+.ch-bot .rc { border-color: var(--ink5); color: var(--fg2); }
+.ch-bot .rc:hover { border-color: var(--acc); background: var(--acc); color: var(--on-fill); }
+@media (hover: hover) {
+  /* 看不见时不接鼠标，免得盖住下一条的上沿。 */
+  .reply-copy { opacity: 0; pointer-events: none; transition: opacity var(--t-fast) var(--ease-in); }
+  .abox:hover .reply-copy, .ch-bot:hover .reply-copy, .reply-copy:focus-within { opacity: 1; pointer-events: auto; }
+}
+
 @media (max-width: 759px) {
   .md { font-size: 14.5px; }
   .md pre { font-size: 12.5px; }

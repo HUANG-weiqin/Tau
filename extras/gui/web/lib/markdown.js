@@ -44,6 +44,8 @@ const marked = new Marked({
     image: (t) => anchor(t.href, t.title, escapeHtml(t.text || t.href)),
     code(t) {
       const lang = langOf(t.lang);
+      // mermaid 图：占位块，里面是原代码块。没 JS、画不出来时它就是退路；ui/mermaid.js 在字吐完后把图挂上去。
+      if (lang.toLowerCase() === "mermaid") return `<div class="md-mermaid" data-md-mermaid><pre><code>${escapeHtml(t.text)}</code></pre></div>\n`;
       const head = `<div class="md-ch"><span class="md-lang">${escapeHtml(lang)}</span><button type="button" class="md-copy" data-md-copy>复制</button></div>`;
       return `<div class="md-code">${head}<pre><code>${escapeHtml(t.text)}</code></pre></div>\n`;
     },
@@ -67,6 +69,6 @@ export function markdownToHtml(text) {
 /** 净化只放行这些标签和属性。href 的协议由 ui/mdview.js 的钩子再查一遍（DOMPurify 自带的协议表更宽）。 */
 export const PURIFY_CONFIG = {
   ALLOWED_TAGS: ["p", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "blockquote", "pre", "code", "em", "strong", "del", "a", "table", "thead", "tbody", "tr", "th", "td", "input", "div", "span", "button"],
-  ALLOWED_ATTR: ["href", "title", "target", "rel", "type", "checked", "disabled", "class", "data-md-copy", "align", "start"],
+  ALLOWED_ATTR: ["href", "title", "target", "rel", "type", "checked", "disabled", "class", "data-md-copy", "data-md-mermaid", "align", "start"],
   ALLOW_DATA_ATTR: false,
 };

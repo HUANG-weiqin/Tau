@@ -2,7 +2,7 @@
 // 每个条目是网格里的两格：左边时间戳，右边内容；整行的带跨两列。
 import { html, Icon, Thumb, clockS, useState, useEffect, useLayoutEffect, useRef, Fragment } from "./common.js";
 import { Typer, claim, release } from "./typer.js";
-import { Markdown } from "./mdview.js";
+import { Markdown, CopyReply } from "./mdview.js";
 import { formatClock, formatBytes, formatElapsed } from "../lib/format.js";
 import { tailLines, argsPreview } from "../lib/stream.js";
 
@@ -149,7 +149,7 @@ export function AssistantRow({ app, item, running, slot = "", out = "" }) {
   return html`<${Ts} ts=${item.ts} app=${app} pad=${4} />
     <div class="abox">
       ${item.thinking.trim() !== "" && html`<details class="think"><summary>思考 · ${Array.from(item.thinking).length} 字</summary><p>${item.thinking}</p></details>`}
-      ${hasText && (caught ? html`<${Markdown} text=${item.text} />` : html`<${Typer} text=${item.text} claimed=${claimed} final=${true} onCaught=${() => setCaught(true)} />`)}
+      ${hasText && (caught ? html`<div class="reply"><${Markdown} text=${item.text} /><${CopyReply} text=${item.text} /></div>` : html`<${Typer} text=${item.text} claimed=${claimed} final=${true} onCaught=${() => setCaught(true)} />`)}
       ${item.errorMessage && html`<div class="aerr"><span class="tag warn">模型出错</span><span class="mono">${item.errorMessage}</span></div>`}
       ${ghost && html`<div class=${`gx ${caught ? "out" : "in"}`} aria-hidden="true"><div class="gi"><div class="working"><${Working} text="模型在写" /></div></div></div>`}
       ${claimed ? calls && html`<div class=${`gx ${caught ? "in" : ""}`}><div class="gi">${calls}</div></div>` : calls}

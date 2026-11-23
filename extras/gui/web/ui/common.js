@@ -9,6 +9,35 @@ export const html = htm.bind(h);
 export { h, Fragment, useEffect, useLayoutEffect, useRef, useState, useCallback };
 
 /**
+ * 复制一段文字，回成不成功。不是安全上下文时没有 `navigator.clipboard`，按失败处理。
+ * @param {string} text @returns {Promise<boolean>}
+ */
+export function copyText(text) {
+  return Promise.resolve()
+    .then(() => navigator.clipboard.writeText(text))
+    .then(
+      () => true,
+      () => false,
+    );
+}
+
+/**
+ * 按钮上的临时反馈：平时显示 `idle`，`flash("已复制")` 之后显示它 1.5 秒再还原。
+ * @param {string} idle @returns {[string, (msg: string) => void]}
+ */
+export function useFlash(idle) {
+  const [msg, setMsg] = useState(/** @type {string | null} */ (null));
+  const timer = useRef(/** @type {any} */ (0));
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const flash = useCallback((/** @type {string} */ m) => {
+    clearTimeout(timer.current);
+    setMsg(m);
+    timer.current = setTimeout(() => setMsg(null), 1500);
+  }, []);
+  return [msg ?? idle, flash];
+}
+
+/**
  * 写信框的回车键：Enter 寄出，Ctrl/Meta+Enter 换行，Shift+Enter 交给浏览器换行。
  * 输入法在选词时不管；触屏手机没有 Ctrl，Enter 保持换行，用按钮寄出。
  * @param {KeyboardEvent} ev @param {() => void} send @param {(v: string) => void} setText
@@ -283,6 +312,8 @@ export function Popover({ rect, onClose, onClosing, label, width = 640, align = 
     const first = root.current?.querySelector("[autofocus], input, textarea, select");
     /** @type {HTMLElement | null} */ (first ?? root.current)?.focus();
     const onKey = (/** @type {KeyboardEvent} */ e) => {
+      // mermaid 全屏查看器（ui/mermaid.js）开着时，键盘归它。
+      if (document.querySelector("[data-mmv]")) return;
       if (e.key === "Escape") {
         e.stopPropagation();
         e.preventDefault();

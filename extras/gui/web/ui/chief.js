@@ -7,7 +7,7 @@ import { attention, refusesImages } from "../lib/derive.js";
 import { findModel } from "../lib/models.js";
 import { useAttach, AttachBar, Thumbs } from "./attach.js";
 import { Typer, claim, pending, slotKey } from "./typer.js";
-import { Markdown } from "./mdview.js";
+import { Markdown, CopyReply } from "./mdview.js";
 import { Follower } from "./follow.js";
 import { askRemove } from "./remove.js";
 
@@ -140,7 +140,7 @@ function Said({ text, calls, error, live = false, slot = "", held = false, wait 
   const md = text.trim() !== "" && !live && (!typed || caught);
   return html`<div class="ch-bot">
     <div class="ch-bot-l"><span class="ch-dia" aria-hidden="true"></span>总管</div>
-    ${md ? html`<${Markdown} text=${text} />` : typed ? html`<${Typer} text=${text} live=${live} slot=${slot} claimed=${claimed} final=${!live && !held} cls="" cur="y" onCaught=${() => setCaught(true)} />` : null}
+    ${md ? html`<div class="reply"><${Markdown} text=${text} /><${CopyReply} text=${text} /></div>` : typed ? html`<${Typer} text=${text} live=${live} slot=${slot} claimed=${claimed} final=${!live && !held} cls="" cur="y" onCaught=${() => setCaught(true)} />` : null}
     ${wait && html`<p class="dim"><span class="pulse">正在想…</span></p>`}
     ${error && html`<p><span class="tag warn">模型出错</span> <span class="mono" style="font-size:12px">${error}</span></p>`}
     ${calls.length > 0 && html`<ul class="ch-calls">${calls.map((c) => html`<li class=${c.status === "error" || c.status === "interrupted" ? "w" : ""}><b>${String(c.name).toUpperCase()}</b><span class="ell">${c.summary || c.name}</span>${c.status === "pending" ? html`<span class="pulse" style="width:7px;height:7px;background:var(--acc);flex:none"></span>` : null}</li>`)}</ul>`}

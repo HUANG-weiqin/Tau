@@ -1,7 +1,7 @@
 // MCP 这一节（设计稿 7.12 的 MCP）：选项目、列配置里的服务器、列工具并生成定义、整个服务器装或更新或卸载、
 // 看中转的状态。一个服务器要么装，要么不装，不能挑几个；工具清单只读。
 // 起服务器要几秒，按钮上写“正在列”。纯逻辑在 lib/mcp.js，本文件只管画和发请求。
-import { html, Pill, SecHead, Fragment, useState, useEffect, useRef, Icon } from "./common.js";
+import { html, Pill, SecHead, Fragment, useState, useEffect, useRef, Icon, copyText } from "./common.js";
 import { CheckStrip } from "./presetform.js";
 import { formatBytes } from "../lib/format.js";
 import { idleText, installable, sizeOf } from "../lib/mcp.js";
@@ -319,12 +319,8 @@ export function McpSection({ app, installed, onChanged }) {
  * @param {(v: boolean) => void} done
  */
 function copy(text, done) {
-  if (!navigator.clipboard) return;
-  navigator.clipboard.writeText(text).then(
-    () => {
-      done(true);
-      setTimeout(() => done(false), 1500);
-    },
-    () => done(false),
-  );
+  copyText(text).then((ok) => {
+    done(ok);
+    if (ok) setTimeout(() => done(false), 1500);
+  });
 }

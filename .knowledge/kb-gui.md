@@ -80,7 +80,7 @@
 |---|---|
 | `/` | `extras/gui/web/index.html` |
 | `/web/<路径>` | `extras/gui/web/` 下的文件 |
-| `/vendor/<包>/<路径>` | `extras/node_modules/<包>/` 下的文件。包只认 `preact`、`htm`、`@fontsource-variable/archivo`、`@fontsource-variable/jetbrains-mono`、`@fontsource-variable/noto-sans-sc`、`marked`、`dompurify` |
+| `/vendor/<包>/<路径>` | `extras/node_modules/<包>/` 下的文件。包只认 `preact`、`htm`、`@fontsource-variable/archivo`、`@fontsource-variable/jetbrains-mono`、`@fontsource-variable/noto-sans-sc`、`marked`、`dompurify`、`mermaid` |
 
 - 路径解析以后不许出对应的目录。找不到回 404。
 - 缓存头：`/web/` 和 `/` 是 `Cache-Control: no-cache`，浏览器每次都校验，改了代码不用强制刷新；`/vendor/` 是 `public, max-age=86400`。
@@ -288,6 +288,20 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
 - Markdown（设计稿第 5.1 节）：`lib/markdown.js` 是纯函数，`marked` 出 HTML；`ui/mdview.js` 用 `dompurify` 净化再放进页面，复制按钮靠事件委托。import map 里 `marked`、`dompurify` 指向 `/vendor/`。
   - 原始 HTML、图片、非 http/https/mailto 的链接在 `marked` 的渲染器里就处理掉，净化是第二道。净化的白名单是 `PURIFY_CONFIG`，不设 `ALLOWED_URI_REGEXP`：它也会拦掉 `type`、`rel` 这些属性值。协议由钩子用 `safeHref` 再查。
   - `AssistantRow` 和总管弹窗的 `Said` 用它：`caught`（吐字追平，或本来就没有记录）为真才渲染 Markdown，之前仍是 `Typer`，吐字衔接不变。总管的 `.ch-bot` 是暗面，`markdown.css` 里单独一段覆盖配色。
+- 整条回复的复制：`ui/mdview.js` 的 `CopyReply`，`AssistantRow` 和总管的 `Said` 在 `Markdown` 后面放它（吐字期间不放）。复制和按钮上的临时反馈共用 `ui/common.js` 的 `copyText`（没有 `navigator.clipboard` 回 `false`）和 `useFlash`；代码块的复制、MCP 说明的复制、存图键都用它们。悬停才显示在 `css/markdown.css` 的 `@media (hover: hover)`。
+- mermaid 图（设计稿第 5.1 节）：
+  - 文件：`ui/mermaid.js`（卡片、查看器、加载、存图），`lib/panzoom.js`（平移缩放和存图的数学，纯函数），`css/mermaid.css`。依赖 `mermaid`（`extras/package.json` 精确锁定，`VENDOR_PACKAGES` 和 import map 都有，CSP 哈希随 import map 自动算）。
+  - 占位：`lib/markdown.js` 的 code 渲染器遇到 `mermaid` 输出 `<div class="md-mermaid" data-md-mermaid>` 加转义后的 `<pre><code>`，`PURIFY_CONFIG` 放行这个属性。`Markdown` 在 `useLayoutEffect`（依赖渲染出的 HTML）里调 `mountDiagrams`：清空占位块，用 Preact 的 `render` 挂 `MermaidBlock`；HTML 变了或卸载时 `render(null, node)` 收掉。
+  - 按需加载：`const MERMAID = "mermaid"; import(MERMAID)`，变量名让 `tsc` 不去找类型；页面上没有 mermaid 块就不加载。加载和 `initialize` 只做一次，失败的结果也缓存（不反复试）。包不在或加载失败：显示原代码块，下面写“画图的库没装上”。渲染出错写“图画不出来：”，下面用等宽字显示整段报错（`lib/panzoom.js` 的 `errorText`，最多 8 行，保留行首空格），并清掉 mermaid 留在 body 里的临时元素（`sweep`，配置里还开了 `suppressErrorRendering`）。
+  - 配置：`securityLevel: "strict"`、`theme: "base"`、颜色取调度台的纸和墨（写死，暗色主题也是浅色的纸）。`htmlLabels: false`（根上和 `flowchart` 里都设）：带 foreignObject 的 SVG 画到 canvas 上会污染 canvas，存不成 PNG。字体只用系统字体：SVG 当图片画时加载不了网页字体，屏幕和存出的图要一致。
+  - 缓存：按源码，最多 50 条，当 LRU；同样的源码在画时不画第二遍。同一张图同时在卡片、查看器、小地图里，每份把 SVG 里的 id 换成不同的（`domSvg`），免得 marker 按 id 找错。存图用缓存里原始的 SVG，不读页面里的。
+  - 手势在 `usePanZoom`：原生监听挂在视口上（滚轮要 `passive: false`）。卡片里 `wheel: "ctrl"`、`touch: "pinch"`（`touch-action: pan-y`，单指留给页面），查看器里 `wheel: "free"`、`touch: "pan"`（`touch-action: none`）。拖动和滚轮用 `set`（跟手），按钮、双击、搜索跳转、小地图点击用 `go`（给 `.mm-sheet` 加 `.go`，200ms 过渡）。动效关闭靠 `base.css` 的全局规则停掉过渡，不读 `prefers-reduced-motion`（见外观一条）。
+  - 全屏查看器挂在 `body` 下（弹窗带 transform，`position: fixed` 在里面会错位），根元素有 `data-mmv`。键盘在 `window` 的捕获阶段收下并 `stopPropagation`；`Popover` 的 Esc 和 Tab 处理看到 `[data-mmv]` 就让开。搜索在 SVG 里找 `text`，按 `g.node`、`g.cluster` 合并，命中框用 `getBoundingClientRect` 换算成纸上的坐标，画成纸上的 div，不改 SVG。
+  - 图里的链接会被去掉：strict 模式下 mermaid 仍保留 `click … href` 的 `<a xlink:href>`，它能 Tab 聚焦、能点，会把界面标签页导航走。出图后 `clean` 用页面的 DOMPurify（`USE_PROFILES: { svg, svgFilters }`，加 `style` 标签，禁 `a`、`script`、`foreignObject`，禁 `tabindex`、`target`、`onclick`，`KEEP_CONTENT` 留下里面的文字）再净化一遍，缓存、卡片、查看器、小地图、存图都用这份结果。净化会丢根上的 `xmlns`，`sizedSvg` 补回。
+  - 为什么要复位 `.label`：`base.css` 的全局 `.label`（大写、字距、拉宽、微字号）会命中 mermaid 节点的 `g.label`，屏幕上节点文字变大写，而存出的 PNG 不带页面样式，两边不一致。`css/mermaid.css` 的 `.mm-svg` 把文字属性复位成 SVG 当图片画时的初始值，`.mm-svg .label` 的字号字重 `inherit`，让 mermaid 自己的样式说了算。以后页面加新的全局类名，要查它会不会命中图里的元素。
+  - 报错：显示渲染错误的整段（`errorText`，最多 8 行，保留换行和行首空格，等宽），插入符那一行和 “Expecting …” 看得到。
+  - 整条复制的按钮不占高度：`.reply` 包住 `Markdown` 和按钮，按钮绝对定位在回复右下角，压在它和下一条之间原有的间隙里；有悬停的设备上看不见时 `pointer-events: none`，免得盖住下一条的上沿。
+  - 存图：`savePng`。把缓存的 SVG 的宽高改成目标大小（`sizedSvg`，去掉 mermaid 写的 `width="100%"` 和 `max-width`，补 xmlns，`&nbsp;` 换数字实体），Blob → Image → canvas（先填纸色）→ `toBlob` → `<a download>`。比例 `exportScale`：默认 2 倍，最长边 12000、总像素 5000 万封顶。失败（图片加载失败、canvas 被污染、太大）键上写“存图失败”。
 - 通知、标题、图标：`ui/notify.js` 的 `Notifier` 不画东西，每次渲染读两类：`app.attention`（`derive.js` 的 `attention`，不含要 git 才知道的“未合并”，定义不改，总管弹窗也在用）和根进程的“新结果”。判断都在 `lib/notify.js`：`watchAttention` 和上一次的集合比较，首次只记下；`trackResults` 比较上一次各进程忙不忙，根进程从忙变闲就是新结果，用户在前台聚焦它时清掉；`unseenCount` 给标题和图标去重计数；`shouldNotify`；`notifyText`。新结果只存在 `ui/notify.js` 的模块变量里。
   - 等 `app.ready` 和 `app.procsReady` 才开始比较，所以刚打开时已经在待你看的不通知。
   - favicon 是 canvas 画的 data: URL。CSP 的 `img-src` 本来就有 `data:`，没有改 CSP。
@@ -361,6 +375,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
 | `test/extras/gui/agentsmd.test.ts` | 上下文文件和旧的拼接块：认出和去掉旧块（CRLF、BOM、手写的末尾空行字节不变）、给了 prompt 块留着、没有结束标记当没有块；接口：`/api/agents-md`、新建勾选写 `context: AGENTS.md` 而不拼块、CLAUDE.md 不认、列表里 `agentsMd` 只有 `none` 和 `legacy`、`agentsMd: false` 去块、`true` 回 400、转成上下文文件（去块加 `context`，已有不重复）、`context` 加上以后装不下窗口改回旧文件 |
 | `test/extras/gui/memory.test.ts` | 记忆页的纯逻辑（字节序排序、折叠、编辑状态、写回复的判读、冲突后字和版本的处理、摘要）；经桥对着真的服务：新键带摘要、改值不丢摘要、兄弟先写造成的冲突不覆盖、删、已删键的冲突、超限（含摘要超限） |
 | `test/extras/gui/image.test.ts` | 图片常量和 `src/` 的真常量一致；缩放尺寸、原样发的条件、压缩尝试的顺序、张数；快照多带的输入类型和阈值、不收图片的判断；段尺比例和九成警告；排队的信、谁在等谁、后台任务的通知标成后台任务 |
+| `test/extras/gui/panzoom.test.ts` | 平移缩放的数学（适应、以点为中心缩放和上下限、移到中间、视野矩形和小地图、双指、搜索匹配）、存图的比例和文件名、SVG 的 viewBox 和宽高改写；mermaid 代码块的占位 |
 | `test/extras/gui/lib.test.ts` | 纯逻辑：信的来历读 `tau`（发送者、跳数、回信、`after`、换段、`filled`，旧消息、被截过的消息）、后台任务的通知认前缀（名字的字符、空格、不是进程的信不认）、`canHandoff`、进程按会话快照归类、增量读跨换段、重连后不丢不重、标题、当前进程、筛选计数、全部停止和清理的顺序、删进程的拒绝条件、`prunePatch`；模型选择（窗口的写法、思考级别取最近一档、搜索、供应商排序、最近用过、默认模型、key 提示）、预设表变成请求（只发变了的字段）、会话表变成 `reconfigure` 的 `fields`（只发变了的，去掉的发 `null`）、重读工具定义发已存的工具列表、保存失败的原文表一动就不显示、转成上下文文件要项目里有 `AGENTS.md`（`convertGate`、`convertPatch`）、待换段条的字段名、换模型的补丁、界面数据的新键、快照多带的几项；流式文本按 `kind` 分开、watch 推来的消息并进缓存（重复、跳号、换段）、末尾几条的推送并进；吐字的节奏（平稳的小块、成批到、收尾追平、一次来一大块）和 `latestSeq`；Markdown（GFM、原始 HTML 转义、链接和图片的过滤、代码块）；通知（谁刚进入待你看、该不该弹、正文、标题）；`notify` 键 |
 
 ## 坑点

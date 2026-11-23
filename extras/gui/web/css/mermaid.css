@@ -1,0 +1,61 @@
+/* mermaid 图（ui/mermaid.js）。图放在一张浅色的“纸”上，暗色主题和总管弹窗里也一样，所以纸和墨的颜色写死，不跟主题令牌走。 */
+.mm, .mmv { --mm-paper: #F1F2EE; --mm-ink: #111211; --mm-line: rgba(17, 18, 17, .14); --mm-acc: #FFE600; }
+.md .md-mermaid { margin: 0 0 .85em; max-width: 100%; }
+.md .md-mermaid > .md-code { margin: 0; }
+
+/* 小键：和代码块的 .md-copy 同一家族 */
+.mm-bs { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px; }
+.mm-b {
+  margin: 3px 0;
+  height: 22px;
+  min-width: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--ink5);
+  background: var(--ink3);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  box-shadow: 0 1.5px 0 var(--ink0);
+  transition: color var(--t-fast) var(--ease-in), background-color var(--t-fast) var(--ease-in), border-color var(--t-fast) var(--ease-in), transform 70ms var(--ease-in);
+}
+.mm-b:hover { border-color: var(--acc); background: var(--acc); color: var(--on-fill); }
+.mm-b:active { transform: translateY(1px); box-shadow: none; }
+.mm-hint { margin-right: auto; margin-left: 4px; font-family: var(--mono); font-size: var(--fs-xs); color: var(--acc-t); }
+.mm-note { margin: 0; padding: 6px 14px 8px; border-top: 1px solid var(--ink4); font-size: var(--fs-sm); color: var(--fg2); }
+.mm-note.warn { color: var(--warn-t); }
+.mm-note > p { margin: 0 0 4px; }
+.mm-err { margin: 0; padding: 0; overflow-x: auto; font-family: var(--mono); font-size: var(--fs-sm); line-height: 1.5; white-space: pre; color: var(--fg); }
+.md .md-code.mm .md-ch { flex-wrap: wrap; }
+
+/* 卡里的视口：纸色，拖动平移，页面照常滚（touch-action: pan-y） */
+.mm-view { position: relative; overflow: hidden; background: var(--mm-paper); color: var(--mm-ink); touch-action: pan-y; cursor: grab; user-select: none; -webkit-user-select: none; }
+.mm-view.grab, .mmv-stage.grab { cursor: grabbing; }
+.mm-sheet { position: absolute; left: 0; top: 0; transform-origin: 0 0; background: var(--mm-paper); }
+.mm-sheet.go { transition: transform var(--t-mid) var(--ease-in); }
+/* 页面的全局样式不许漏进图里：base.css 的 .label 会把节点文字变成大写、加字距，而存出的 PNG 不带页面样式。
+   容器按 SVG 当图片画时的初始值起算，.label 的这几个属性复位，字号和字重让 mermaid 自己的样式说了算。 */
+.mm-svg { position: absolute; font-size: 16px; font-weight: 400; font-style: normal; font-stretch: normal; letter-spacing: normal; line-height: normal; text-transform: none; text-align: left; white-space: normal; overflow-wrap: normal; color: var(--mm-ink); }
+.mm-svg .label { font-size: inherit; font-weight: inherit; font-stretch: normal; letter-spacing: normal; text-transform: none; }
+.mm-svg > svg { display: block; max-width: none; }
+/* 搜索命中：信号黄的框，线宽按屏幕像素算 */
+.mm-hl { position: absolute; pointer-events: none; box-sizing: border-box; border: calc(2px / var(--k)) solid var(--mm-acc); background: rgba(255, 230, 0, .16); }
+.mm-hl.cur { border-width: calc(4px / var(--k)); background: rgba(255, 230, 0, .3); box-shadow: 0 0 0 calc(1.5px / var(--k)) var(--mm-ink); }
+
+/* 全屏查看器 */
+.mmv { position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column; background: rgba(8, 9, 8, .95); color: var(--fg); outline: none; animation: tau-fade var(--t-mid) var(--ease-in); }
+.mmv-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-height: 44px; padding: 6px 12px; background: var(--ink1); border-bottom: 1px solid var(--ink4); box-shadow: inset 0 4px 0 var(--acc); }
+.mmv-t { font-family: var(--mono); font-size: var(--fs-xs); font-weight: 700; letter-spacing: .12em; color: var(--fg2); padding-top: 3px; }
+.mmv-find { display: flex; align-items: center; gap: 8px; flex: 1 1 220px; max-width: 420px; padding-top: 3px; }
+.mmv-in { flex: 1; min-width: 0; height: 26px; padding: 0 8px; border: 1px solid var(--ink5); background: var(--ink0); color: var(--fg); font-family: var(--ui); font-size: var(--fs-sm); outline: none; }
+.mmv-in:focus { border-color: var(--acc); }
+.mmv-count { min-width: 34px; font-size: var(--fs-xs); color: var(--fg2); }
+.mmv-count.none { color: var(--warn-t); }
+.mmv-pct { min-width: 44px; padding-top: 3px; text-align: right; font-size: var(--fs-xs); color: var(--fg); margin-left: auto; }
+.mmv-bar .mm-bs { padding-top: 3px; }
+.mmv-main { position: relative; flex: 1; min-height: 0; }
+.mmv-stage { position: absolute; inset: 0; overflow: hidden; touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
+.mmv-stage .mm-sheet { box-shadow: 0 0 0 1px rgba(255, 255, 255, .08), 0 18px 48px rgba(0, 0, 0, .6); }
+.mmv-map { position: absolute; right: 14px; bottom: 14px; overflow: hidden; background: var(--mm-paper); box-shadow: 0 0 0 1px var(--ink5), 0 8px 24px rgba(0, 0, 0, .5); touch-action: none; cursor: pointer; }
+.mmv-map .mm-sheet { box-shadow: none; }
+.mmv-map-f { position: absolute; box-sizing: border-box; border: 2px solid var(--mm-acc); background: rgba(255, 230, 0, .12); pointer-events: none; }
