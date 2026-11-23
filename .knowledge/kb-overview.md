@@ -46,7 +46,7 @@ tau 不负责：
 | 层 | 内容 | 能否持久 | 崩溃后 |
 |---|---|---|---|
 | 库 | 进程记录、工作段、信箱、待办副作用、记忆、图片（`blobs`） | 能 | 原样恢复 |
-| 执行器活状态 | 子进程、模型流、中止开关 | 不能 | 正在运行的库外副作用全部作为“被中断”送回 |
+| 执行器活状态 | 子进程、模型流、中止开关、催的开关 | 不能 | 正在运行的库外副作用全部作为“被中断”送回 |
 | 观察者 | 连接和 `watch` 订阅、流式文本 | 不需要 | 重连后重新拉取投影 |
 
 ## 决策
@@ -107,7 +107,7 @@ tau 不负责：
 
 1. 纯函数 `decide` 和 `effectOf`。
 2. 一个信箱，加上“一条输入一个事务”。
-3. 一个只会开始、中止、上报的执行器。
+3. 一个只会开始、中止、催、上报的执行器。
 4. 一个纯函数 `observe`。
 
 ## 投影与命令
@@ -125,7 +125,7 @@ tau 不负责：
 | `src/cli/main.ts`、`src/protocol.ts` | 命令行和线协议；CLI 只依赖协议 | [kb-service.md](kb-service.md) |
 | `src/kernel/` | 纯函数：`decide`、`effectOf`、`observe`、`buildContext`、派生值、工具描述、会话快照的比较（`snapshot.ts`） | [kb-kernel.md](kb-kernel.md) |
 | `src/store/` | 表、处理输入的事务、库内工具、读上下文文件拼开段视图（`context-files.ts`） | [kb-store.md](kb-store.md) |
-| `src/executor/` | 库外副作用的开始、中止、上报，启动恢复 | [kb-executor.md](kb-executor.md) |
+| `src/executor/` | 库外副作用的开始、中止、催、上报，启动恢复 | [kb-executor.md](kb-executor.md) |
 | `src/memory/kv.ts` | `Memory` 接口的 SQLite 实现 | [kb-memory.md](kb-memory.md) |
 | `src/tools/` | `read`、`write`、`edit`、`bash` | [kb-tools.md](kb-tools.md) |
 | `src/presets/load.ts` | 读预设文件，生成快照；`reconfigure` 造新快照也走它（`buildPreset`、`presetFields`、`reconfigured`） | [设计稿第 2 节](../docs/design/mvp.md#2-预设)、[kb-service](kb-service.md#会话配置reconfigure) |

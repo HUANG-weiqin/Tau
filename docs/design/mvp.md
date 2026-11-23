@@ -74,7 +74,7 @@ tools: read, write, edit, bash, memory
 src/
   kernel/      纯：类型、工具描述、start、decide、effectOf、observe、buildContext、派生函数
   store/       SQLite：表、处理输入的事务、库内工具
-  executor/    库外副作用：模型和工具。只做开始、中止、上报
+  executor/    库外副作用：模型和工具。只做开始、中止、催、上报
   memory/      记忆接口和键值实现
   tools/       read / write / edit / bash 的实现
   presets/     读取预设文件，查模型窗口，生成快照

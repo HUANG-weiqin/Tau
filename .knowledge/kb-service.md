@@ -27,7 +27,7 @@
 它不负责：
 
 - 存储事务，以及回执承诺的落盘：[kb-store.md](kb-store.md#存储事务)。
-- 执行器的开始、中止、上报和启动恢复：[kb-executor.md](kb-executor.md)。
+- 执行器的开始、中止、催、上报和启动恢复：[kb-executor.md](kb-executor.md)。
 - 投影的字段：[kb-kernel.md](kb-kernel.md#投影与命令)。`self` 的文字：[kb-store.md](kb-store.md#self)。
 - 预设文件的格式：[设计稿第 2 节](../docs/design/mvp.md#2-预设)。工具，包括 bash 怎样结束进程：[kb-tools.md](kb-tools.md)。
 
@@ -56,6 +56,7 @@
 pump()
   循环 handleNext 直到信箱空：
     返回 abort 时 exec.abort(进程, n)
+    进程 hurried 时 exec.hurry(进程, n)    （D104）
     有订阅时 push(进程, update)            （见“历史和订阅”）
     settle(进程)                          （见“观察者和最终回复”）
   循环 exec.startNext 直到 null：
@@ -63,6 +64,7 @@ pump()
 ```
 
 - 只有 `pump` 推进状态。它是同步函数，中间没有 `await`；处理请求也是同步的。所以服务里没有并发：两次 `pump` 不会交错，一个请求的提交和随后的 `pump` 之间不会插进别的请求。
+- 催（[D104](kb-decisions.md#d104-bash-前台等待时有信排队最多再等-1-秒就转后台)）：每次 `handleNext` 之后，这个进程若是 `hurried`（`awaitingTool` 且 `turn.queued` 不空，纯函数 `hurried(p)`），就对它正在等的副作用 n 调 `exec.hurry`。这个副作用不在运行、不是内置 bash，什么都不做。同一批里后面才开始的 bash，由执行器开始时自己查（[kb-executor](kb-executor.md#控制流)）。
 - 每条输入的 `now` 是那次 `handleNext` 调用时的 `Date.now()`。
 - 每个往信箱放输入的地方，后面都跟着一次 `pump`：
 
@@ -483,7 +485,7 @@ tau stop <进程>
 ## 认知模型
 
 - 服务 = 一把锁（管道）+ 一个库 + 一个执行器 + 一个同步的 `pump` + 一张观察者表和一张订阅表。
-- 状态全在库里。服务内存里只有执行器的中止开关、观察者表和订阅表，崩溃后都可以丢。
+- 状态全在库里。服务内存里只有执行器的中止开关和催的开关、观察者表和订阅表，崩溃后都可以丢。
 - 一个命令 = 一个事务 + 一次 `pump`。回执是服务对客户端唯一的承诺：它说的是“已提交”，不是“已处理”。读请求和 `prune`、`remove`、`sweep`、`backup` 没有 `pump`。`reconfigure` 的回执在 `pump` 之后才发，所以它说的是处理以后的事：有没有待换配置。
 - 从零重建：`listen`、`openDb`、`createExecutor`、`pump`、`settle`、`parseRequest`，加一个只懂协议的 CLI。
 - 一次修改越界的信号：
@@ -578,7 +580,7 @@ tau stop <进程>
 - **断开之后拿不回回复。** 观察者不持久，CLI 也没有读回复的命令。协议有 `history`，上层可以读；`tau ps` 只给阶段。
 - **“结果未知”时 `tau ps` 只能间接判断。** `start` 看有没有多出一个进程；`send` 看不出消息进没进库，`ps` 不显示消息。
 - **屏幕上的文字不一定在库里。** CLI 收到过流式文本，就不打印 `final.reply`。流式文本包括交接说明和被丢弃的回复，多次模型调用的文字直接连在一起。
-- **Agent 对自己运行 `tau send`。** CLI 等这个进程回到 `idle`，进程在等这次 bash，只能等 bash 到时间转后台（默认 60 秒），这次工具调用返回以后这一轮才往下走。消息已经提交，会作为排队的消息，在下一个安全点或本轮结束时处理。
+- **Agent 对自己运行 `tau send`。** CLI 等这个进程回到 `idle`，进程在等这次 bash，信一排上队，这个 bash 就被催，最多再等 1 秒转后台（D104；没这条规则时要等到时间，默认 60 秒），这次工具调用返回以后这一轮才往下走。消息已经提交，会作为排队的消息，在下一个安全点或本轮结束时处理。
 - **服务运行时别的程序写库。** `openDb` 没设忙等超时。另一个连接持有写锁时，服务的事务立刻报 `database is locked`：请求得到 `error`；动作结束时写库失败则 `fatal` 退出。要备份，用 `backup` 请求（[备份](#备份backup)），不要在服务运行时复制库文件或另开连接。
 - **`backup` 是同步的，它跑的时候服务不处理别的输入。** 时间和库的大小成正比，库大了会停好几秒甚至更久：模型回复、请求、回执都得等。定在没人用的时候。
 - **`reconfigure` 的回执只说“现在有没有待换配置”。** `pending: false` 只说没有待换的配置，不说结构性字段有没有变：几种情形见[会话配置](#会话配置reconfigure)。要分清，读 `inspect`。
@@ -589,7 +591,7 @@ tau stop <进程>
 ## 关联模块
 
 - [kb-overview.md](kb-overview.md)：运行循环；状态分三层里的观察者。
-- [kb-executor.md](kb-executor.md)：`pump` 调用的 `startNext`、`abort`，启动恢复，崩溃窗口。
+- [kb-executor.md](kb-executor.md)：`pump` 调用的 `startNext`、`abort`、`hurry`，启动恢复，崩溃窗口。
 - [kb-store.md](kb-store.md)：`startProcess`、`send`、`handleNext`；落盘；`self` 的文字。
 - [kb-kernel.md](kb-kernel.md)：投影的字段；排队的消息和 `endTurn`。
 - [kb-decisions.md](kb-decisions.md)：D11、D16、D17、D18、D21、D71（`reconfigure`）、D73（`backup`）。

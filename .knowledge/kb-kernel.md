@@ -112,6 +112,7 @@ interface Env { now: Instant; memoryView: string; fresh?: { memoryView: string; 
 | `fork(id, source, seg, before, now, to?)` | `decide.ts` | 从源进程的当前段分叉出新进程：返回 `{ process, messages }`，规则见 [fork](#fork)。带 `to`（新预设的快照、记忆视图，和可选的上下文视图）是换角色。不合格就抛错 |
 | `decide(p, seg, input, env)` | `decide.ts` | 返回 `{ process, append, out }`，不发出副作用。`out` 是要寄的回信：`{ to, letter }[]`。五种输入都在一个穷尽的 `switch` 里 |
 | `effectOf(p, seg)` | `decide.ts` | `idle`：`null`。`awaitingModel`：`callModel(lastEffect, purpose)`。`awaitingTool`：`runTool(lastEffect, 第一个待执行的调用)` |
+| `hurried(p)` | `decide.ts` | 进程是 `awaitingTool` 且 `turn.queued` 不空时为真，否则为假。纯函数，不读段。服务的 `pump` 和执行器开始副作用时靠它决定要不要催等着的 bash（[D104](kb-decisions.md#d104-bash-前台等待时有信排队最多再等-1-秒就转后台)） |
 | `buildContext(p, seg)`、`tailStart(seg)`、`omitOldImages(messages)` | `context.ts` | 模型请求；段末用户消息的起点；请求里成批省略旧图 |
 | `observe(p, seg, siblings, now)` | `observe.ts` | 投影 |
 | `toolsFor(preset)`、`findTool(preset, name)` | `tools.ts` | 工具描述，含工具定义。参数只要 `tools` 和 `toolDefs` |
@@ -527,6 +528,7 @@ W 是 `preset.contextWindow`。快照里只存它和 `input`，不存模型的�
 2. `queued` 不空：经 `userMessage` 合并成一条用户消息写进段（头和形状见[信的头和合并](#信的头和合并)，不限张数），时间戳 `env.now`。这批信的 `replyTo` 并进 `turn.replyTo`（去重），`hops` 取 `turn.hops` 和这批信的最大值，`queued` 清空。
 3. `continueTurn`。这批信带[换段信](#换段信)标记且段里有助手消息时，传标记。
 
+- 信排在安全点之前的这段时间里，正在前台等的 bash 会被催：最多再等 1 秒就转后台，好让这一批尽快到安全点（[D104](kb-decisions.md#d104-bash-前台等待时有信排队最多再等-1-秒就转后台)）。
 - 写入不计步，下一次调用模型才计。
 - 换段成功以后、等模型回复时到的信，都等下一个安全点或者本轮结束；`turn.queued` 到那时才写进段。
 - 工具被中断、停止、`length` 等不经过安全点：信由 `endTurn` 写入。
@@ -751,7 +753,7 @@ type PhaseView =
 | 文件 | 内容 |
 |---|---|
 | `src/kernel/types.ts` | 全部类型、`unreachable` |
-| `src/kernel/decide.ts` | `start`、`decide`（含 `reconfigure` 一支和换段时采用 `next`）、`effectOf`、`continueTurn`、`endTurn`、`sendReplies`（回信）、`endedNote`（上一轮的说明）、`header`、`render`、`fit`、`userMessage`、`toolResult`、`addUsage`、`INTERRUPTED`、`SKIPPED` |
+| `src/kernel/decide.ts` | `start`、`decide`（含 `reconfigure` 一支和换段时采用 `next`）、`effectOf`、`hurried`、`continueTurn`、`endTurn`、`sendReplies`（回信）、`endedNote`（上一轮的说明）、`header`、`render`、`fit`、`userMessage`、`toolResult`、`addUsage`、`INTERRUPTED`、`SKIPPED` |
 | `src/kernel/snapshot.ts` | 会话快照的比较（D71），纯函数：`pendingFields`（`next` 和 `preset` 的结构性字段差在哪些键，换成对外的名字，投影的 `self.pending` 用它）、`sameStructure`（结构性字段是否相等，稳定序列化后比较，`decide` 的 `reconfigure` 用它；稳定序列化不递归，用显式的栈，见[坑点](#坑点)）、`withCallParams`（`base` 的结构性字段加 `from` 的三个调用参数，`from` 没有的键结果里也没有；`decide` 和服务造 S 都用它） |
 | `src/kernel/derive.ts` | 派生值（含 `limits` 的 `contextMax`）、`clip`、`utf8Bytes`、`finalReply`、`endedText`、`endedReason`、常量 |
 | `src/kernel/context.ts` | `buildContext`、`tailStart`、`systemPrompt`（含上下文一节）、记忆和上下文两个标题常量、`toolDescriptions`、交接文本、`IMAGE_UNSUPPORTED` |

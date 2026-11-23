@@ -4,12 +4,13 @@
 
 ## 这个模块是干什么的
 
-执行器执行库外副作用：调用模型，运行 `read`、`write`、`edit`、`bash` 和工具定义。它只做三件事：开始、中止、上报。
+执行器执行库外副作用：调用模型，运行 `read`、`write`、`edit`、`bash` 和工具定义。它只做四件事：开始、中止、催、上报。
 
 它负责：
 
 - 从待办副作用表取一个副作用，开始它，把结果放进信箱。
 - 中止一个正在运行的副作用。
+- 催一个正在运行的副作用（`hurry`，[D104](kb-decisions.md#d104-bash-前台等待时有信排队最多再等-1-秒就转后台)）：只有内置 bash 理它，别的都不理。
 - 服务启动时，把上次没跑完的副作用作为“被中断”送回。
 - 把动作的失败变成普通的结果。
 - 带图的工具结果：在上报结果的事务里把图片插入 `blobs`。
@@ -49,21 +50,26 @@
 
 ```text
 startNext()
-  claim 提交 → 登记中止开关 → 同步开始动作      （三步之间不让出）
-  动作结束 → 构造 Input → complete 提交 → 删掉中止开关
+  claim 提交 → 登记中止开关和催的开关 → 同步开始动作      （三步之间不让出）
+    claim 读到的进程已有排队的信（hurried(p)）：催的开关一开始就是开的
+  动作结束 → 构造 Input → complete 提交 → 删掉两个开关
 abort(id, n)
   有这个中止开关就中止；没有就什么都不做
+hurry(id, n)
+  有这个催的开关就打开；没有就什么都不做
 ```
 
 - `startNext` 返回时动作已经开始。没有 `pending` 行时返回 `null`。
 - 结果的输入怎么构造：模型回复是 `modelResult`；工具结果是 `toolResult`，`ToolOutput` 里的 `images` 在同一个事务里存进 `blobs`，`calls`（工具定义声明的库内动作）原样放进输入的 `outcome`，不进内容。执行器不解释 `calls`，也不检查它：声明由 `handleNext` 在处理这条结果时执行（[kb-store](kb-store.md#声明的库内动作)）。
 - 返回的 promise 在结果写回或被丢弃之后完成。`complete` 抛出（例如库已关）时，promise 被拒绝。
-- 中止开关在 `finally` 里删掉。
+- 中止开关和催的开关在 `finally` 里删掉。
 - 执行器不自己发现行被删了。服务的 `pump` 在 `handleNext` 返回 `abort` 时调用 `exec.abort`，然后循环 `startNext` 直到 `null`（`src/server/serve.ts`，[kb-service.md](kb-service.md#pump)）。
+- 执行器也不自己判断该不该催：`hurried(p)`（`src/kernel/decide.ts`，进程是 `awaitingTool` 且有排队的信）是纯函数，`startNext` 开始时和服务的 `pump` 在每次 `handleNext` 之后各用一次（D104）。
+- 催是内存里的信号，不进库，不改状态。崩溃后前台那次照旧报“被中断”。
 
 ### 活状态
 
-执行器内存里只有一张表：`Map<string, AbortController>`，键是 `JSON.stringify([进程 ID, n])`。这是它唯一的活状态。崩溃后它消失，恢复把对应的 `running` 行变成 `interrupted`。
+执行器内存里只有一张表：键是 `JSON.stringify([进程 ID, n])`，每个运行中的副作用一项，装一个中止开关（`AbortController`）和一个催的开关（D104）。这是它唯一的活状态。崩溃后它消失，恢复把对应的 `running` 行变成 `interrupted`。
 
 `busy(id)`：只读，看这张表里有没有这个进程的键。服务删进程之前用它（[kb-service.md](kb-service.md#删除)）。
 
@@ -149,7 +155,7 @@ pi-ai 会经常升级（[D84](kb-decisions.md#d84-pi-ai-升级版本不再写死
 
 1. 从 `toolDescriptions(preset)` 找到工具描述。找不到时回 `工具 <name> 不存在，或者预设里没有它。可用的工具：<这个进程快照里有的工具名>。`
 2. 先过 `fixArgs`（`src/tools/args.ts`）：可选的 `null` 当没填，必填的 `null` 回 `参数 <名字> 是 null，必须给出一个值。`，字符串和数字、布尔互转。再用 pi-ai 的 `validateToolArguments(tool, call)` 校验。它按 JSON Schema 检查。参数整体是 `null`、缺必填字段、多出字段都失败。失败时回 `参数错误：<pi-ai 的说明>`，`isError: true`。说明里带收到的参数原文。
-3. 按名字调用 `read`、`write`、`edit`（传工作目录），或 `bash`（传工作目录、中止信号，以及进程 ID 和管道名）。进程 ID 是 `job.process.id`；管道名是 `createActions` 的第三个参数，服务传它实际监听的管道（`opts.pipe`）。bash 把这两个值放进命令的环境（[kb-tools](kb-tools.md#包装脚本)）。别的名字，在快照的 `toolDefs` 里找工具定义，用 `runToolDef` 运行：参数、工作目录、中止信号、进程 ID 和管道名同 `bash`，再加快照的 `input` 是否含 `image`（[kb-tools](kb-tools.md#运行工具定义)）。
+3. 按名字调用 `read`、`write`、`edit`（传工作目录），或 `bash`（传工作目录、中止信号，以及进程 ID 和管道名，还有催的信号，D104）。进程 ID 是 `job.process.id`；管道名是 `createActions` 的第三个参数，服务传它实际监听的管道（`opts.pipe`）。bash 把这两个值放进命令的环境（[kb-tools](kb-tools.md#包装脚本)）。别的名字，在快照的 `toolDefs` 里找工具定义，用 `runToolDef` 运行：参数、工作目录、中止信号、进程 ID 和管道名同 `bash`，再加快照的 `input` 是否含 `image`（[kb-tools](kb-tools.md#运行工具定义)）。
 
 - 参数怎么被改写，见 [kb-tools.md](kb-tools.md#参数从哪来)。弱模型的参数 JSON 不完整时 `validateToolArguments` 用 `call.argumentsError` 报错。
 - 库内工具的 `runInStore` 用同一个 `fixArgs`，文字见 [kb-store.md](kb-store.md#记忆工具)。
@@ -179,7 +185,8 @@ pi-ai 会经常升级（[D84](kb-decisions.md#d84-pi-ai-升级版本不再写死
 
 | 决定 | 原因 |
 |---|---|
-| 执行器只开始、中止、上报，不决策，自己不重试 | 不纯的东西关进执行器（[D4](kb-decisions.md#d4-纯-decide单信箱事务提交)） |
+| 执行器只开始、中止、催、上报，不决策，自己不重试 | 不纯的东西关进执行器（[D4](kb-decisions.md#d4-纯-decide单信箱事务提交)） |
+| 催是执行器的第四个控制，内存里的信号，只有内置 bash 理它；该不该催由纯函数 `hurried(p)` 定 | 有排队的信时，等着的 bash 最多再等 1 秒就转后台，不用加阶段和状态（[D104](kb-decisions.md#d104-bash-前台等待时有信排队最多再等-1-秒就转后台)） |
 | 三个事务的边界写死；登记中止开关和开始动作之间不让出 | 否则崩溃会让行和结果一起消失（[D19](kb-decisions.md#d19-第四轮审查fable-52-复审-d18-之后的文档)） |
 | 停止和删行在同一个处理输入的事务里；`complete` 发现行不在就丢弃 | 执行器不会在停止之后开始或上报副作用（[D18](kb-decisions.md#d18-第三轮审查两个审查者24-项修改) 第 1 条） |
 | 恢复一律送 `interrupted`，不重做 | 崩溃后不猜测外部世界（D18） |
@@ -193,9 +200,9 @@ pi-ai 会经常升级（[D84](kb-decisions.md#d84-pi-ai-升级版本不再写死
 
 - 一行是一份租约：`pending` 表示还没开始，`running` 表示可能已经开始。
 - 对一个库外副作用 n，“表里有 n 这一行”和“信箱里有 n 的结果”恰好一个成立。三个事务都保持这一条：`claim` 不动信箱；`complete` 删行、存图片和放结果一起做；`recover` 删行和放 `interrupted` 一起做。
-- 从零重建：三个事务、一张中止开关表、一个两函数的 `Actions` 接口。
+- 从零重建：三个事务、一张开关表（每项一个中止开关和一个催的开关）、一个两函数的 `Actions` 接口。
 - 一次修改越界的信号：
-  - 执行器内存里多了中止开关以外的状态。
+  - 执行器内存里多了中止开关和催的开关以外的状态。
   - 执行器读结果内容做判断，或者自己重试。
   - `claim` 和开始动作之间出现 `await`。
   - 删行和放结果分到两个事务。
@@ -213,7 +220,7 @@ pi-ai 会经常升级（[D84](kb-decisions.md#d84-pi-ai-升级版本不再写死
 |---|---|
 | `src/executor/executor.ts` | `createExecutor`、`Executor`、`Actions`、`Job`、`ToolOutput`；`claim`、`complete`（含 `putBlobs`）、`recover` |
 | `src/executor/actions.ts` | `createActions(models, onText, pipe, readBlob)`：调用模型、校验参数、分派工具（含工具定义） |
-| `src/server/serve.ts` | `pump`：把 `handleNext` 的 `abort` 接到 `exec.abort`，循环 `startNext` |
+| `src/server/serve.ts` | `pump`：把 `handleNext` 的 `abort` 接到 `exec.abort`，有排队的信时调 `exec.hurry`，循环 `startNext` |
 | `src/main.ts` | 用 `builtinModels()` 建模型目录 |
 | `test/store/executor.test.ts` | 开始、完成、中止、失败上报、启动恢复、竞态 |
 | `test/store/model-call.test.ts` | 真目录里在用的六个模型：经 `createActions`、真的 pi-ai 适配器和假 fetch，用 `onPayload` 断言请求体的输出上限和思考预算；执行器传给 pi-ai 的参数；重试的种类和 60 秒上限 |
@@ -278,7 +285,7 @@ pi-ai 会经常升级（[D84](kb-decisions.md#d84-pi-ai-升级版本不再写死
 ## 关联模块
 
 - [kb-overview.md](kb-overview.md)：运行循环和状态分层。
-- [kb-decisions.md](kb-decisions.md)：D4、D18、D19。
+- [kb-decisions.md](kb-decisions.md)：D4、D18、D19、D104。
 - [kb-kernel.md](kb-kernel.md)：`effectOf`、结果的丢弃和裁剪、`interrupted` 怎样结束本轮。
 - [kb-store.md](kb-store.md)：处理输入的事务、待办副作用表的同步、表结构。
 - [kb-tools.md](kb-tools.md)：`read`、`write`、`edit`、`bash` 的实现，bash 怎样结束进程。
