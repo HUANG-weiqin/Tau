@@ -2951,6 +2951,26 @@ fork 原来在这张表里，已进内核，见 [D49](#d49-fork-进内核)。
 - 验证：`test/kernel/handoff-last.test.ts`（说明写在参数里、旁白加 `handoff` 第二次只写文字、完整说明加 `handoff` 三次、中间夹流出错、带别的调用、只有空白、参数是 `null` 或字符串、没有文字只有参数、写法不同的 `handoff`、`stop` 加 `memory_set` 加 `handoff`、`stop` 带正文带调用）先红后绿；`flow.test.ts` 里 `toolUse` 的表改成“带说明时收下”；随机序列加 `noteCall`，每一步检查 `toolUse` 被收下时一定是最后一次、调用全是 `handoff`，并统计覆盖。
 - 写在这里的页：[kb-kernel](kb-kernel.md#流程换段)、[kb-contract](kb-contract.md#契约清单)。
 
+### D111 上层的命令行 tx：外部主 Agent 和用户有一样的能力
+
+- 状态：已做（2026-11-24），不改契约，不动 `src/`。用户原话：“其实可以更加放权，让外部主agent和用户有一样的能力”。
+- 为什么做 `tx`：外部 harness（Codex、Claude Code，或者任何只有 shell 的）里的主 Agent 要把 tau 当子 Agent 池用：派子 Agent、等结果、续聊、复制进程、改会话配置、读写记忆、清理。内核的 `tau` 命令只有 `serve`、`start`、`send`、`ps`、`stop`，而且等这一轮结束才返回，不够做这些。
+- 为什么不做 MCP：用户不喜欢 MCP；命令行在任何 harness 里都能用，零配置。外部 Agent 只要读一遍 `tx help`。
+- 为什么全放权：`tx req` 把任意一个线协议请求原样发出，协议里的每个请求（`inspect`、`check`、`memory`、`memory_write`、`reconfigure`、`prune`、`sweep`、`backup`、`blob`、`watch`……）都能走它，以后协议新加的请求也自动覆盖。常用的几个（`start`、`post`、`wait`、`result`、`ps`、`history`、`stop`、`rm`、`fork`、`presets`）另给命令，因为它们要整理输出、等待或者转换路径。
+- 为什么不改内核的 `tau` 命令：它是冻结的契约（[kb-contract](kb-contract.md#契约清单)）；上层只用线协议就能完整接管，没有代价（[取舍顺序](kb-extending.md#取舍顺序)：上层能完整接管、不付出代价的，内核不做）。
+- 契约（[四问](kb-contract.md#推导测试的做法)）：1 否；2 否；3 否；4 否。内核没动，不出推导测试。
+- 自己定的细节：
+  - 进程 ID 由 `tx` 生成（`start`、`fork` 没给 `--id` 时）：连接断了、结果未知时，标准错误也写出 ID。
+  - `wait` 默认 100 秒，不到常见 shell 的 2 分钟超时；超时退出码 4，不是错误。
+  - `history` 默认最后 20 条。
+  - 路径认 `C:\x`、`C:/x`、`/c/x`；别的以 `/` 开头的报用法错误。旧写法“`--image` 以 `/` 开头就报错”因此改了。
+  - 旧写法里“`tx` 冻结以后再做、暂名”“`ps` 能按父进程过滤”“`history` 打印 `message` 行和 `end` 行”都不要了：`ps` 按进程 ID 列，`history` 写成可读的文字。
+  - 审阅后补（同日）：`wait` 和 `result` 不只看阶段，还看 `self.bgJobs` 和子进程（后台命令、子进程跑完会唤醒进程，那一轮才是真结果）；经 `tx.cmd` 传正文会被 cmd.exe 改坏，`tx help` 教用 `node` 直接调和标准输入 `-`；标准输入去掉开头所有 BOM；进程 ID 转小写；`ps` 不放累计用量。
+- 和已有决策、清单的对照：设计稿的“MVP 不做”清单里没有命令行这一项，MCP 一项指内核不做 MCP（[D29](#d29-放到上层的和不做的)），`tx` 不是 MCP。[D29](#d29-放到上层的和不做的)“不做协议的 `post` 请求”不变：`tx post` 是客户端命令，发的还是 `send`。[D46](#d46-v2-也不做的)第一张表里“fork 命令行在上层的 `tx`”落实了。没有冲突，表不改。
+- 代价：多一个要维护的命令行，它的输出文字是上层的约定，外部 Agent 靠 `tx help` 学；服务没在运行时 `tx` 不能用（退出码 2）。
+- 验证：`test/extras/tx.test.ts`，真的服务、真的 node 子进程、Git Bash 里真跑启动脚本：每个命令的正常路径和退出码、`start` 立即返回、`post` 后紧接着 `wait` 拿到新一轮、`wait` 的全部、任一、超时、`result` 的运行中、正常结束、步数用完、`req` 的普通请求、`error` 回复、`watch` 加 `--timeout`、路径转换、选项写在位置参数后面、标准输入的 `-`。
+- 写在这里的页：[kb-extras](kb-extras.md#上层的命令行-tx)。
+
 ## 未确认的默认值
 
 这些都不影响开工，写代码时可以随时改：

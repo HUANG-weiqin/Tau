@@ -55,7 +55,7 @@
 | [kb-decisions.md](kb-decisions.md) | 决定的理由、核实过的事实、放弃的方案、未确认的默认值；v2 的来由和六个缺口（D47）、核实时对照的文档估算和需求来源（D48）；v2 也不做的三张表（D46） |
 | [kb-piweb-lessons.md](kb-piweb-lessons.md) | Pi Web 的实测问题，以及 tau 对应的规则 |
 | [kb-contract.md](kb-contract.md) | 冻结的内核契约清单、目标和不变量、每个原语为什么在内核、参与启动检查的量、改契约的程序、不算改契约的事、推导测试的做法、风险表 |
-| [kb-extras.md](kb-extras.md) | 上层建筑（`extras/`）放在哪、依赖规则、Pi Web 功能在 v2 上的做法和代价、上层命令行 `tx` 的约定、多 Agent 等待、后台命令（内置 `bash`）、派工隔离的配方（git worktree）、工具库（含换段以后查旧段的提示）、技能库（`~/.agents/skills`）、领地（`~/.tau/extras/home/`）、备份脚本和计划任务、认证（登录脚本和凭据库的拷贝）、Copilot 的模型列表（生成模型补充文件）、HTTP 桥的检查 |
+| [kb-extras.md](kb-extras.md) | 上层建筑（`extras/`）放在哪、依赖规则、Pi Web 功能在 v2 上的做法和代价、上层命令行 `tx`（给用户和外部 harness 的主 Agent 用；命令、约定、退出码）、多 Agent 等待、后台命令（内置 `bash`）、派工隔离的配方（git worktree）、工具库（含换段以后查旧段的提示）、技能库（`~/.agents/skills`）、领地（`~/.tau/extras/home/`）、备份脚本和计划任务、认证（登录脚本和凭据库的拷贝）、Copilot 的模型列表（生成模型补充文件）、HTTP 桥的检查 |
 | [kb-extending.md](kb-extending.md) | 扩展的核心原则、取舍顺序（放内核还是上层）、加功能的推导顺序、大致方向 |
 | [kb-ops.md](kb-ops.md) | 运维：服务和桥怎么起、改代码后重启什么、怎么只读查库、备份和恢复的顺序、清理的入口、排错顺序、哪些操作先问用户 |
 | [_template.md](_template.md) | 新页模板 |

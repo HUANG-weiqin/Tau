@@ -10,7 +10,7 @@
 
 - 上层放在哪里，依赖什么，数据放在哪里。
 - Pi Web 的每个功能在 v2 上怎么做，放上层付什么代价。
-- 上层的命令行 `tx` 的约定。
+- 上层的命令行 `tx`：给用户和外部 harness 的主 Agent 用的命令、约定和退出码。
 - 多 Agent 等待的两条出路。
 - 后台命令：现在由内置 `bash` 做，上层不再有工具。
 - 派工隔离的配方：多个队友改同一个仓库时，各用一个 git worktree。
@@ -117,15 +117,54 @@
 
 ### 上层的命令行 `tx`
 
-暂名 `tx`，在 `extras/`，冻结以后再做。
+`tx` 在 `extras/tx/`，启动脚本是仓库根目录的 `tx`（给 bash）和 `tx.cmd`，和 `tau`、`tau.cmd` 并排。它只用线协议，不导入 `src/`。内核的 `tau` 命令冻结，不动（[D111](kb-decisions.md#d111-上层的命令行-tx外部主-agent-和用户有一样的能力)）。
 
-- 子命令：`post`（发 `send`，收到回执就断开）、`fork`（发 `fork`，打印回执里的新进程 ID；`--before` 是段内序号，不带就复制整个当前段；`--preset` 是预设 ID，带上就是换角色；收到 `error` 退出 1）、`history`（打印 `message` 行和 `end` 行；`fork` 要的段内序号从这里看）、`ps`（带父进程和累计用量，能按父进程过滤）；`start`、`send`、`post` 能带 `--image`。
-- 约定，照[线协议的分帧](kb-service.md#线协议srcprotocolts)和 v1 的 [CLI](kb-service.md#clisrcclimaints) 定：
-  - 连接服务时，`TAU_PIPE` 有值就用它。发完请求不能半关闭。
-  - `tx` 的启动脚本和 `tau` 一样设 `MSYS_NO_PATHCONV=1`。下面“`/` 开头报错”的检查靠它：不设时，msys 先把 `/` 开头的参数改成 Windows 路径，正文也会被改坏（[启动脚本](kb-service.md#启动脚本和入口)）。
-  - 选项写在位置参数之前。第一个位置参数之后，任何一个参数等于已知选项，或者以“已知选项=”开头，都按用法错误退出，提示把选项挪到前面。正文里真要写这些字，加引号和别的字放进同一个参数。
-  - `--image` 的路径以 `/` 开头时，按用法错误退出，提示用 `cygpath -w` 转换。文件读不出，也退出 2：它和用法错误一样，请求没发出。
-  - `history` 收到 `end` 退出 0；收到 `error` 退出 1；用法错误或者连不上退出 2；没收到 `end` 连接就关了，退出 3。
+给谁用：用户，和外部 harness 里的主 Agent（Codex、Claude Code 里的模型，或者任何只有 shell 的 harness）。它们只用命令行，就能把 tau 当子 Agent 池：派子 Agent、等结果、续聊、复制进程、改会话配置、读写记忆、清理。不做 MCP：命令行在任何 harness 里都能用，零配置。
+
+放进外部 harness 的说明，一句话就够（写进 Codex 的 `AGENTS.md` 或 Claude Code 的 `CLAUDE.md`）：
+
+> 要用子 Agent，就用 tau 的 `tx` 命令，先运行 `tx help`。tau 服务要先在运行（`tau serve`）。
+
+命令（选项都写在位置参数前面）：
+
+| 命令 | 做什么 |
+|---|---|
+| `tx start [--id X] [--workdir D] [--image P]... <预设> <任务\|->` | 发 `start`，收到回执就打印进程 ID 并返回，不等这一轮结束。没给 `--id` 时 `tx` 自己生成，合格的 ID 同服务的检查 |
+| `tx post [--image P]... [--handoff] <进程> <消息\|->` | 发 `send`，收到回执就返回 |
+| `tx wait [--any] [--timeout 秒] <进程>...` | 等结束，默认等全部、默认 100 秒（常见 shell 的默认超时是 2 分钟）。已结束的写 ID、预设、结束原因和最终回复，没结束的只写状态。结束的判断见下面“后台命令和子进程” |
+| `tx result <进程>` | 打印当前段的最终回复。这一轮停了、但后台命令或子进程还在跑时，照样打印，标准错误写“回复可能还会变”，退出码 4 |
+| `tx ps [<进程>...]` | 每个进程一行：比 `tau ps` 多父进程、模型、排队数、后台命令数、在跑的子进程数；不放累计用量，用户不在乎 token |
+| `tx history [--segment n] [--last n] <进程>` | 用 `peek` 的 `describe` 写成文字，默认最后 20 条 |
+| `tx stop <进程>...`、`tx rm <进程>...` | 发 `stop`、`remove` |
+| `tx fork [--before n] [--preset p] [--id X] <进程>` | 发 `fork`，打印新进程的 ID。`--before` 是段内序号，不带就复制整个当前段；`--preset` 换角色 |
+| `tx presets` | 列出 `~/.tau/presets` 里的预设：ID 和一句说明 |
+| `tx req [--timeout 秒] <JSON 请求\|->` | 把任意一个线协议请求原样发出，每行回复原样写成一行 JSON。协议里的每个请求都能走它，以后协议新加的请求也自动能用 |
+| `tx help`（或不带参数） | 用法，写给外部 Agent 看：每个命令一行，派三个子 Agent 的完整例子，其余请求的最短例子 |
+
+约定，照[线协议的分帧](kb-service.md#线协议srcprotocolts)和 [CLI](kb-service.md#clisrcclimaints) 定：
+
+- 连接服务时，`TAU_PIPE` 有值就用它，否则默认的管道。发完请求不能半关闭。
+- 启动脚本和 `tau` 一样设 `MSYS_NO_PATHCONV=1`：不设时，msys 先把 `/` 开头的参数改成 Windows 路径，正文也会被改坏（[启动脚本](kb-service.md#启动脚本和入口)）。
+- 选项写在位置参数之前（`--` 结束选项）。第一个位置参数之后，任何一个参数等于已知选项，或者以“已知选项=”开头，都按用法错误退出，提示把选项挪到前面。正文里真要写这些字，加引号和别的字放进同一个参数。
+- 消息正文：其余参数用一个空格连接。正好是 `-` 时从标准输入读，按 UTF-8，去掉开头所有的 BOM（Windows PowerShell 5.1 在两个编码都设成 UTF-8 时会发出两个）和末尾的换行。空正文是用法错误。任务长、有多行时，用 heredoc 加 `-`。
+- 路径（`--workdir`、`--image`）：认 `C:\x`、`C:/x` 和 Git Bash 的 `/c/x`，一律转成 Windows 绝对路径；相对路径按调用方的当前目录。其它以 `/` 开头的路径（例如 `/tmp`）是用法错误，提示用 `cygpath -w` 转换。图片文件读不出也是用法错误：请求没发出。
+- `start` 和 `fork` 的 ID 由 `tx` 生成：连接断了、结果未知时，标准错误也写出 ID，调用方用 `tx ps <ID>` 查，不必盲目重发。
+- `wait` 的结束判断：阶段是带结束原因的 `idle(...)`（刚建、不带原因的 `idle` 不算），而且 `self.bgJobs` 是空的，而且它的子进程都已结束。后台命令和子进程跑完都会唤醒进程再开一轮，那一轮才是真结果；只看阶段，会拿“等信”当结果，`rm` 以后真结果就丢了。子进程取自投影的 `children`（parent 是它、不处于 `idle`），停了、没有后台命令以后才查（一次 `ps`），还有子进程时每秒再查。没满足的，状态写“这一轮停了，但还有 N 个后台命令、M 个子进程在跑，跑完会唤醒它”。只数直接的子进程。`tx post X …` 之后紧接着 `tx wait X` 等的是新一轮：服务的 `pump` 是同步的，提交和随后的 `pump` 之间插不进别的请求，回执到手时进程已经离开 `idle`（测试钉住了它）。
+- `result` 的算法照 [kb-kernel 的最终回复](kb-kernel.md#最终回复)在上层重写一遍。
+- 进程 ID 一律转小写（协议只许小写），真转了在标准错误说一句。`stop`、`rm` 断线时退出码是 3。
+- 错误文字是中文，给能照抄的下一步：拼错的进程 ID 列出现有的进程，拼错的预设列出现有的预设。
+
+退出码（所有命令统一）：
+
+| 码 | 什么时候 |
+|---|---|
+| 0 | 成功。`wait` 等到了就是 0，不管各进程的结束原因是什么，原因写在输出里 |
+| 1 | 服务回了 `error`；`result` 的结束原因不是 `done`（标准错误写 `[本轮结束：<原因>]`）；`wait` 的 ID 不存在 |
+| 2 | 用法错误，或者连不上服务。这两种都没发出请求 |
+| 3 | 连接关了，但没收到能定结果的回复 |
+| 4 | 超时（`wait`、`req --timeout`），或者 `result` 时还没结束、回复可能还会变 |
+
+`tx help` 里的文档和 `main.ts` 路径由 `tx` 按自己所在的位置算出，不写死：外部 Agent 的当前目录不在仓库里。`--timeout` 要比外部 harness 的单次命令超时短（Claude Code 默认 2 分钟，用 100；不清楚就用 10，返回 4 再等）。
 
 ### 多 Agent 的等待
 
@@ -537,6 +576,7 @@ schtasks /Create /TN "tau-backup" /SC DAILY /ST 03:30 /TR "node \"<仓库>\extra
 |---|---|
 | `extras/` | 上层的代码 |
 | `extras/tools/` | 工具库：`catalog.ts` 是目录，每个工具一个脚本；`history.ts` 是 `history_dump` 的脚本和测试共用的纯函数（渲染、写文件、清理，[工具库](#工具库)） |
+| `extras/tx/` | 命令行 `tx`：`main.ts` 分发，`cmds.ts` 是命令，`args.ts` 是选项、路径和正文，`net.ts` 连管道，`help.ts` 是用法（[上层的命令行 tx](#上层的命令行-tx)） |
 | `extras/backup.ts` | 备份脚本：连管道发 `backup`，只留最近几个（[备份](#备份)） |
 | `extras/mcp/` | MCP 中转：`config.ts` 读配置、`server.ts` 起和关服务器、`relay.ts` 是中转进程、`call.ts` 是调用脚本、`gen.ts` 生成工具定义（[MCP 中转](#mcp-中转)） |
 | `test/extras-imports.test.ts` | 扫描 `extras/`，不许导入仓库里 `extras/` 之外的文件 |
@@ -548,6 +588,7 @@ schtasks /Create /TN "tau-backup" /SC DAILY /ST 03:30 /TR "node \"<仓库>\extra
 - **上层没在运行时，它的功能不生效。** 提醒、续跑、HTTP 桥都是这样。信在库里，不丢。
 - **`start` 起来的进程拿不到调用者的标准输出。** `cmd /c start /b` 里写 `1>文件` 不起作用：重定向留在 start 那一层。所以 relay 自己打开日志文件写，代码里别再用 `console.log` 打日志。
 - **测试里收进程按创建时间和标记认人，不只看进程号。** Windows 的进程号复用很快（实测 20 个死掉的号里，有 3 个在 300 个新进程内被复用）。只看进程号会把别人的新进程当成泄漏，还会用 `taskkill /T` 误杀。`test/extras/mcp/own.ts` 的做法：假服务器的命令行和它起的孙进程带每个测试文件唯一的标记（`FAKE_MARK`）；第一次看到一个进程号时核对命令行并记下创建时间，之后只认进程号和创建时间都对得上的。真的泄漏不会自己消失，照样抓得住。逐字比对输出的测试各用一个没用过的 `TAU_PROCESS`：空闲回收的短设置（8 秒）会收掉共用的实例，下一次调用就多出“服务器重启过”一行。
+- **`tx.cmd` 经 cmd.exe 解析参数，和 `tau.cmd` 一样（[kb-service](kb-service.md#坑点)）。** 正文里的 `&` 会把命令截断，后半段被当命令执行；`%` 被展开，引号和 `^` 被吃掉，`|`、`>` 成了管道和重定向。请求照样发出，退出码却可能是错的，外部 Agent 会以为失败而重发。所以不加 `.ps1`（受执行策略限制），`tx help` 教的是：PowerShell 和 cmd 里用 `node <tx 的绝对路径>/extras/tx/main.ts` 调；正文有特殊字符、引号或多行时一律走标准输入 `-`（PowerShell 里用 here-string）。Windows PowerShell 5.1 给原生程序传参时内嵌的双引号会坏，所以带引号的正文只能走 `-`；5.1 管道默认 `$OutputEncoding` 是 us-ascii，中文变成问号，要先设成不带 BOM 的 UTF-8，输出要设 `[Console]::OutputEncoding`。
 - **cmd 的重定向独占文件。** 谁在 cmd 里 `1>>x.log`，别的进程再打开 `x.log` 写就是 `EBUSY`。relay 的日志只有一个写者，就是这个原因。
 
 ## 关联模块
