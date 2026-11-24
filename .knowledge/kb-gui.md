@@ -51,6 +51,7 @@
   - `--home`：默认 `~/.tau`。测试用临时目录。
   - `--host`：额外认的 `Host` 名字，可以写多次，给 Tailscale 用。
   - 凭据文件默认 `<home>/auth.json`（`~/.tau/auth.json`），路径是 `createBridge` 的选项 `authFile`，没有命令行参数；测试用临时文件。桥用 `extras/auth/store.ts` 读写它，取标题的模型集合也用同一份，所以标题模型是 OAuth 供应商也能刷新令牌。
+  - 模型补充文件的目录是 `createBridge` 的选项 `modelsDir`，默认 `<home>/models`，没有命令行参数。Copilot 的后台刷新是选项 `copilotRefresh`，默认用 `authFile` 里的账号去拉 `/models`、写 `modelsDir`；测试注入假的，不联网。
 - 管道：`TAU_PIPE` 有值就用它，否则用 `\\.\pipe\tau`，和 CLI 一样。
 - `start.ps1`：管道不在就起服务，端口没人听就起桥，都和终端脱开，日志写进 `~/.tau/extras/gui/`。然后打开页面。不做开机自启。带 `-Popup` 时，出错弹一个对话框，写原因。
 - 桌面快捷方式：`shortcut.ps1` 画图标 `~/.tau/extras/gui/tau.ico`（黄底黑字的 τ，和左上角的标志一样），在桌面放 `tau.lnk`。仓库挪了位置就重新运行它。
@@ -69,6 +70,8 @@
 | 路径 | 内容 |
 |---|---|
 | `presets/` | 预设 |
+| `models/<供应商>.json` | 模型补充文件（D105）：桥叠在目录上，Copilot 的由桥后台生成 |
+| `extras/models/github-copilot.json` | Copilot 刷新器的状态（见 [kb-extras](kb-extras.md#copilot-的模型列表)） |
 | `extras/gui/state.json` | 界面数据 |
 | `extras/gui/*.log` | `start.ps1` 起的服务和桥的日志 |
 | `extras/bg/<进程 ID>-<名字>.log` | 老 `bg_run` 留下的后台命令 log（这个工具已退役，只为看没跑完的老进程还认；[kb-extras](kb-extras.md#后台命令)） |

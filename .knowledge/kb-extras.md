@@ -383,12 +383,20 @@ schtasks /Create /TN "tau-backup" /SC DAILY /ST 03:30 /TR "node \"<仓库>\extra
 
 - 凭据：经凭据库 `extras/auth/store.ts` 和 pi-ai 的 `getAuth` 取令牌和账号的 API 地址。令牌过期时由 pi-ai 刷新、写回，持锁。没登录 Copilot 就什么都不做。
 - 请求：`GET <API 地址>/models`，带令牌、pi-ai 目录里 Copilot 模型的固定请求头，和 `X-GitHub-Api-Version: 2026-08-01`（这一版的响应才有分档价格）。失败（网络、非 2xx、不是 JSON）就不写文件，旧文件照用。
-- 选哪些：聊天模型（`capabilities.type` 没写或是 `chat`），`model_picker_enabled` 为真，`policy.state` 不是 `disabled`，`supports.tool_calls` 不是 `false`。一个这样的模型都没有时（Free 账号），只取 `is_chat_default` 那一个。解析要宽松：认不出的值只影响那一项，不丢整批。
+- 选哪些：先筛可用的聊天模型：`capabilities.type` 没写或是 `chat`，`policy.state` 不是 `disabled`，`supports.tool_calls` 不是 `false`。可用的里面 `model_picker_enabled` 为真的有，就用它们。一个都没有时看账号地址（按实际请求的那个地址判断）：
+  - Individual 端点（`https://api.individual.githubcopilot.com`）：取 `policy.state` 为 `enabled` 的，再加上 `is_chat_default` 那一个（还没在里面时）。有的 Individual 付费账号所有 picker 标志都是 false，模型其实开着，pi-ai 也这样退（`github-copilot.js` 里的 `policy.state === "enabled"`，只限这个端点）。
+  - 别的端点（Business、Enterprise）：只取 `is_chat_default` 那一个。
+  - 结果保持响应里的顺序。解析要宽松：认不出的值只影响那一项，不丢整批。
 - 每个模型生成一个条目：
   - pi-ai 目录里有同 `id` 的：拿它当模板，接口、思考、兼容开关都照它，只用 `/models` 改上下文窗口、输出上限、能不能看图。
-  - 没有的：接口按 `supported_endpoints` 选，`/v1/messages`、`/responses`、`/chat/completions` 依次对应 `anthropic-messages`、`openai-responses`、`openai-completions`，排在前面的优先。模板是 pi-ai 目录里同一种接口、`id` 前缀相同最长的那个模型。思考照 `adaptive_thinking`、`reasoning_effort` 生成，写法照模板那一类条目。价格写 0。
-  - 上下文窗口取不加价那一档的输入上限：`billing.token_prices.default.max_prompt_tokens`；没有就用 `limits.max_prompt_tokens`，再没有就用 `limits.max_context_window_tokens`。输出上限是 `limits.max_output_tokens`。
-- 这一次没出现、但 7 天内出现过的模型照留：`/models` 每次可能返回不同的一套。记录放在 `~/.tau/extras/models/`。
+  - 没有的：接口按 `supported_endpoints` 选，`/v1/messages`、`/responses`、`/chat/completions` 依次对应 `anthropic-messages`、`openai-responses`、`openai-completions`，排在前面的优先。字段没有或是空列表时走 `/chat/completions`，也就是 `openai-completions`（VS Code、Zed 缺这个字段都这样，不按名字猜：`o5-mini` 这种名字猜出来会每次 400）。写了但一个都认不出：跳过这个模型，别的不受影响。模板是 pi-ai 目录里同一种接口、`id` 前缀相同最长的那个模型，所以缺 endpoints 时模板只在 completions 的条目里找（`gemini-*`、`kimi-*` 等）。价格写 0。
+  - 思考照元数据推，写法照模板那一类条目。`reasoning` 为真：`supports.thinking`、`adaptive_thinking` 为真，或 `reasoning_effort` 非空。`reasoning_effort` 小写后只认 `minimal`、`low`、`medium`、`high`、`xhigh`、`max`。`compat` 先拷模板的，去掉 `forceAdaptiveThinking`，再按下面改。`thinkingLevelMap` 只在 `reasoning` 为真时才可能有：
+    - Anthropic 且 `adaptive_thinking`：`compat.forceAdaptiveThinking = true`；`off: null`（响应不说能不能关，不发 `thinking: disabled`）；列出了级别时，`xhigh`、`max` 写了才算支持，值同名；没列出的 `minimal` 到 `high` 落在最近的一档上，同样近取低的。
+    - Anthropic 不自适应：按预算思考，没有映射，不写 `forceAdaptiveThinking`。
+    - OpenAI 两种（`openai-responses`、`openai-completions`），列出了级别时：六个级别都写，列出的值同名，没列出的 `xhigh`、`max` 是 `null`，`minimal` 到 `high` 落在最近的一档；`off` 是 `"none"`（列了 `none`）或 `null`。`openai-completions` 再写 `compat.supportsReasoningEffort`（有没有列出级别）。
+  - 上下文窗口取账号能收的提示词上限：`billing.token_prices.default.max_prompt_tokens` 和 `limits.max_prompt_tokens` 里有的取小的；两个都没有才用 `limits.max_context_window_tokens`。窗口比账号能收的大，交接请求本身就超限，进程会卡住。输出上限是 `limits.max_output_tokens`。
+- 这一次没出现、但 7 天内出现过的模型照留：`/models` 每次可能返回不同的一套。状态文件 `~/.tau/extras/models/github-copilot.json`：`lastSuccess`（上次成功刷新的毫秒时间，桥靠它判断列表旧没旧）；`seen.<模型 id>`：`lastSeen`（最后一次出现的毫秒时间）和 `entry`（当时写出的条目）。状态在模型文件之后写，失败不影响文件。
+- 换账号：状态不认账号，换了账号以后旧账号的模型会留 7 天。所以 `login github-copilot` 之后的那次刷新带 `forgetSeen`，忽略旧状态，只留这一次的结果。桥和手动运行不带。
 - 写之前，按内核的条件检查每个条目。整个文件先写临时文件、再改名。顶层另写生成时间和 pi-ai 的版本，内核不看。
 - 谁跑：`login github-copilot` 成功以后跑一次；桥启动时跑一次，`/api/models` 发现上次成功已超过 6 小时，也在后台跑（同时只跑一个）；`node extras/models/copilot.ts` 手动跑。
 - 代价：

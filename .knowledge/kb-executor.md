@@ -147,9 +147,10 @@ pi-ai 会经常升级（[D84](kb-decisions.md#d84-pi-ai-升级版本不再写死
 3. `npm run typecheck`、`npm test`。钉着 pi-ai 行为的测试会红，这是预警：`test/store/model-call.test.ts`（输出上限、思考预算、重试）、`test/store/fork-model-payload.test.ts`（跨模型历史的请求体）、`test/credential-suite.ts`（接进登录和刷新）。逐条看：新行为合理就改测试的预期、在决策记录里写一行；不合理就不升。
 4. 在用的模型还在新目录里：预设文件里的 `model`，和库里每个进程快照的 `model`（目录删了模型，调用时报“模型目录里没有”）。
 5. 换段阈值的前提还成立：对目录里每个模型，用量取 `handoffThreshold` 加 `resultReserve` 加交接指令，看 `clampMaxTokensToContext` 会不会把交接调用的 `cap` 压低。
-6. 真调用冒烟：在用的每家各来一次带工具的往返，要传 `sessionId`（opencode-go 没有它回 400），`maxTokens` 别给得太小（按预算思考的路径预算不足 1,024 会被 Anthropic 拒绝）。
-7. 回放真库：用 `backup` 请求取一个一致的副本（别拷 `tau.db`，最近的数据在 `-wal` 里），对每个进程的当前工作段，经 `createActions` 加假 fetch 截请求体，都应能转成请求体。
-8. 合并后主树 `npm ci`（根目录和 `extras/`），紧接着重启服务和桥。
+6. 适配器有没有新的办法让输出上限不是 `cap`：升级后查 pi-ai 有没有新的模型字段或 compat 开关，会让适配器不发上限，或者让别的参数顶掉上限（现在已知的是 `samplingParams`、`samplingParamsByThinkingLevel` 和 `compat.supportsMaxOutputTokens`）。有的话，给模型补充文件的条目检查加条件，按改契约的程序走（[kb-service 的模型补充文件](kb-service.md#模型补充文件d105)）。
+7. 真调用冒烟：在用的每家各来一次带工具的往返，要传 `sessionId`（opencode-go 没有它回 400），`maxTokens` 别给得太小（按预算思考的路径预算不足 1,024 会被 Anthropic 拒绝）。
+8. 回放真库：用 `backup` 请求取一个一致的副本（别拷 `tau.db`，最近的数据在 `-wal` 里），对每个进程的当前工作段，经 `createActions` 加假 fetch 截请求体，都应能转成请求体。
+9. 合并后主树 `npm ci`（根目录和 `extras/`），紧接着重启服务和桥。
 
 ### 运行工具（`actions.ts`）
 

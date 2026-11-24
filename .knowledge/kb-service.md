@@ -464,7 +464,12 @@ tau stop <进程>
   - `contextWindow`、`maxTokens`：正的安全整数。
   - `cost`：对象，`input`、`output`、`cacheRead`、`cacheWrite` 都是非负的有限数。
   - `provider`：没有，或者等于文件名的 provider。`type`：没有，或者是 `"chat"`。
-  - 别的键（`headers`、`compat`、`thinkingLevelMap`、`inputLimits` 等）原样交给 pi-ai，内核不查。`api` 不是这家 provider 支持的，调用时由 pi-ai 报错。
+  - `samplingParams`：没有，或者是普通对象，且不含 `SAMPLING_RESERVED`（`src/presets/load.ts`，预设 `options.samplingParams` 同一张表）里的键，包括 `max_tokens`、`max_completion_tokens`、`max_output_tokens`。
+  - `samplingParamsByThinkingLevel`：没有，或者是普通对象，且每个值都满足上一条。
+  - `compat.supportsMaxOutputTokens`：不是 `false`。
+  - 为什么查这三条：输出上限归内核，`cap = min(模型的 maxTokens, 快照的上限)`，换段阈值靠它证明（[kb-executor](kb-executor.md#调用模型actionsts)）。pi-ai 的三个 OpenAI 适配器最后会用 `samplingParams` 顶掉上限，`supportsMaxOutputTokens: false` 让 responses 适配器不发上限；条目带了这些，上限就不再是 `cap`。查不过的条目整条跳过。
+  - 其余的键（`headers`、`compat`、`thinkingLevelMap`、`inputLimits` 等）原样交给 pi-ai，内核不查。`api` 不是这家 provider 支持的，调用时由 pi-ai 报错。
+- 读之前去掉开头的 BOM（`\uFEFF`），同工具定义文件。
 - 文件坏了就整份忽略，等于没有这个文件：读不出、超过 `MODELS_FILE_MAX_BYTES`（1 MiB）、不是合法 JSON、顶层不是对象、`models` 不是数组。内核不报错，也不写日志。
 - 合并：这家 provider 的模型列表是 pi-ai 目录里的模型，`id` 相同的换成文件里的条目，文件里新的 `id` 加在后面。
 - 每次查模型都现读，改了不用重启。查模型的地方：读预设（`start`、`check`、`spawn`、带 `preset` 的 `fork`、带结构性字段的 `reconfigure`），和每次调用模型（[kb-executor](kb-executor.md#调用模型actionsts)）。

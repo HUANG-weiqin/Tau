@@ -102,7 +102,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | 表结构。索引不算（见[不算改契约](#不算改契约)） | [kb-store 的表](kb-store.md#表) |
 | 文件格式：预设（含 D64 的 `options`，D72 的 `context` 及它的写法条件，见下面的入口条件） | [设计稿第 2 节](../docs/design/mvp.md#2-预设) |
 | 文件格式：工具定义 | [kb-tools 的工具定义](kb-tools.md#工具定义) |
-| 文件格式：模型补充文件 `~/.tau/models/<provider>.json`，和它的读法：内核查的字段和条件，同 `id` 替换、新 `id` 加入、坏条目跳过、坏文件忽略，每次查模型现读（D105） | [kb-service 的模型补充文件](kb-service.md#模型补充文件d105) |
+| 文件格式：模型补充文件 `~/.tau/models/<provider>.json`，和它的读法：内核查的字段和条件（含不许绕过输出上限的三条）、读前去掉 BOM，同 `id` 替换、新 `id` 加入、坏条目跳过、坏文件忽略，每次查模型现读（D105） | [kb-service 的模型补充文件](kb-service.md#模型补充文件d105) |
 | 工具定义的运行（原文在这一节），含 D64 的 `call` 项 | [kb-tools 的运行工具定义](kb-tools.md#运行工具定义) |
 | 环境变量：`TAU_PROCESS`、`TAU_PIPE` | [kb-tools 的包装脚本](kb-tools.md#包装脚本)、[kb-service 的启动脚本和入口](kb-service.md#启动脚本和入口) |
 | CLI：v1 的命令、输出和退出码，加上 `TAU_PIPE`。入口是仓库里的 `tau`、`tau.cmd` 和 `node src/main.ts` | [kb-service 的 CLI](kb-service.md#clisrcclimaints)、[启动脚本和入口](kb-service.md#启动脚本和入口) |
