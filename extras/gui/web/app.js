@@ -133,7 +133,7 @@ import { ServiceBanner, StartServiceButton } from "./ui/banner.js";
 
 /* ------------------------------------------------------------------ 状态 */
 
-/** 页面的全部状态。只在这里改，改完 `schedule()`。 */
+/** 页面的全部状态。只在这里改，改完 `schedule()`（不带参数；只有流式文字片段可以 `schedule(true)`，见 schedule 上的说明）。 */
 const S = {
   store: emptyStore(),
   /** @type {Record<string, History>} */
@@ -186,9 +186,20 @@ const S = {
 };
 
 let queued = false;
+/** 上次画完以后，S 有没有被不带参数的 schedule() 标脏。 */
+let dirty = true;
+/** 上次算出的 app 和外围三栏的 vnode；textOnly 重画时原样复用（Preact 见同一个 vnode 就跳过子树）。 @type {{ app: App, entries: any[], rail: any, list: any, insp: any } | null} */
+let SIDE = null;
 /** @type {() => void} */
 let bump = () => {};
-function schedule() {
+/**
+ * 合并到下一帧重画。不带参数：app 和外围三栏（Rail、ProcList、Inspector）都重算。
+ * `textOnly` 只给流式文字片段（onReply 的 text 分支）：复用上一份 app 和三栏的 vnode，
+ * 所以那三栏和 compute() 不许读 store.text。S 的其它改动一律调不带参数的 schedule()。
+ * @param {boolean} [textOnly]
+ */
+function schedule(textOnly = false) {
+  if (!textOnly) dirty = true;
   if (queued) return;
   queued = true;
   // 页面在后台时 rAF 不跑，用定时器兜底：谁先到谁渲染。
@@ -340,7 +351,7 @@ function onReply(r) {
   S.store = reduce(S.store, r, now);
   // 流式片段一个 token 一条：只有读它的界面（聚焦的进程、开着的总管弹窗）才重画。
   if (r.type === "text") {
-    if (textShown(S.store, r.process, { focused: S.route.proc, chiefPreset: S.dialog?.name === "chief" ? (S.gui.chief ?? null) : null })) schedule();
+    if (textShown(S.store, r.process, { focused: S.route.proc, chiefPreset: S.dialog?.name === "chief" ? (S.gui.chief ?? null) : null })) schedule(true);
     return;
   }
   if (r.type === "ps") {
@@ -576,7 +587,7 @@ function compute() {
         }
       }
       const label = tag === "awaitingModel" ? (e.self.phase.tag === "awaitingModel" && e.self.phase.purpose === "handoff" ? "写交接说明" : "等模型") : tag === "awaitingTool" ? "等工具" : "空闲";
-      return { label, tool, since, dur, doing: describeNow(msgs), endedText: endedText(ended) };
+      return { label, tool, since, dur, get doing() { return describeNow(msgs); }, endedText: endedText(ended) };
     },
     entryOf: (id) => byId[id] ?? null,
     projectOf: (path) => projects.find((p) => p.key === gs.pathKey(path)) ?? null,
@@ -921,7 +932,12 @@ function Root() {
     };
   }, []);
 
-  const { app, entries } = compute();
+  if (dirty || !SIDE) {
+    const c = compute();
+    SIDE = { app: c.app, entries: c.entries, rail: html`<${Rail} app=${c.app} />`, list: html`<${ProcList} app=${c.app} />`, insp: html`<${Inspector} app=${c.app} />` };
+    dirty = false;
+  }
+  const { app, entries } = SIDE;
   LAST = app;
 
   // 已经删掉的进程，清掉界面数据里它们的键，文件才不会越长越大。
@@ -967,11 +983,11 @@ function Root() {
     app.focusKind === "process" ? html`<${ProcessView} key=${app.focusedId} app=${app} />` : app.focusKind === "project" ? html`<${ProjectView} app=${app} />` : html`<${Empty} app=${app} />`;
 
   return html`<div class="shell">
-    <${Rail} app=${app} />
+    ${SIDE.rail}
     <div class="shell-body">
-      <${ProcList} app=${app} />
+      ${SIDE.list}
       <main class="main" aria-label="主区">${main}</main>
-      <${Inspector} app=${app} />
+      ${SIDE.insp}
     </div>
     ${d && d.name === "chief" && html`<${ChiefDialog} app=${app} onClose=${close} />`}
     ${d && d.name === "newproc" && html`<${NewProcDialog} app=${app} onClose=${close} />`}

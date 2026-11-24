@@ -3,20 +3,20 @@ import { test } from "node:test";
 import { activityAt, applyFilter, attention, buildEntries, buildProjects, classify, currentOf, defaultPreset, filterCounts, indexPresets, projectView, railSections, seenFromInspect } from "../../../extras/gui/web/lib/derive.js";
 import { formatAgo, formatBytes, formatClock, formatContext, formatDuration, formatElapsed } from "../../../extras/gui/web/lib/format.js";
 import { applyEnd, applyMessage, applyPushed, emptyHistory, giveUp, known, lastTimestamp, noteSelf, plan, segmentMessages } from "../../../extras/gui/web/lib/history.js";
-import { canHandoff, CARRY_HEADER, describeNow, describeStart, foldMiddle, forkPoints, HANDOFF_HEADER, itemsOf, parseUser, phaseStartedAt, summarizeCall, toItems, turnStart } from "../../../extras/gui/web/lib/messages.js";
+import { canHandoff, CARRY_HEADER, clipText, describeNow, describeStart, firstTextLine, foldMiddle, forkPoints, HANDOFF_HEADER, itemsOf, parseUser, phaseStartedAt, summarizeCall, toItems, turnStart } from "../../../extras/gui/web/lib/messages.js";
 import { cleanPlan, stopOrder } from "../../../extras/gui/web/lib/order.js";
 import { removePlan, skippedFor } from "../../../extras/gui/web/lib/remove.js";
 import { addFork, movePinned, normalizeState, pathKey, pinFolder, prunePatch, setCurrent } from "../../../extras/gui/web/lib/state.js";
 import { allProcs, childCounts, emptyStore, reduce, streamingLive, streamingOutput, streamingText, textShown } from "../../../extras/gui/web/lib/store.js";
 import { extractTitle, processTitle } from "../../../extras/gui/web/lib/titles.js";
-import { appendDelta, argsPreview, ARGS_KEEP, OUTPUT_KEEP, tailLines } from "../../../extras/gui/web/lib/stream.js";
+import { appendDelta, argsPreview, ARGS_KEEP, charCount, OUTPUT_KEEP, tailLines } from "../../../extras/gui/web/lib/stream.js";
 import { newPace, paceArrive, paceStep } from "../../../extras/gui/web/lib/pace.js";
 import { buildCreate, buildUpdate, contextText, CONTEXT_MAX, convertGate, convertPatch, defaultModelRef, filterCatalog, findModel, formatWindow, hasAgents, keyActions, keyHint, keyLabel, modelPatch, nearestLevel, parseContext, parseOptions, pushRecent, recentEntries, sortProviders, splitModel, suggestId, moreSummary, withAgents } from "../../../extras/gui/web/lib/models.js";
 import { markdownToHtml, safeHref } from "../../../extras/gui/web/lib/markdown.js";
 import { firstLine, lastReply, notifyText, shouldNotify, tabTitle, trackResults, unseenCount, watchAttention } from "../../../extras/gui/web/lib/notify.js";
 import { applyTheme } from "../../../extras/gui/web/lib/theme.js";
 import { buildSession, EFFECT, EFFECT_TEXT, hasStructural, isStructural, needsInspect, pendingOf, pendingText, receiptNote, reloadFields, sessionInfo, shownErr } from "../../../extras/gui/web/lib/session.js";
-import { reconfigure as apiReconfigure, inspect as apiInspect, tauCommand } from "../../../extras/gui/web/api.js";
+import { reconfigure as apiReconfigure, inspect as apiInspect, tauAll, tauCommand } from "../../../extras/gui/web/api.js";
 
 type Self = import("../../../extras/gui/web/lib/types.js").Self;
 type Msg = import("../../../extras/gui/web/lib/types.js").Message;
@@ -1701,4 +1701,83 @@ test("新进程：默认选中的预设，指定的 > 最近有动静的进程�
   assert.equal(defaultPreset(choices, entries, { p1: 500 }, undefined), "a", "lastAt 说了算");
   assert.equal(defaultPreset(choices, [], {}, undefined), "a", "没有进程，取第一个");
   assert.equal(defaultPreset([], entries, {}, "a"), null, "一个可选的都没有");
+});
+
+/** 固定种子的伪随机串：字符表里有各种换行、空白和成对、落单的代理。 */
+function fuzz(count: number, fn: (s: string) => void): void {
+  const alphabet = ["\n", "\r", "\r\n", " ", "\t", " ", " ", "　", "a", "b", "字", "😀", "\ud83d", "\ude00"];
+  let x = 12345;
+  const rnd = (n: number) => ((x = (Math.imul(x, 1103515245) + 12345) >>> 0) >>> 8) % n;
+  for (let i = 0; i < count; i++) {
+    let s = "";
+    for (let k = rnd(14); k > 0; k--) s += alphabet[rnd(alphabet.length)];
+    fn(s);
+  }
+}
+
+test("stream: tailLines 和原来的 replace 加 split 实现逐一相同", () => {
+  const ref = (s: string, max: number) => {
+    const lines = s.replace(/\s+$/, "").split(/\r?\n/);
+    if (lines.length <= max) return { text: lines.join("\n"), hidden: 0 };
+    return { text: lines.slice(lines.length - max).join("\n"), hidden: lines.length - max };
+  };
+  fuzz(4000, (s) => {
+    for (const max of [0, 1, 2, 3, 5]) assert.deepEqual(tailLines(s, max), ref(s, max), JSON.stringify([s, max]));
+  });
+  assert.deepEqual(tailLines("a\r\nb\r\nc", 2), { text: "b\nc", hidden: 1 });
+  assert.deepEqual(tailLines("a\rb\rc", 2), { text: "a\rb\rc", hidden: 0 });
+  assert.deepEqual(tailLines("", 3), { text: "", hidden: 0 });
+  assert.deepEqual(tailLines("\n\n", 3), { text: "", hidden: 0 });
+});
+
+test("stream: charCount 和 Array.from(s).length 相同", () => {
+  fuzz(4000, (s) => assert.equal(charCount(s), Array.from(s).length, JSON.stringify(s)));
+  assert.equal(charCount("😀a"), 2);
+  assert.equal(charCount("\ud83d"), 1);
+  assert.equal(charCount("\ude00\ud83d"), 2);
+});
+
+test("messages: firstTextLine 和原来按行分、取第一个非空行的实现逐一相同；clipText 的快路径不改结果", () => {
+  const ref = (s: string) => {
+    for (const line of s.split(/\r?\n/)) {
+      const t = line.trim();
+      if (t !== "") return t;
+    }
+    return "";
+  };
+  fuzz(4000, (s) => assert.equal(firstTextLine(s), ref(s), JSON.stringify(s)));
+  assert.equal(firstTextLine("\n  \r\n hi there \nnext"), "hi there");
+  const clipRef = (s: string, max: number) => {
+    const chars = Array.from(s);
+    return chars.length <= max ? s : chars.slice(0, max).join("") + "…";
+  };
+  fuzz(2000, (s) => {
+    for (const max of [0, 1, 2, 5, 20]) assert.equal(clipText(s, max), clipRef(s, max), JSON.stringify([s, max]));
+  });
+});
+
+test("api: tauAll 收到结束行就返回，流不结束也不等；error 照旧抛错", async () => {
+  const real = globalThis.fetch;
+  const enc = new TextEncoder();
+  let aborted = false;
+  const hang = (lines: unknown[]) =>
+    (async (_url: any, init: any) => {
+      init?.signal?.addEventListener("abort", () => (aborted = true));
+      const body = new ReadableStream({
+        start(c) {
+          c.enqueue(enc.encode(`${lines.map((l) => JSON.stringify(l)).join("\n")}\n`));
+        },
+      });
+      return new Response(body, { status: 200 });
+    }) as typeof fetch;
+  try {
+    globalThis.fetch = hang([procLine({}, {}), { type: "inspected", count: 1, now: 1 }]);
+    const rs = await tauAll({ op: "inspect" });
+    assert.deepEqual(rs.map((r) => r.type), ["process", "inspected"]);
+    globalThis.fetch = hang([{ type: "error", message: "没有这个进程：abc" }]);
+    await assert.rejects(tauAll({ op: "inspect", process: "abc" }), /没有这个进程/);
+  } finally {
+    globalThis.fetch = real;
+  }
+  assert.ok(aborted, "断开了连接");
 });

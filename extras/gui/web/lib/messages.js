@@ -35,17 +35,16 @@ export const CARRY_HEADER = "（下面是写交接说明时还没处理的用户
  * @param {number} max 按字符数
  */
 export function clipText(s, max) {
+  if (s.length <= max) return s;
   const chars = Array.from(s);
   return chars.length <= max ? s : chars.slice(0, max).join("") + "…";
 }
 
-/** @param {string} s */
-function firstLine(s) {
-  for (const line of s.split(/\r?\n/)) {
-    const t = line.trim();
-    if (t !== "") return t;
-  }
-  return "";
+/** 第一个去掉首尾空白后非空的行。导出名不叫 firstLine，免得和 notify.js 的同名。 @param {string} s */
+export function firstTextLine(s) {
+  const t = s.trimStart();
+  const j = t.indexOf("\n");
+  return (j < 0 ? t : t.slice(0, j)).trimEnd();
 }
 
 /**
@@ -171,13 +170,13 @@ export function summarizeCall(name, args) {
   else if (name === "read" || name === "write" || name === "edit") v = args["path"] ?? args["file_path"] ?? args["filePath"];
   if (typeof v !== "string") v = Object.values(args).find((x) => typeof x === "string");
   if (typeof v !== "string") return Object.keys(args).length === 0 ? "" : clipText(JSON.stringify(args), 80);
-  return clipText(firstLine(v), 80);
+  return clipText(firstTextLine(v), 80);
 }
 
 /** @param {import("./types.js").ToolResultMessage} m @param {number} seq @returns {CallResult} */
 function resultOf(m, seq) {
   const text = textOf(m.content);
-  return { seq, ts: m.timestamp, text, summary: clipText(firstLine(text), 100), images: imagesOf(m.content), isError: m.isError, filled: m.tau?.filled ?? null };
+  return { seq, ts: m.timestamp, text, summary: clipText(firstTextLine(text), 100), images: imagesOf(m.content), isError: m.isError, filled: m.tau?.filled ?? null };
 }
 
 /** @param {CallResult | null} r @returns {Call["status"]} */

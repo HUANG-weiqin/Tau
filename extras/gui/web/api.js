@@ -95,8 +95,10 @@ export async function tauStream(request, onReply, signal) {
   }
 }
 
+const TERMINAL = new Set(["ps", "inspected", "swept", "blob", "memory", "memory_written", "memory_rejected", "error"]);
+
 /**
- * 发一条请求，收齐回复（连接由服务关闭）。
+ * 发一条请求，收齐回复，收到结束行就断开。
  * @param {Record<string, unknown>} request
  * @returns {Promise<any[]>}
  */
@@ -105,6 +107,8 @@ export async function tauAll(request) {
   const out = [];
   await tauStream(request, (r) => {
     out.push(r);
+    // 收到结束行就断开，不等管道关闭。这些行服务发完就 end()，不会作为中间行出现（src/server/serve.ts）。
+    return TERMINAL.has(r.type);
   });
   const err = out.find((r) => r.type === "error");
   if (err) throw new ApiError(err.message);

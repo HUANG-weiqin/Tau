@@ -51,9 +51,23 @@ export function appendDelta(cur, r) {
  * @returns {{ text: string, hidden: number }}
  */
 export function tailLines(s, max) {
-  const lines = s.replace(/\s+$/, "").split(/\r?\n/);
-  if (lines.length <= max) return { text: lines.join("\n"), hidden: 0 };
-  return { text: lines.slice(lines.length - max).join("\n"), hidden: lines.length - max };
+  let end = s.length;
+  while (end > 0 && /\s/.test(s.charAt(end - 1))) end--;
+  let total = 1;
+  for (let i = 0; i < end; i++) if (s.charCodeAt(i) === 10) total++;
+  if (total <= max) return { text: s.slice(0, end).replace(/\r?\n/g, "\n"), hidden: 0 };
+  // 从尾部往前数 max 个换行，剩下的就是最后 max 行。
+  let start = end;
+  for (let k = 0; k < max; k++) start = s.lastIndexOf("\n", start - 1);
+  return { text: s.slice(start + 1, end).replace(/\r?\n/g, "\n"), hidden: total - max };
+}
+
+/**
+ * 按码点数的字数，和 `Array.from(s).length` 一样（成对的代理算 1 个，落单的也算 1 个），但不分配数组。
+ * @param {string} s
+ */
+export function charCount(s) {
+  return s.length - (s.match(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g)?.length ?? 0);
 }
 
 /**

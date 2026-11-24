@@ -277,6 +277,12 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
   - 读 `history` 的同时推送也在往同一份缓存里追加：读的每一行都从缓存里取最新的再并，不用手里的旧副本盖掉。
   - 流式片段每个 token 一条。只有聚焦的进程、或总管弹窗开着时总管的进程，收到 `text` 才重画（`lib/store.js` 的 `textShown`）。其余的只并进 store。
   - 消息变条目经 `lib/messages.js` 的 `itemsOf`，按消息数组缓存（`WeakMap`）。所以缓存里的消息数组不能原地改，新消息一律生成新数组；返回的条目只读。
+  - `text` 引起的重画走 `schedule(true)`，复用上一份 `app` 和外围三栏（`Rail`、`ProcList`、`Inspector`）的 vnode（`app.js` 的 `SIDE`）。Preact 见同一个 vnode 就跳过整棵子树。
+  - 所以外围三栏和 `compute()` 不许读 `store.text`。流式文字只能经 `app.streamText`、`app.streamLive`、`app.streamOutput` 的闭包现读。
+  - `S` 的其它改动必须调不带参数的 `schedule()`，它把 `app` 标脏，下一帧重算。
+  - 助手消息行（`ui/messages.js` 的 `AssistantRow`）用 `shouldComponentUpdate` 挡住没变的重画。比较 `item`、`slot`、`app.skew`；有 pending 调用时再比 `running`、`out`、`app.now`。
+  - 这依赖 `itemsOf` 内容不变时条目引用不变。子树以后多读 `app` 的别的东西，比较函数要同步改。
+  - `tauAll`、读历史（`createHistoryReader`）、读尾部（`createPeeker`）收到结束行就断开，不等管道关闭。`tauAll` 认的结束行：`ps`、`inspected`、`swept`、`blob`、`memory`、`memory_written`、`memory_rejected`、`error`。
 - 命令边跑边写的输出（D88）也在 `Live` 里（`output`，只留最后 20000 字），等工具时接在正在跑的那条调用下面，跑完以工具结果为准；等工具时不清 `Live`，回到空闲才清。
 - 运行中的命令预览（`.cout.live`）：收起时只留最后 24 行，有更多行时给一个「展开（还有 N 行）」；展开后显示界面留住的全部输出（`stream.js` 的 `OUTPUT_KEEP`，20 万字），`.cout pre` 的 `max-height` 让它自己滚。跑完以工具结果为准。
 - 流式文本按进程存成 `Live`：`n`、正文、思考、工具调用参数（`lib/stream.js` 的 `appendDelta` 按 `kind` 分开；不认识的 `kind` 丢掉，不当正文）。`n` 变了三样一起清掉重来，进程离开 `awaitingModel` 也清。参数只存最后 2000 字，总字数另记。
@@ -384,7 +390,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
 | `test/extras/gui/memory.test.ts` | 记忆页的纯逻辑（字节序排序、折叠、编辑状态、写回复的判读、冲突后字和版本的处理、摘要）；经桥对着真的服务：新键带摘要、改值不丢摘要、兄弟先写造成的冲突不覆盖、删、已删键的冲突、超限（含摘要超限） |
 | `test/extras/gui/image.test.ts` | 图片常量和 `src/` 的真常量一致；缩放尺寸、原样发的条件、压缩尝试的顺序、张数；快照多带的输入类型和阈值、不收图片的判断；段尺比例和九成警告；排队的信、谁在等谁、后台任务的通知标成后台任务 |
 | `test/extras/gui/panzoom.test.ts` | 平移缩放的数学（适应、以点为中心缩放和上下限、移到中间、视野矩形和小地图、双指、搜索匹配）、存图的比例和文件名、SVG 的 viewBox 和宽高改写；mermaid 代码块的占位 |
-| `test/extras/gui/lib.test.ts` | 纯逻辑：信的来历读 `tau`（发送者、跳数、回信、`after`、换段、`filled`，旧消息、被截过的消息）、后台任务的通知认前缀（名字的字符、空格、不是进程的信不认）、`canHandoff`、进程按会话快照归类、增量读跨换段、重连后不丢不重、标题、当前进程、筛选计数、全部停止和清理的顺序、删进程的拒绝条件、`prunePatch`；模型选择（窗口的写法、思考级别取最近一档、搜索、供应商排序、最近用过、默认模型、key 提示）、预设表变成请求（只发变了的字段）、会话表变成 `reconfigure` 的 `fields`（只发变了的，去掉的发 `null`）、重读工具定义发已存的工具列表、保存失败的原文表一动就不显示、转成上下文文件要项目里有 `AGENTS.md`（`convertGate`、`convertPatch`）、待换段条的字段名、换模型的补丁、界面数据的新键、快照多带的几项；流式文本按 `kind` 分开、`text` 回复要不要重画（`textShown`）、消息变条目按数组缓存（`itemsOf`）、watch 推来的消息并进缓存（重复、跳号、换段）、末尾几条的推送并进；吐字的节奏（平稳的小块、成批到、收尾追平、一次来一大块）和 `latestSeq`；Markdown（GFM、原始 HTML 转义、链接和图片的过滤、代码块）；通知（谁刚进入待你看、该不该弹、正文、标题）；`notify` 键 |
+| `test/extras/gui/lib.test.ts` | 纯逻辑：信的来历读 `tau`（发送者、跳数、回信、`after`、换段、`filled`，旧消息、被截过的消息）、后台任务的通知认前缀（名字的字符、空格、不是进程的信不认）、`canHandoff`、进程按会话快照归类、增量读跨换段、重连后不丢不重、标题、当前进程、筛选计数、全部停止和清理的顺序、删进程的拒绝条件、`prunePatch`；模型选择（窗口的写法、思考级别取最近一档、搜索、供应商排序、最近用过、默认模型、key 提示）、预设表变成请求（只发变了的字段）、会话表变成 `reconfigure` 的 `fields`（只发变了的，去掉的发 `null`）、重读工具定义发已存的工具列表、保存失败的原文表一动就不显示、转成上下文文件要项目里有 `AGENTS.md`（`convertGate`、`convertPatch`）、待换段条的字段名、换模型的补丁、界面数据的新键、快照多带的几项；流式文本按 `kind` 分开、`text` 回复要不要重画（`textShown`）、消息变条目按数组缓存（`itemsOf`）、`tailLines`、`charCount`、`firstTextLine` 和原实现逐一对拍、`tauAll` 收到结束行就返回、watch 推来的消息并进缓存（重复、跳号、换段）、末尾几条的推送并进；吐字的节奏（平稳的小块、成批到、收尾追平、一次来一大块）和 `latestSeq`；Markdown（GFM、原始 HTML 转义、链接和图片的过滤、代码块）；通知（谁刚进入待你看、该不该弹、正文、标题）；`notify` 键 |
 
 ## 坑点
 

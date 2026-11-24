@@ -1,10 +1,11 @@
 // 消息流里的条目：换段带、交接说明、来信、助手的话、工具调用。
 // 每个条目是网格里的两格：左边时间戳，右边内容；整行的带跨两列。
+import { Component } from "preact";
 import { html, Icon, Thumb, clockS, useState, useEffect, useLayoutEffect, useRef, Fragment } from "./common.js";
 import { Typer, claim, release } from "./typer.js";
 import { Markdown, CopyReply } from "./mdview.js";
 import { formatClock, formatBytes, formatElapsed } from "../lib/format.js";
-import { tailLines, argsPreview } from "../lib/stream.js";
+import { tailLines, argsPreview, charCount } from "../lib/stream.js";
 
 /** 左边的时间戳，窄屏隐藏。 */
 export function Ts({ ts, app, pad = 9, children }) {
@@ -71,7 +72,7 @@ export function UserRow({ app, item, onFork }) {
 /** 交接说明：默认折起。 */
 export function HandoffRow({ app, item, segment }) {
   const [open, setOpen] = useState(false);
-  const chars = Array.from(item.note).length;
+  const chars = charCount(item.note);
   return html`<${Ts} ts=${item.ts} app=${app} />
     <article class="card handoff">
       <div class="hh"><span class="tag">交接说明</span><span class="mono dim">第 ${segment - 1} 段写的 · ${chars} 字</span>
@@ -132,7 +133,7 @@ const Working = ({ text, secs }) => html`<span class="wk-l">MODEL</span>
  * 吐字期间是纯文字；追平以后（或本来就没有记录）换成 Markdown 渲染的结果。
  * @param {{ app: any, item: any, running: boolean, slot?: string }} p
  */
-export function AssistantRow({ app, item, running, slot = "", out = "" }) {
+function AssistantRowView({ app, item, running, slot = "", out = "" }) {
   const hasText = item.text.trim() !== "";
   const [claimed] = useState(() => (slot !== "" ? claim(slot, item.text) : null));
   const [ghost] = useState(() => claimed !== null && claimed.bar);
@@ -148,12 +149,41 @@ export function AssistantRow({ app, item, running, slot = "", out = "" }) {
   const calls = item.calls.length > 0 && html`<ul class="calls">${item.calls.map((c, i) => html`<${CallStrip} key=${c.id + ":" + i} call=${c} running=${running} app=${app} since=${item.ts} out=${out} />`)}</ul>`;
   return html`<${Ts} ts=${item.ts} app=${app} pad=${4} />
     <div class="abox">
-      ${item.thinking.trim() !== "" && html`<details class="think"><summary>思考 · ${Array.from(item.thinking).length} 字</summary><p>${item.thinking}</p></details>`}
+      ${item.thinking.trim() !== "" && html`<details class="think"><summary>思考 · ${charCount(item.thinking)} 字</summary><p>${item.thinking}</p></details>`}
       ${hasText && (caught ? html`<div class="reply"><${Markdown} text=${item.text} /><${CopyReply} text=${item.text} /></div>` : html`<${Typer} text=${item.text} claimed=${claimed} final=${true} onCaught=${() => setCaught(true)} />`)}
       ${item.errorMessage && html`<div class="aerr"><span class="tag warn">模型出错</span><span class="mono">${item.errorMessage}</span></div>`}
       ${ghost && html`<div class=${`gx ${caught ? "out" : "in"}`} aria-hidden="true"><div class="gi"><div class="working"><${Working} text="模型在写" /></div></div></div>`}
       ${claimed ? calls && html`<div class=${`gx ${caught ? "in" : ""}`}><div class="gi">${calls}</div></div>` : calls}
     </div>`;
+}
+
+/**
+ * 助手消息行的两次属性一样吗：一样就不重画。
+ * item 来自 itemsOf 的缓存，内容不变引用不变。子树读 app 的只有三处：
+ * app.clock（闭包现读 S.skew，所以比 app.skew）、app.now（只在 pending 且 running 的调用条里显示运行时长）、app.blob（api.blobUrl，引用不变）。
+ * 没有 pending 调用时，CallStrip 不读 running、out、now。子树以后多读 app 的别的东西，要同步改这里。
+ * @param {any} a
+ * @param {any} b
+ */
+function same(a, b) {
+  return (
+    a.item === b.item &&
+    a.slot === b.slot &&
+    a.app.skew === b.app.skew &&
+    (!b.item.calls.some((/** @type {any} */ c) => c.status === "pending") || (a.running === b.running && a.out === b.out && a.app.now === b.app.now))
+  );
+}
+
+/** 助手消息行：属性没变就挡住重画。内容见 AssistantRowView。 */
+export class AssistantRow extends Component {
+  /** @param {any} next */
+  shouldComponentUpdate(next) {
+    return !same(this.props, next);
+  }
+  /** @param {any} p */
+  render(p) {
+    return html`<${AssistantRowView} ...${p} />`;
+  }
 }
 
 /** 没有配上调用的工具结果。 */
@@ -192,7 +222,7 @@ function ThinkLive({ text }) {
     if (n && open && near.current) n.scrollTop = n.scrollHeight;
   }, [text, open]);
   return html`<div class="thinkl" role="status">
-    <div class="tl-h"><span class="tl-k">思考中</span><span class="mono dim">${Array.from(text).length} 字</span>
+    <div class="tl-h"><span class="tl-k">思考中</span><span class="mono dim">${charCount(text)} 字</span>
       <button type="button" class="link" aria-expanded=${open} onClick=${() => setOpen(!open)}>${open ? "收起" : tail.hidden > 0 ? `展开（还有 ${tail.hidden} 行）` : "展开"}<${Icon} name=${open ? "up" : "down"} size=${12} sw=${2.8} /></button></div>
     <div class=${`tl-b ${open ? "open" : ""}`} ref=${box} onScroll=${(/** @type {any} */ e) => (near.current = e.target.scrollHeight - e.target.scrollTop - e.target.clientHeight < 24)}><pre>${tail.text}</pre></div>
   </div>`;
@@ -205,7 +235,7 @@ function ArgsLive({ args, len }) {
 
 /** 写完了、消息还没读到的思考：已经是收起的样子。 @param {{ text: string }} p */
 function ThoughtHeld({ text }) {
-  return html`<details class="think"><summary>思考 · ${Array.from(text).length} 字</summary><p>${text}</p></details>`;
+  return html`<details class="think"><summary>思考 · ${charCount(text)} 字</summary><p>${text}</p></details>`;
 }
 
 /**

@@ -98,6 +98,7 @@ export function createHistoryReader(io) {
             }
           }
           io.setHist(id, h);
+          return r.type === "end" || r.type === "error";
         });
       } catch {
         failed = true;
@@ -208,6 +209,7 @@ export function createPeeker(io) {
       await tauStream({ op: "history", process: id, segment: want.segment, from: Math.max(0, want.messages - TAIL) }, (r) => {
         if (r.type === "message") msgs.push(r.message);
         else if (r.type === "end") ok = true;
+        return r.type === "end" || r.type === "error";
       });
     } catch {
       // 下次再试。
