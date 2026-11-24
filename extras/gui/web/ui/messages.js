@@ -102,7 +102,7 @@ function CallStrip({ call, running, app, since, out = "" }) {
     : html`<span class="cr"><${Icon} name="check" size=${12} sw=${3.4} color="var(--acc-t)" /><span class="ell">${r?.summary ?? ""}</span></span>`;
   const head = html`<span class="clabel">${label}</span><span class="cbody"><span class="csum">${call.summary || call.name}</span>${right}</span>`;
   const live = st === "pending" && running;
-  const tail = out === "" ? null : tailLines(out, LIVE_LINES);
+  const tail = live && out !== "" ? tailLines(out, LIVE_LINES) : null;
   return html`<li class=${`call ${st} ${live ? "run" : ""}`}>
     ${can ? html`<button type="button" class="chead" aria-expanded=${open} onClick=${() => setOpen(!open)}>${head}</button>` : html`<div class="chead">${head}</div>`}
     ${open && r && html`<div class="cout">

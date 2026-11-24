@@ -242,6 +242,24 @@ export function toItems(messages) {
   return items.sort((a, b) => seqOf(a) - seqOf(b));
 }
 
+/** @type {WeakMap<readonly Message[], Item[]>} */
+const itemsCache = new WeakMap();
+
+/**
+ * `toItems` 按消息数组缓存：同一个数组回同一个结果对象。
+ * 前提：缓存里的消息数组从不原地改（新消息进来总是生成新数组），返回的条目只读。
+ * @param {readonly Message[]} messages
+ * @returns {Item[]}
+ */
+export function itemsOf(messages) {
+  let items = itemsCache.get(messages);
+  if (!items) {
+    items = toItems(messages);
+    itemsCache.set(messages, items);
+  }
+  return items;
+}
+
 /** @param {Item} x */
 function seqOf(x) {
   return x.kind === "fold" ? x.from : x.seq;

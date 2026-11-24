@@ -2,7 +2,7 @@
 import { html, Popover, Pill, Icon, Lamp, Fragment, useState, useRef, useEffect, useLayoutEffect } from "./common.js";
 import * as api from "../api.js";
 import * as gs from "../lib/state.js";
-import { toItems, clipText, canHandoff } from "../lib/messages.js";
+import { itemsOf, clipText, canHandoff } from "../lib/messages.js";
 import { attention, refusesImages } from "../lib/derive.js";
 import { findModel } from "../lib/models.js";
 import { useAttach, AttachBar, Thumbs } from "./attach.js";
@@ -153,7 +153,7 @@ function Log({ app, e }) {
   const flowEl = useRef(/** @type {HTMLElement | null} */ (null));
   const [more, setMore] = useState(false);
   const msgs = app.messages(e.id);
-  const items = toItems(msgs).filter((it) => it.kind !== "fold" && it.kind !== "orphanResult");
+  const items = itemsOf(msgs).filter((it) => it.kind !== "fold" && it.kind !== "orphanResult");
   const shown = more ? items : items.slice(-SHOW);
   const phase = e.self.phase.tag;
   const live = phase === "awaitingModel" ? app.streamText(e.id) : "";

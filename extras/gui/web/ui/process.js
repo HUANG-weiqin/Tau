@@ -1,6 +1,6 @@
 // 聚焦的进程：铭牌、消息流、写信框。出错时铭牌变橙，流的末尾是结束带。
 import { html, Icon, Pill, Tex, Contour, pad2, useRef, useState, useLayoutEffect, Fragment } from "./common.js";
-import { toItems, foldMiddle, forkPoints, turnStart, clipText, phaseStartedAt, describeStart, canHandoff } from "../lib/messages.js";
+import { itemsOf, foldMiddle, forkPoints, turnStart, clipText, phaseStartedAt, describeStart, canHandoff } from "../lib/messages.js";
 import { askRemove } from "./remove.js";
 import { segmentMessages } from "../lib/history.js";
 import { formatClock } from "../lib/format.js";
@@ -126,7 +126,7 @@ function Stream({ app, e }) {
   const ended = e.self.phase.tag === "idle" ? e.self.phase.ended : undefined;
 
   const onFork = (/** @type {number} */ seq) => app.fork(e.id, seq);
-  const items = toItems(msgs);
+  const items = itemsOf(msgs);
   // 正在写的字将来是当前段第 e.self.messages 条消息。写完了、历史还没读到那条的，先留住（typer.js）。
   const awaiting = e.self.phase.tag === "awaitingModel";
   const liveSeq = awaiting ? e.self.messages : -1;
@@ -167,7 +167,7 @@ function Stream({ app, e }) {
     const old = segmentMessages(h, s);
     if (old.length === 0) continue;
     rows.push(html`<${FoldRow} text=${`第 ${s} 段 · ${old.length} 条消息`} label=${openOld[s] ? "收起" : "展开"} onOpen=${() => setOpenOld({ ...openOld, [s]: !openOld[s] })} />`);
-    if (openOld[s]) rows.push(...renderItems(app, e, toItems(old), s, false, null));
+    if (openOld[s]) rows.push(...renderItems(app, e, itemsOf(old), s, false, null));
   }
   if (msgs.length > 0) {
     const first = msgs[0];

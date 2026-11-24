@@ -105,6 +105,19 @@ export function streamingLive(store, id) {
 }
 
 /**
+ * 一条 `text` 回复要不要引起重画。流式文字只有两处读：聚焦的进程，和总管弹窗开着时总管的进程。
+ * `chiefPreset` 只在总管弹窗开着时给总管的预设 ID，否则是 null。别的进程的流式片段只并进 store。
+ * @param {Store} store
+ * @param {string} id 回复所属的进程
+ * @param {{ focused: string | null, chiefPreset: string | null }} view
+ * @returns {boolean}
+ */
+export function textShown(store, id, view) {
+  if (id === view.focused) return true;
+  return view.chiefPreset !== null && store.procs[id]?.self.preset === view.chiefPreset;
+}
+
+/**
  * @template T
  * @param {Record<string, T>} obj
  * @param {string} key

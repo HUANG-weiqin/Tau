@@ -1,7 +1,7 @@
 // 聚焦项目时的主区：铭牌、成员表、最近动态、写信框。项目里一个预设都没有时，成员表换成空状态（设计稿 5.3）。
 import { html, projTitle, Pill, Lamp, Tex, Contour, pad2, clockS, useState, useEffect, Fragment } from "./common.js";
 import * as api from "../api.js";
-import { toItems, clipText } from "../lib/messages.js";
+import { itemsOf, clipText } from "../lib/messages.js";
 import { currentOf } from "../lib/derive.js";
 import { formatContext } from "../lib/format.js";
 import { Compose } from "./compose.js";
@@ -48,7 +48,7 @@ function activityOf(app, p) {
     if (e.self.segment > 1 && e.segmentStartedAt !== null) {
       out.push({ key: `s:${e.id}:${e.self.segment}`, ts: e.segmentStartedAt, kind: "handoff", who, text: `第 ${e.self.segment - 1} 段写好了交接说明，开了第 ${e.self.segment} 段。` });
     }
-    for (const it of toItems(app.messages(e.id))) {
+    for (const it of itemsOf(app.messages(e.id))) {
       if (it.kind !== "user") continue;
       it.letters.forEach((l, i) => {
         if (l.from === "user") return;

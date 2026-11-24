@@ -3,11 +3,11 @@ import { test } from "node:test";
 import { activityAt, applyFilter, attention, buildEntries, buildProjects, classify, currentOf, defaultPreset, filterCounts, indexPresets, projectView, railSections, seenFromInspect } from "../../../extras/gui/web/lib/derive.js";
 import { formatAgo, formatBytes, formatClock, formatContext, formatDuration, formatElapsed } from "../../../extras/gui/web/lib/format.js";
 import { applyEnd, applyMessage, applyPushed, emptyHistory, giveUp, known, lastTimestamp, noteSelf, plan, segmentMessages } from "../../../extras/gui/web/lib/history.js";
-import { canHandoff, CARRY_HEADER, describeNow, describeStart, foldMiddle, forkPoints, HANDOFF_HEADER, parseUser, phaseStartedAt, summarizeCall, toItems, turnStart } from "../../../extras/gui/web/lib/messages.js";
+import { canHandoff, CARRY_HEADER, describeNow, describeStart, foldMiddle, forkPoints, HANDOFF_HEADER, itemsOf, parseUser, phaseStartedAt, summarizeCall, toItems, turnStart } from "../../../extras/gui/web/lib/messages.js";
 import { cleanPlan, stopOrder } from "../../../extras/gui/web/lib/order.js";
 import { removePlan, skippedFor } from "../../../extras/gui/web/lib/remove.js";
 import { addFork, movePinned, normalizeState, pathKey, pinFolder, prunePatch, setCurrent } from "../../../extras/gui/web/lib/state.js";
-import { allProcs, childCounts, emptyStore, reduce, streamingLive, streamingOutput, streamingText } from "../../../extras/gui/web/lib/store.js";
+import { allProcs, childCounts, emptyStore, reduce, streamingLive, streamingOutput, streamingText, textShown } from "../../../extras/gui/web/lib/store.js";
 import { extractTitle, processTitle } from "../../../extras/gui/web/lib/titles.js";
 import { appendDelta, argsPreview, ARGS_KEEP, OUTPUT_KEEP, tailLines } from "../../../extras/gui/web/lib/stream.js";
 import { newPace, paceArrive, paceStep } from "../../../extras/gui/web/lib/pace.js";
@@ -108,6 +108,18 @@ test("store: 重连的 ps 清掉不在等模型的流式文本", () => {
   s = reduce(s, { type: "text", process: "a", n: 1, delta: "x" }, NOW);
   s = reduce(s, { type: "ps", processes: [proj(self("a"))] }, NOW);
   assert.deepEqual(s.text, {});
+});
+
+test("store: textShown 只放行聚焦的进程，和总管弹窗开着时总管的进程", () => {
+  const s = reduce(emptyStore(), { type: "ps", processes: [proj(self("a", { preset: "x" })), proj(self("b", { preset: "chief" })), proj(self("c", { preset: "y" }))] }, NOW);
+  const none = { focused: null, chiefPreset: null };
+  assert.equal(textShown(s, "a", { ...none, focused: "a" }), true);
+  assert.equal(textShown(s, "c", { ...none, focused: "a" }), false);
+  assert.equal(textShown(s, "b", { focused: "a", chiefPreset: "chief" }), true);
+  assert.equal(textShown(s, "c", { focused: "a", chiefPreset: "chief" }), false);
+  assert.equal(textShown(s, "b", { focused: "a", chiefPreset: null }), false);
+  assert.equal(textShown(s, "zz", { focused: "a", chiefPreset: "chief" }), false);
+  assert.equal(textShown(s, "zz", { focused: "zz", chiefPreset: null }), true);
 });
 
 test("store: childCounts 按 parent 数", () => {
@@ -396,6 +408,19 @@ test("messages: foldMiddle", () => {
   assert.equal(f.length, 6);
   assert.deepEqual(f[2], { kind: "fold", count: 5, from: 2, to: 6 });
   assert.equal(foldMiddle(items, 5, 5), items);
+});
+
+test("messages: itemsOf 按数组缓存，结果和 toItems 一样，新数组得新结果", () => {
+  const msgs = [user("hi", 1), asst([call("a", "bash", {})], 2), result("a", "ok", false, 3)];
+  const first = itemsOf(msgs);
+  assert.equal(itemsOf(msgs), first);
+  assert.deepEqual(first, toItems(msgs));
+  const more = [...msgs, user("再来", 4)];
+  const next = itemsOf(more);
+  assert.notEqual(next, first);
+  assert.equal(next.length, first.length + 1);
+  assert.equal((next[next.length - 1] as any).kind, "user");
+  assert.equal(itemsOf(msgs), first);
 });
 
 // ---------- derive ----------

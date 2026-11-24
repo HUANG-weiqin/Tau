@@ -3,7 +3,7 @@ import { render } from "preact";
 import { html, Pill, useEffect, useState, TipLayer, MenuLayer } from "./ui/common.js";
 import * as api from "./api.js";
 import { createConn, createHistoryReader, createPeeker } from "./conn.js";
-import { emptyStore, reduce, streamingText, streamingLive, streamingOutput, childCounts } from "./lib/store.js";
+import { emptyStore, reduce, textShown, streamingText, streamingLive, streamingOutput, childCounts } from "./lib/store.js";
 import { emptyHistory, segmentMessages, lastTimestamp, applyPushed } from "./lib/history.js";
 import { buildEntries, buildProjects, railSections, projectView, currentOf, attention, seenFromInspect } from "./lib/derive.js";
 import { describeNow, phaseStartedAt, HANDOFF_LETTER } from "./lib/messages.js";
@@ -338,6 +338,11 @@ function onReply(r) {
   if (r.type === "ps" && r.processes[0]) S.skew = r.processes[0].now - now;
   const before = r.type === "update" ? S.store.procs[r.self.id]?.self : undefined;
   S.store = reduce(S.store, r, now);
+  // 流式片段一个 token 一条：只有读它的界面（聚焦的进程、开着的总管弹窗）才重画。
+  if (r.type === "text") {
+    if (textShown(S.store, r.process, { focused: S.route.proc, chiefPreset: S.dialog?.name === "chief" ? (S.gui.chief ?? null) : null })) schedule();
+    return;
+  }
   if (r.type === "ps") {
     if (!S.gotPs) S.firstPrune = true;
     S.gotPs = true;
