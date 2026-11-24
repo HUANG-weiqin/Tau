@@ -10,6 +10,8 @@ import { parseArgs } from "node:util";
 import type { AuthEvent, AuthInteraction, AuthPrompt, Models } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { checkKey } from "./key.ts";
+import { defaultPaths, refreshCopilot } from "../models/copilot.ts";
+import type { RefreshResult } from "../models/copilot.ts";
 import { fileCredentials } from "./store.ts";
 
 const USAGE = "用法：node login.ts list | login <供应商> [api_key] | logout <供应商>   （都可以带 --file <路径>，默认 ~/.tau/auth.json）";
@@ -19,6 +21,8 @@ export interface Deps {
   err?: (text: string) => void;
   /** 测试注入。默认是内置的全部供应商，凭据读写 --file。 */
   models?: (file: string) => Models;
+  /** 测试注入。登录 GitHub Copilot 成功后生成模型补充文件（D105）。默认用同一份凭据去拉账号的 `/models`。 */
+  refresh?: (file: string, models: Models) => Promise<RefreshResult>;
   /** 测试注入。默认是终端：提示读一行（secret 不回显），事件打印出来。 */
   interaction?: AuthInteraction;
 }
@@ -103,6 +107,13 @@ export async function main(argv: readonly string[], deps: Deps = {}): Promise<nu
       own?.close();
     }
     out(`已登录 ${provider.name}（${kind}），存进 ${file}。\n`);
+    // Copilot 的模型列表跟着账号走：登录完马上生成一次，不认旧的见过状态（可能换了账号）。失败只是警告，登录已经成功了；桥启动和列表旧了的时候还会再试。
+    if (id === "github-copilot") {
+      const run = deps.refresh ?? ((f, m) => refreshCopilot({ ...defaultPaths(f), models: m, forgetSeen: true }));
+      const r = await run(file, models).catch((e): RefreshResult => ({ kind: "failed", summary: `刷新模型列表出错：${e instanceof Error ? e.message : String(e)}` }));
+      if (r.kind === "failed") err(`警告：${r.summary}\n`);
+      else out(`${r.summary}\n`);
+    }
     return 0;
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

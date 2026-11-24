@@ -13,7 +13,10 @@ import { pickFolder as realPick } from "./pick.ts";
 import type { PickFolder } from "./pick.ts";
 import { fileCredentials } from "../../auth/store.ts";
 import { clearKey, setKey } from "./keys.ts";
-import { accountModels, buildCatalog, readKeys } from "./models.ts";
+import { accountModels, buildCatalog, overlayCatalog, readKeys } from "./models.ts";
+import { createCopilotRefresher } from "./copilot.ts";
+import { readLastSuccess, refreshCopilot } from "../../models/copilot.ts";
+import type { RefreshResult } from "../../models/copilot.ts";
 import type { CatalogProvider } from "./models.ts";
 import { agentsMdInfo } from "./agentsmd.ts";
 import { createPreset, deletePreset, listPresets, presetWorkdirs, updatePreset } from "./presets.ts";
@@ -53,6 +56,10 @@ export interface BridgeOptions {
   repo?: string;
   /** 桥的启动时间（毫秒）。测试注入。 */
   bridgeStartedAt?: number;
+  /** 模型补充文件的目录（D105）。默认 <home>/models。 */
+  modelsDir?: string;
+  /** Copilot 模型补充文件的刷新。测试注入假的，不联网。默认用 auth.json 里的账号去拉 `/models`。 */
+  copilotRefresh?: () => Promise<RefreshResult>;
   /** MCP 中转的管道。默认 TAU_MCP_PIPE，再默认 \\.\pipe\tau-mcp。桥只查它，不拉起。 */
   mcpPipe?: string;
 }
@@ -108,6 +115,13 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
   const authFile = opts.authFile ?? path.join(home, "auth.json");
   const credentials = fileCredentials(authFile);
   let catalog: CatalogProvider[] | null = null;
+  const modelsDir = opts.modelsDir ?? path.join(home, "models");
+  const copilotState = path.join(home, "extras", "models", "github-copilot.json");
+  const copilot = createCopilotRefresher({
+    run: opts.copilotRefresh ?? (() => refreshCopilot({ authFile, modelsDir, stateFile: copilotState })),
+    lastSuccess: () => readLastSuccess(copilotState),
+    loggedIn: () => readKeys(authFile).creds.has("github-copilot"),
+  });
   const control = createServiceControl({ pipe, repo: opts.repo ?? DEFAULT_REPO, ...(opts.serviceOps ? { ops: opts.serviceOps } : {}), ...(opts.bridgeStartedAt === undefined ? {} : { bridgeStartedAt: opts.bridgeStartedAt }) });
   const bridgeArgs = opts.bridgeArgs ?? process.argv.slice(2);
   const pick = opts.pickFolder ?? realPick;
@@ -154,7 +168,9 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
         // 目录算一次；key 状态和账号的可用清单每次现读，登录脚本里改了不用重启。
         catalog ??= buildCatalog();
         const { keys, creds, auth } = readKeys(authFile);
-        return json(res, 200, { providers: accountModels(catalog, creds).map((p) => ({ ...p, key: keys.get(p.id) ?? "none" })), auth });
+        copilot.maybe();
+        const merged = overlayCatalog(catalog, modelsDir);
+        return json(res, 200, { providers: accountModels(merged.catalog, creds, merged.exact).map((p) => ({ ...p, key: keys.get(p.id) ?? "none" })), auth });
       }
       case "keys/set":
       case "keys/clear": {
@@ -283,6 +299,7 @@ export async function createBridge(opts: BridgeOptions = {}): Promise<Bridge> {
   allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`, ...extraHosts]);
   allowedOrigins = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`, ...extraHosts.flatMap((h) => [`https://${h}`, `http://${h}`])]);
 
+  copilot.start();
   return {
     port,
     server,

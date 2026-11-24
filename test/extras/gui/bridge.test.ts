@@ -109,6 +109,8 @@ async function setupBridge(t: TestContext, o: Partial<BridgeOptions> & { service
     pickFolder: async () => {
       throw new Error("测试里不该弹对话框");
     },
+    // 不联网：默认的刷新会用 auth.json 里的 Copilot 凭据去拉 /models。
+    copilotRefresh: async () => ({ kind: "skipped", summary: "测试" }),
     ...opts,
   });
   t.after(async () => {

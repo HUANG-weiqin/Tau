@@ -2,11 +2,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createModels, createProvider } from "@earendil-works/pi-ai";
-import type { AuthInteraction, Models, OAuthAuth } from "@earendil-works/pi-ai";
+import type { AuthInteraction, Models, MutableModels, OAuthAuth } from "@earendil-works/pi-ai";
 import { main, terminal } from "../../../extras/auth/login.ts";
 import { fileCredentials } from "../../../extras/auth/store.ts";
 
@@ -163,4 +163,69 @@ test("脚本：输入被关闭（标准输入一上来就结束）：退出码 1
   assert.equal(code, 1, output);
   assert.match(output, /失败：输入被关闭了/);
   assert.equal(existsSync(file), false);
+});
+
+// D105：登录 GitHub Copilot 成功以后生成一次模型补充文件。假供应商用 Copilot 的 id；刷新是注入的，不联网。
+function fakeCopilot(file: string): MutableModels {
+  const models = createModels({ credentials: fileCredentials(file) });
+  const never = { stream: () => assert.fail("不该调模型"), streamSimple: () => assert.fail("不该调模型") };
+  const auth: OAuthAuth = { name: "Copilot", login: async () => ({ type: "oauth", access: "A", refresh: "R", expires: Date.UTC(2100, 0, 1) }), refresh: async (c) => c, toAuth: async (c) => ({ apiKey: c.access }) };
+  models.setProvider(createProvider({ id: "github-copilot", name: "GitHub Copilot", auth: { oauth: auth }, models: [], api: never as never }));
+  return models;
+}
+
+test("login github-copilot：登录成功后跑一次刷新，输出它的摘要；刷新用刚存的凭据所在的文件", async (t) => {
+  const { file, out, err, deps } = setup(t);
+  const seen: string[] = [];
+  const refresh = async (f: string, m: Models) => {
+    seen.push(f);
+    assert.ok(await m.getAuth("github-copilot"), "刷新用的 Models 已经有刚登录的凭据");
+    return { kind: "ok" as const, summary: "模型列表已更新：3 个。" };
+  };
+  assert.equal(await main(["login", "github-copilot", "--file", file], { ...deps, models: fakeCopilot, interaction: scripted([]), refresh }), 0, err.join(""));
+  assert.deepEqual(seen, [file]);
+  assert.match(out.join(""), /已登录 GitHub Copilot[\s\S]*模型列表已更新：3 个。/);
+  assert.equal(err.join(""), "");
+});
+
+test("login github-copilot：刷新失败（返回失败或抛错）只打警告，登录照样成功，退出码 0，凭据已存", async (t) => {
+  for (const refresh of [async () => ({ kind: "failed" as const, summary: "刷新失败：HTTP 500" }), async (): Promise<never> => Promise.reject(new Error("炸了"))]) {
+    const { file, out, err, deps } = setup(t);
+    assert.equal(await main(["login", "github-copilot", "--file", file], { ...deps, models: fakeCopilot, interaction: scripted([]), refresh }), 0);
+    assert.match(out.join(""), /已登录 GitHub Copilot/);
+    assert.match(err.join(""), /警告：.*(HTTP 500|炸了)/);
+    assert.equal(JSON.parse(readFileSync(file, "utf8"))["github-copilot"].type, "oauth");
+  }
+});
+
+test("login：登录失败不刷新；别家的登录不刷新；登出不刷新", async (t) => {
+  const { file, deps } = setup(t);
+  const refresh = async (): Promise<never> => assert.fail("不该刷新");
+  const failing = (f: string): Models => {
+    const m = fakeCopilot(f);
+    const p = m.getProvider("github-copilot")!;
+    m.setProvider({ ...p, auth: { oauth: { ...p.auth.oauth!, login: async () => Promise.reject(new Error("没授权")) } } } as never);
+    return m;
+  };
+  assert.equal(await main(["login", "github-copilot", "--file", file], { ...deps, models: failing, interaction: scripted([]), refresh }), 1);
+  assert.equal(await main(["login", "fake", "--file", file], { ...deps, models: (f) => fakeModels(f), interaction: scripted(["x"]), refresh }), 0);
+  assert.equal(await main(["logout", "fake", "--file", file], { ...deps, models: (f) => fakeModels(f), refresh }), 0);
+});
+
+test("login github-copilot（默认刷新）：不认旧的见过状态，换账号后旧账号的模型不留；用登录用的凭据文件所在的家", async (t) => {
+  const { file, deps } = setup(t);
+  const home = dirname(file);
+  const stateFile = join(home, "extras", "models", "github-copilot.json");
+  mkdirSync(dirname(stateFile), { recursive: true });
+  const old = { id: "old-account-model", name: "o", api: "openai-completions", provider: "github-copilot", baseUrl: "https://x.test", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 1000, maxTokens: 100 };
+  writeFileSync(stateFile, JSON.stringify({ lastSuccess: Date.now(), seen: { [old.id]: { lastSeen: Date.now(), entry: old } } }));
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    Response.json({ data: [{ id: "new-account-model", name: "n", model_picker_enabled: true, policy: { state: "enabled" }, supported_endpoints: ["/chat/completions"], capabilities: { type: "chat", limits: { max_prompt_tokens: 50_000, max_output_tokens: 4_000 }, supports: { tool_calls: true } } }] })) as typeof fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+  assert.equal(await main(["login", "github-copilot", "--file", file], { ...deps, models: fakeCopilot, interaction: scripted([]) }), 0);
+  const written = JSON.parse(readFileSync(join(home, "models", "github-copilot.json"), "utf8")) as { models: { id: string }[] };
+  assert.deepEqual(written.models.map((m) => m.id), ["new-account-model"]);
 });
