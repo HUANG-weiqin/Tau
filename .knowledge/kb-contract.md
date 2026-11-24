@@ -40,11 +40,11 @@
 6. 会话快照：进程出生时，预设读成一份快照。之后它是这个会话自己的配置，不随预设文件变，只经 `reconfigure` 改（[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。调用参数（`thinking`、`options`、`handoff`）立即生效；结构性字段（其余所有键，如 `prompt`、`tools`、`model`、`workdir`、`context`）在换段时生效，待换的配置存在 `Process.next`。`id` 不能改。
 7. 回信只在一轮结束时寄出，每个进程一封（[kb-kernel 的回信](kb-kernel.md#回信)）。信的 `replyTo` 并进哪一轮（并进 `turn` 的规则也在那里），就由那一轮结束时回，之后的几轮不回。信还在排队时这一轮异常结束，也在这一轮结束时回。
 8. 换段是唯一缩短上下文的办法。图片有一个例外（[D40](kb-decisions.md#d40-第-6-步前一半的选择)）。
-9. 处理一条输入不读旧段，也不读别的进程的工作段。`fork` 不是处理一条输入：它是协议请求，读源进程的当前段，和 `history` 一样（[D49](kb-decisions.md#d49-fork-进内核)）。读别的东西的例外有三处，都是同步的，在事务里：`post`、`stop_process` 还读收件人的进程记录，`spawn` 还读预设文件和它用到的工具定义文件（[D36](kb-decisions.md#d36-第-4-步第二部分进程之间的工具的执行和两处例外)）；开段读上下文文件，开段是建进程、换段被接受、`reconfigure` 直接采用（[D72](kb-decisions.md#d72-上下文文件开段重读)）。
+9. 处理一条输入不读旧段，也不读别的进程的工作段。`fork` 不是处理一条输入：它是协议请求，读源进程的当前段，和 `history` 一样（[D49](kb-decisions.md#d49-fork-进内核)）。读别的东西的例外有三处，都是同步的，在事务里：`post`、`stop_process` 还读收件人的进程记录，`spawn` 还读预设文件、它用到的工具定义文件和模型补充文件（[D36](kb-decisions.md#d36-第-4-步第二部分进程之间的工具的执行和两处例外)、[D105](kb-decisions.md#d105-模型补充文件copilot-的模型列表跟着账号走)）；开段读上下文文件，开段是建进程、换段被接受、`reconfigure` 直接采用（[D72](kb-decisions.md#d72-上下文文件开段重读)）。
 10. 内核不自己删数据。旧段、进程、图片只经三个删除原语删，由上层调用（[D59](kb-decisions.md#d59-删除原语旧段和空闲进程)）。删除原语不碰记忆：记忆的键只经 `Memory` 接口的 `delete` 删，入口是库内工具 `memory_delete`（模型调用或工具定义声明）和协议的 `memory_write`（[D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)）。
 11. 服务只在命名管道上监听。
 
-另外不变的规矩：`src/` 的依赖白名单（`extras/` 的依赖不在其中，见 [D63](kb-decisions.md#d63-上层的依赖随便加)）；代码量预算 4150 行（D64 从 3000 放宽，D87、D88、D89、D90、D92、D103、D104 各加一次；都在 [AGENTS.md](../AGENTS.md#小而硬规矩)）。
+另外不变的规矩：`src/` 的依赖白名单（`extras/` 的依赖不在其中，见 [D63](kb-decisions.md#d63-上层的依赖随便加)）；代码量预算 4210 行（D64 从 3000 放宽，D87、D88、D89、D90、D92、D103、D104、D105 各加一次；都在 [AGENTS.md](../AGENTS.md#小而硬规矩)）。
 
 ### 原语和它在内核的理由
 
@@ -68,6 +68,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | 会话配置：`reconfigure`、待换配置 `next` | [kb-kernel 的流程：会话配置](kb-kernel.md#流程会话配置reconfigure)、[换段时采用待换配置](kb-kernel.md#换段时采用待换配置)、[kb-service 的会话配置](kb-service.md#会话配置reconfigure)、[D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改) | 做不到。进程记录里的快照只有内核能写，模型和上层都改不了。绕开的办法都有代价：`fork` 带 `preset` 要换 ID，旧段、累计用量、`parent` 全断；上层自己记“逻辑 Agent = 一串进程 ID”，上层没在运行时映射就丢，回信和用量仍指着旧 ID |
 | 上下文文件 | [kb-kernel 的上下文文件](kb-kernel.md#上下文文件开段重读)、[kb-store 的上下文文件视图](kb-store.md#上下文文件视图)、[D72](kb-decisions.md#d72-上下文文件开段重读) | 丢数据：上层只能在文件变了时，给每个用它的会话推一次 `reconfigure`，上层没在运行时就漏了，会话从此是旧的。拼进预设提示词的内容出生时就定了 |
 | `backup` | [kb-service 的备份](kb-service.md#备份backup)、[D73](kb-decisions.md#d73-backup-请求) | 做不到：上层不读库，不停服务拿不到一致的备份。停服务复制会打断在跑的动作，它们变成“被中断” |
+| 模型补充文件 | [kb-service 的模型补充文件](kb-service.md#模型补充文件d105)、[D105](kb-decisions.md#d105-模型补充文件copilot-的模型列表跟着账号走) | 做不到：服务查模型只看进程里的模型目录，目录是启动时用 pi-ai 的 `builtinModels` 建的。上层没法让服务认目录外的模型，也改不了目录里模型的上限 |
 | 事实可读：`inspect`、限度和 `check`、段里消息的 `tau`、`since`、`watch` 推追加的消息、流式预览的种类 | [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作) | 做不到：快照、排队的信、`replyTo`、跳数只在记录里，上层不读库；阈值要内部常量，抄一份就漂移。丢数据：信并进段以后只剩文字。慢：每走一步都要再读一次段 |
 | 控制对称：`memory`、`memory_write`、换段信、`send` 带 `from` 和 `reply`、调用方定的进程 ID | [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作) | 做不到：记忆只能让模型读写；换段只能请模型调 `handoff`，它可以不照做。丢数据、不原子：一轮的结果要上层盯着转寄；回执丢了再重试，会多建一个进程 |
 | 动作可组合：工具定义在结果里声明库内动作 | [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作) | 不原子：工具里用 `tau send/start/stop`，崩溃后模型重做，信就重复，子进程就多一个（同“进程之间”一行） |
@@ -101,6 +102,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | 表结构。索引不算（见[不算改契约](#不算改契约)） | [kb-store 的表](kb-store.md#表) |
 | 文件格式：预设（含 D64 的 `options`，D72 的 `context` 及它的写法条件，见下面的入口条件） | [设计稿第 2 节](../docs/design/mvp.md#2-预设) |
 | 文件格式：工具定义 | [kb-tools 的工具定义](kb-tools.md#工具定义) |
+| 文件格式：模型补充文件 `~/.tau/models/<provider>.json`，和它的读法：内核查的字段和条件，同 `id` 替换、新 `id` 加入、坏条目跳过、坏文件忽略，每次查模型现读（D105） | [kb-service 的模型补充文件](kb-service.md#模型补充文件d105) |
 | 工具定义的运行（原文在这一节），含 D64 的 `call` 项 | [kb-tools 的运行工具定义](kb-tools.md#运行工具定义) |
 | 环境变量：`TAU_PROCESS`、`TAU_PIPE` | [kb-tools 的包装脚本](kb-tools.md#包装脚本)、[kb-service 的启动脚本和入口](kb-service.md#启动脚本和入口) |
 | CLI：v1 的命令、输出和退出码，加上 `TAU_PIPE`。入口是仓库里的 `tau`、`tau.cmd` 和 `node src/main.ts` | [kb-service 的 CLI](kb-service.md#clisrcclimaints)、[启动脚本和入口](kb-service.md#启动脚本和入口) |
@@ -109,6 +111,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | 入口条件：图片检查的全部条件（张数、大小、类型按魔数收 png、jpeg、gif、webp、尺寸） | [kb-service 的图片](kb-service.md#图片) |
 | 入口条件：`MESSAGE_MAX_BYTES`、`HOPS_MAX` | [kb-kernel 的常量](kb-kernel.md#常量) |
 | 入口条件：`TOOL_DEF_MAX_BYTES`、`TOOL_DEFS_MAX_BYTES`、工具定义 `timeout` 的范围 | [kb-tools 的工具定义](kb-tools.md#工具定义) |
+| 入口条件：`MODELS_FILE_MAX_BYTES`（D105） | [kb-service 的模型补充文件](kb-service.md#模型补充文件d105) |
 | 入口条件：`CALLS_PER_RESULT`、`OPTIONS_MAX_BYTES`、`options` 的白名单和各键的类型、进程 ID 的字符集 | [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作) |
 | 入口条件：`reconfigure` 的 `fields.tools` 最多 128 项（`TOOLS_FIELD_MAX`，按请求里的个数算）。每个名字都要读一个工具定义文件，所以个数要设限 | [kb-service 的会话配置](kb-service.md#会话配置reconfigure) |
 | 入口条件：`context` 的写法：最多 8 项，每项 1 到 260 个字符，不含控制字符，不含逗号，首尾没有空白，是相对路径或 Windows 绝对路径（预设文件和 `reconfigure` 走同一个函数，所以数组形式写进预设文件以后能原样读回）；整个视图的上界 `CONTEXT_VIEW_MAX_BYTES` 见下面“参与启动检查的量” | [设计稿第 2 节](../docs/design/mvp.md#2-预设)、[D72](kb-decisions.md#d72-上下文文件开段重读) |
@@ -116,7 +119,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 入口条件的松紧：
 
 - 收紧算改契约，包括删类型、加新的拒绝条件。
-- 放宽 `HOPS_MAX`、`TOOL_DEF_MAX_BYTES`、`TOOL_DEFS_MAX_BYTES`、工具定义 `timeout` 的范围、`CALLS_PER_RESULT`、`OPTIONS_MAX_BYTES`、`TOOLS_FIELD_MAX`，以及跟着 pi-ai 给 `options` 的白名单加键，不算改契约，先在决策记录写理由。
+- 放宽 `HOPS_MAX`、`TOOL_DEF_MAX_BYTES`、`TOOL_DEFS_MAX_BYTES`、工具定义 `timeout` 的范围、`CALLS_PER_RESULT`、`OPTIONS_MAX_BYTES`、`TOOLS_FIELD_MAX`、`MODELS_FILE_MAX_BYTES`，以及跟着 pi-ai 给 `options` 的白名单加键，不算改契约，先在决策记录写理由。
 - 放宽 `MESSAGE_MAX_BYTES` 和图片的条件（含加图片类型），先做下面“参与启动检查的量”里写的检查。
 
 ### 参与启动检查的量
@@ -196,7 +199,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 - v2 的来由、六个缺口：[D47](kb-decisions.md#d47-v2-的来由六个缺口和-v1v2-的对照)；文档估算和需求来源：[D48](kb-decisions.md#d48-量-image_tokens-的文档估算和思考级别重试的需求来源)。
 - 为什么冻结，以及冻结的判据是推导测试：[D26](kb-decisions.md#d26-内核-v2-的方向和准入原则)、[D28](kb-decisions.md#d28-v2-的原语)。
 - 推导测试的记录：[D55](kb-decisions.md#d55-推导测试第一次)、[D56](kb-decisions.md#d56-推导测试第二次)没通过，[D57](kb-decisions.md#d57-推导测试第三次)通过，契约从那里起冻结。为 D59 改契约做的：[D60](kb-decisions.md#d60-推导测试第四次)、[D61](kb-decisions.md#d61-推导测试第五次)、[D62](kb-decisions.md#d62-推导测试第六次)没通过，用户决定不等通过就合并（D59 的破例）。为 D64 改契约做的：[D65](kb-decisions.md#d65-推导测试第七次)、[D66](kb-decisions.md#d66-推导测试第八次)没通过，[D67](kb-decisions.md#d67-推导测试第九次)通过。
-- 删除原语是冻结以后第一次改契约，见 [D59](kb-decisions.md#d59-删除原语旧段和空闲进程)。第二次是内核的四类自由度，见 [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)，它也改了目标 4。第三次是会话配置、上下文文件和 `backup`，见 [D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)、[D72](kb-decisions.md#d72-上下文文件开段重读)、[D73](kb-decisions.md#d73-backup-请求)，它改了不变量 6，给不变量 9 加了一个例外；推导测试见 D75。迁移的规矩是 [D74](kb-decisions.md#d74-迁移的规矩)，不改契约。第四次是记忆视图改成索引，见 [D81](kb-decisions.md#d81-记忆视图改成索引键更新日期字节数摘要)（第一次真迁移），它改了表结构和视图格式；推导测试的受试者换成 deepseek-v4.1-flash，通过，有一处保留，记在 D81 末尾。第五次是加内置工具 `memory_edit`，见 [D89](kb-decisions.md#d89-memory_edit记忆工具的另一半只换一段不重发整个值)：它给内置工具的名单加一个，`Memory` 接口、表、线协议都不变。第六次是 bash 接管后台命令，见 [D90](kb-decisions.md#d90-bash-接管后台命令先等没跑完转后台输出写文件跑完寄信)：bash 的超时语义和 `timeout` 的含义变了（先等，到时间转后台，不再结束命令），内核首次写 `~/.tau/extras/`，新增 `src/tools/notify.ts`，工具描述变了；类型、表、线协议、工具名字都不变。第七次是换段时带上旧段的简略视图，见 [D103](kb-decisions.md#d103-换段时带上旧段的简略视图)：新段第一条多一块，`tau` 多一个可选键 `brief`，多两句固定文字，`HANDOFF_INSTRUCTION` 多两项（`HANDOFF_REQUEST_MAX_BYTES` 跟着变，重算启动检查）；表、线协议、工具名字都不变。第八次是 bash 前台等待时有信排队，最多再等 1 秒就转后台，见 [D104](kb-decisions.md#d104-bash-前台等待时有信排队最多再等-1-秒就转后台)：多一个常量 `HURRY_MS`、一个纯函数 `hurried(p)`、执行器多一个控制 `hurry`，转后台的结果在固定的一段前多一行，bash 的工具描述多一句（重算启动检查）；类型、表、线协议、工具名字、`self` 的字段、固定的一段都不变。
+- 删除原语是冻结以后第一次改契约，见 [D59](kb-decisions.md#d59-删除原语旧段和空闲进程)。第二次是内核的四类自由度，见 [D64](kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)，它也改了目标 4。第三次是会话配置、上下文文件和 `backup`，见 [D71](kb-decisions.md#d71-会话配置reconfigure会话快照可改)、[D72](kb-decisions.md#d72-上下文文件开段重读)、[D73](kb-decisions.md#d73-backup-请求)，它改了不变量 6，给不变量 9 加了一个例外；推导测试见 D75。迁移的规矩是 [D74](kb-decisions.md#d74-迁移的规矩)，不改契约。第四次是记忆视图改成索引，见 [D81](kb-decisions.md#d81-记忆视图改成索引键更新日期字节数摘要)（第一次真迁移），它改了表结构和视图格式；推导测试的受试者换成 deepseek-v4.1-flash，通过，有一处保留，记在 D81 末尾。第五次是加内置工具 `memory_edit`，见 [D89](kb-decisions.md#d89-memory_edit记忆工具的另一半只换一段不重发整个值)：它给内置工具的名单加一个，`Memory` 接口、表、线协议都不变。第六次是 bash 接管后台命令，见 [D90](kb-decisions.md#d90-bash-接管后台命令先等没跑完转后台输出写文件跑完寄信)：bash 的超时语义和 `timeout` 的含义变了（先等，到时间转后台，不再结束命令），内核首次写 `~/.tau/extras/`，新增 `src/tools/notify.ts`，工具描述变了；类型、表、线协议、工具名字都不变。第七次是换段时带上旧段的简略视图，见 [D103](kb-decisions.md#d103-换段时带上旧段的简略视图)：新段第一条多一块，`tau` 多一个可选键 `brief`，多两句固定文字，`HANDOFF_INSTRUCTION` 多两项（`HANDOFF_REQUEST_MAX_BYTES` 跟着变，重算启动检查）；表、线协议、工具名字都不变。第八次是 bash 前台等待时有信排队，最多再等 1 秒就转后台，见 [D104](kb-decisions.md#d104-bash-前台等待时有信排队最多再等-1-秒就转后台)：多一个常量 `HURRY_MS`、一个纯函数 `hurried(p)`、执行器多一个控制 `hurry`，转后台的结果在固定的一段前多一行，bash 的工具描述多一句（重算启动检查）；类型、表、线协议、工具名字、`self` 的字段、固定的一段都不变。第九次是模型补充文件，见 [D105](kb-decisions.md#d105-模型补充文件copilot-的模型列表跟着账号走)：内核多读一种文件 `~/.tau/models/<provider>.json`，给模型目录补模型、改模型；多一个入口条件 `MODELS_FILE_MAX_BYTES`；不变量 9 里 `spawn` 多读一个文件；类型、表、线协议、CLI、工具名字都不变。
 - 常量的状态（已定、暂定）只写在 [kb-kernel 的常量](kb-kernel.md#常量)的表里，这里不重复。
 - 常量的出处：`IMAGE_TOKENS` 见 [D42](kb-decisions.md#d42-第-6-步量-image_tokens核实收图片)；图片的其余常量和 `HOPS_MAX` 见 [kb-kernel 的常量](kb-kernel.md#常量)和 [kb-service 的图片](kb-service.md#图片)；`MESSAGE_MAX_BYTES` 见 [D22](kb-decisions.md#d22-换段阈值用量估算和记忆上限)；工具定义的两个上限见 [kb-tools 的工具定义](kb-tools.md#工具定义)。
 - `WATCH_BUFFER_MAX`、`MODEL_RETRIES` 和 OAuth 订阅（[D83](kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)，凭据文件不在契约清单里）：[未确认的默认值](kb-decisions.md#未确认的默认值)。
@@ -253,7 +256,7 @@ v2 的原语都按[取舍顺序](kb-extending.md#取舍顺序)第 4 条第 3 支
 | 工具定义的 schema 内层不合法，进程第一次调用模型就失败 | 改文件，`start` 新进程。上层的中转生成定义时负责规整 schema |
 | 工具定义存在每个 `state_json` 里，`self` 和 `ps` 变慢 | 定义有大小上限；真的变慢时加表达式索引 |
 | `tau.cmd` 把正文里的 `&` 当成命令 | 外部程序直接连管道；bash 里用 `tau` 脚本；计划任务直接运行 node |
-| 代码量超出预期 | 每步完成时校准；超出 4150 行（D64、D87、D88、D89、D90、D92、D103、D104）先停下来复查设计 |
+| 代码量超出预期 | 每步完成时校准；超出 4210 行（D64、D87、D88、D89、D90、D92、D103、D104、D105）先停下来复查设计 |
 
 ## 关联模块
 

@@ -29,6 +29,7 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 |---|---|
 | 预设 | `~/.tau/presets/<id>.md`。文件名就是预设 ID，也就是 Agent 的身份。 |
 | 工具定义 | `~/.tau/tools/<name>.json`。模型能调用的外部命令：名称、说明、参数和命令（[kb-tools](.knowledge/kb-tools.md#工具定义)）。请求里给模型看的工具名、说明和参数叫“工具描述”。 |
+| 模型补充文件 | `~/.tau/models/<provider>.json`。上层写，内核每次查模型时现读：同 `id` 的条目替换 pi-ai 目录里的模型，新 `id` 加进目录（[D105](.knowledge/kb-decisions.md#d105-模型补充文件copilot-的模型列表跟着账号走)）。 |
 | 进程 | 一条正在工作的线：一份会话快照、一个信箱、一个状态。 |
 | 会话快照 | 进程出生时由预设读成的配置，之后属于这个会话，只经 `reconfigure` 改（[D71](.knowledge/kb-decisions.md#d71-会话配置reconfigure会话快照可改)）。预设文件只管出生，改它不影响已有的进程。 |
 | 待换配置 | 会话快照里换段时才生效的改动，存在进程记录的 `next` 里。 |
@@ -74,14 +75,14 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 
 **上下文与记忆**（第 5 节、第 8 节）
 
-- 换段是唯一缩短上下文的办法。例外：一次请求里，旧图成批省略，库不变（[D40](.knowledge/kb-decisions.md#d40-第-6-步前一半的选择)）。处理一条输入只读进程记录和当前工作段。两个例外（[D36](.knowledge/kb-decisions.md#d36-第-4-步第二部分进程之间的工具的执行和两处例外)）：`post`、`stop_process` 还读收件人的进程记录，`spawn` 还读预设文件和它用到的工具定义文件。开段还读会话快照声明的上下文文件（[D72](.knowledge/kb-decisions.md#d72-上下文文件开段重读)）。工具定义在结果里声明的同样动作，读的也一样（[D64](.knowledge/kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)）。
+- 换段是唯一缩短上下文的办法。例外：一次请求里，旧图成批省略，库不变（[D40](.knowledge/kb-decisions.md#d40-第-6-步前一半的选择)）。处理一条输入只读进程记录和当前工作段。两个例外（[D36](.knowledge/kb-decisions.md#d36-第-4-步第二部分进程之间的工具的执行和两处例外)）：`post`、`stop_process` 还读收件人的进程记录，`spawn` 还读预设文件、它用到的工具定义文件和模型补充文件（[D105](.knowledge/kb-decisions.md#d105-模型补充文件copilot-的模型列表跟着账号走)）。开段还读会话快照声明的上下文文件（[D72](.knowledge/kb-decisions.md#d72-上下文文件开段重读)）。工具定义在结果里声明的同样动作，读的也一样（[D64](.knowledge/kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)）。
 - 每次调用模型都计一步。运行中收到的信件排队到下一个安全点。
 - 记忆只能通过记忆接口访问。写入必须带读到的版本号。
 
 **边界与存储**（第 2 节、第 7 节、第 9 到 11 节）
 
 - `self` 只读，这是接口的范围，不是权限边界。没有沙箱。不做能被 bash 绕过的假边界。
-- 预设是 `~/.tau/presets/` 下的文件，工具定义是 `~/.tau/tools/` 下的文件，上层的数据在 `~/.tau/extras/<名字>/`（例外：共享手册装在 `~/.tau/handbook.md`，原型在仓库 `extras/handbook/`，[D99](.knowledge/kb-decisions.md#d99-共享手册的原型进仓库安装脚本装到-tauhandbookmd)），凭据（api key 和 OAuth 令牌）在 `~/.tau/auth.json`（[D83](.knowledge/kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)，这是不进库的内核数据之一）。另一个是 bash 工具的输出文件：写在 `~/.tau/extras/shell/<进程 ID>/`（[D90](.knowledge/kb-decisions.md#d90-bash-接管后台命令先等没跑完转后台输出写文件跑完寄信)），不进库、不备份、7 天清理，这是内核唯一写 `extras/` 的地方。其余数据都在 `~/.tau/tau.db`，包括图片（`blobs` 表）。项目目录里不写任何东西。
+- 预设是 `~/.tau/presets/` 下的文件，工具定义是 `~/.tau/tools/` 下的文件，模型补充文件是 `~/.tau/models/` 下的文件（内核只读，[D105](.knowledge/kb-decisions.md#d105-模型补充文件copilot-的模型列表跟着账号走)），上层的数据在 `~/.tau/extras/<名字>/`（例外：共享手册装在 `~/.tau/handbook.md`，原型在仓库 `extras/handbook/`，[D99](.knowledge/kb-decisions.md#d99-共享手册的原型进仓库安装脚本装到-tauhandbookmd)），凭据（api key 和 OAuth 令牌）在 `~/.tau/auth.json`（[D83](.knowledge/kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)，这是不进库的内核数据之一）。另一个是 bash 工具的输出文件：写在 `~/.tau/extras/shell/<进程 ID>/`（[D90](.knowledge/kb-decisions.md#d90-bash-接管后台命令先等没跑完转后台输出写文件跑完寄信)），不进库、不备份、7 天清理，这是内核唯一写 `extras/` 的地方。其余数据都在 `~/.tau/tau.db`，包括图片（`blobs` 表）。项目目录里不写任何东西。
 - 服务只在命名管道上监听，监听成功才算持锁。MVP 只支持 Windows。
 
 ## 准入规则
@@ -120,7 +121,7 @@ tau 是本机常驻的个人 Agent harness，目标是连续运行很多年。�
 - 没有构建步骤：Node 24（不低于 24.21）直接运行 `.ts`。只用可擦除的 TS 语法（不用 enum、namespace、参数属性）；import 写 `.ts` 扩展名。
 - tsconfig：strict 全开，`noEmit`、`erasableSyntaxOnly`、`allowImportingTsExtensions`、`verbatimModuleSyntax`。
 - 测试用 `node:test`。类型检查只跑 `tsc`。
-- 代码量预算：不算测试，`src/` 不超过 4150 行（D64 从 3000 放宽，D87 到 3610，D88 到 3640，D89 到 3670，D90 到 3950，D92 到 4100，D103 到 4120，D104 到 4150）。写到一半时校准这个数字。
+- 代码量预算：不算测试，`src/` 不超过 4210 行（D64 从 3000 放宽，D87 到 3610，D88 到 3640，D89 到 3670，D90 到 3950，D92 到 4100，D103 到 4120，D104 到 4150，D105 到 4210）。写到一半时校准这个数字。
 - 不写兼容代码。例外：改表结构要带迁移（[D74](.knowledge/kb-decisions.md#d74-迁移的规矩)）。不提前建抽象：只有记忆有接口，因为它明确要被替换。
 - 对崩溃、竞态和生命周期，先写最小反例测试，再改代码。
 

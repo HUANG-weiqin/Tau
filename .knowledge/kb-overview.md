@@ -122,6 +122,7 @@ tau 不负责：
 | `src/server/serve.ts` | 把库、执行器和管道装配起来；`pump` 处理信箱、开始副作用 | [kb-service.md](kb-service.md) |
 | `src/server/listen.ts` | 在命名管道上监听，监听成功就是单实例锁 | [kb-service.md](kb-service.md) |
 | `src/server/credentials.ts` | tau 自己的凭据文件 `~/.tau/auth.json`，可读可写，交给模型目录 | [kb-service.md](kb-service.md#启动脚本和入口) |
+| `src/server/modelfiles.ts` | 模型补充文件 `~/.tau/models/<provider>.json`：叠在每家 provider 的目录上，每次查模型现读 | [kb-service.md](kb-service.md#模型补充文件d105) |
 | `src/cli/main.ts`、`src/protocol.ts` | 命令行和线协议；CLI 只依赖协议 | [kb-service.md](kb-service.md) |
 | `src/kernel/` | 纯函数：`decide`、`effectOf`、`observe`、`buildContext`、派生值、工具描述、会话快照的比较（`snapshot.ts`） | [kb-kernel.md](kb-kernel.md) |
 | `src/store/` | 表、处理输入的事务、库内工具、读上下文文件拼开段视图（`context-files.ts`） | [kb-store.md](kb-store.md) |

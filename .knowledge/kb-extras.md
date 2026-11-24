@@ -21,6 +21,7 @@
 - 领地：带记忆的 Agent 自己的目录 `~/.tau/extras/home/<预设 ID>/`。
 - 备份：定期调 `backup` 请求的脚本和计划任务。
 - 认证：登录脚本和凭据库的拷贝，凭据文件由内核读写。
+- Copilot 的模型列表：照账号的 `/models` 生成模型补充文件。
 - MCP 中转怎么做。
 - HTTP 桥要做的检查。
 
@@ -375,6 +376,25 @@ schtasks /Create /TN "tau-backup" /SC DAILY /ST 03:30 /TR "node \"<仓库>\extra
 - 备份不含 `auth.json`（备份只含库，见下面“备份”）。丢了就重新登录、重填 key，不是不可恢复的数据。
 - 令牌和 key 明文存文件，bash 读得到（没有沙箱）。
 - 真账号的完整登录没有自动测试：假供应商走存储、刷新和登出；真的设备码只验过“要得到码和链接”。
+
+### Copilot 的模型列表
+
+`extras/models/copilot.ts` 照账号的 `/models` 生成 Copilot 的模型补充文件 `~/.tau/models/github-copilot.json`。内核只读这个文件（[kb-service 的模型补充文件](kb-service.md#模型补充文件d105)），不懂 Copilot；理由见 [D105](kb-decisions.md#d105-模型补充文件copilot-的模型列表跟着账号走)。
+
+- 凭据：经凭据库 `extras/auth/store.ts` 和 pi-ai 的 `getAuth` 取令牌和账号的 API 地址。令牌过期时由 pi-ai 刷新、写回，持锁。没登录 Copilot 就什么都不做。
+- 请求：`GET <API 地址>/models`，带令牌、pi-ai 目录里 Copilot 模型的固定请求头，和 `X-GitHub-Api-Version: 2026-08-01`（这一版的响应才有分档价格）。失败（网络、非 2xx、不是 JSON）就不写文件，旧文件照用。
+- 选哪些：聊天模型（`capabilities.type` 没写或是 `chat`），`model_picker_enabled` 为真，`policy.state` 不是 `disabled`，`supports.tool_calls` 不是 `false`。一个这样的模型都没有时（Free 账号），只取 `is_chat_default` 那一个。解析要宽松：认不出的值只影响那一项，不丢整批。
+- 每个模型生成一个条目：
+  - pi-ai 目录里有同 `id` 的：拿它当模板，接口、思考、兼容开关都照它，只用 `/models` 改上下文窗口、输出上限、能不能看图。
+  - 没有的：接口按 `supported_endpoints` 选，`/v1/messages`、`/responses`、`/chat/completions` 依次对应 `anthropic-messages`、`openai-responses`、`openai-completions`，排在前面的优先。模板是 pi-ai 目录里同一种接口、`id` 前缀相同最长的那个模型。思考照 `adaptive_thinking`、`reasoning_effort` 生成，写法照模板那一类条目。价格写 0。
+  - 上下文窗口取不加价那一档的输入上限：`billing.token_prices.default.max_prompt_tokens`；没有就用 `limits.max_prompt_tokens`，再没有就用 `limits.max_context_window_tokens`。输出上限是 `limits.max_output_tokens`。
+- 这一次没出现、但 7 天内出现过的模型照留：`/models` 每次可能返回不同的一套。记录放在 `~/.tau/extras/models/`。
+- 写之前，按内核的条件检查每个条目。整个文件先写临时文件、再改名。顶层另写生成时间和 pi-ai 的版本，内核不看。
+- 谁跑：`login github-copilot` 成功以后跑一次；桥启动时跑一次，`/api/models` 发现上次成功已超过 6 小时，也在后台跑（同时只跑一个）；`node extras/models/copilot.ts` 手动跑。
+- 代价：
+  - 桥没开、也没手动跑，列表就旧着：新模型晚一点出现，不丢东西。
+  - 目录外的新模型，请求细节是照元数据和模板推的。推错了，调用会报错。等 pi-ai 收录了它，下一次生成就以 pi-ai 的条目为模板。
+  - 没有真账号测过：作者没有 Copilot 订阅。字段和取值照官方插件和别的客户端的源码，测试用自己造的响应。
 
 ### MCP 中转
 

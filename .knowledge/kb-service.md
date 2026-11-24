@@ -438,7 +438,7 @@ tau stop <进程>
 - 管道名、库和预设的位置写死在 `protocol.ts`、`main.ts` 和 `presets/load.ts`。`serve()` 和 CLI 的 `main` 接受别的管道和路径，只给测试用。
 - `TAU_PIPE`：CLI 的 `main` 的管道参数默认取 `process.env.TAU_PIPE`，空或没设就用 `PIPE`。bash 工具给命令设的 `TAU_PIPE` 是服务实际监听的管道（[kb-tools](kb-tools.md#包装脚本)），所以测试服务里的 Agent 运行 `tau`，连的是测试服务。
 - `tau`（不带扩展名，`#!/bin/sh`，git 里是可执行）：给 bash 用的启动脚本，和 `tau.cmd` 放在仓库根目录。`MSYS_NO_PATHCONV=1 exec node "$(cygpath -w "$(dirname "$0")")/src/main.ts" "$@"`。`MSYS_NO_PATHCONV=1` 不让 msys 改写参数，否则以 `/` 开头的消息正文会被改成 Windows 路径；`cygpath -w` 因为 node 要 Windows 路径才找得到 `main.ts`。bash 找不到不带扩展名的 `tau`，所以光有 `tau.cmd` 不够：写全名才行，还经 cmd.exe 解析参数。
-- 服务的模型目录是 `builtinModels({ credentials })`（[kb-executor.md](kb-executor.md#调用模型actionsts)）。`credentials` 是 tau 自己的凭据文件 `~/.tau/auth.json`，可读可写：`fileCredentials`（`src/server/credentials.ts`，理由、取舍和风险见 [D83](kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)）。路径写死在 `main.ts`。
+- 服务的模型目录是 `builtinModels({ credentials })`，每家 provider 再叠上它的模型补充文件（[kb-executor.md](kb-executor.md#调用模型actionsts)、下面的[模型补充文件](#模型补充文件d105)）。`credentials` 是 tau 自己的凭据文件 `~/.tau/auth.json`，可读可写：`fileCredentials`（`src/server/credentials.ts`，理由、取舍和风险见 [D83](kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)）。路径写死在 `main.ts`。
 - 每家供应商一条，形状同 pi-ai 的 `Credential`：`{type: "api_key", key}` 或 `{type: "oauth", access, refresh, expires, …}`。别的类型当作没有。pi-ai 在 OAuth 令牌剩不到 5 分钟时，经 `modify` 刷新并写回（刷新最多等 15 秒）。
 - 读：每次调用都重读，不加锁。写（`modify`、`delete`）整个过程持锁：`auth.json.lock` 目录，`mkdir` 抢；持锁的人每 5 秒刷新锁目录的修改时间，15 秒没动过算持锁的进程崩了，清掉；等锁最多 30 秒（必须比 15 秒长）。写入是先写 `auth.json.tmp`、落盘、再改名。改名遇到 `EPERM`、`EBUSY`、`EACCES`（Windows 上目标正被别人读着）重试，最多 100 次，每次隔 25 毫秒；读不受影响，不重试。
 - 写的人有三个，都是不同的进程：服务（刷新）、登录脚本、HTTP 桥（填和清 key）。登录和登出见 [kb-extras 的认证](kb-extras.md#认证)。
@@ -449,6 +449,28 @@ tau stop <进程>
 - 文件不存在算没有凭据。不是合法的 JSON、顶层不是对象时，这次模型调用以错误结束，`modify` 和 `delete` 拒绝、不动文件。报错不带文件内容：V8 的 JSON 报错会引用出错处附近的原文，可能是 key 的开头，而报错会存进库、显示在 CLI 上。
 - 服务不读 pi 的文件。从 pi 迁移：`api_key` 条目可以复制过来；OAuth 条目要在 tau 里重新登录（[D83](kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)）。
 - 模型调用由服务进程发出。CLI 的环境不影响模型调用。
+
+### 模型补充文件（D105）
+
+`~/.tau/models/<provider>.json` 给服务的模型目录补模型、改模型。上层写，内核只读。理由、取舍和代价见 [D105](kb-decisions.md#d105-模型补充文件copilot-的模型列表跟着账号走)；Copilot 的文件由谁生成，见 [kb-extras 的 Copilot 的模型列表](kb-extras.md#copilot-的模型列表)。
+
+- 一家一个文件，文件名去掉 `.json` 就是 provider ID。只认服务的模型目录里已有的 provider（pi-ai 内置的），别的文件不读。
+- 文件是 JSON 对象，`models` 是数组，每项是一个模型条目。别的顶层键忽略。
+- 条目是 pi-ai 的聊天模型对象（`Model`）。内核只查下面这些；查不过的条目跳过，同一个文件里别的条目照用：
+  - `id`：1 到 200 个字符，不含控制字符。同一个文件里 `id` 重复的，只用第一条。
+  - `name`、`baseUrl`：字符串。`api`：非空字符串。
+  - `reasoning`：布尔。
+  - `input`：数组，只含 `"text"`、`"image"`，含 `"text"`，不重复。
+  - `contextWindow`、`maxTokens`：正的安全整数。
+  - `cost`：对象，`input`、`output`、`cacheRead`、`cacheWrite` 都是非负的有限数。
+  - `provider`：没有，或者等于文件名的 provider。`type`：没有，或者是 `"chat"`。
+  - 别的键（`headers`、`compat`、`thinkingLevelMap`、`inputLimits` 等）原样交给 pi-ai，内核不查。`api` 不是这家 provider 支持的，调用时由 pi-ai 报错。
+- 文件坏了就整份忽略，等于没有这个文件：读不出、超过 `MODELS_FILE_MAX_BYTES`（1 MiB）、不是合法 JSON、顶层不是对象、`models` 不是数组。内核不报错，也不写日志。
+- 合并：这家 provider 的模型列表是 pi-ai 目录里的模型，`id` 相同的换成文件里的条目，文件里新的 `id` 加在后面。
+- 每次查模型都现读，改了不用重启。查模型的地方：读预设（`start`、`check`、`spawn`、带 `preset` 的 `fork`、带结构性字段的 `reconfigure`），和每次调用模型（[kb-executor](kb-executor.md#调用模型actionsts)）。
+- 快照在出生时冻结 `contextWindow` 和 `input`（[设计稿第 2 节](../docs/design/mvp.md#2-预设)）。改文件不动已有进程的快照。要让已有进程用上新的窗口，带结构性字段 `reconfigure` 一次（例如把 `model` 原样发一次），新快照按现读的条目算。调用模型时用现读的条目：`api`、`baseUrl`、`maxTokens`、`compat` 这些，下一次调用就是新的。
+- 实现：`src/server/modelfiles.ts`。`main.ts` 建好 `builtinModels({ credentials })` 以后，把每家 provider 换成叠了补充文件的版本（`setProvider`）。叠的版本只改 `getModels` 和 `getAllModels`，请求还是原来的 provider 发。
+- 内核不写这些文件。上层写的时候先写临时文件、再改名，内核读到的是旧文件或新文件。手改的文件写到一半时被读到，这一次按坏文件忽略。
 
 ### 退出
 

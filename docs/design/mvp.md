@@ -39,7 +39,7 @@ tools: read, write, edit, bash, memory
 - `tools` 里除了内置工具和工具组，还能写工具定义的名字（`~/.tau/tools/<name>.json`，格式见 [kb-tools](../../.knowledge/kb-tools.md#工具定义)）。
 - `tools` 里的 `memory` 表示进程有记忆库。`agents` 表示模型能调用 `post`、`spawn`、`stop_process` 给别的进程寄信、建进程、停进程（[kb-store](../../.knowledge/kb-store.md#进程之间的工具)）。工具定义在结果里声明这些动作，不看 `agents`（[D64](../../.knowledge/kb-decisions.md#d64-内核的自由度给上层事实对称的控制和可组合的动作)）。
 - 进程出生时，预设被读成会话快照，存进进程记录，用到的工具定义也一起读进去（快照的 `toolDefs`）。之后修改预设文件或工具定义文件，只影响新出生的会话。会话自己的快照只经 `reconfigure` 改，规则见 [kb-kernel 的流程：会话配置](../../.knowledge/kb-kernel.md#流程会话配置reconfigure)和 [D71](../../.knowledge/kb-decisions.md#d71-会话配置reconfigure会话快照可改)。
-- 快照里还有两项：从 pi-ai 模型目录查到的这个模型的 `contextWindow` 和 `input`（模型能收的输入）。查不到就启动失败。存进快照，是为了让 `decide` 不做 I/O。预设写了的 `thinking`、`handoff`、`options`、`context` 也进快照。调用模型时，执行器仍从模型目录取模型（第 6 节）。
+- 快照里还有两项：从模型目录查到的这个模型的 `contextWindow` 和 `input`（模型能收的输入）。模型目录是 pi-ai 的目录叠上模型补充文件（[kb-service 的模型补充文件](../../.knowledge/kb-service.md#模型补充文件d105)）。查不到就启动失败。存进快照，是为了让 `decide` 不做 I/O。预设写了的 `thinking`、`handoff`、`options`、`context` 也进快照。调用模型时，执行器仍从模型目录取模型（第 6 节）。
 
 读取预设（`src/presets/load.ts`）的规则：
 

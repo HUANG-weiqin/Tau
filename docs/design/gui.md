@@ -604,7 +604,7 @@ MCP（弹窗的第三节，编号 03）：
 | 寄信、建进程、分叉、停止、删除 | `send`、`start`、`fork`、`stop`、`remove`、`sweep` |
 | 记忆库的键、值、版本号；改、加、删 | `memory`、`memory_write` |
 | 新建、改、删除预设 | HTTP 桥写、改或删 `~/.tau/presets/<ID>.md`。改完立刻 `check`，不行就改回去 |
-| 模型目录、窗口、能不能收图、思考级别 | HTTP 桥读 pi-ai 的目录，进程启动时算一次 |
+| 模型目录、窗口、能不能收图、思考级别 | HTTP 桥读 pi-ai 的目录（进程启动时算一次），每次请求再叠上模型补充文件（[kb-gui](../../.knowledge/kb-gui.md)） |
 | 供应商的 key 状态 | HTTP 桥读 `~/.tau/auth.json`，只看每条的供应商名和类型，不回 key |
 | 填写和清除 key，登出 | HTTP 桥经凭据库写 `auth.json`：只动一家的条目，持锁，先写临时文件再改名；OAuth 登录的填 key 拒绝，清掉就是登出（[D69](../../.knowledge/kb-decisions.md#d69-界面可以填写和清除-api_key)、[D83](../../.knowledge/kb-decisions.md#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)） |
 | 进程现在的模型、思考强度、换段阈值、`options`、上下文文件 | `inspect` 的会话快照（`process.preset`） |

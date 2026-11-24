@@ -2727,13 +2727,61 @@ fork 原来在这张表里，已进内核，见 [D49](#d49-fork-进内核)。
   - 用户决定照常落地，不重测（2026-11-23）。先例是 [D59](#d59-删除原语旧段和空闲进程) 和 D103 的破例。用户原话：“继续推”。这是一次性的破例，[改契约的程序](kb-contract.md#改契约的程序)不变。
 - 写在这里的页：[kb-tools 的等待、转后台和中止](kb-tools.md#等待转后台和中止)和[结果文本](kb-tools.md#结果文本)、[kb-executor 的控制流](kb-executor.md#控制流)、[kb-service 的 pump](kb-service.md#pump)、[kb-contract 的契约清单](kb-contract.md#契约清单)。
 
+### D105 模型补充文件：Copilot 的模型列表跟着账号走
+
+- 状态：已确认（2026-11-24），改契约（第九次）。推导测试见下面“推导测试”一条。
+- 来由：
+  - pi-ai 的 Copilot 目录是静态的：从 models.dev 生成，再手工修正，随 pi-ai 发版。登录和刷新令牌时，pi-ai 会拉账号的 `/models`，但只留模型 ID（`availableModelIds`），拿去过滤静态目录。目录里没有的新模型被丢掉，要等 pi-ai 发版、tau 升级（[D84](#d84-pi-ai-升级版本不再写死)）。
+  - 目录里的上下文窗口不一定是账号真正的输入上限。pi-ai 按 GitHub 的“扩展能力”表，把十个 Copilot 模型的窗口强制写成 100 万。Copilot 按账号和计价档限制 `max_prompt_tokens`，超了回 400。tau 按 `contextWindow` 算换段阈值，可能等不到换段就失败。
+  - 用户本人没订阅 Copilot，但 tau 有别的用户在用（用户 2026-11-24：“我harness有其他人用”）。用户要 Copilot 的模型列表自动更新。
+- 调研（2026-11-24，读源码和问题单）：
+  - 官方 VS Code 插件（已并进 `microsoft/vscode` 的 `extensions/copilot`）、Zed、opencode 都按 `/models` 的元数据组请求，新模型不用改代码。接口看 `supported_endpoints`；思考看 `adaptive_thinking`、`min_thinking_budget`、`max_thinking_budget`、`reasoning_effort`；输入上限看 `max_prompt_tokens`，输出看 `max_output_tokens`；看图看 `supports.vision`。还写死的只剩怪癖，例如图片张数、个别模型的温度和系统消息。
+  - 刷新：VS Code 用到列表时才取，窗口在前台、离上次超过 10 分钟才重取，失败保留旧列表。opencode 每 10 分钟取一次。pi 的编程 Agent（不在 pi-ai 里）每 4 小时从 pi.dev 取一份手工修正过的目录。
+  - pi 上游有一个开着的 PR（earendil-works/pi#12325），只让 `availableModelIds` 保持最新，目录外的模型照样进不来。
+  - 别人踩过的坑：字段出现新值时整批丢模型（Zed 不认识 `/v1/messages`，Claude 模型全没了）；选错接口回 400 `unsupported_api_for_model`；`/models` 每次可能返回不同的一套；拿窗口当输入上限，回 `model_max_prompt_tokens_exceeded`；Free 账号列出的模型大多用不了（只来自问题单，没复现）；登录时批量开启模型，引来 429。
+- 判定（[取舍顺序](kb-extending.md#取舍顺序)）：
+  - 第 1 条不成立。
+  - 第 2 条不成立：别的用户在用 Copilot。tau 没有别的机制：升级 pi-ai 要等发版，也修不了按账号的上限，是“晚一些、粗一些”。
+  - 第 3 条不成立，上层自己做不到：服务查模型只看进程里的模型目录，目录是启动时用 pi-ai 的 `builtinModels` 建的（[D56](#d56-推导测试第二次) 题 3 的理由）。上层没法让服务认目录外的模型，也改不了目录里模型的上限。
+  - 第 4 条：第 1 支不成立，内核版不加阶段、状态、表，不变量 9 只多一个读文件的例外（见下）。第 2 支不成立，“做不到”出在主要场景，不只在崩溃时。归 4.3：内核加原语，功能留上层。
+  - 原语是模型补充文件。它只管“目录里有哪些模型、每个模型长什么样”，不懂 Copilot。按[原则 8](kb-extending.md#核心原则) 看，它补的是“参数可传”：模型对象是调用模型的第一个参数，以前只能用 pi-ai 包里的那份。
+- 做法（内核，细节见 [kb-service 的模型补充文件](kb-service.md#模型补充文件d105)）：
+  - 文件是 `~/.tau/models/<provider>.json`，一家一个。上层写，内核只读。一家一个文件，每个文件就只有一个写的人：Copilot 的脚本只写 `github-copilot.json`。
+  - 内容是 JSON 对象，`models` 是模型条目的数组，条目是 pi-ai 的聊天模型对象。内核只查它要用、要冻结进快照的字段，查不过的条目跳过。文件坏了（读不出、超过 `MODELS_FILE_MAX_BYTES`、不是 JSON 对象、`models` 不是数组），整份忽略。从不抛错。
+  - 同 `id` 的条目替换 pi-ai 目录里的那个模型，新 `id` 加进目录。只认服务目录里已有的 provider。
+  - 每次查模型都现读，改了不用重启。查模型的地方：读预设（`start`、`check`、`spawn`、带 `preset` 的 `fork`、带结构性字段的 `reconfigure`），和每次调用模型。
+  - 快照照旧在出生时冻结 `contextWindow` 和 `input`。改文件不动已有进程的快照；调用模型时用现读的条目。
+  - 实现：`main.ts` 建好 `builtinModels` 以后，把每个 provider 换成叠了补充文件的版本。只用 pi-ai 的公开接口（`getProviders`、`setProvider`、`Provider`）。pi 的编程 Agent 叠 pi.dev 的目录，也是这样做的。
+  - 不变量 9 的例外多一项：`spawn` 读预设时查模型，会读这家 provider 的补充文件。文件很小，在本机，同步读。
+- 做法（上层，细节见 [kb-extras 的 Copilot 的模型列表](kb-extras.md#copilot-的模型列表)）：脚本用账号的凭据拉 `/models`，按元数据生成条目，写进 `github-copilot.json`。pi-ai 目录里有的模型，拿它的条目当模板，只改上限和看图；没有的，照元数据生成。登录以后、桥启动和列表旧了的时候、手动，都会跑。
+- 契约范围（[kb-contract 的契约清单](kb-contract.md#契约清单)）：
+  - 冻结：文件的位置和格式；内核查的字段和条件；合并的规则（同 `id` 替换、新 `id` 加入、坏条目跳过、坏文件忽略）；每次查模型现读；`MODELS_FILE_MAX_BYTES`（放宽不算改契约）。
+  - 类型、表、线协议、CLI、工具名字都不变。上层怎样生成条目，不在契约里。
+- 放弃：
+  - **单独开一个 Copilot 分支**（用户最初的想法）：tau 要跑很多年，长期分支每次改内核都要合两遍。
+  - **内核自己拉 `/models`**（pi-ai 的 `fetchModels`，服务里加定时器）：内核里多一套 Copilot 专用的代码和定时的网络请求。桥也要同一份列表，得再写一份，或者加线协议请求。
+  - **用 pi.dev 的目录**：那是 pi 编程 Agent 用的服务，按 pi 的 User-Agent 和版本发，不是 pi-ai 的公开接口。它也要等 models.dev 和维护者收录。
+  - **等上游**：earendil-works/pi#12325 只更新 `availableModelIds`，目录外的模型进不来，上限也不修。
+  - **补充文件只加不改**（目录里有的以 pi-ai 为准）：修不了目录里模型的上限。
+  - **放进 `auth.json`**：凭据文件里混进目录；pi-ai 刷新令牌时会整条重写。
+  - **所有 provider 共用一个文件**：几个写的人会互相覆盖。
+  - **放进 `tau.db` 的新表**：改表结构要迁移；上层不读库。
+  - **文件坏了就报错**：一份坏文件会让这一家的模型全部用不了；pi-ai 的 `Provider.getModels` 也约定不能抛错。
+- 代价：
+  - 每次查模型，多读一个小文件。
+  - 补充文件压过 pi-ai 的条目：条目写错了，这个模型就调用失败。删掉文件，就回到 pi-ai 的目录。pi-ai 升级以后，旧条目要等上层重新生成，才用上新模板（桥启动时会重新生成）。
+  - 坏条目、坏文件被静默忽略，内核不报。上层写之前自己检查。
+  - `src/` 预算从 4150 放宽到 4210（暂定，写到一半校准），同步 `AGENTS.md`、`scripts/loc.ts`、`kb-contract`、下面“未确认的默认值”表。
+- 推导测试：待做。
+- 写在这里的页：[kb-service 的模型补充文件](kb-service.md#模型补充文件d105)、[kb-contract 的不变量和契约清单](kb-contract.md#契约清单)、[kb-extending 的核心原则和方向表](kb-extending.md#大致方向)、[kb-extras 的 Copilot 的模型列表](kb-extras.md#copilot-的模型列表)、[kb-gui 的模型目录](kb-gui.md)、[AGENTS.md](../AGENTS.md)、[设计稿第 2 节](../docs/design/mvp.md#2-预设)。
+
 ## 未确认的默认值
 
 这些都不影响开工，写代码时可以随时改：
 
 | 默认值 | 理由 |
 |---|---|
-| 代码量预算：不算测试，`src/` 不超过 4150 行（[D64](#d64-内核的自由度给上层事实对称的控制和可组合的动作) 从 3000 放宽到 3600，[D87](#d87-一次回复的工具调用放不下时截断不再作废整条回复) 到 3610，[D88](#d88-命令边跑边写的输出走流式预览推给界面) 到 3640，[D89](#d89-memory_edit记忆工具的另一半只换一段不重发整个值) 到 3670，[D90](#d90-bash-接管后台命令先等没跑完转后台输出写文件跑完寄信) 到 3950，[D92](#d92-弱模型兜底可恢复的模型失败重试不结束这一轮) 到 4100，[D103](#d103-换段时带上旧段的简略视图) 到 4120，[D104](#d104-bash-前台等待时有信排队最多再等-1-秒就转后台) 到 4150） | 逼着做取舍；写到一半时校准 |
+| 代码量预算：不算测试，`src/` 不超过 4150 行（[D64](#d64-内核的自由度给上层事实对称的控制和可组合的动作) 从 3000 放宽到 3600，[D87](#d87-一次回复的工具调用放不下时截断不再作废整条回复) 到 3610，[D88](#d88-命令边跑边写的输出走流式预览推给界面) 到 3640，[D89](#d89-memory_edit记忆工具的另一半只换一段不重发整个值) 到 3670，[D90](#d90-bash-接管后台命令先等没跑完转后台输出写文件跑完寄信) 到 3950，[D92](#d92-弱模型兜底可恢复的模型失败重试不结束这一轮) 到 4100，[D103](#d103-换段时带上旧段的简略视图) 到 4120，[D104](#d104-bash-前台等待时有信排队最多再等-1-秒就转后台) 到 4150，[D105](#d105-模型补充文件copilot-的模型列表跟着账号走) 到 4210） | 逼着做取舍；写到一半时校准 |
 | 修改 harness 自身代码，按普通项目工作，用户审核后再加载 | 不需要特殊机制 |
 | 工具顺序执行，不并行 | 简单、确定。它已随契约冻结：进程一次只等一个副作用，`effects` 每个进程最多一行（[kb-contract 的契约清单](kb-contract.md#契约清单)）。要改按改契约的程序做，不受上面“随时可以改”约束 |
 | 工具定义的两个大小上限：一个定义 `TOOL_DEF_MAX_BYTES` 16 KiB，一个预设用到的全部定义 `TOOL_DEFS_MAX_BYTES` 64 KiB（[kb-tools](kb-tools.md#工具定义)） | 定义存在每个 `state_json` 里，每条输入整行重写，还占每次请求的上下文。放宽不算改契约，先在决策记录写理由；收紧算改契约，不受上面“随时可以改”约束（[kb-contract](kb-contract.md#契约清单)） |
@@ -2742,6 +2790,7 @@ fork 原来在这张表里，已进内核，见 [D49](#d49-fork-进内核)。
 | `WATCH_BUFFER_MAX` 1 MiB（[kb-service](kb-service.md#历史和订阅)） | `watch` 订阅方的写缓冲上限。内部常量，调它不算改契约 |
 | `MODEL_RETRIES` 5（[kb-executor](kb-executor.md#调用模型actionsts)） | 交给 pi-ai 的重试次数。内部常量，调它不算改契约 |
 | OAuth 订阅：支持，用 tau 自己的凭据文件（[D83](#d83-tau-自己的凭据文件读写支持-oauth不再用-pi-的)） | 令牌由 pi-ai 在剩不到 5 分钟时刷新，写回 `~/.tau/auth.json`，持锁 |
+| `MODELS_FILE_MAX_BYTES` 1 MiB（[D105](#d105-模型补充文件copilot-的模型列表跟着账号走)，[kb-service](kb-service.md#模型补充文件d105)） | 一个模型补充文件的大小上限，超了整份忽略。每次查模型都读它，所以要设限。放宽不算改契约，先在决策记录写理由；收紧算改契约（[kb-contract](kb-contract.md#契约清单)） |
 
 ## 关联模块
 

@@ -135,8 +135,9 @@
 
 模型目录和 key 状态（`models.ts`）：
 
-- 目录：用 pi-ai 的 `getBuiltinProviders`、`getBuiltinModels`、`builtinProviders`（显示名）和 `getSupportedThinkingLevels`，桥第一次收到请求时算一次。只含有模型的供应商。
-- 账号可用清单：目录是包里的全部，回复里的 `models` 再过一遍 provider 自带的 `filterModels`（`accountModels`，每次请求现算，用 `authFile` 里 tau 读得了的条目）。pi-ai 1.5.2 里只有 GitHub Copilot 有：OAuth 条目的 `availableModelIds`（登录和刷新令牌时 pi-ai 从 Copilot 拉的）不在清单里的模型不列；没有这个字段、形状不对、不是 OAuth 都列全部；清单是空数组，那一家 `models` 是 `[]`，供应商还在。其余供应商的目录是静态的：pi-ai 里只有 radius 能在线刷新，桥和服务各有一份目录，只在桥刷新会列出服务不认的模型，所以没做刷新键（[D84](kb-decisions.md#d84-pi-ai-升级版本不再写死)的升级才是更新目录的办法）。桥不用 `Models.getAvailable`：它会丢掉没配 key 的供应商，设置页要靠这些组填 key。服务那边的校验不变，仍按完整目录。
+- 目录：用 pi-ai 的 `getBuiltinProviders`、`getBuiltinModels`、`builtinProviders`（显示名）和 `getSupportedThinkingLevels`，桥第一次收到请求时算一次。每次请求再叠上模型补充文件 `~/.tau/models/<provider>.json`，规则和服务一样（[kb-service 的模型补充文件](kb-service.md#模型补充文件d105)），所以界面和服务认同一份目录。只含有模型的供应商。
+- 账号可用清单：回复里的 `models` 再过一遍 provider 自带的 `filterModels`（`accountModels`，每次请求现算，用 `authFile` 里 tau 读得了的条目）。pi-ai 里只有 GitHub Copilot 有：OAuth 条目的 `availableModelIds`（登录和刷新令牌时 pi-ai 从 Copilot 拉的）不在清单里的模型不列；没有这个字段、形状不对、不是 OAuth 都列全部；清单是空数组，那一家 `models` 是 `[]`，供应商还在。Copilot 有补充文件时，补充文件就是账号的清单：只列文件里的模型，不再按 `availableModelIds` 过滤（它只在刷新令牌时更新，会漏掉新模型）。桥不用 `Models.getAvailable`：它会丢掉没配 key 的供应商，设置页要靠这些组填 key。服务那边的校验不变，仍按完整目录。
+- Copilot 的补充文件由桥在启动时和列表旧了时在后台生成（[kb-extras 的 Copilot 的模型列表](kb-extras.md#copilot-的模型列表)）。其余供应商的目录照旧只随 pi-ai 升级变（[D84](kb-decisions.md#d84-pi-ai-升级版本不再写死)）。
 - `providers` 每项：`{ id, name, key, models }`。`models` 每项：`{ id, name, window, image, thinking }`，`thinking` 是支持的级别，已去掉预设不收的 `off`。
 - `key` 每次请求现读 `authFile`，只看每个条目的供应商名和 `type`：`key`（`api_key`）、`oauth`（已登录，字段齐全）、`unreadable`（OAuth 缺 `access`、`refresh` 或 `expires`；`api_key` 的 key 不是字符串、`!` 开头或含 `$`；和凭据库 `read` 的检查一致）、`none`。只有 `env` 没有 `key` 的 `api_key` 条目算 `key`（pi-ai 读得了）。key 的值不进回复、日志和错误文字。
 - `auth` 是 `{ ok: true }`；文件读不出或不是 JSON 对象时是 `{ ok: false, error }`，`error` 是固定的中文，不带文件内容，这时每家都是 `none`。文件不存在算没配，`ok: true`。
