@@ -54,8 +54,11 @@ const refuse: Actions = {
   },
 };
 
+// 子进程的临时目录：硬杀留下的 bash pgid 文件跟着测试目录一起删。
+let childTemp = tmpdir();
+
 function launch(args: string[]): Child {
-  const proc = spawn(process.execPath, [CHILD, ...args], { stdio: ["pipe", "ignore", "pipe"], windowsHide: true });
+  const proc = spawn(process.execPath, [CHILD, ...args], { stdio: ["pipe", "ignore", "pipe"], windowsHide: true, env: { ...process.env, TEMP: childTemp, TMP: childTemp } });
   const stderr: string[] = [];
   proc.stderr?.setEncoding("utf8").on("data", (d: string) => stderr.push(d));
   return { proc, stderr, exit: new Promise((resolve) => proc.once("exit", () => resolve())) };
@@ -127,6 +130,8 @@ test("服务运行中被随机硬杀 5 次：每次恢复后没有 running 行�
   const presets = join(dir, "presets");
   mkdirSync(work);
   mkdirSync(presets);
+  childTemp = join(dir, "tmp");
+  mkdirSync(childTemp);
   writeFileSync(join(work, "a.txt"), "hello\n");
   writeFileSync(join(presets, "k.md"), `---\nworkdir: ${work}\nmodel: faux/m\ntools: read, bash\n---\n你是测试助手。\n`);
   const pipe = `\\\\.\\pipe\\tau-test-kill-${process.pid}-${Math.random().toString(16).slice(2)}`;

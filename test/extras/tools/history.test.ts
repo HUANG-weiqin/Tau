@@ -34,9 +34,15 @@ const result = (id: string, name: string, t: string, isError = false): any => ({
 const rowsOf = (...messages: any[]): Row[] => messages.map((message, seq) => ({ seq, message }));
 
 /** 临时目录，每个测试自己一个。 */
+const tempRoots: string[] = [];
 function tempRoot(): string {
-  return mkdtempSync(join(tmpdir(), "tau-dump-"));
+  const dir = mkdtempSync(join(tmpdir(), "tau-dump-"));
+  tempRoots.push(dir);
+  return dir;
 }
+after(() => {
+  for (const dir of tempRoots) rmSync(dir, { recursive: true, force: true });
+});
 
 // ---------- 纯函数 ----------
 
