@@ -23,7 +23,7 @@ const isInt = (v: unknown, min: number): boolean => typeof v === "number" && Num
 const oneOf = (list: readonly string[]) => (v: unknown) => typeof v === "string" && list.includes(v);
 const BUDGET_KEYS = ["minimal", "low", "medium", "high"];
 /** `samplingParams` 里不许出现的键：请求的结构和输出上限归内核和适配器管。 */
-const SAMPLING_RESERVED = ["model", "messages", "input", "instructions", "system", "tools", "tool_choice", "stream", "stream_options", "n", "max_tokens", "max_completion_tokens", "max_output_tokens", "previous_response_id", "store", "prompt_cache_key", "reasoning", "reasoning_effort", "thinking"];
+export const SAMPLING_RESERVED = ["model", "messages", "input", "instructions", "system", "tools", "tool_choice", "stream", "stream_options", "n", "max_tokens", "max_completion_tokens", "max_output_tokens", "previous_response_id", "store", "prompt_cache_key", "reasoning", "reasoning_effort", "thinking"];
 
 /** 白名单：键 -> [类型说明, 检查]。 */
 const OPTION_CHECKS: Record<keyof PresetOptions, [string, (v: unknown) => boolean]> = {
