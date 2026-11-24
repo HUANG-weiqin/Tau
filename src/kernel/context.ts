@@ -1,5 +1,6 @@
 // 从进程记录和工作段构造模型请求（见 .knowledge/kb-kernel.md）。
 import type { Tool } from "@earendil-works/pi-ai";
+import { loopNote } from "./loop.ts";
 import { toolsFor } from "./tools.ts";
 import type { Content, Message, ModelRequest, PresetSnapshot, Process } from "./types.ts";
 
@@ -100,9 +101,10 @@ export function buildContext(p: Process, segment: readonly Message[]): ModelRequ
     // 交接请求只要重发过就带提示，不看失败的种类：先 toolUse 再流出错时，第三次请求也要带。
     const retry = p.phase.turn.retry !== undefined ? `\n\n${HANDOFF_RETRY}` : "";
     messages.push({ role: "user", content: HANDOFF_INSTRUCTION + retry, timestamp: messages.at(-1)?.timestamp ?? p.createdAt });
-  } else if (p.phase.tag === "awaitingModel" && p.phase.turn.retry !== undefined) {
-    // 重发时末尾的提示，不入库（D92）。error 重发的是同一个请求，不加。
-    const note = p.phase.turn.retry.kind === "empty" ? EMPTY_REPLY_NOTE : p.phase.turn.retry.kind === "length" ? LENGTH_NOTE : "";
+  } else if (p.phase.tag === "awaitingModel") {
+    // 末尾的提示，不入库。D92 的重发提示优先，同一次请求只加一条；error 重发的是同一个请求，不加 D92 的。
+    const retry = p.phase.turn.retry;
+    const note = retry?.kind === "empty" ? EMPTY_REPLY_NOTE : retry?.kind === "length" ? LENGTH_NOTE : loopNote(segment);
     if (note !== "") messages.push({ role: "user", content: note, timestamp: messages.at(-1)?.timestamp ?? p.createdAt });
   }
   messages = omitOldImages(messages).map(withoutTau);

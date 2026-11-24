@@ -387,10 +387,10 @@ CREATE TABLE blobs (
 | `memory_edit` | `key`、`old`、`new` 字符串，必填；`version` 整数，必填；`brief` 字符串，可选 | `已写入 <key>，版本 <v>。` |
 | `memory_delete` | `key` 字符串；`version` 整数，必填 | `已删除 <key>。` |
 
-- `version` 省略、为 `null`、为 0 或负数：这个键现在必须不存在。版本号从 1 起，0 和负数不可能是读到的版本；模型常给新键填 0，旧文案只说“键不存在”、没说怎么改，模型会一直重发，所以当作没带。只在 `memory_set` 这样；`Memory.set` 和线协议的 `expected` 不变（`null` 或正整数），`memory_delete` 的 `version` 仍必填。已有的键带 0 照样冲突，不覆盖。
+- `memory_set` 只在键现在存在时才看 `version`。省略、为 `null`、为 0 或负数，都当没带：版本号从 1 起，0 和负数不可能是读到的版本。键不存在而带了正整数，也当没带，照样新建，结果在 `已写入 <key>，版本 <v>。` 后面接 `这个键原来不存在，按新建写入，没看 version。`（没带、带 0 或负数时不接）。原因：弱模型总给新键填 1 之类，拒绝了它不照做，会带着 version 一直重发；那句让键名写错时看得出来（[D107](kb-decisions.md#d107-新键带了-version-照样新建)，[D86](kb-decisions.md#d86-记忆的版本号保留不让系统代记0-和负数当没带)）。只在 `memory_set` 这样；`Memory.set` 和线协议的 `expected` 不变（`null` 或正整数），`memory_delete` 的 `version` 仍必填。键存在时照旧：带 0、负数、不带都冲突，不覆盖。
 - `version` 必须是整数，`1.5` 也不行。`memory_edit`、`memory_delete` 缺它时还接 `先用 memory_get 读到现在的版本号。`
 - 参数不对：结果是 `参数错误：<说明>`，`isError` 为 `true`，不碰记忆。`memory_set`、`memory_edit` 少了哪个字符串参数就指名，并列出模型实际给的名字：`memory_set 缺少 value（字符串）。收到的参数名：key, content, brief。`（弱模型常把 `value` 写成 `content`）。别的工具只说哪几个必须是字符串。更新时间是这条输入的 `now`。
-- 版本对不上：不写入，`isError` 为 `true`，结果带最新值：`版本冲突，没有写入。现在的值是 ` 接 `memory_get` 那一段（键、版本、更新日期、摘要、值）。键已不存在时是 `版本冲突，没有写入。键 <key> 现在不存在。`；`memory_set` 在这句后面再接 `新建键不要带 version，去掉它再写一次。`（只有带了正的 `version` 才会走到这里：模型常给新键填 1 之类，光说“不存在”它会照样重试）。键还在时，`memory_set` 在值的那段后面另起一行接 `要覆盖，带 version=<N> 再写一次。`（N 是现在的版本号，已代入）（值可能以任何字符结尾，接在同一行会黏在一起）。`memory_delete` 不加这两句。
+- 版本对不上：不写入，`isError` 为 `true`，结果带最新值：`版本冲突，没有写入。现在的值是 ` 接 `memory_get` 那一段（键、版本、更新日期、摘要、值）。键已不存在时（`memory_delete` 才会）是 `版本冲突，没有写入。键 <key> 现在不存在。`。键还在时，`memory_set` 在值的那段后面另起一行接 `要覆盖，带 version=<N> 再写一次。`（N 是现在的版本号，已代入）（值可能以任何字符结尾，接在同一行会黏在一起）。`memory_delete` 不加这句。
 - `memory_set` 超出上限：不写入，`isError` 为 `true`。结果是 `超出上限，没有写入：` 接下表的一句。`N` 是 `Memory.set` 返回的 `bytes`，上限取自 `src/kernel/tools.ts` 的常量。摘要不在这张表里：201 到 300 字节原样存，超过 300 按码点截到 300（末尾 `…`），静默写入，不报错（[D96](kb-decisions.md#d96-摘要的上限分两层给模型看-200实际存-300超了截断)）。
 
 | 超出的 | 接的那句 |

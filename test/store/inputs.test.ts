@@ -213,9 +213,12 @@ test("记忆工具：读、写、冲突时带最新值、删除、参数错误",
   assert.deepEqual(run("memory_get", { key: "k" }), { text: "k（版本 2，更新 1970-01-01）：\n摘要：乙\n2", isError: false });
   assert.equal(run("memory_delete", { key: "k", version: 1 }).isError, true);
   assert.deepEqual(run("memory_delete", { key: "k", version: 2 }), { text: "已删除 k。", isError: false });
-  // 新键：version 0 从来不是读到的版本（版本号从 1 起），模型常给新键填 0 或负数，当作没带；别的数照实冲突，并告诉它去掉 version。删一个不存在的键的文字不变。
-  assert.deepEqual(run("memory_set", { key: "k", value: "3", brief: "丙", version: 2 }), { text: "版本冲突，没有写入。键 k 现在不存在。新建键不要带 version，去掉它再写一次。", isError: true });
-  assert.deepEqual(run("memory_set", { key: "k", value: "3", brief: "丙", version: 0 }), { text: "已写入 k，版本 3。", isError: false }, "新键带 0：写得进");
+  // 新键：version 0 和负数当没带（D86）；带正整数也当没带，照样新建，结果说明没看 version（D107）。删一个不存在的键的文字不变。
+  const NOTE = "这个键原来不存在，按新建写入，没看 version。";
+  assert.deepEqual(run("memory_set", { key: "k", value: "3", brief: "丙", version: 2 }), { text: "已写入 k，版本 3。" + NOTE, isError: false }, "新键带正整数：新建，带说明");
+  assert.equal(run("memory_get", { key: "k" }).text, "k（版本 3，更新 1970-01-01）：\n摘要：丙\n3");
+  assert.equal(run("memory_set", { key: "k", value: "8", brief: "己", version: 99 }).isError, true, "已有键带错的正整数：照旧冲突");
+  assert.equal(run("memory_get", { key: "k" }).text, "k（版本 3，更新 1970-01-01）：\n摘要：丙\n3", "冲突没有覆盖");
   // 0 只代表“新键”：已有的键带 0 照样冲突，不覆盖。
   assert.deepEqual(run("memory_set", { key: "k", value: "9", brief: "戊", version: 0 }), { text: "版本冲突，没有写入。现在的值是 k（版本 3，更新 1970-01-01）：\n摘要：丙\n3\n要覆盖，带 version=3 再写一次。", isError: true });
   assert.deepEqual(run("memory_delete", { key: "k", version: 1 }), { text: "版本冲突，没有写入。现在的值是 k（版本 3，更新 1970-01-01）：\n摘要：丙\n3", isError: true });
@@ -223,6 +226,11 @@ test("记忆工具：读、写、冲突时带最新值、删除、参数错误",
   assert.deepEqual(run("memory_delete", { key: "k", version: 3 }), { text: "版本冲突，没有写入。键 k 现在不存在。", isError: true });
   assert.deepEqual(run("memory_set", { key: "k", value: "4", brief: "丁", version: -1 }), { text: "已写入 k，版本 4。", isError: false }, "新键带负数：同 0");
   assert.deepEqual(run("memory_delete", { key: "k", version: 4 }), { text: "已删除 k。", isError: false });
+  // 读了以后键被删，再带着读到的版本写：重新建出来（D107 接受的代价）。
+  assert.deepEqual(run("memory_set", { key: "k", value: "5", brief: "庚", version: 4 }), { text: "已写入 k，版本 5。" + NOTE, isError: false });
+  assert.deepEqual(run("memory_delete", { key: "k", version: 5 }), { text: "已删除 k。", isError: false });
+  assert.deepEqual(run("memory_set", { key: "k", value: "6", brief: "辛", version: 0 }), { text: "已写入 k，版本 6。", isError: false }, "新键带 0：没有说明");
+  assert.deepEqual(run("memory_delete", { key: "k", version: 6 }), { text: "已删除 k。", isError: false });
   assert.equal(memory.get(PRESET.id, "k"), null);
   for (const [name, args, want] of [
     ["memory_get", {}, "key 必须是字符串。"],

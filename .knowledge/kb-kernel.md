@@ -114,6 +114,7 @@ interface Env { now: Instant; memoryView: string; fresh?: { memoryView: string; 
 | `effectOf(p, seg)` | `decide.ts` | `idle`：`null`。`awaitingModel`：`callModel(lastEffect, purpose)`。`awaitingTool`：`runTool(lastEffect, 第一个待执行的调用)` |
 | `hurried(p)` | `decide.ts` | 进程是 `awaitingTool` 且 `turn.queued` 不空时为真，否则为假。纯函数，不读段。服务的 `pump` 和执行器开始副作用时靠它决定要不要催等着的 bash（[D104](kb-decisions.md#d104-bash-前台等待时有信排队最多再等-1-秒就转后台)） |
 | `buildContext(p, seg)`、`tailStart(seg)`、`omitOldImages(messages)` | `context.ts` | 模型请求；段末用户消息的起点；请求里成批省略旧图 |
+| `sameErrors(seg)`、`loopNote(seg)` | `loop.ts` | 段末连续相同的错误步数、工具名和错误；请求末尾的提示文字（D108） |
 | `observe(p, seg, siblings, now)` | `observe.ts` | 投影 |
 | `toolsFor(preset)`、`findTool(preset, name)` | `tools.ts` | 工具描述，含工具定义。参数只要 `tools` 和 `toolDefs` |
 | `contextUsed`、`messageBytes`、`tokens`、`outputMax`、`handoffThreshold`、`resultReserve`、`fixedTokens`、`limits`、`startError`、`newSegmentUsed`、`pendingCalls`、`handoffRequested`、`segmentStartedAt`、`usageOf`、`clip`、`utf8Bytes` | `derive.ts` | 派生值和字节工具 |
@@ -135,6 +136,7 @@ interface Env { now: Instant; memoryView: string; fresh?: { memoryView: string; 
   - 去掉段末连续的用户消息（从 `tailStart` 起）。下标 0 总保留：第一条消息是写交接说明的依据。段末没有用户消息时什么都不去掉。
   - 末尾加一条不入库的用户消息 `HANDOFF_INSTRUCTION`。时间戳取保留下来的最后一条消息的，段空时取 `createdAt`。`turn.retry` 有值时（不看 `kind`），这条消息在指令后面空一行，接 `HANDOFF_RETRY`。
 - `awaitingModel(turn)` 且 `turn.retry` 的 `kind` 是 `empty` 或 `length` 时，末尾加一条不入库的用户消息 `EMPTY_REPLY_NOTE` 或 `LENGTH_NOTE`，时间戳取段里最后一条的，段空时取 `createdAt`。`kind` 是 `error` 时不加，请求和第一次一字不差。没有 `retry` 时请求没有这一条。
+- `awaitingModel(turn)` 且没有加上一条的提示（没有 `retry`，或 `kind` 是 `error`）时，如果段末连续 `LOOP_NOTE_AT` 步相同，末尾加一条不入库的用户消息 `loopNote`（D108），时间戳取法同上。一步是一条带工具调用的助手消息加紧跟它的工具结果；两步相同是工具名依次相同（不比参数和助手的文字）、结果依次相同（`isError` 和内容），并且至少有一个错误结果。从段末往前数，遇到用户消息、没有工具调用的助手消息或不同的一步就停；段末那一步没有错误就不加。提示里的工具名去重，按出现顺序用“、”连，截到 200 字节；错误取第一个错误结果的第一个非空文字行（没有文字写“（没有文字）”），截到 300 字节；截短按码点，末尾加 …，… 也算在内。D92 的提示优先，同一次请求只加一条；交接请求不加。不入库：段和阈值不变，模型一换做法，下一次请求就没有它；带提示那次回复的用量多算最多 `LOOP_NOTE_MAX_BYTES` 换成的 token，只会让换段早一点（证明第 9 条）。提示每次请求都在最后一条消息上，打转期间会让按“最后一条消息”打断点的提示缓存（Anthropic 格式）接不上，这一段按全价计（D108 的代价）。实现在 `loop.ts`，不放进 `derive.ts`：`derive.ts` 导入 `context.ts`，放进去会成环。
 - 去掉的消息在换段成功时原样带到新段（见[流程：换段](#流程换段)）。为什么不能带进交接请求，见坑点。
 
 ### fork
@@ -242,6 +244,8 @@ interface Env { now: Instant; memoryView: string; fresh?: { memoryView: string; 
 | `MESSAGE_MAX_BYTES` | 32 KiB | 已定 | 每个工具结果和 `decide` 写入的每条用户消息的字节上限，超出时保留头尾 |
 | `MARGIN_TOKENS` | 4096 | 已定 | 阈值之上的余量：交接请求末尾的消息（指令加重试提示）、补的结果、ID、消息框架和估算误差 |
 | `RETRIES_PER_REPLY` | 2 | 已定（[D92](kb-decisions.md#d92-弱模型兜底可恢复的模型失败重试不结束这一轮)） | 同一种可恢复失败最多重发几次。放在 `derive.ts` |
+| `LOOP_NOTE_AT` | 3 | 已定（[D108](kb-decisions.md#d108-同样的错误连续出现时提醒模型换做法)），内部常量 | 段末连续多少步相同的错误，请求末尾加提示。放在 `loop.ts` |
+| `LOOP_NOTE_MAX_BYTES` | 1048 | 由文字算出 | 这条提示的最大字节数：固定文字，加 n（按 4 位数）、截短后的工具名（200 字节）和错误（300 字节）。换段阈值证明的第 9 条按它算。放在 `loop.ts` |
 | `HANDOFF_REQUEST_MAX_BYTES` | 671 | 由文字算出 | 交接请求末尾那条消息的最大字节数：`HANDOFF_INSTRUCTION`、空行、`HANDOFF_RETRY`。余量按它算。放在 `derive.ts` |
 | `ENDED_REASON_MAX_BYTES` | 1024 | 已定 | 出错的原因经 `clip` 截到这个字节数：D25 的说明、`self` 和回信的头都用 |
 | `HOPS_MAX` | 1024 | 暂定 | `post` 和 `spawn` 寄出的信，跳数超过它就失败。回信不受限制。只防库内工具的循环。检查在存储层 `post`、`spawn` 的执行里（[kb-store](kb-store.md#进程之间的工具)），常量放在 `derive.ts`。为什么是 1024，见 [D50](kb-decisions.md#d50-hops_max-放宽到-1024) |
@@ -269,6 +273,7 @@ interface Env { now: Instant; memoryView: string; fresh?: { memoryView: string; 
 | `HANDOFF_RETRY` | 注意：你上一次回复没有写出交接说明。这一次不要调用任何工具，也不要写工具调用，只用文字写交接说明。147 字节 | 交接请求只要重发过（`turn.retry` 有值，不看失败的种类），就接在 `HANDOFF_INSTRUCTION` 后面，空一行，同一条消息，不入库 |
 | `EMPTY_REPLY_NOTE` | 你上一条回复是空的：没有文字，也没有工具调用。请继续做事；做完了就写出最终回复。 | 空回复后重发时加在请求末尾，不入库 |
 | `LENGTH_NOTE` | 你上一条回复太长，被截断，已经丢弃。请缩短思考和输出，把事情拆成小步，一步一步做。 | `length` 后重发时加在请求末尾，不入库 |
+| `loopNote` | 注意：你最近连续 n 次调用 <工具名>，都得到同样的错误（工具返回的原文，只引第一行）：「<错误>」；完整的错误见上面的工具结果；用同样的做法再试多半还是这个结果；先读懂错误，再换一种做法；实在做不下去就先跳过，接着做别的，并在最终回复里写明跳过了什么、卡在哪个错误；这是程序自动加的提醒，不是新任务，不用回复它。全文见 `loop.ts`，措辞不冻结（D108） | 段末连续 `LOOP_NOTE_AT` 步相同的错误时，用途 `turn` 的请求末尾，不入库 |
 
 ### 换段阈值
 
@@ -293,6 +298,7 @@ W 是 `preset.contextWindow`。快照里只存它和 `input`，不存模型的�
 7. 停止、步数用完、交接失败多少次、后来的消息多大，都不改变这个上界。重发的交接请求最多多一段 `HANDOFF_RETRY`，I 已经把它算进去；失败的回复不进段，重发期间段不变，所以上界照旧。
 8. `turn` 调用：T + OUT < W。
 9. `turn` 重发的请求多出 `EMPTY_REPLY_NOTE` 或 `LENGTH_NOTE`（约 60 token，不入库）。它只让这一次请求和回复用量里多这么多，由 2·OUT + R + `MARGIN_TOKENS` 里的余量吸收：下一次请求里提示已经没了，锚点多算的只会让换段早一点。
+   D108 的提示（`loopNote`）同理：不入库，只让这一次请求多出最多 `LOOP_NOTE_MAX_BYTES` = 1048 字节，即 524 token。它和 D92 的提示不同时出现，所以取二者里大的，就是 524 token，远小于 `MARGIN_TOKENS` = 4096，由同一处余量吸收。回复用量里多出的这 524 token 在之后的请求里没有，锚点只会多算，U 仍是上界。
 
 前提：真实的分词至少 2 字节一个 token；`IMAGE_TOKENS` 不低于在用模型一张图的真实 token 数，图按入口允许的各种形状算，不只正方形；固定部分加记忆加上下文的上界低于阈值，由[启动检查](#启动检查和交接以后的检查)保证。
 
@@ -512,7 +518,7 @@ W 是 `preset.contextWindow`。快照里只存它和 `input`，不存模型的�
 - 请求末尾加什么，见[函数](#函数)里 `buildContext` 的消息一项：`empty` 加 `EMPTY_REPLY_NOTE`，`length` 加 `LENGTH_NOTE`，交接请求（用途 `handoff`）只要重发过就在交接指令后加 `HANDOFF_RETRY`，不看 `kind`；用途 `turn` 的 `error` 不加。提示不入库。
 - 失败的回复不入段，所以重发期间段、用量锚点、阈值都不变；累计用量照加（每个不丢弃的模型结果都加）。
 - 崩溃：重发中的 `awaitingModel` 被 `interrupted` 送回时，照旧 `endTurn(turn, { error: "服务重启，模型调用被中断" })`，不再重发。
-- 没做：文字里假装调用工具、死循环检测、流看门狗、重启后重发、窗口溢出（[D92](kb-decisions.md#d92-弱模型兜底可恢复的模型失败重试不结束这一轮)）。连续失败的次数不分种类，一起数。
+- 没做：文字里假装调用工具、流看门狗、重启后重发、窗口溢出（[D92](kb-decisions.md#d92-弱模型兜底可恢复的模型失败重试不结束这一轮)）。连续失败的次数不分种类，一起数。死循环不停这一轮，改成在请求末尾提醒（[D108](kb-decisions.md#d108-同样的错误连续出现时提醒模型换做法)）。
 
 工具调用太多：每个调用按 2 × ID + 名称 + `未执行` 的字节算补的结果，换成 token 后加上交接请求末尾那条消息的 336（`HANDOFF_REQUEST_MAX_BYTES`）。超过 `MARGIN_TOKENS` 时只留放得下的前几个调用，后面的调用和它们后面的文字一起丢掉；留下的部分里没有文字块时，把被丢掉的部分里最后一个文字块接回来，免得回信正文是空串（[D87](kb-decisions.md#d87-一次回复的工具调用放不下时截断不再作废整条回复)）；连第一个都放不下才不写入、本轮出错。截断是静默的：模型看到自己只发了留下的那些，下一轮会重发没拿到结果的调用。留下几个用同一个口径算：把所有字节加起来再换成 token，不逐个取整，所以留的是“放得下的最长前缀”。
 
@@ -757,6 +763,7 @@ type PhaseView =
 | `src/kernel/decide.ts` | `start`、`decide`（含 `reconfigure` 一支和换段时采用 `next`）、`effectOf`、`hurried`、`continueTurn`、`endTurn`、`sendReplies`（回信）、`endedNote`（上一轮的说明）、`header`、`render`、`fit`、`userMessage`、`toolResult`、`addUsage`、`INTERRUPTED`、`SKIPPED` |
 | `src/kernel/snapshot.ts` | 会话快照的比较（D71），纯函数：`pendingFields`（`next` 和 `preset` 的结构性字段差在哪些键，换成对外的名字，投影的 `self.pending` 用它）、`sameStructure`（结构性字段是否相等，稳定序列化后比较，`decide` 的 `reconfigure` 用它；稳定序列化不递归，用显式的栈，见[坑点](#坑点)）、`withCallParams`（`base` 的结构性字段加 `from` 的三个调用参数，`from` 没有的键结果里也没有；`decide` 和服务造 S 都用它） |
 | `src/kernel/derive.ts` | 派生值（含 `limits` 的 `contextMax`）、`clip`、`utf8Bytes`、`finalReply`、`endedText`、`endedReason`、常量 |
+| `src/kernel/loop.ts` | `sameErrors`、`loopNote`、`LOOP_NOTE_AT`、`LOOP_NOTE_MAX_BYTES`（D108；不导入 `derive.ts`，免得成环） |
 | `src/kernel/context.ts` | `buildContext`、`tailStart`、`systemPrompt`（含上下文一节）、记忆和上下文两个标题常量、`toolDescriptions`、交接文本、`IMAGE_UNSUPPORTED` |
 | `src/presets/tooldefs.ts` | 读工具定义（不在 `kernel` 里，格式见 [kb-tools](kb-tools.md#工具定义)） |
 | `src/kernel/observe.ts` | `observe` |
@@ -773,6 +780,7 @@ type PhaseView =
 | `test/kernel/letters.test.ts` | 信的头和合并、两种形状、工具结果和新段第一条的张数、换段带全部段末消息 |
 | `test/kernel/observe.test.ts` | 投影；`self.bgJobs` 认得催出来的转后台结果（D104：说明一行在固定的一段前面） |
 | `test/kernel/since.test.ts` | `since` 在各转移上的值，`fork` 的 `since`，投影带 `since` |
+| `test/kernel/loop-note.test.ts` | D108：段末连续 3 步同名同错加提示（次数、工具名、错误第一行）；不到 3 步、错误不同、工具名不同、段末成功、信或成功一步隔开，都不加；一步多个调用；D92 提示优先；交接请求不加；超长的工具名和错误截短，不超过 `LOOP_NOTE_MAX_BYTES`；提示不入库 |
 | `test/kernel/retry.test.ts` | D92：五条重发路径（空回复、`length`、`stop` 带调用、换段、流出错）各自的重发、次数用完和计数；`retry` 的清除；请求末尾的提示；重发期间来信；崩溃；步数用完 |
 | `test/kernel/usage.test.ts` | 累计用量：每种回复都加，丢弃的和被中断的不加 |
 | `test/kernel/context.test.ts` | 系统提示词、工具描述、交接请求去掉段末用户消息 |

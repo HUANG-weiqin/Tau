@@ -116,11 +116,11 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
       if (typeof key !== "string" || typeof value !== "string" || typeof brief !== "string") return bad(missing("memory_set", fixed.args, ["key", "value", "brief"]));
       if (version != null && !isInt(version)) return bad("version 必须是整数，或者省略。");
       if (extra.length > 0) return badExtra();
-      // 版本号从 1 起，0 和负数不可能是读到的版本：模型常给新键这么填，当作没带。
-      const r = memory.set(ns, key, { value, brief, now }, isInt(version) && version > 0 ? version : null);
-      if (r.ok) return ok(`已写入 ${key}，版本 ${r.version}。`);
-      if ("over" in r) return { content: textContent("超出上限，没有写入：" + overText(r.over, r.bytes)), isError: true };
-      return conflict(key, r.current, r.current ? override(r.current.version) : "新建键不要带 version，去掉它再写一次。");
+      // 只看键还在时带的正整数 version：0、负数（D86）和新键带的都当没带，弱模型常这么填，拒绝了它会一直重发（D107）。
+      const fresh = isInt(version) && version > 0 && !memory.get(ns, key);
+      const r = memory.set(ns, key, { value, brief, now }, isInt(version) && version > 0 && !fresh ? version : null);
+      if (r.ok) return ok(`已写入 ${key}，版本 ${r.version}。${fresh ? "这个键原来不存在，按新建写入，没看 version。" : ""}`);
+      return "over" in r ? { content: textContent("超出上限，没有写入：" + overText(r.over, r.bytes)), isError: true } : conflict(key, r.current, r.current ? override(r.current.version) : "");
     }
     case "memory_edit": {
       const { old, new: replacement } = fixed.args;
