@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { Fail, extrasDir, readArgs, run, tauEnv } from "./common.ts";
+import { dropUnknown, extrasDir, readArgs, refuseUnknown, run, takeArgs, takeNotes, tauEnv } from "./common.ts";
 import { checkBounds, describeWindow, doneText, encodeImage, fitSize, parseArgs, perform, pruneComputerImages, zoomRect, zoomText } from "./computer_lib.ts";
 import type { Io, Size } from "./computer_lib.ts";
 import { needsLease } from "./computer_lease.ts";
@@ -37,19 +37,33 @@ function saveImage(proc: string, bgra: Buffer, size: Size): string {
   return file;
 }
 
-const show = (items: unknown[]): void => void process.stdout.write(`${JSON.stringify(items)}
+/** 输出一个 JSON 数组。“注：”并进第一个文字项（标准输出只能是这一个数组）；没有文字项就加一个。 */
+const show = (items: unknown[]): void => {
+  const n = takeNotes();
+  const first = items.find((i) => (i as { type?: string }).type === "text") as { text: string } | undefined;
+  if (n !== "") {
+    if (first === undefined) items.unshift({ type: "text", text: n });
+    else first.text = `${first.text}
+${n}`;
+  }
+  process.stdout.write(`${JSON.stringify(items)}
 `);
+};
 
 if (import.meta.main) run(async () => {
   const { proc } = tauEnv();
-  const a = parseArgs(await readArgs());
+  const taken = takeArgs("computer", await readArgs());
+  const a = parseArgs(taken.args);
+  // 不认识的参数：输入动作拒绝（可能改了意思，做错了收不回），其余丢掉。都在拿租约之前。
+  if (needsLease(a.action)) refuseUnknown("computer", taken.unknown, `这次没有${a.action}：去掉 ${taken.unknown.join("、")} 再调，会照剩下的参数真的执行 ${a.action}（${JSON.stringify(taken.args)}），${taken.unknown.join("、")} 不会生效；拿不准先 screenshot 看一眼。`);
+  else dropUnknown("computer", taken.unknown);
   // 输入动作先拿租约：拿不到就在发出任何输入之前报错。
   if (needsLease(a.action)) takeLease(proc);
   initDpi();
   checkDesktop();
   const screen = screenSize();
   const shot = fitSize(screen.w, screen.h);
-  checkBounds(a, shot);
+  checkBounds(a, shot, screen);
 
   if (a.action === "zoom") {
     const rect = zoomRect(a.region, shot, screen);
@@ -75,6 +89,7 @@ if (import.meta.main) run(async () => {
     show([{ type: "text", text }, { type: "image", path: file }]);
   } catch (e) {
     if (did === "") throw e;
-    throw new Fail(`${did}，动作已经做了，不要重做。但之后出错：${e instanceof Error ? e.message : String(e)}`);
+    // 动作已经做了：退出码 0，写明没截到图，免得模型以为没做成、再做一遍。
+    show([{ type: "text", text: `${did}。动作已经做了；之后没截到图：${e instanceof Error ? e.message : String(e)}。要看画面就 screenshot。` }]);
   }
 });

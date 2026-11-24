@@ -194,7 +194,7 @@ function userLines(m: any): string[] {
   return out;
 }
 
-const firstLine = (t: string): string => squash(t.split("\n").find((l) => l.trim() !== "") ?? "");
+const firstLine = (t: string): string => squash(t.split("\n").find((l) => l.trim() !== "" && !l.startsWith("注：")) ?? "");
 
 /** 一条工具结果的行：工具名加参数开头；库内工具成功再加第一行；失败写头尾。 */
 function resultLine(m: any, call: any): string {
@@ -203,7 +203,7 @@ function resultLine(m: any, call: any): string {
   const head = arg === "" ? name : `${name} ${arg}`;
   const text = textOf(m.content);
   if (m.isError !== true) return LIBRARY_TOOLS.has(name) && firstLine(text) !== "" ? `${head} → ${firstLine(text)}` : head;
-  const lines = text.split("\n").map((l) => l.trim()).filter((l) => l !== "");
+  const lines = text.split("\n").map((l) => l.trim()).filter((l) => l !== "" && !l.startsWith("注："));
   let code = "";
   const exit = /^\[退出码 -?\d+\]$/;
   if (lines.length > 0 && exit.test(lines[lines.length - 1]!)) code = `${lines.pop()!} `;

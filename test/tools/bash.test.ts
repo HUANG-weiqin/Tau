@@ -7,14 +7,14 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { MESSAGE_MAX_BYTES, utf8Bytes } from "../../src/kernel/derive.ts";
+import { clip, MESSAGE_MAX_BYTES, utf8Bytes } from "../../src/kernel/derive.ts";
 import { bash } from "../../src/tools/bash.ts";
 import { plain } from "../plain.ts";
 
 // 转后台的命令跑完后，包装脚本运行 notify.ts，经 TAU_PIPE 寄信。这里的假服务收 send、回回执。
 const MAIL_PIPE = String.raw`\\.\pipe\tau-bash-mail-` + process.pid;
 const CTX = { process: "p-test", pipe: MAIL_PIPE };
-const KEEP = MESSAGE_MAX_BYTES / 2 - 256; // bash.ts 的 KEEP_BYTES
+const KEEP = MESSAGE_MAX_BYTES / 2 - 768; // bash.ts 的 KEEP_BYTES：两段加说明行加执行器接的“注：”不超过 MESSAGE_MAX_BYTES
 const STARTED = Date.now();
 let dir = "";
 let tmp = "";
@@ -222,6 +222,27 @@ test("timeout 是负数、NaN、小数时报参数错误，不运行", async () 
   }
   assert.equal(exists("badtimeout.txt"), false);
   assert.deepEqual(filesLeft(), []);
+  assert.ok((await run("echo x", -1)).text.includes("不想等就写 0（立刻转后台，跑完寄信）；不写是 60；最长 600"));
+});
+
+test("工作目录不存在：说清不是命令的错，换什么命令都一样；不运行，不留输出文件", async () => {
+  const gone = path.join(dir, "gone");
+  const r = plain(await bash({ command: "echo x > made.txt" }, gone, new AbortController().signal, CTX));
+  assert.equal(r.isError, true);
+  assert.ok(r.text.startsWith(`工作目录 ${gone.replaceAll("\\", "/")} 不存在了（被删了或改了名）。`), r.text);
+  assert.ok(r.text.includes("换什么命令都一样") && r.text.includes("handoff"), r.text);
+  assert.deepEqual(filesLeft(), []);
+  assert.equal(exists("made.txt"), false);
+});
+
+test("输出被截断时，加上执行器接的“注：”也不超过 MESSAGE_MAX_BYTES，省略的字节数不被再截一次", async () => {
+  clearShell();
+  const r = await run(`head -c ${2 * KEEP + 5000} /dev/zero | tr '\\0' a`);
+  const withNote = `${r.text}\n注：${"说明".repeat(100)}。`;
+  assert.ok(Buffer.byteLength(withNote) <= MESSAGE_MAX_BYTES, String(Buffer.byteLength(withNote)));
+  assert.equal(clip(withNote), withNote);
+  assert.equal(r.text.match(/中间省略/g)?.length, 1);
+  clearShell();
 });
 
 // 超时不再结束命令：到时间就转后台，命令继续跑完，跑完寄信。调用远早于命令结束就返回，说明没等它。

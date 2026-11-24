@@ -2,12 +2,13 @@ import { StringDecoder } from "node:string_decoder";
 // 真正的动作：调用模型、运行库外工具（见 .knowledge/kb-executor.md、.knowledge/kb-tools.md）。
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import type { JsonObject, Models, SimpleStreamOptions } from "@earendil-works/pi-ai";
-import { buildContext, toolDescriptions } from "../kernel/context.ts";
+import { buildContext } from "../kernel/context.ts";
 import { outputMax } from "../kernel/derive.ts";
+import { findTool, renamed, unknownTool } from "../kernel/tools.ts";
 import { textContent } from "../kernel/types.ts";
 import type { ProcessId } from "../kernel/types.ts";
 import { resolveImages } from "../store/blobs.ts";
-import { fixArgs } from "../tools/args.ts";
+import { fixArgs, noted } from "../tools/args.ts";
 import { bash } from "../tools/bash.ts";
 import type { BashContext } from "../tools/bash.ts";
 import { edit, read, write } from "../tools/files.ts";
@@ -56,32 +57,34 @@ export function createActions(models: Models, onText: (id: ProcessId, n: number,
     },
     async runTool(job, call, signal, hurry) {
       const { workdir } = job.process.preset;
-      const tools = toolDescriptions(job.process.preset);
-      const tool = tools.find((t) => t.name === call.name);
-      if (!tool) return { content: textContent(`工具 ${call.name} 不存在，或者预设里没有它。可用的工具：${tools.map((t) => t.name).join("、")}。`), isError: true };
-      const fixed = fixArgs(tool.parameters, typeof call.arguments === "object" && call.arguments !== null ? call.arguments : {});
+      // 和存储层同一个解析函数（D109）：规范名执行，段里的调用名不改。
+      const tool = findTool(job.process.preset, call.name);
+      if (!tool) return { content: textContent(unknownTool(job.process.preset, call.name)), isError: true };
+      const def = job.process.preset.toolDefs.find((d) => d.name === tool.name);
+      const fixed = fixArgs(tool, call, def === undefined);
       if ("error" in fixed) return { content: textContent(fixed.error), isError: true };
+      const notes = [...renamed(call.name, tool), ...fixed.notes];
       let args;
       try {
-        args = validateToolArguments(tool, { ...call, arguments: fixed.args as JsonObject });
+        args = validateToolArguments(tool, { ...call, name: tool.name, arguments: fixed.args as JsonObject });
       } catch (e) {
-        return { content: textContent(`参数错误：${e instanceof Error ? e.message : String(e)}`), isError: true };
+        return { content: textContent(`参数错误：参数不合 schema（下面是校验器的原文）。\n${e instanceof Error ? e.message : String(e)}`), isError: true };
       }
       // 进程的模型收图片：read 和工具定义带图时才存图，不收时换成一行说明。
       const accepts = job.process.preset.input.includes("image");
-      switch (call.name) {
+      switch (tool.name) {
+        // 路径和 edit 的兜底也把说明收进 notes，和工具名、参数的说明一起接成一行。
         case "read":
-          return read(args, workdir, accepts);
+          return noted(await read(args, workdir, accepts, notes), notes);
         case "write":
-          return write(args, workdir);
+          return noted(await write(args, workdir, notes), notes);
         case "edit":
-          return edit(args, workdir);
+          return noted(await edit(args, workdir, notes), notes);
         case "bash":
-          return bash(args, workdir, signal, live(job, hurry));
+          return noted(await bash(args, workdir, signal, live(job, hurry)), notes);
         default: {
-          const def = job.process.preset.toolDefs.find((d) => d.name === call.name);
-          if (!def) return { content: textContent(`工具 ${call.name} 不由执行器运行。`), isError: true };
-          return runToolDef(def, args, workdir, signal, live(job), accepts);
+          if (!def) return { content: textContent(`工具 ${tool.name} 不由执行器运行。`), isError: true };
+          return noted(await runToolDef(def, args, workdir, signal, live(job), accepts), notes);
         }
       }
     },

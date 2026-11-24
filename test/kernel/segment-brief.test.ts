@@ -241,6 +241,24 @@ describe("D103 简略视图：取法", () => {
     assert.ok(linesOf(firstOf(w).text).includes("[1:2] spawn worker → 新进程 ab12cd"));
   });
 
+  test("末尾的“注：”行不进简略视图：退出码和最后一行还是对的（D109）", () => {
+    const w = world(P);
+    feed(w, userInput("任务"));
+    reply(w, assistant({ usage: 1000, calls: [call("c", "bash", { command: "false", description: "x" })] }));
+    toolDone(w, "开头\n最后一行报错\n[退出码 1]\n注：没用上参数 description。", env(0), true);
+    handoff(w, "说明");
+    assert.ok(linesOf(firstOf(w).text).includes("[1:2] ✗ bash false：[退出码 1] 开头 … 最后一行报错"));
+  });
+
+  test("库内工具写成别的写法：成功行也带结果第一行（D109）", () => {
+    const w = world(P);
+    feed(w, userInput("任务"));
+    reply(w, assistant({ usage: 1000, calls: [call("c", "Memory_Get", { key: "k" })] }));
+    toolDone(w, "键 k 不存在。\n注：工具名 \"Memory_Get\" 当作 memory_get。");
+    handoff(w, "说明");
+    assert.ok(linesOf(firstOf(w).text).includes("[1:2] Memory_Get k → 键 k 不存在。"));
+  });
+
   test("回归：最早的任务之后 80 次失败的 bash，任务仍在（失败行不进第一遍）", () => {
     const w = world(P);
     feed(w, userInput("最早的任务：把 X 模块重构成 Y"));

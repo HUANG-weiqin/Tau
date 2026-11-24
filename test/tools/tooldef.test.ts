@@ -81,8 +81,15 @@ describe("text 输出：和 bash 一样", () => {
     const t0 = Date.now();
     const r = await text("echo before; sleep 60", {}, { timeout: 1 });
     assert.equal(r.isError, true);
-    assert.match(r.text, /\[超时：1 秒后结束了命令启动的进程\]$/);
+    assert.match(r.text, /\[超时：1 秒后结束了命令启动的进程。同样的调用多半还会超时：[^\]]*\]$/);
     assert.ok(Date.now() - t0 < 30_000);
+  });
+
+  test("工作目录不存在：说清不是命令的错，不运行", async () => {
+    const gone = path.join(dir, "gone");
+    const r = plain(await runToolDef(def("echo x > made.txt"), {}, gone, signal(), CTX, true));
+    assert.equal(r.isError, true);
+    assert.ok(r.text.startsWith(`工作目录 ${gone.replaceAll("\\", "/")} 不存在了（被删了或改了名）。`), r.text);
   });
 
   test("中止：调用前已中止就不运行；运行中中止会结束命令", async () => {
@@ -135,7 +142,7 @@ describe("content 输出", () => {
   test("超时和中止：错误，和 text 时一样", async () => {
     const r = await runToolDef(def("echo '[]'; sleep 60", { output: "content", timeout: 1 }), {}, dir, signal(), CTX, true);
     assert.equal(r.isError, true);
-    assert.match(textOfResult(r), /\[超时：1 秒后结束了命令启动的进程\]$/);
+    assert.match(textOfResult(r), /\[超时：1 秒后结束了命令启动的进程。同样的调用多半还会超时：[^\]]*\]$/);
   });
 
   test("没有输出和空数组：合法，没有内容块", async () => {

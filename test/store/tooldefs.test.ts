@@ -65,7 +65,7 @@ test("spawn：工具定义读不出，错误结果是“预设 <preset> 读不�
   const p = asking(db, memory);
   const r = plain(tx(db, () => runInStore(db, memory, p, [], toolCall("c", "spawn", { preset: "ghost", text: "做" }), 0, readPreset)));
   assert.equal(r.isError, true);
-  assert.equal(r.text, "预设 ghost 读不出：找不到工具定义：nope");
+  assert.equal(r.text, "预设 ghost 读不出：找不到工具定义：nope。原样再调用结果一样：换一个预设或 workdir，或者在回复里说明建不了。");
   assert.equal(loadProcesses(db).length, 1);
   assert.equal(mailbox(db).length, 0);
 });
@@ -115,10 +115,25 @@ test("spawn 带 workdir：目录不存在、不是字符串都是错误结果，
   };
   bad({ preset: "kid", text: "做", workdir: join(work, "nope") }, /^预设 kid 读不出：.*工作目录不存在/);
   // bad() 会加“参数错误：”前缀，和同一分支的其它参数错误一致。
-  bad({ preset: "kid", text: "做", workdir: ["x"] }, /^参数错误：workdir 必须是字符串，或者省略。$/);
+  bad({ preset: "kid", text: "做", workdir: ["x"] }, /^参数错误：workdir 要字符串，收到的是 数组。spawn 的参数：/);
   assert.equal(loadProcesses(db).length, 1);
   assert.deepEqual(mailbox(db), []);
   assertStoreInvariants(db);
+});
+
+test("spawn 的 workdir 写成 bash 的写法照做，不是绝对路径的照旧拒绝并给下一步（D109）", (t) => {
+  const db = tempDb(t);
+  const memory = fakeMemory();
+  const { readPreset, work2 } = setup(t);
+  const p = asking(db, memory);
+  const msys = work2.replace(/^([A-Za-z]):/, (_, d: string) => `/${d.toLowerCase()}`).replaceAll("\\", "/");
+  assert.equal(spawn(db, memory, p, { preset: "rules", text: "做", workdir: msys }, readPreset).preset.workdir, work2);
+  const r = (workdir: string) => plain(tx(db, () => runInStore(db, memory, p, [], toolCall("c", "spawn", { preset: "kid", text: "做", workdir }), 0, readPreset)));
+  const hint = "要写盘符路径（如 C:/x）或 UNC 路径；bash 里的 /tmp 这类路径，先在 bash 里用 cygpath -m 换算";
+  assert.deepEqual(r("/tmp"), { text: `预设 kid 读不出：预设 kid 的工作目录必须是绝对路径：/tmp。${hint}。原样再调用结果一样：换一个预设或 workdir，或者在回复里说明建不了。`, isError: true });
+  assert.equal(r(".").isError, true);
+  assert.equal(r("sub").isError, true);
+  assert.equal(loadProcesses(db).length, 2);
 });
 
 test("工具定义声明的 spawn 带 workdir 同样生效", (t) => {

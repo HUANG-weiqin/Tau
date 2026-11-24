@@ -6,7 +6,7 @@
 
 - 先等 `timeout` 秒（默认 60，最长 600），没跑完就转后台、工具立刻返回。可能超过 60 秒的命令直接写 `timeout: 0`。
 - 转后台的命令跑完会给你寄一封信。**不要 sleep 等，也不要轮询**：先做别的事，没有就结束这一轮，信会开新一轮。
-- 它是 Git for Windows 的真 bash：`/e/tau` 和 `E:/tau` 都认。PowerShell 的命令用 `powershell -NoProfile -Command '…'` 调。
+- 它是 Git for Windows 的真 bash：`/e/tau` 和 `E:/tau` 都认。PowerShell 的命令用 `powershell -NoProfile -Command '…'` 调。PowerShell 输出的中文乱码时，在命令开头加 `[Console]::OutputEncoding=[Text.Encoding]::UTF8;`。
 - 输出太长只回头尾，完整输出在返回的文件里，用 read 读。
 - `| tail`、`| grep` 会吞掉退出码。要退出码就写成 `cmd > log 2>&1; code=$?; echo $code; exit $code`。
 

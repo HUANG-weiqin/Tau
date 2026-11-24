@@ -220,7 +220,13 @@ function toItems(proc: string, content: unknown[], restarted: boolean): ContentI
       items.push({ type: "text", text: textOf(item) });
     } else if (item["type"] === "image" && typeof item["data"] === "string") {
       images++;
-      const saved = saveImage(proc, images, item["data"], item["mimeType"]);
+      // 服务器那边动作已经做完：存图失败只少这一张图，不让整次调用失败（模型会重做有副作用的动作）。
+      let saved: { file: string; text: string } | { text: string };
+      try {
+        saved = saveImage(proc, images, item["data"], item["mimeType"]);
+      } catch (e) {
+        saved = { text: `[第 ${images} 张图片没存下：${e instanceof Error ? e.message : String(e)}]` };
+      }
       if ("file" in saved) items.push({ type: "image", path: winPath(saved.file) });
       else items.push({ type: "text", text: saved.text });
     } else {
@@ -263,7 +269,7 @@ async function ask(request: Record<string, unknown>): Promise<Record<string, unk
         launched = true;
         await launchRelay();
       }
-      if (Date.now() > deadline) throw new Fail(`连不上 MCP 中转进程，拉起以后也没在 ${CONNECT_MS / 1000} 秒内连上。日志：${winPath(dataDir("relay.log"))}`);
+      if (Date.now() > deadline) throw new Fail(`连不上 MCP 中转进程，拉起以后也没在 ${CONNECT_MS / 1000} 秒内连上。日志：${winPath(dataDir("relay.log"))} 这是环境问题，重试没用，别再调；告诉用户看日志。`);
       await sleep(100);
       continue;
     }
@@ -295,12 +301,15 @@ async function main(): Promise<void> {
   try {
     loadServer(workdir, server);
   } catch (e) {
-    throw new Fail(e instanceof Error ? e.message : String(e));
+    throw new Fail(`这个工具在当前工作目录用不了，重试没用，别再调；需要的话请用户检查 MCP 配置。${e instanceof Error ? e.message : String(e)}`);
   }
   pruneOldImages(dataDir("images"), Date.now(), dataDir("images", proc));
 
   const reply = await ask({ op: "call", process: proc, workdir, server, tool, arguments: args });
-  if (reply["ok"] !== true) throw new Fail(typeof reply["error"] === "string" ? reply["error"] : "MCP 中转返回了不认识的结果。");
+  if (reply["ok"] !== true) {
+    const err = typeof reply["error"] === "string" ? reply["error"] : "MCP 中转返回了不认识的结果。";
+    throw new Fail(err.startsWith("起不来 MCP 服务器") ? `MCP 服务器起不来，重试没用，别再调；把下面的原因告诉用户。${err}` : err);
+  }
   const content = reply["content"];
   const items = toItems(proc, Array.isArray(content) ? content : [], reply["restarted"] === true);
   if (reply["isError"] === true) {

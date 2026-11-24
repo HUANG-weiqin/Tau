@@ -3,8 +3,9 @@
 import { isDeepStrictEqual } from "node:util";
 import { effectOf } from "../src/kernel/decide.ts";
 import { contextUsed, handoffThreshold, IMAGES_PER_MESSAGE, RETRIES_PER_REPLY, STEPS_PER_TURN } from "../src/kernel/derive.ts";
+import { findTool } from "../src/kernel/tools.ts";
 import { unreachable } from "../src/kernel/types.ts";
-import type { Content, Ended, Letter, Message, Process, ToolCall, Turn } from "../src/kernel/types.ts";
+import type { Content, Ended, Letter, Message, PresetSnapshot, Process, ToolCall, Turn } from "../src/kernel/types.ts";
 
 type Bad = (what: string) => Error;
 
@@ -55,7 +56,7 @@ export function assertInvariants(p: Process, segment: readonly Message[], relaxe
       const expected = { kind: "callModel", n: p.lastEffect, purpose: phase.purpose };
       if (!isDeepStrictEqual(effect, expected)) throw bad(`effectOf 是 ${JSON.stringify(effect)}，应为 ${JSON.stringify(expected)}`);
       // 等模型时工作段不变，所以存下的用途和现在重算的一致。
-      const requested = handoffCalled(segment);
+      const requested = handoffCalled(segment, p.preset);
       // 成功的 handoff 调用和阈值无关：reconfigure 改了 handoff 也不会让它不要求换段，所以 relaxed 也要查。
       if (requested && phase.purpose !== "handoff") throw bad(`用途是 ${phase.purpose}，但最后一条助手消息里有成功的 handoff 调用`);
       if (relaxed) return;
@@ -89,14 +90,14 @@ export function assertInvariants(p: Process, segment: readonly Message[], relaxe
 }
 
 /** 最后一条助手消息里有 handoff 调用，并且它的结果不是错误。 */
-function handoffCalled(segment: readonly Message[]): boolean {
+function handoffCalled(segment: readonly Message[], preset: PresetSnapshot): boolean {
   const at = segment.findLastIndex((m) => m.role === "assistant");
   const m = segment[at];
   if (m?.role !== "assistant") return false;
   const calls = m.content.filter((c): c is ToolCall => c.type === "toolCall");
   return calls.some((c, k) => {
     const r = segment[at + 1 + k];
-    return c.name === "handoff" && r?.role === "toolResult" && !r.isError;
+    return findTool(preset, c.name)?.name === "handoff" && r?.role === "toolResult" && !r.isError;
   });
 }
 

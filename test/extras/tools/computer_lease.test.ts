@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Fail } from "../../../extras/tools/common.ts";
 import { pruneComputerImages } from "../../../extras/tools/computer_lib.ts";
-import { LEASE_TTL_MS, acquireLease, leaseKeeper, needsLease, parseLease } from "../../../extras/tools/computer_lease.ts";
+import { LEASE_TTL_MS, acquireLease, leaseConflict, leaseKeeper, needsLease, parseLease } from "../../../extras/tools/computer_lease.ts";
 import type { LeaseIo } from "../../../extras/tools/computer_lease.ts";
 
 const NOW = 1_000_000;
@@ -134,4 +134,13 @@ test("leaseKeeper：第一次一定拿；10 秒内不重拿；超过 10 秒再�
   t -= 1000;
   short();
   assert.equal(takes, before + 3);
+});
+
+test("leaseConflict：固定的文字，别马上重试，不带秒数、不说稍后再试", () => {
+  const a = leaseConflict({ holder: "aaaa1111", at: 1000 }, "me", 1000 + 5000)!;
+  const b = leaseConflict({ holder: "aaaa1111", at: 1000 }, "me", 1000 + 20000)!;
+  assert.equal(a, b);
+  assert.match(a, /别马上重试/);
+  assert.doesNotMatch(a, /稍后再试/);
+  assert.ok(a.includes("aaaa1111"));
 });

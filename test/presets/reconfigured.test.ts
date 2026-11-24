@@ -122,7 +122,7 @@ test("presetFields：tools 是内置工具名加工具定义的名字；buildPre
 test("buildPreset 的拒绝和 loadPreset 的一字不差：同一个函数", () => {
   write("r3", ["tools: read"]);
   const f = presetFields(load("r3"));
-  assert.match(message(() => buildPreset("r3", { ...f, workdir: "rel" }, models, tools)), /^预设 r3 的工作目录必须是绝对路径：rel$/);
+  assert.match(message(() => buildPreset("r3", { ...f, workdir: "rel" }, models, tools)), /^预设 r3 的工作目录必须是绝对路径：rel。要写盘符路径/);
   assert.match(message(() => buildPreset("r3", { ...f, workdir: path.join(root, "没有") }, models, tools)), /^预设 r3 的工作目录不存在：/);
   assert.match(message(() => buildPreset("r3", { ...f, model: "faux/nope" }, models, tools)), /^模型目录里没有 faux\/nope$/);
   assert.match(message(() => buildPreset("r3", { ...f, model: "x" }, models, tools)), /^预设 r3 的模型格式应为/);
@@ -189,7 +189,7 @@ test("reconfigured：校验用读预设的同一套，拒绝的文字一样；�
   assert.match(message(() => reconfigured(s, { options: { temperature: "热" } }, models, tools)), /^预设 b 的 options 里的 temperature 必须是有限数/);
   assert.match(message(() => reconfigured(s, { options: { metadata: { x: "a".repeat(5000) } } }, models, tools)), /^预设 b 的 options 超过 4096 字节$/);
   assert.match(message(() => reconfigured(s, { model: "faux/nope" }, models, tools)), /^模型目录里没有 faux\/nope$/);
-  assert.match(message(() => reconfigured(s, { workdir: "rel" }, models, tools)), /^预设 b 的工作目录必须是绝对路径：rel$/);
+  assert.match(message(() => reconfigured(s, { workdir: "rel" }, models, tools)), /^预设 b 的工作目录必须是绝对路径：rel。要写盘符路径/);
   assert.match(message(() => reconfigured(s, { tools: ["read", "missing"] }, models, tools)), /^找不到工具定义：missing$/);
   assert.match(message(() => reconfigured(s, { context: ["/e/x"] }, models, tools)), /^预设 b 的 context 必须是相对路径或 Windows 绝对路径：/);
   assert.match(message(() => reconfigured(s, { context: ["a.md,b.md"] }, models, tools)), /^预设 b 的 context 的路径不能含逗号，首尾不能有空白：/);

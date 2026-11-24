@@ -2,6 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { copyFileSync } from "node:fs";
+import os from "node:os";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { createExecutor } from "../../src/executor/executor.ts";
@@ -77,12 +78,12 @@ test("post 和 stop_process 的失败：收件人不存在、对象是自己、�
     assert.equal(r.isError, true, name);
     assert.match(r.text, typeof text === "string" ? new RegExp(`^${text}$`) : text);
   };
-  bad("post", { to: "zz", text: "x" }, "没有进程 zz。用 self 查运行中的进程 ID。");
-  bad("post", { to: "a", text: "x" }, "不能给自己寄信。");
-  bad("post", { to: 1, text: "x" }, "没有进程 1。用 self 查运行中的进程 ID。"); // 数字转成字符串
+  bad("post", { to: "zz", text: "x" }, /^没有进程 "zz"。这里写进程 ID，不是预设名，也不带“进程”二字：信头“（来自进程 X，预设 Y）”和 spawn 的结果“已建进程 X”里的 X。self 只列同预设、同工作目录和你的子进程里正在运行的那些。$/);
+  bad("post", { to: "a", text: "x" }, /^不能给自己寄信（a 是你自己）。现在没有进程在等你回信；要寄给别的进程，to 写它的进程 ID。$/);
+  bad("post", { to: 1, text: "x" }, /^没有进程 "1"。这里写进程 ID/); // 数字转成字符串
   bad("post", { to: "a" }, /^参数错误/);
-  bad("post", { to: "zz", text: "x", reply: "yes" }, /^参数错误/);
-  bad("stop_process", { process: "zz" }, "没有进程 zz。用 self 查运行中的进程 ID。");
+  bad("post", { to: "zz", text: "x", reply: "maybe" }, /^参数错误/);
+  bad("stop_process", { process: "zz" }, /^没有进程 "zz"。这里写进程 ID，不是预设名，也不带“进程”二字：信头“（来自进程 X，预设 Y）”和 spawn 的结果“已建进程 X”里的 X。self 只列同预设、同工作目录和你的子进程里正在运行的那些。$/);
   bad("stop_process", { process: "a" }, "不能停止自己。要结束这一轮，直接回复，不再调用工具。");
   bad("stop_process", {}, /^参数错误/);
   bad("spawn", { preset: "kid" }, /^参数错误/);
@@ -146,9 +147,27 @@ test("spawn：预设读不出时是错误结果，什么都不建；读预设抛
   const db = tempDb(t);
   const memory = fakeMemory();
   const p = asking(db, memory);
-  assert.deepEqual(run(db, memory, p, "spawn", { preset: "nope", text: "x" }), { text: "预设 nope 读不出：找不到预设：nope", isError: true });
+  assert.deepEqual(run(db, memory, p, "spawn", { preset: "nope", text: "x" }), { text: "预设 nope 读不出：找不到预设：nope。原样再调用结果一样：换一个预设或 workdir，或者在回复里说明建不了。", isError: true });
   assert.equal(loadProcesses(db).length, 1);
   assert.deepEqual(mailbox(db), []);
+});
+
+test("spawn 的 workdir 换写法（D109）：~ 和 /e/x 换成盘符路径并说一句，空串当没写，别的原样交给读预设", (t) => {
+  const db = tempDb(t);
+  const memory = fakeMemory();
+  const p = asking(db, memory);
+  const seen: (string | undefined)[] = [];
+  const spy = (id: string, workdir?: string): PresetSnapshot => (seen.push(workdir), readPreset(id));
+  const go = (workdir: string) => plain(tx(db, () => runInStore(db, memory, p, [], toolCall("c", "spawn", { preset: "kid", text: "x", workdir }), 0, spy)));
+  const home = os.homedir().replaceAll("\\", "/");
+  for (const [raw, want, note] of [["/e/x", "E:/x", true], ["~", home, true], ["/d/D:/x", "D:/x", true], ["", undefined, false], ["E:/abs", "E:/abs", false], [".", ".", false], ["sub", "sub", false], ["/tmp", "/tmp", false], ["/", "/", false], ["/Windows", "/Windows", false]] as const) {
+    const r = go(raw);
+    assert.equal(seen.at(-1), want, JSON.stringify(raw));
+    assert.equal(r.isError, false, r.text);
+    if (note) assert.ok(r.text.endsWith(`
+注：参数 workdir ${JSON.stringify(raw)} 当作 ${want}。`), r.text);
+    else assert.doesNotMatch(r.text, /注：/, JSON.stringify(raw));
+  }
 });
 
 test("跳数：post 和 spawn 超过 HOPS_MAX 就失败，什么都不写；刚好等于上限可以", (t) => {

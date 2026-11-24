@@ -38,7 +38,7 @@ export function parseLease(text: string | null): Lease | null {
 export function leaseConflict(lease: Lease | null, proc: string, now: number): string | null {
   // at 在将来：多半是时钟往回调过，这种租约不能让别人等一个小时，当作过期。
   if (lease === null || lease.holder === proc || lease.at > now || now - lease.at > LEASE_TTL_MS) return null;
-  return `桌面正被进程 ${lease.holder} 用，租约到期前别的进程不能操作。稍后再试。`;
+  return `桌面正被进程 ${lease.holder} 用，它停手 30 秒后才轮到你。别马上重试：先做别的，或者结束这一轮。`;
 }
 
 /** 在任何输入发出之前调用。拿不到抛 Fail，拿到就写入 {holder: proc, at: now}。 */

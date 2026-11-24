@@ -102,14 +102,15 @@ const items = (line: string): string[] => line.split(",").map((s) => s.trim()).f
 
 /** `dir` 是预设目录。读文件、拆文件头，查未知、重复和缺少的字段；字段的值在 `buildPreset` 里校验。 */
 function parsePresetFile(dir: string, id: string): PresetFields {
-  const file = `${id}.md`;
   let text: string;
+  let ids: string[] = [];
   try {
     // 精确匹配目录项：拒绝大小写不同的文件名（NTFS 下会读到同一个文件）和 8.3 短名。
-    if (!readdirSync(dir).includes(file)) throw new Error();
-    text = readFileSync(path.join(dir, file), "utf8");
+    ids = readdirSync(dir).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3));
+    if (!ids.includes(id)) throw new Error();
+    text = readFileSync(path.join(dir, `${id}.md`), "utf8");
   } catch {
-    throw new Error(`找不到预设：${id}`);
+    throw new Error(`找不到预设：${id}${ids.length > 0 ? `。现有的预设：${ids.join("、")}` : ""}`);
   }
   if (text.startsWith("﻿")) text = text.slice(1);
   const lines = text.split(/\r?\n/);
@@ -172,7 +173,7 @@ function parseContext(id: string, list: readonly string[]): string[] | undefined
 /** 字段变成快照：工作目录要存在，模型要在目录里，工具定义要读得出，调用参数和上下文要合格。`loadPreset` 和 `reconfigure` 都走它，所以两处的拒绝永远一致。 */
 export function buildPreset(id: string, f: PresetFields, models: Models, toolsDir: string): PresetSnapshot {
   const raw = f.workdir;
-  if (!isWindowsAbsolute(raw)) throw new Error(`预设 ${id} 的工作目录必须是绝对路径：${raw}`);
+  if (!isWindowsAbsolute(raw)) throw new Error(`预设 ${id} 的工作目录必须是绝对路径：${raw}。要写盘符路径（如 C:/x）或 UNC 路径；bash 里的 /tmp 这类路径，先在 bash 里用 cygpath -m 换算`);
   const workdir = path.resolve(raw);
   try {
     if (!statSync(workdir).isDirectory()) throw new Error();

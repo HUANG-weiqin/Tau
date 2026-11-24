@@ -74,19 +74,21 @@ function callTool(t: TestContext, name: string, args: JsonObject, seed?: { value
   return { db, memory, r: toolResult(db, 2) };
 }
 
-test("memory_edit 的参数：old 不能为空，version 必填且是整数，brief 给了必须是字符串，必填是 null 就报 null；都不碰记忆", (t) => {
-  const cases: [JsonObject, string][] = [
-    [{ key: "笔记", old: "", new: "乙", version: 1 }, "参数错误：old 不能为空。"],
-    [{ key: "笔记", old: "甲", new: "乙" }, "参数错误：version 必须是整数。先用 memory_get 读到现在的版本号。"],
-    [{ key: "笔记", old: "甲", new: "乙", version: 1.5 }, "参数错误：version 必须是整数。先用 memory_get 读到现在的版本号。"],
-    [{ key: "笔记", old: "甲", new: "乙", version: 1, brief: ["x"] }, "参数错误：brief 必须是字符串，或者省略。"],
-    [{ key: "笔记", old: "甲", new: null, version: 1 }, "参数 new 是 null，必须给出一个值。"],
-    [{ key: "笔记", old: "甲", new: "乙", version: null }, "参数 version 是 null，必须给出一个值。"],
-    [{ key: "笔记", old: "甲" }, "参数错误：memory_edit 缺少 new（字符串）。收到的参数名：key, old。"],
+test("memory_edit 的参数：old 不能为空，brief 给了必须是字符串，必填是 null 就报 null；version 不对而键不存在时先说不存在；都不碰记忆", (t) => {
+  const cases: [JsonObject, string | RegExp][] = [
+    [{ key: "笔记", old: "", new: "乙", version: 1 }, "参数错误：old 不能为空。要在末尾加内容，old 写值的最后一行（不带结尾的换行；这一行不唯一就多带前面几行），new 写这一行加上新内容；要整个改写，用 memory_set。"],
+    [{ key: "笔记", old: "甲", new: "乙" }, "键 笔记 不存在。要新建，用 memory_set。"],
+    [{ key: "笔记", old: "甲", new: "乙", version: 1.5 }, "键 笔记 不存在。要新建，用 memory_set。"],
+    [{ key: "笔记", old: "甲", new: "乙", version: 1, brief: ["x"] }, /^参数错误：brief 要字符串，收到的是 数组。/],
+    [{ key: "笔记", old: "甲", new: null, version: 1 }, /^参数错误：new 是 null，必填/],
+    [{ key: "笔记", old: "甲", new: "乙", version: null }, "键 笔记 不存在。要新建，用 memory_set。"],
+    [{ key: "笔记", old: "甲" }, /^参数错误：缺少 new。/],
   ];
   for (const [args, want] of cases) {
     const { db, r } = callTool(t, "memory_edit", args);
-    assert.deepEqual(r, { text: want, isError: true }, JSON.stringify(args));
+    if (typeof want === "string") assert.deepEqual(r, { text: want, isError: true }, JSON.stringify(args));
+    else assert.match(r.text, want, JSON.stringify(args));
+    assert.equal(r.isError, true);
     assert.deepEqual(memoryRows(db), [], JSON.stringify(args));
   }
 });
@@ -99,13 +101,13 @@ test("memory_edit：键不存在时让它用 memory_set，不写入", (t) => {
 
 test("memory_edit：版本对不上，和 memory_set 一样报冲突并带最新值，不写入", (t) => {
   const { memory, r } = callTool(t, "memory_edit", { key: "笔记", old: "甲", new: "乙", version: 99 }, { value: "甲", brief: "摘要" });
-  assert.deepEqual(r, { text: `版本冲突，没有写入。现在的值是 笔记（版本 1，更新 ${utcDate(0)}）：\n摘要：摘要\n甲`, isError: true });
+  assert.deepEqual(r, { text: `版本冲突，没有写入。现在的值是 笔记（版本 1，更新 ${utcDate(0)}）：\n摘要：摘要\n甲\n要改，先确认 old 还在上面的值里，再带 version=1 改一次。`, isError: true });
   assert.deepEqual(memory.get(PRESET.id, "笔记")?.version, 1);
 });
 
 test("memory_edit：old 没找到、出现多次都是 isError，不写入", (t) => {
   const miss = callTool(t, "memory_edit", { key: "笔记", old: "丁", new: "乙", version: 1 }, { value: "甲 乙 丙", brief: "摘要" });
-  assert.deepEqual(miss.r, { text: "没找到原文，没有写入。old 必须和值逐字一致，包括标点、空格和换行；先用 memory_get 看现在的值。", isError: true });
+  assert.deepEqual(miss.r, { text: "没找到原文，没有写入。old 要从下面的值里逐字复制，包括标点、空格和换行，不要带 memory_get 的头两行。现在的值：\n甲 乙 丙", isError: true });
   assert.deepEqual(miss.memory.get(PRESET.id, "笔记")?.value, "甲 乙 丙");
   const many = callTool(t, "memory_edit", { key: "笔记", old: "甲", new: "乙", version: 1 }, { value: "甲和甲", brief: "摘要" });
   assert.deepEqual(many.r, { text: "原文出现 2 次，必须唯一，没有写入。把 old 写长一点，带上前后的字。", isError: true });

@@ -570,8 +570,15 @@ describe("真的服务", () => {
     const one = await begin("单段的进程");
     const r = await tool("history_dump", {}, one);
     assert.equal(r.isError, false, r.text);
-    assert.equal(r.text, "现在是第 1 段，没有旧段。");
+    assert.match(r.text, /^现在是第 1 段，没有旧段。当前段的内容你已经有了，不用再调；看别的进程用 peek。/);
     assert.ok(!existsSync(dumpDir(one)));
+  });
+
+  test("带了参数（指向别的进程）：照写自己的旧段，写明忽略了", async () => {
+    const r = await tool("history_dump", { process: "other111", segment: 2 }, main);
+    assert.equal(r.isError, false, r.text);
+    assert.ok(r.text.includes("注：history_dump 没有参数 process、segment，忽略了；它只写你自己的旧段，看别的进程用 peek。"), r.text);
+    assert.ok(r.text.startsWith(dumpDir(main).replace(/\\/g, "/")), r.text);
   });
 
   test("被 prune 删掉的段：写一句原因，别的段照常（已缓存过的文件也能感知到 prune）", async () => {

@@ -1673,7 +1673,7 @@ test("reconfigure 的请求校验：fields 和 revert 恰好一个；id、不认
   assert.match(await errors({ ...base, fields: { handoff: 1.5 } }), /^预设 p 的 handoff 必须是正整数/);
   assert.match(await errors({ ...base, fields: { options: { apiKey: "x" } } }), /^预设 p 的 options 里的 apiKey 不能用/);
   assert.match(await errors({ ...base, fields: { model: "faux/nope" } }), /^模型目录里没有 faux\/nope$/);
-  assert.match(await errors({ ...base, fields: { workdir: "rel" } }), /^预设 p 的工作目录必须是绝对路径：rel$/);
+  assert.match(await errors({ ...base, fields: { workdir: "rel" } }), /^预设 p 的工作目录必须是绝对路径：rel。要写盘符路径/);
   assert.match(await errors({ ...base, fields: { tools: ["read", "ghost"] } }), /^找不到工具定义：ghost$/);
   assert.match(await errors({ ...base, fields: { context: ["/e/x"] } }), /^预设 p 的 context 必须是相对路径或 Windows 绝对路径/);
 });

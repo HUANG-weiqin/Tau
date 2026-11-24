@@ -45,6 +45,9 @@ test("脚本：按 ID 排序，跳过非 .md 和不合法的文件名；没有�
     writeFileSync(join(dir, "trailing..md"), GOOD);
     writeFileSync(join(dir, "x..y.md"), GOOD);
     const out = run();
+    const filtered = execFileSync(process.execPath, [SCRIPT], { env, input: JSON.stringify({ filter: "x" }), encoding: "utf8" });
+    assert.match(filtered, /共 3 个预设/);
+    assert.equal(filtered.trimEnd().split("\n").at(-1), "注：list_presets 没有参数 filter，忽略了。");
     assert.match(out, /共 3 个预设/);
     assert.ok(out.indexOf("- a：") < out.indexOf("- b："));
     assert.ok(out.includes("- v1.coder："));

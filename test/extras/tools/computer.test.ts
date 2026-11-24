@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, uti
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import zlib from "node:zlib";
+import { takeNotes } from "../../../extras/tools/common.ts";
 import {
   IMAGE_MAX_BYTES,
   checkBounds,
@@ -499,6 +500,12 @@ test("脚本：截图和放大（只读，不动鼠标键盘）", (t) => {
     assert.deepEqual({ w: Number(zm[5]), h: Number(zm[6]) }, zsize);
     assert.deepEqual(fitSize(Number(zm[3]), Number(zm[4])), zsize);
 
+    // 兜底：多带的 coordinate 丢掉，说明并进第一个文字项，标准输出仍是一个 JSON 数组。
+    const noted = runScript(home, { action: "screenshot", coordinate: [1, 2] });
+    assert.equal(noted.status, 0, noted.stderr);
+    const nitems = JSON.parse(noted.stdout) as Array<{ type: string; text?: string }>;
+    assert.equal(nitems[0]!.text!.split("\n").at(-1), "注：screenshot 用不到 coordinate，忽略了。");
+
     // 越界和缺参数在动屏幕之前就报错，退出码 1。
     const bad = runScript(home, { action: "zoom", region: [0, 0, 99999, 10] });
     assert.equal(bad.status, 1);
@@ -657,5 +664,80 @@ test("perform：拖动中途出错也松开左键；每个动作开始前先放�
     const g = fakeIo();
     await perform(parseArgs(raw), SHOT, SCREEN, g.io);
     assert.equal(g.log[0], "release", raw.action);
+  }
+});
+
+// ---------- 弱模型兜底：动作用不到的参数、坐标和区域的提示 ----------
+
+test("parseArgs：决定点哪里、输什么的多余参数拒绝，调节参数丢掉并说明", () => {
+  takeNotes();
+  const clickText = failure(() => parseArgs({ action: "click", coordinate: [1, 1], text: "提交" }));
+  assert.match(clickText, /^这次没有点击：click 用不到 text。.*modifiers/);
+  assert.ok(clickText.includes('去掉 text 再调只会点击，不会输入') && clickText.includes('computer {"action":"click","coordinate":[1,1]}') && clickText.includes('computer {"action":"type","text":"提交"}'), clickText);
+  assert.doesNotMatch(clickText, /其余参数不变/);
+  const typeAt = failure(() => parseArgs({ action: "type", text: "a", coordinate: [1, 1] }));
+  assert.match(typeAt, /^这次没有输入：type 用不到 coordinate。/);
+  assert.ok(typeAt.includes('computer {"action":"click","coordinate":[1,1]}') && typeAt.includes('computer {"action":"type","text":"a"}'), typeAt);
+  assert.doesNotMatch(typeAt, /其余参数不变/);
+  const keyAt = failure(() => parseArgs({ action: "key", keys: "Return", coordinate: [3, 4] }));
+  assert.ok(keyAt.includes('computer {"action":"click","coordinate":[3,4]}') && keyAt.includes('computer {"action":"key","keys":"Return"}'), keyAt);
+  assert.deepEqual(parseArgs({ action: "move", coordinate: [1, 2], button: "left" }), { action: "move", at: [1, 2] });
+  assert.equal(takeNotes(), "注：move 用不到 button，忽略了。");
+  assert.deepEqual(parseArgs({ action: "screenshot", coordinate: [1, 2] }), { action: "screenshot" });
+  assert.equal(takeNotes(), "注：screenshot 用不到 coordinate，忽略了。");
+  parseArgs({ action: "click", coordinate: [1, 1], text: "", region: [] });
+  assert.equal(takeNotes(), "", "空串、空数组不算给了");
+});
+
+test("E2：key 带 modifiers，意图唯一：合进 keys 照做，说一句；合不出唯一结果就拒绝并给合好的调用", () => {
+  takeNotes();
+  const same = (raw: Record<string, unknown>, keys: string): void => {
+    const a = parseArgs(raw);
+    assert.equal(a.action === "key" && a.keys, keys);
+    assert.equal(takeNotes(), `注：key 用不到 modifiers，合进 keys 当作 ${keys}。`);
+  };
+  same({ action: "key", keys: "s", modifiers: "ctrl" }, "ctrl+s");
+  same({ action: "key", keys: "Return", modifiers: "ctrl" }, "ctrl+Return");
+  same({ action: "key", keys: "s", modifiers: ["ctrl", "shift"] }, "ctrl+shift+s");
+  same({ action: "key", keys: "ctrl+s", modifiers: "ctrl" }, "ctrl+s");
+  const multi = failure(() => parseArgs({ action: "key", keys: "a b", modifiers: "ctrl" }));
+  assert.ok(multi.includes('computer {"action":"key","keys":"ctrl+a ctrl+b"}'), multi);
+  assert.doesNotMatch(multi, /其余参数不变/);
+  assert.match(failure(() => parseArgs({ action: "key", keys: "s", modifiers: "banana" })), /modifiers 里认不出“banana”/);
+});
+
+test("E2：click、scroll 的 keys 只是修饰键时当 modifiers；不是修饰键就拒绝，写明去掉就是普通单击", () => {
+  takeNotes();
+  const a = parseArgs({ action: "click", coordinate: [1, 1], keys: "ctrl" });
+  assert.equal(a.action === "click" && a.modsText, "ctrl");
+  assert.equal(takeNotes(), "注：click 用不到 keys，当作 modifiers ctrl。");
+  const s = parseArgs({ action: "scroll", coordinate: [1, 1], direction: "down", keys: "ctrl+shift" });
+  assert.equal(s.action === "scroll" && s.modsText, "ctrl+shift");
+  takeNotes();
+  const m = failure(() => parseArgs({ action: "click", coordinate: [1, 1], keys: "Return" }));
+  assert.ok(m.includes("去掉 keys 就是普通单击，不会按键") && m.includes('computer {"action":"key","keys":"Return"}'), m);
+  const both = failure(() => parseArgs({ action: "click", coordinate: [1, 1], keys: "ctrl", modifiers: "shift" }));
+  assert.match(both, /用不到 keys/);
+});
+
+test("checkBounds：主屏坐标给出换算好的截图坐标；region 写明是两个角", () => {
+  const shot = { w: 1429, h: 804 };
+  const screen = { w: 2560, h: 1440 };
+  assert.match(failure(() => checkBounds(parseArgs({ action: "click", coordinate: [2000, 1200] }), shot, screen)), /你给的像是主屏坐标（主屏 2560×1440）。换成截图坐标是 \(1116, 670\)；拿不准先 screenshot 看一眼。/);
+  assert.doesNotMatch(failure(() => checkBounds(parseArgs({ action: "click", coordinate: [5000, 1200] }), shot, screen)), /主屏坐标/);
+  assert.match(failure(() => checkBounds(parseArgs({ action: "zoom", region: [100, 200, 50, 40] }), shot)), /region 是左上角和右下角 \[x0, y0, x1, y1\]，不是 \[x, y, 宽, 高\]/);
+});
+
+test("E2：computer 的输入动作带不认识的参数（double:\"click\"）：拒绝在拿租约和发输入之前，写明去掉以后会真的执行什么", () => {
+  const home = mkdtempSync(join(tmpdir(), "tau-computer-e2-"));
+  try {
+    const r = runScript(home, { action: "click", coordinate: [10, 10], double: "click" });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /computer 没有参数 double/);
+    assert.match(r.stderr, /去掉 double 再调，会照剩下的参数真的执行 click/);
+    assert.doesNotMatch(r.stderr, /其余参数不变/);
+    assert.equal(r.stdout, "");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });

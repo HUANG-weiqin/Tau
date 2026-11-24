@@ -2,7 +2,8 @@
 // 结束 = 空闲阶段带结束原因。刚建、还没处理第一封信的 `idle`（没有原因）不算结束。
 // 也订阅自己（`TAU_PROCESS`）：自己的阶段是 `awaitingTool` 而且有信排队，就提前返回。信本来就只能在安全点并入，等下去是白等。
 import { talk } from "./client.ts";
-import { Fail, readArgs, run, tauEnv } from "./common.ts";
+import { dropUnknown, Fail, note, readArgs, run, takeArgs, tauEnv } from "./common.ts";
+import { candidatesFor } from "./procs.ts";
 
 const DEFAULT_SECONDS = 300;
 const MAX_SECONDS = 590;
@@ -30,12 +31,28 @@ export function phaseText(phase: any): { text: string; ended: boolean } {
 
 if (import.meta.main) run(async () => {
   const { proc, pipe } = tauEnv();
-  const args = await readArgs();
-  const list = args.processes;
-  if (!Array.isArray(list) || list.length < 1 || list.length > MAX_PROCESSES || list.some((x) => typeof x !== "string" || x === "")) throw new Fail(`processes 必须是 1 到 ${MAX_PROCESSES} 个进程 ID。`);
-  const ids = [...new Set(list as string[])];
-  const seconds = args.timeout === undefined ? DEFAULT_SECONDS : Math.min(MAX_SECONDS, Math.max(1, Math.trunc(Number(args.timeout))));
-  if (!Number.isFinite(seconds)) throw new Fail("timeout 必须是整数（秒）。");
+  const { args, unknown } = takeArgs("wait", await readArgs());
+  dropUnknown("wait", unknown);
+  const given = typeof args.processes === "string" ? [args.processes] : args.processes;
+  if (!Array.isArray(given) || given.some((x) => typeof x !== "string")) throw new Fail('processes 要是进程 ID 的数组，例如 wait {"processes":["a1b2c3d4"]}');
+  // 一个串里可能写了好几个 ID（逗号、空白、顿号都有人用）：拆开，转小写，去空，去重。
+  const all = [...new Set((given as string[]).flatMap((x) => x.split(/[\s,，、;；]+/)).map((x) => x.toLowerCase()).filter((x) => x !== ""))];
+  if (all.length !== given.length || all.some((x, i) => x !== given[i])) note(`processes 当作 ${all.join("、")}`);
+  if (all.length > MAX_PROCESSES) {
+    throw new Fail(`一次最多等 ${MAX_PROCESSES} 个进程，收到 ${all.length} 个。分两次等：先 wait ${JSON.stringify({ processes: all.slice(0, MAX_PROCESSES) })}，再等其余的。`);
+  }
+  // 等不到自己结束：去掉。照旧订阅自己，只用来被来信打断。
+  const ids = all.filter((x) => x !== proc);
+  if (ids.length < all.length) note(`${proc} 是你自己，等不到自己结束，去掉了`);
+  if (ids.length === 0) {
+    const c = await candidatesFor("wait", pipe, proc);
+    throw new Fail(`${all.length > 0 ? `processes 里只有你自己（${proc}），等不到自己结束。` : "processes 是空的。"}${c.text}`);
+  }
+  const asked = args.timeout === undefined ? DEFAULT_SECONDS : Math.trunc(Number(args.timeout));
+  if (!Number.isFinite(asked)) throw new Fail("timeout 必须是整数（秒）。");
+  const seconds = Math.min(MAX_SECONDS, Math.max(1, asked));
+  if (asked > MAX_SECONDS) note(`timeout 最多 ${MAX_SECONDS} 秒，按 ${MAX_SECONDS} 秒等`);
+  else if (asked < 1) note("timeout 最少 1 秒，按 1 秒等");
 
   const seen = new Map<string, Seen>(ids.map((id) => [id, { kind: "wait" }]));
   const ctl = new AbortController();
@@ -45,6 +62,8 @@ if (import.meta.main) run(async () => {
   });
   const timer = setTimeout(() => ctl.abort(), seconds * 1000);
   let failure: Error | null = null;
+  /** 服务回“没有这个进程”的目标：读不到，多半是已被删除。 */
+  const missing = new Set<string>();
   /** 被打断时自己队列里有几封信；null 表示没被打断。 */
   let queued: number | null = null;
   let grace: ReturnType<typeof setTimeout> | undefined;
@@ -71,7 +90,13 @@ if (import.meta.main) run(async () => {
           // 自己不是等待目标：这一路只用来打断，出错就不听了（读不到自己，无非等不到打断）。
           return true;
         } else if (r.type === "removed") seen.set(id, { kind: "gone", text: "已被删除" });
-        else if (r.type === "error") seen.set(id, { kind: "gone", text: `读不到：${String(r.message)}` });
+        else if (r.type === "error") {
+          seen.set(id, { kind: "gone", text: `读不到：${String(r.message)}` });
+          if (String(r.message).startsWith("没有这个进程")) {
+            missing.add(id);
+            ctl.abort();
+          }
+        }
         settle();
         if (finished()) ctl.abort();
         return seen.has(id) && seen.get(id)!.kind === "gone";
@@ -82,11 +107,17 @@ if (import.meta.main) run(async () => {
       ctl.abort();
     });
   };
-  // 自己的 ID 也在 processes 里时只订阅一次，按等待目标的那套规则处理（它在跑，所以只能靠被打断或者超时）。
-  await Promise.all((ids.includes(proc) ? ids : [...ids, proc]).map(watch));
+  await Promise.all([...ids, proc].map(watch));
   clearTimeout(timer);
   clearTimeout(grace);
   if (failure !== null) throw new Fail((failure as Error).message);
+  if (missing.size > 0) {
+    // 读不到的 ID 报错（不是“不用再等了”）：文字只由当时的记录决定，同样的状态下一字不差。
+    const c = await candidatesFor("wait", pipe, proc);
+    const bad = c.recs === null ? [...missing] : ids.filter((x) => !c.recs!.some((r) => r.id === x));
+    const lead = `这些不是现有的进程 ID：${bad.join("、")}。${c.recs !== null && !c.text.startsWith("你没有子进程") ? "拼错了就照下面的改；" : ""}如果是你建过的进程，它已经被删除了，不用再等`;
+    throw new Fail(`${lead}${c.text.startsWith("你没有子进程") ? "。" : "，从 processes 里去掉。"}${c.text}`);
+  }
   const done = finished();
   const allEnded = ids.every((id) => {
     const s = seen.get(id)!;
@@ -98,6 +129,6 @@ if (import.meta.main) run(async () => {
   });
   const head = queued !== null && !done
     ? `被来信打断：有 ${queued} 封信排队，到下一个安全点并入。先看信，再决定要不要接着等。`
-    : done ? (allEnded ? "全部结束。" : "不用再等了：有的进程读不到或已删除。") : `等了 ${seconds} 秒，还没全部结束（超时不算错误，可以再等，或者先做别的）。`;
+    : done ? (allEnded ? "全部结束。" : "不用再等了：有的进程已被删除。") : `等了 ${seconds} 秒，还没全部结束（超时不算错误，可以再等，或者先做别的）。`;
   process.stdout.write(`${head}\n${rows.join("\n")}\n`);
 });

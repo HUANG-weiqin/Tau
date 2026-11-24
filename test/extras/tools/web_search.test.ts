@@ -163,11 +163,42 @@ describe("web_search 的脚本", () => {
     assert.match(r.out, /（经 Anthropic 搜索。/);
   });
 
-  test("都出错：退出码 1，每个后端一行原因", async () => {
+  test("都出错（key 失效加暂时失败）：退出码 1，暂时失败的写明可以再试", async () => {
     respond = (c) => (c.path === "/search" ? { status: 401, text: "bad key" } : { status: 529, text: "不是 json 的过载页面" });
     const r = await runTool({ query: "q" }, { TAVILY_API_KEY: "t", ANTHROPIC_API_KEY: "a" });
     assert.equal(r.code, 1);
-    assert.match(r.err, /^搜索失败。\nTavily：HTTP 401：bad key\nAnthropic：HTTP 529：不是 json 的过载页面\n$/);
+    assert.equal(r.err, "搜索暂时失败：Tavily：key 失效（HTTP 401）；Anthropic：HTTP 529：不是 json 的过载页面。过一会儿可以再试一次；连着失败就别再调了。\n");
+  });
+
+  test("额度用完、key 失效：写明重试没用，不带后端的正文，两次文字一字不差", async () => {
+    respond = (c) => (c.path === "/search" ? { status: 432, text: `用量 ${Math.random()}` } : { status: 400, json: { error: { message: "Your credit balance is too low" } } });
+    const one = await runTool({ query: "q" }, { TAVILY_API_KEY: "t", ANTHROPIC_API_KEY: "a" });
+    const two = await runTool({ query: "q" }, { TAVILY_API_KEY: "t", ANTHROPIC_API_KEY: "a" });
+    assert.equal(one.code, 1);
+    assert.equal(one.err, "web_search 用不了：Tavily：额度用完（HTTP 432）；Anthropic：额度用完（HTTP 400）。重试没用，别再调 web_search；需要的话告诉用户。\n");
+    assert.equal(one.err, two.err);
+  });
+
+  test("限流：过一会儿可以再试；其余 4xx：请求被拒，换个写法", async () => {
+    respond = () => ({ status: 429, text: "slow down" });
+    assert.match((await runTool({ query: "q" }, { TAVILY_API_KEY: "t" })).err, /^搜索暂时失败：Tavily：HTTP 429：slow down。过一会儿可以再试一次；连着失败就别再调了。/);
+    respond = () => ({ status: 404, text: "no" });
+    assert.match((await runTool({ query: "q" }, { TAVILY_API_KEY: "t" })).err, /^搜索请求被拒：Tavily：HTTP 404：no。换个写法再试一次；还被拒就别再调了。/);
+  });
+
+  test("q 当作 query；多带的 max_results 丢掉并说明，照常搜", async () => {
+    respond = () => ({ status: 200, json: tavilyBody });
+    const r = await runTool({ q: "node lts", max_results: 3 }, { TAVILY_API_KEY: "t" });
+    assert.equal(r.code, 0, r.err);
+    assert.equal(calls[0]!.body.query, "node lts");
+    assert.equal(r.out.trimEnd().split("\n").at(-1), "注：参数 q 当作 query；web_search 没有参数 max_results，忽略了。");
+  });
+
+  test("query 只有空白：说是空的", async () => {
+    const r = await runTool({ query: "   " }, { TAVILY_API_KEY: "t" });
+    assert.equal(r.code, 1);
+    assert.match(r.err, /query 是空的：把要搜的问题写进 query。/);
+    assert.equal(calls.length, 0);
   });
 
   test("返回的不是 JSON：算这个后端出错", async () => {
@@ -198,7 +229,7 @@ describe("web_search 的脚本", () => {
   });
 
   test("参数不对：退出码 1，不发请求", async () => {
-    for (const [args, re] of [[{}, /非空字符串/], [{ query: "   " }, /非空字符串/], [{ query: 5 }, /非空字符串/], [{ query: "x".repeat(401) }, /太长/]] as const) {
+    for (const [args, re] of [[{}, /缺参数 query/], [{ query: "   " }, /query 是空的/], [{ query: 5 }, /query 是空的/], [{ query: "x".repeat(401) }, /太长/]] as const) {
       const r = await runTool(args, { TAVILY_API_KEY: "t" });
       assert.equal(r.code, 1);
       assert.match(r.err, re);

@@ -203,7 +203,19 @@ export const CATALOG: ToolEntry[] = [
   },
 ];
 
+/**
+ * 装出去的 `parameters`：顶层去掉 additionalProperties 和 required，必填参数的说明末尾加“（必填）”。
+ * CATALOG 里严格的 schema 是脚本的规格（common.ts 的 takeArgs 照它规整）；内核按装出去的宽 schema 校验，别的写法才到得了脚本。
+ * type、enum 和各种范围原样留着，由内核查。
+ */
+function lax(parameters: Record<string, unknown>): Record<string, unknown> {
+  const { additionalProperties: _a, required, ...rest } = parameters;
+  const props = { ...(parameters.properties as Record<string, Record<string, unknown>>) };
+  for (const r of (required ?? []) as string[]) props[r] = { ...props[r], description: `${String(props[r]?.description ?? "")}（必填）` };
+  return { ...rest, properties: props };
+}
+
 /** 写进 `~/.tau/tools/<name>.json` 的内容。键的顺序固定。`dir` 是本目录的绝对路径，正斜杠。 */
 export function definitionOf(e: ToolEntry, dir: string): Record<string, unknown> {
-  return { description: e.description, parameters: e.parameters, command: e.command(`${dir}/${e.script}`), timeout: e.timeout, output: e.output };
+  return { description: e.description, parameters: lax(e.parameters), command: e.command(`${dir}/${e.script}`), timeout: e.timeout, output: e.output };
 }

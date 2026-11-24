@@ -154,7 +154,7 @@ interface Memory {
 
 ### `briefOf`
 
-`briefOf(value, budget = MEMORY_BRIEF_MAX_BYTES)` 在 `src/kernel/derive.ts`：取前 `budget` 字节，按码点累加，不切断字符和代理对。不超过时原样返回。记忆里三处用它：协议 `memory_write` 的 `set` 没带 `brief` 时；表结构升级（5 到 6）时给旧行填摘要（[kb-store](kb-store.md#表)）；`set` 里摘要超过 `MEMORY_BRIEF_STORE_MAX_BYTES` 时截断（[D96](kb-decisions.md#d96-摘要的上限分两层给模型看-200实际存-300超了截断)，传的是 `300 - 3`，末尾补 `…`）。
+`briefOf(value, budget = MEMORY_BRIEF_MAX_BYTES)` 在 `src/kernel/derive.ts`：取前 `budget` 字节，按码点累加，不切断字符和代理对。不超过时原样返回。记忆里四处用它：协议 `memory_write` 的 `set` 没带 `brief` 时；`memory_set` 工具的新键没带 `brief` 时（已有的键摘要不变，D109）；表结构升级（5 到 6）时给旧行填摘要（[kb-store](kb-store.md#表)）；`set` 里摘要超过 `MEMORY_BRIEF_STORE_MAX_BYTES` 时截断（[D96](kb-decisions.md#d96-摘要的上限分两层给模型看-200实际存-300超了截断)，传的是 `300 - 3`，末尾补 `…`）。
 
 ### 版本号
 
@@ -199,7 +199,7 @@ interface Memory {
 | 按键的 UTF-8 字节序排列 | 确定，不依赖区域设置 |
 | 先查键、值、摘要，再查版本，最后查视图 | 见[检查顺序](#set-的检查顺序) |
 | 视图是索引，值只经 `memory_get` | 视图在每次请求里；库的容量不再被视图上限卡住（D81） |
-| 摘要由模型每次写入时给，必填 | 值和摘要不分家；内核不自动截取（D81） |
+| 摘要由模型每次写入时给，必填 | 值和摘要不分家；内核不自动截取（D81）。例外：schema 仍标必填，工具层缺了时新键用值的开头、已有的键不动（D109） |
 | `kv.ts` 不读时钟，`now` 由调用方传 | 和 `Env.now` 一样；测试确定 |
 | 视图和 `set` 的检查只读键、摘要、更新时间、值的字节数 | 不读值本体，读取量随条数涨，不随值的大小涨 |
 | 按 `BLOB` 读，`set` 先 `toWellFormed()` | 存进去的和读出来的、量的和存的，都是同一份文本 |

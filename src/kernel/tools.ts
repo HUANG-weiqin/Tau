@@ -91,9 +91,35 @@ export function toolsFor(preset: Tools): ToolSpec[] {
   return out;
 }
 
-/** 预设里有这个工具时返回它的描述；不认识或预设里没有时返回 undefined。 */
+/** 写法键：去掉空白、`_`、`-`，去掉末尾的 `:数字`，转小写，去掉供应商带进来的 `functions.`、`default_api.`（或 `:`）前缀。别的前缀不去（D109）。 */
+const keyOf = (s: string): string => s.replace(/[\s_-]/g, "").replace(/:\d+$/, "").toLowerCase().replace(/^(functions|defaultapi)[.:]/, "");
+
+/**
+ * 预设里有这个工具时返回它的描述。一字不差的名字永远先用；写法不同时（大小写、空白、分隔符、供应商的前缀和序号）
+ * 只有恰好对上一个内置工具才照做，有歧义不猜。工具定义只去掉开头的 `functions.`、`default_api.` 和结尾的 `:数字`，再一字不差地对。`handoff` 也解析：换段的判断（`handoffRequested`）同样经过这里（D109）。
+ * 不认识，或预设里没有时返回 undefined。
+ */
 export function findTool(preset: Tools, name: string): ToolSpec | undefined {
-  return toolsFor(preset).find((t) => t.name === name);
+  const all = toolsFor(preset);
+  const exact = all.find((t) => t.name === name);
+  if (exact) return exact;
+  const near = all.filter((t) => keyOf(t.name) === keyOf(name));
+  // 工具定义的名字只含 [A-Za-z0-9_-]：去掉供应商的前缀和序号后一字不差地对上，意图就唯一（K1）。
+  const bare = name.replace(/^(functions|default_api)\./, "").replace(/:\d+$/, "");
+  const def = preset.toolDefs.filter((d) => d.name === bare);
+  if (def.length === 1 && near.every((t) => t.name === bare)) return all.find((t) => t.name === bare);
+  const [only] = near;
+  return near.length === 1 && !preset.toolDefs.some((d) => d.name === only!.name) ? only : undefined;
+}
+
+/** 名字是照别的写法解析出来的，结果末尾要说一句。名字用 JSON 引号写，空白看得见。 */
+export const renamed = (name: string, spec: ToolSpec): string[] => (spec.name === name ? [] : [`工具名 ${JSON.stringify(name)} 当作 ${spec.name}`]);
+
+/** `findTool` 找不到时给模型的话：列出能用的工具，要求照抄，说清怎样结束一轮（D109）。 */
+export function unknownTool(preset: Tools, name: string): string {
+  const names = toolsFor(preset).map((t) => t.name);
+  const shown = JSON.stringify(name);
+  return `工具 ${shown} 不存在，或者预设里没有它。可用的工具：${names.join("、")}。工具名要从这里照抄，一字不差。列表外的工具都调不通，不要再调用它。${names.includes("bash") ? "grep、ls、find、python、curl 这类命令，用 bash 运行。" : ""}要结束这一轮或者提问，直接写回复，不调用工具。`;
 }
 
 const BUILTIN = toolsFor({ tools: ["read", "write", "edit", "bash", "memory", "agents"], toolDefs: [] });

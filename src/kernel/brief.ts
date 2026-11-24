@@ -1,8 +1,8 @@
 // 旧段的简略视图（D103）：把刚结束的一段渲染成每条消息一行。纯函数，规格见 .knowledge/kb-kernel.md。
 import { BRIEF_END, BRIEF_HEADER, CARRY_HEADER, HANDOFF_HEADER } from "./context.ts";
 import { briefOf, utf8Bytes } from "./derive.ts";
-import { findBuiltin } from "./tools.ts";
-import type { Content, Message, ToolCall } from "./types.ts";
+import { findBuiltin, findTool } from "./tools.ts";
+import type { Content, Message, PresetSnapshot, ToolCall } from "./types.ts";
 
 /** 整块最多多少字节（预算的第一项）。 */
 export const BRIEF_MAX_BYTES = 16 * 1024;
@@ -29,11 +29,11 @@ function argOf(c: ToolCall): string {
 }
 
 /** 一个工具结果的一行（不含位置）。 */
-function resultLine(call: ToolCall | undefined, m: Extract<Message, { role: "toolResult" }>): string {
-  const rows = blocks(m).flatMap((c) => (c.type === "text" ? c.text.split("\n").map(flat).filter((r) => r !== "") : []));
+function resultLine(call: ToolCall | undefined, m: Extract<Message, { role: "toolResult" }>, preset: PresetSnapshot): string {
+  const rows = blocks(m).flatMap((c) => (c.type === "text" ? c.text.split("\n").map(flat).filter((r) => r !== "" && !r.startsWith("注：")) : []));
   const name = call?.name ?? m.toolName;
   const head = [name, call === undefined ? "" : argOf(call)].filter((x) => x !== "").join(" ");
-  if (!m.isError) return findBuiltin(name)?.inStore === true && rows[0] !== undefined ? `${head} → ${cut(rows[0], ARG_MAX_BYTES)}` : head;
+  if (!m.isError) return (findBuiltin(name) ?? findTool(preset, name))?.inStore === true && rows[0] !== undefined ? `${head} → ${cut(rows[0], ARG_MAX_BYTES)}` : head;
   const code = /^\[退出码 \d+\]$/.test(rows.at(-1) ?? "") ? rows.pop() : undefined;
   const first = rows[0];
   const last = rows.at(-1);
@@ -46,7 +46,7 @@ function resultLine(call: ToolCall | undefined, m: Extract<Message, { role: "too
  * 第 0 条是上一次换段写的：旧行（第 1 段里不带，只可能是 fork 复制来的）原样排在前面，说明和带过来的信各一行。
  * 工具结果按位置和调用配对，不按 ID。
  */
-export function briefLines(seg: readonly Message[], end: number, seq: number): { lines: string[]; omitted: number } {
+export function briefLines(seg: readonly Message[], end: number, seq: number, preset: PresetSnapshot): { lines: string[]; omitted: number } {
   const lines: string[] = [];
   let omitted = 0;
   let calls: ToolCall[] = [];
@@ -60,7 +60,7 @@ export function briefLines(seg: readonly Message[], end: number, seq: number): {
       const text = flat(m.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join(" "));
       if (text !== "") add(i, `助手：${calls.length > 0 ? cut(text, NARRATION_MAX_BYTES) : text}`);
     } else if (m.role === "toolResult") {
-      add(i, resultLine(calls[k++], m));
+      add(i, resultLine(calls[k++], m, preset));
     } else {
       const text = textOf(m);
       const letters = (m.tau?.letters ?? []).filter((l) => l.at !== undefined);

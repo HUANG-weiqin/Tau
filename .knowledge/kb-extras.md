@@ -136,6 +136,7 @@
 - 用上层的等待工具：一个工具定义，`timeout` 设 600，经 `watch` 订阅子进程，阶段变成带结束原因的 `idle(...)` 就返回，最长约 590 秒。它也 `watch` 自己（`TAU_PROCESS`）：自己的阶段是 `awaitingTool` 且队列不为空，就返回，写明排队几封；返回前让每个子进程都读到一次状态（最多再等 1 秒），免得结果里写“还没读到状态”。
 - 只有 bash 时，在一次 bash 调用里轮询：`timeout` 设 600，每 10 秒查一次 `tau ps`，最长约 590 秒。用 `grep -q` 之类只做判断，不打印 `ps` 的输出；打印的话，每次醒来都把整张表写进段。代价是慢：每次 `ps` 都读全部进程和它们的当前段，服务这期间不处理别的输入，随年头变慢。
 - 刚建的子进程处理第一封信之前，阶段是不带括号的 `idle`，不算结束。
+- `wait` 先整理参数：一个串里的几个 ID 按逗号和空白拆开，转小写、去重；去掉调用者自己（等不到自己结束，只订阅它来被来信打断）；`timeout` 夹住时说一句。整理后为空、只有自己、超过 8 个都是错误，错误里给照抄的调用。读不到的 ID（预设名、拼错的、已被删除的子进程）是错误，不是“不用再等了”：文字列出调用者的子进程（新的在前）、写明已被删除就从 `processes` 里去掉。文字只由当时的记录决定，同样的状态下一字不差，[D108](kb-decisions.md) 的提醒才接得住。等的过程中被删，照旧算结束。
 - 等的是后台命令时，查它的 log，不查 `ps`：出现退出码那一行就返回。`bash` 跑完照样寄信：这一轮没等到就结束时，靠它唤醒进程。它一般在这次调用返回后的安全点并入；晚到时，会多开一轮。
 - 回信在这批工具结果之后的安全点并入，模型在同一轮里就看得到。这一轮的最终回复就是汇总，照常寄给上一层。
 - 每次醒来算一步。一轮最多等约（`STEPS_PER_TURN` − 已用的步数）× 10 分钟。超过就以步数用完结束，代价和结束本轮一样。
@@ -217,6 +218,17 @@ git -C $REPO branch -d wt/<名字>
 
 `extras/tools/` 放八个工具定义的脚本和目录（`catalog.ts`）。界面的“工具定义”页按目录装进 `~/.tau/tools/<名字>.json`（[kb-gui](kb-gui.md#页面)）。装进去的定义没有多余字段，`command` 指向仓库里的脚本。仓库挪了位置，在界面里点“更新”。
 
+#### 参数规整
+
+弱模型常把参数写错，内核校验一拒它就重发。工具库在上层兜底（内核不动）：
+
+- `catalog.ts` 的 `CATALOG` 仍是严格的 schema，当脚本的规格。`definitionOf` 装出去时只去掉顶层的 `additionalProperties` 和 `required`，必填参数的说明末尾加“（必填）”；`type`、`enum`、各种范围原样留着，由内核查。
+- `common.ts` 的 `takeArgs(name, raw)` 按 CATALOG 规整：只差大小写和下划线的改名；必填正好缺一个、多出来的里形状相同的正好一个，就改名（只读的工具；其余多出来的丢掉并说明）；和已给参数同值的、只是说明用途的键（`reason`、`explanation` 之类）丢掉。不写别名表。会写、删、输入的工具（`create_preset`、`delete_preset`、`computer`）补和丢同值的两条都不用：猜错了做错事收不回（`name:"Code Reviewer"` 会被当成 `prompt`；`double:"click"` 和 `action:"click"` 同值，丢掉就只单击一次），多出来的都当不认识的。剩下不认识的：只读的工具 `dropUnknown` 丢掉并说明，会改东西的 `refuseUnknown` 拒绝；文字写清去掉以后会怎样执行（`delete_preset` 没有预演，去掉 `dry_run` 就真删），给的下一步照抄以后做的必须是模型原来想做的，不能更危险。
+- 兜底照做时，结果最后另起一行，以“注：”开头，一句话说清改了什么，多处用“；”连成一行。文字输出的工具，它是脚本输出的最后一行，在内核接的 `[退出码 N]` 之前；`computer` 的输出是 JSON 数组，说明并进第一个文字项。退出码只看真实结果，不因为兜底改变。
+- 各工具再加自己的：`peek` 的 ID 转小写、`last` 夹住要说；`history_dump`、`list_presets` 多给的参数忽略；`create_preset` 拆开 `tools` 的逗号串、去掉 `self`、拒绝单独给的 `memory_get` 之类、换 `/d/x` 和 `~` 和相对的 `workdir`、同参重发只补校验；`delete_preset` 去掉 `.md`、不存在算成功、先查文件再查进程；`computer` 的输入动作：意图唯一的并进该用的参数并说明（`key` 带 `modifiers` 合成 `ctrl+s`；`click`、`scroll` 的 `keys` 只是修饰键时当 `modifiers`），合不出唯一结果的、和决定点哪里、输什么的多余参数（`coordinate`、`text`、`keys`、`modifiers` 等）拒绝，文字给照抄的调用（`type` 带 `coordinate` 给先 `click` 再 `type` 的两条），调节参数丢掉并说明；`create_preset` 的 `context` 只按半角逗号拆（`、`、`，`、`；` 在 Windows 文件名里合法，内核只禁半角逗号）；动作做完以后截图出错，退出码 0、写明没截到图。
+- 会让模型白白重试的失败，文字写明“重试没用”（`web_search` 没配后端、额度用完、key 失效，`computer` 锁屏，MCP 环境问题）或“别马上重试”（桌面租约被占）。这些文字固定、不带秒数，同样的情况每次一字不差，[D108](kb-decisions.md) 的提醒才接得住。
+- 改了定义以后：脚本的改动立刻生效（`command` 指向仓库里的脚本，每次调用现读）。schema 的改动（别的写法能到脚本）要在界面“工具定义”页点“更新”；已有进程的会话快照里存的是旧定义，要在“改这个会话”里“重读工具定义”（换段时生效）或新建进程才用上。
+
 | 工具 | 做什么 | 数据放哪 | 代价 |
 |---|---|---|---|
 | `peek` | 读另一个进程的当前段，只给最后几条（默认 6，最多 20）：谁说的、文字（每条约 1500 字）、工具调用的名字。`timeout` 30 | 不存 | 只读，重做无害 |
@@ -235,7 +247,7 @@ git -C $REPO branch -d wt/<名字>
 - 清理规则：数据放 `~/.tau/extras/history/<进程 ID>/`，不进库、不备份。每次调用先遍历这个目录，删修改时间超过 7 天的文件，删空了的进程目录也删；每步失败都跳过（文件可能被占用），清理出错不让工具失败。期限和内核清理 bash 输出文件一样是 7 天（[kb-tools 的输出文件](kb-tools.md#输出文件)）。清理放在工具自己里：内核只写 `extras/shell/` 一处（[D90](kb-decisions.md#d90-bash-接管后台命令先等没跑完转后台输出写文件跑完寄信)），而且 GUI 和计划任务都不常驻，不能指望上层有个程序一直跑（[D93](kb-decisions.md#d93-history_dump-取代-history_search-和-history_read)）。
 - 除 `web_search`、`list_presets` 外，都只在 tau 的工具调用里运行：没有 `TAU_PROCESS` 或 `TAU_PIPE` 时报错。这两个不连管道，不需要这两个变量。连管道的小客户端是 `extras/tools/client.ts`，发完请求不半关闭。
 - 给脚本用的桌面入口和连拍（[D102](kb-decisions.md#d102-编排脚本自己编排桌面连拍是现成脚本)）：不是工具定义，Agent 用 bash 跑 node 脚本。`desktop.ts` 是脚本导入的入口，转导出截图和 `perform`，`leasedIo(proc)` 发输入前先拿桌面租约。`burst.ts` 是现成的连拍：`node burst.ts [--seconds 2] [--region x0,y0,x1,y1]`，0.2 到 5 秒、最多 30 帧均匀摊开，拼成最多 16 格的网格图，打印每格的时间和相邻帧的变化范围，单帧存 JPEG；文件和截图放一起，同样 1 小时后清理。用法写在技能 `~/.agents/skills/desktop-burst/`，`computer` 的说明末尾指向它，共享手册的“编排”一节讲怎样自己写脚本。
-- 测试：`test/extras/tools/web_search.test.ts`（`web_search`：脚本在子进程里跑，后端是本机的假 HTTP 服务，不碰真网络，也不读真的 `~/.tau`；后端的顺序和退路、错误文字、auth.json 的各种写法、输出的截断）。`test/extras/tools/list_presets.test.ts`（`list_presets`：纯函数，加一次指到临时目录的子进程）。`test/extras/tools/preset_crud.test.ts`（`create_preset`、`delete_preset`：参数检验、自动补装工具库定义、`check` 失败回滚、`ps` 在运行进程保护和大小写检查）。`test/extras/tools/tools.test.ts`（`peek`、`wait`，和桥的工具路由），真的服务、真的 Git Bash；数据目录靠 `USERPROFILE` 指到临时目录。`test/extras/tools/history.test.ts`（`history_dump`）：渲染、输出、清理、写文件的幂等不要服务，另有对着真的服务的集成测试。`test/extras/tools/computer.test.ts`（`computer`）：几何、键名、PNG 编码、参数检查、清理是纯函数；脚本端到端只跑 `screenshot` 和 `zoom`，屏幕锁着就跳过。`test/extras/tools/computer_lease.test.ts`（桌面租约：判断和续期是纯函数，互斥量和文件都是注入的假的）。`test/extras/tools/burst.test.ts`（连拍：抽帧、布局、拼图、帧差、坐标换算、文字是纯函数；脚本端到端只截图，屏幕锁着就跳过）。不动鼠标和键盘：`npm test` 跑在用户正在用的桌面上。
+- 测试：`test/extras/tools/common.test.ts`、`procs.test.ts`（参数规整、进程候选：纯函数）。`test/extras/tools/web_search.test.ts`（`web_search`：脚本在子进程里跑，后端是本机的假 HTTP 服务，不碰真网络，也不读真的 `~/.tau`；后端的顺序和退路、错误文字、auth.json 的各种写法、输出的截断）。`test/extras/tools/list_presets.test.ts`（`list_presets`：纯函数，加一次指到临时目录的子进程）。`test/extras/tools/preset_crud.test.ts`（`create_preset`、`delete_preset`：参数检验、自动补装工具库定义、`check` 失败回滚、`ps` 在运行进程保护和大小写检查）。`test/extras/tools/tools.test.ts`（`peek`、`wait`，和桥的工具路由），真的服务、真的 Git Bash；数据目录靠 `USERPROFILE` 指到临时目录。`test/extras/tools/history.test.ts`（`history_dump`）：渲染、输出、清理、写文件的幂等不要服务，另有对着真的服务的集成测试。`test/extras/tools/computer.test.ts`（`computer`）：几何、键名、PNG 编码、参数检查、清理是纯函数；脚本端到端只跑 `screenshot` 和 `zoom`，屏幕锁着就跳过。`test/extras/tools/computer_lease.test.ts`（桌面租约：判断和续期是纯函数，互斥量和文件都是注入的假的）。`test/extras/tools/burst.test.ts`（连拍：抽帧、布局、拼图、帧差、坐标换算、文字是纯函数；脚本端到端只截图，屏幕锁着就跳过）。不动鼠标和键盘：`npm test` 跑在用户正在用的桌面上。
 
 ### 共享手册
 

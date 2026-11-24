@@ -9,6 +9,7 @@ import type { JsonObject, ToolCall } from "@earendil-works/pi-ai";
 import { createActions } from "../../src/executor/actions.ts";
 import { createExecutor } from "../../src/executor/executor.ts";
 import { start } from "../../src/kernel/decide.ts";
+import { clip } from "../../src/kernel/derive.ts";
 import { userLetter } from "../../src/kernel/types.ts";
 import type { Message, PresetSnapshot, Process } from "../../src/kernel/types.ts";
 import { loadProcess, loadSegment, openDb } from "../../src/store/db.ts";
@@ -261,11 +262,39 @@ test("库外工具的 null 参数：可选当作没填，必填报错，不会�
     const call = toolCall("c1", name, args);
     return plain(await actions.runTool({ process, segment: [], effect: { kind: "runTool", n: 1, call } }, call, new AbortController().signal, new AbortController().signal));
   };
-  assert.deepEqual(await run("edit", { path: "a.txt", old: "x", new: null }), { text: "参数 new 是 null，必须给出一个值。", isError: true });
-  assert.deepEqual(await run("write", { path: "a.txt", content: 123 }), { text: `已写入 3 字节：${join(workdir, "a.txt")}`, isError: false }, "数字和布尔照旧转成字符串");
+  assert.deepEqual(await run("edit", { path: "a.txt", old: "x", new: null }), { text: '参数错误：new 是 null，必填（空的写 ""）。edit 的参数：path（字符串，必填）、old（字符串，必填）、new（字符串，必填）、replaceAll（布尔值，可选）。照这样调用：edit({"path": …, "old": …, "new": …})', isError: true });
+  assert.deepEqual(await run("write", { path: "a.txt", content: 123 }), { text: `已写入 3 字节：${join(workdir, "a.txt").replaceAll("\\", "/")}`, isError: false }, "数字和布尔照旧转成字符串");
   assert.equal(await readFile(join(workdir, "a.txt"), "utf8"), "123");
   assert.deepEqual(await run("read", { path: "a.txt", offset: null }), { text: "     1\t123", isError: false }, "可选的 null 当作没填");
-  assert.deepEqual(await run("bash", { command: "ls" }), { text: "工具 bash 不存在，或者预设里没有它。可用的工具：read、write、edit、self、handoff。", isError: true }, "不认识的工具名带上能用的");
+  assert.deepEqual(await run("bash", { command: "ls" }), { text: '工具 "bash" 不存在，或者预设里没有它。可用的工具：read、write、edit、self、handoff。工具名要从这里照抄，一字不差。列表外的工具都调不通，不要再调用它。要结束这一轮或者提问，直接写回复，不调用工具。', isError: true }, "不认识的工具名带上能用的");
+});
+
+test("路径的说明接在结果最后一行，和工具名的说明合成一行；干净的调用没有注；截断不被说明挤坏（D109）", async (t) => {
+  const workdir = tempDir(t);
+  const preset: PresetSnapshot = { ...PRESET, workdir, tools: ["read", "write", "edit"] };
+  const process: Process = start("p1", preset, { now: 0, memoryView: "" });
+  const actions = createActions(createModels(), () => {}, "test-pipe", () => undefined);
+  const run = async (name: string, args: JsonObject) => {
+    const call = toolCall("c1", name, args);
+    return plain(await actions.runTool({ process, segment: [], effect: { kind: "runTool", n: 1, call } }, call, new AbortController().signal, new AbortController().signal));
+  };
+  const a = join(workdir, "a.txt").replaceAll("\\", "/");
+  await run("write", { path: "a.txt", content: "123" });
+  assert.deepEqual(await run("read", { path: " a.txt" }), { text: `     1	123
+注：路径 " a.txt" 当作 ${a}。`, isError: false });
+  assert.deepEqual(await run("Read", { path: " a.txt" }), { text: `     1	123
+注：工具名 "Read" 当作 read；路径 " a.txt" 当作 ${a}。`, isError: false });
+  assert.deepEqual(await run("read", { path: "a.txt", offset: 0 }), { text: "     1	123", isError: false }, "offset 0 不加说明");
+  const nope = await run("read", { path: "'nope.txt'" });
+  assert.equal(nope.isError, true);
+  assert.ok(nope.text.split("\n").at(-1)!.startsWith(`注：路径 "'nope.txt'" 当作 `), nope.text);
+  for (const r of [await run("read", { path: "a.txt" }), await run("write", { path: "b.txt", content: "x" }), await run("edit", { path: "a.txt", old: "123", new: "456" })]) assert.doesNotMatch(r.text, /注：/);
+  // 2 万行的文件，路径带空白：段里（decide 的 clip）只有一个“中间省略”标记，说明还在最后一行。
+  await run("write", { path: "big.log", content: Array.from({ length: 20_000 }, (_, i) => `line ${i} 中文`).join("\n") });
+  const big = (await run("read", { path: " big.log" })).text;
+  assert.equal(clip(big), big);
+  assert.equal(big.match(/中间省略/g)?.length, 1);
+  assert.ok(big.split("\n").at(-1)!.startsWith("注：路径 "));
 });
 
 test("库外工具的参数整体是 null（pi-ai 解析流式 JSON 'null' 的结果）：回参数错误，不是执行失败", async () => {

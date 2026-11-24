@@ -1,6 +1,6 @@
 // 能从工作段算出来的值都在这里算，不存（见 .knowledge/kb-kernel.md）。
 import { CONTEXT_HEADING, contextSection, fixedPrompt, HANDOFF_INSTRUCTION, HANDOFF_RETRY, MEMORY_HEADING, memorySection, systemPrompt, toolDescriptions } from "./context.ts";
-import { CONTEXT_VIEW_MAX_BYTES, MEMORY_BRIEF_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "./tools.ts";
+import { CONTEXT_VIEW_MAX_BYTES, findTool, MEMORY_BRIEF_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "./tools.ts";
 import { unreachable } from "./types.ts";
 import type { AssistantMessage, Ended, Instant, Message, PresetSnapshot, Process, ToolCall } from "./types.ts";
 
@@ -175,10 +175,10 @@ export function pendingCalls(segment: readonly Message[]): ToolCall[] {
   return t === undefined ? [] : t.calls.slice(t.results.length);
 }
 
-/** 主动换段：最后一条助手消息里有 `handoff` 调用，并且它的结果不是错误。补的结果都是错误，所以没执行的 `handoff` 不算。不存状态，从段算。 */
-export function handoffRequested(segment: readonly Message[]): boolean {
+/** 主动换段：最后一条助手消息里有 `handoff` 调用（名字经 `findTool` 解析，`functions.handoff:0` 也算，D109），并且它的结果不是错误。补的结果都是错误，所以没执行的 `handoff` 不算。不存状态，从段算。 */
+export function handoffRequested(segment: readonly Message[], preset: PresetSnapshot): boolean {
   const t = lastTurn(segment);
-  return t !== undefined && t.calls.some((c, k) => c.name === "handoff" && t.results[k]?.role === "toolResult" && !t.results[k].isError);
+  return t !== undefined && t.calls.some((c, k) => findTool(preset, c.name)?.name === "handoff" && t.results[k]?.role === "toolResult" && !t.results[k].isError);
 }
 
 /** 最终回复：从段尾往前，遇到用户消息之前的最后一条助手消息的正文。 */

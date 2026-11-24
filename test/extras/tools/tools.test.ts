@@ -20,6 +20,7 @@ import { parseExit } from "../../../extras/gui/bridge/bg.ts";
 import { talk } from "../../../extras/tools/client.ts";
 import { CATALOG, definitionOf } from "../../../extras/tools/catalog.ts";
 import { phaseText } from "../../../extras/tools/wait.ts";
+import { validateToolArguments } from "@earendil-works/pi-ai";
 import { textOfResult } from "../../plain.ts";
 
 const LIB = join(import.meta.dirname, "..", "..", "..", "extras", "tools").replace(/\\/g, "/");
@@ -191,10 +192,30 @@ describe("peek", () => {
     assert.ok(r.text.includes(`来自进程 ${other}（t）`) || r.text.includes(`进程 ${other}（t）：`), r.text);
   });
 
-  test("没有这个进程：错误里有服务的原因", async () => {
+  test("没有这个进程：报错，写明可能已被删除，后面是候选；同样的状态下文字一字不差", async () => {
     const r = await tool("peek", { process: "nope-nope" }, "pk");
     assert.equal(r.isError, true);
-    assert.match(r.text, /读不到进程 nope-nope/);
+    assert.match(r.text, /读不到进程 nope-nope：没有这个进程。/);
+    assert.match(r.text, /已经被删除了/);
+    assert.match(r.text, /现有的进程：|现在没有别的运行中的进程/);
+    assert.equal((await tool("peek", { process: "nope-nope" }, "pk")).text, r.text);
+  });
+
+  test("ID 写成大写带空格、last 超过 20：照做，最后一行说明", async () => {
+    const id = await start("好");
+    await untilIdle(id);
+    const r = await tool("peek", { process: ` ${id.toUpperCase()} `, last: 50 }, "pk");
+    assert.equal(r.isError, false, r.text);
+    assert.ok(r.text.includes(`进程 ${id}，当前段`), r.text);
+    assert.ok(r.text.includes(`注：process 当作 ${id}；last 最多 20，给了最后 20 条。`), r.text);
+  });
+
+  test("装出去的定义：process_id、count 照做，说明写明", async () => {
+    const id = await start("好");
+    await untilIdle(id);
+    const r = await tool("peek", { process_id: id, count: 2 }, "pk");
+    assert.equal(r.isError, false, r.text);
+    assert.match(r.text, /注：参数 process_id 当作 process；peek 没有参数 count，忽略了。/);
   });
 });
 
@@ -244,18 +265,38 @@ describe("wait", () => {
     assert.ok(r.text.includes(`- ${slow}：已结束，被停止`), r.text);
   });
 
-  test("没有这个进程：不再等它，写明读不到", async () => {
+  test("没有这个进程：报错，写明已被删除就别再等，列候选；两次文字一样", async () => {
     const r = await tool("wait", { processes: ["nope-nope"], timeout: 5 }, "wt");
-    assert.equal(r.isError, false);
-    assert.match(r.text, /不用再等了/);
-    assert.match(r.text, /- nope-nope：读不到/);
+    assert.equal(r.isError, true);
+    assert.match(r.text, /这些不是现有的进程 ID：nope-nope/);
+    assert.match(r.text, /已经被删除了，不用再等/);
+    assert.equal((await tool("wait", { processes: ["nope-nope"], timeout: 5 }, "wt")).text, r.text);
   });
 
-  test("参数不对：1 到 8 个进程", async () => {
-    for (const processes of [[], Array.from({ length: 9 }, (_, i) => `p${i}`), [""], "x"]) {
+  test("一个串里写了逗号分隔的 ID：拆开；timeout 超过 590：照 590 等并说明", async () => {
+    const a = await start("好");
+    const b = await start("好");
+    await untilIdle(a);
+    await untilIdle(b);
+    const r = await tool("wait", { processes: [`${a},${b}`], timeout: 900 }, "wt");
+    assert.equal(r.isError, false, r.text);
+    assert.match(r.text, /^全部结束。/);
+    assert.ok(r.text.includes(`- ${a}：已结束`) && r.text.includes(`- ${b}：已结束`), r.text);
+    assert.ok(r.text.includes(`注：processes 当作 ${a}、${b}；timeout 最多 590 秒，按 590 秒等。`), r.text);
+  });
+
+  test("参数不对：空的、只有自己、超过 8 个", async () => {
+    for (const processes of [[], [""]]) {
       const r = await tool("wait", { processes }, "wt");
       assert.equal(r.isError, true, JSON.stringify(processes));
+      assert.match(r.text, /processes 是空的/);
     }
+    const mine = await tool("wait", { processes: ["wt"] }, "wt");
+    assert.equal(mine.isError, true);
+    assert.match(mine.text, /processes 里只有你自己（wt）/);
+    const many = await tool("wait", { processes: [Array.from({ length: 9 }, (_, i) => `p${i}`).join(",")] }, "wt");
+    assert.equal(many.isError, true);
+    assert.match(many.text, /一次最多等 8 个进程，收到 9 个/);
   });
 
   test("等着的时候收到信：提前返回，写明被打断，照常列出每个子进程的状态", async () => {
@@ -315,7 +356,23 @@ describe("wait", () => {
     assert.equal(r.status, 0, r.err);
     assert.ok(r.ms < 5_000, `用了 ${r.ms} 毫秒`);
     assert.match(r.text, /^被来信打断：有 1 封信排队/);
-    assert.ok(r.text.includes(`- ${mine}：运行中，在等工具`) && r.text.includes(`- ${child}：运行中，在等工具`), r.text);
+    assert.ok(!r.text.includes(`- ${mine}：`) && r.text.includes(`- ${child}：运行中，在等工具`), r.text);
+    assert.ok(r.text.includes(`注：${mine} 是你自己，等不到自己结束，去掉了。`), r.text);
+  });
+
+  test("processes 里有自己和已结束的子进程：去掉自己，马上返回，不等满 timeout", async () => {
+    const mine = await start("hold 抱着");
+    const child = await start("好");
+    await untilPhase(mine, "awaitingTool");
+    await untilIdle(child);
+    const r = await spawnTool("wait.ts", { processes: [mine, child], timeout: 30 }, mine, async () => {});
+    await request({ op: "stop", process: mine });
+    await untilIdle(mine);
+    assert.equal(r.status, 0, r.err);
+    assert.ok(r.ms < 10_000, `用了 ${r.ms} 毫秒`);
+    assert.match(r.text, /^全部结束。/);
+    assert.ok(!r.text.includes(`- ${mine}：`), r.text);
+    assert.equal(r.text.trimEnd().split("\n").at(-1), `注：${mine} 是你自己，等不到自己结束，去掉了。`);
   });
 
   test("阶段的判断：刚建、还没处理第一封信的 idle 不算结束", () => {
@@ -323,6 +380,36 @@ describe("wait", () => {
     assert.equal(phaseText({ tag: "idle", ended: "done" }).ended, true);
     assert.equal(phaseText({ tag: "idle", ended: { error: "炸了" } }).text, "已结束，出错：炸了");
     assert.equal(phaseText({ tag: "awaitingTool" }).ended, false);
+  });
+});
+
+describe("工具库装出去的定义", () => {
+  const lax = (name: string): any => definitionOf(CATALOG.find((c) => c.name === name)!, LIB).parameters;
+  const check = (name: string, args: Record<string, unknown>): void => {
+    validateToolArguments({ name, description: "", parameters: lax(name) } as any, { type: "toolCall", id: "x", name, arguments: args } as any);
+  };
+
+  test("顶层没有 additionalProperties 和 required；必填的说明以（必填）结尾；enum 和范围原样在", () => {
+    for (const e of CATALOG) {
+      const p = lax(e.name);
+      assert.ok(!("additionalProperties" in p) && !("required" in p), e.name);
+      for (const r of (e.parameters.required ?? []) as string[]) assert.ok(p.properties[r].description.endsWith("（必填）"), `${e.name}.${r}`);
+      for (const [k, v] of Object.entries(e.parameters.properties as Record<string, any>)) {
+        for (const key of ["type", "enum", "minItems", "maxItems", "minLength", "maxLength", "minimum", "maximum"]) assert.deepEqual(p.properties[k][key], v[key], `${e.name}.${k}.${key}`);
+      }
+      assert.ok("additionalProperties" in e.parameters || e.parameters.properties !== undefined, "CATALOG 不变");
+    }
+    assert.equal(CATALOG.find((c) => c.name === "peek")!.parameters.additionalProperties, false);
+  });
+
+  test("别的写法能到脚本；取值和范围照旧被内核拒", () => {
+    check("peek", { process_id: "x" });
+    check("wait", { process: "x" });
+    check("web_search", { q: "x" });
+    check("history_dump", { segment: 2 });
+    assert.throws(() => check("computer", { action: "left_click" }));
+    assert.throws(() => check("wait", { processes: [] }));
+    assert.throws(() => check("create_preset", { id: "a", workdir: "E:/", model: "a/b", tools: [], prompt: "x", thinking: "HIGH" }));
   });
 });
 

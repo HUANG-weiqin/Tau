@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { HANDOFF_INSTRUCTION } from "../../src/kernel/context.ts";
 import { decide, effectOf } from "../../src/kernel/decide.ts";
-import { contextUsed, endedReason, estimatedUsed, finalReply, handoffRequested, handoffThreshold, MESSAGE_MAX_BYTES, tokens, utf8Bytes } from "../../src/kernel/derive.ts";
+import { contextUsed, endedReason, estimatedUsed, finalReply, handoffRequested, handoffThreshold, MESSAGE_MAX_BYTES, RETRIES_PER_REPLY, tokens, utf8Bytes } from "../../src/kernel/derive.ts";
 import { unreachable } from "../../src/kernel/types.ts";
 import type { AssistantMessage, Effect, Ended, Env, ImageContent, Input, Letter, Message, PresetSnapshot, PresetTool, Process } from "../../src/kernel/types.ts";
 import { res } from "../plain.ts";
@@ -65,7 +65,7 @@ function text(r: Rng, chars: number): string {
 
 type Action = "user" | "stop" | "complete" | "deliver" | "duplicate" | "drop" | "forge" | "crash" | "reconfigure";
 type ReplyKind = "toolUse" | "noCalls" | "stop" | "stopWithCalls" | "length" | "error" | "aborted" | "pending" | "deferred";
-type HandoffKind = "note" | "lengthNote" | "empty" | "toolUse" | "error" | "aborted";
+type HandoffKind = "note" | "lengthNote" | "empty" | "toolUse" | "noteCall" | "error" | "aborted";
 
 interface Profile {
   name: string;
@@ -87,7 +87,7 @@ const PROFILES: Profile[] = [
     windows: [28_000, 36_000, 80_000, 200_000],
     actions: { user: 10, stop: 3, complete: 45, deliver: 25, duplicate: 5, drop: 2, forge: 5, crash: 2, reconfigure: 4 },
     replies: { toolUse: 45, noCalls: 4, stop: 25, stopWithCalls: 3, length: 5, error: 5, aborted: 5, pending: 4, deferred: 4 },
-    handoffs: { note: 70, lengthNote: 10, empty: 5, toolUse: 5, error: 5, aborted: 5 },
+    handoffs: { note: 70, lengthNote: 10, empty: 5, toolUse: 5, noteCall: 5, error: 5, aborted: 5 },
     toolInterrupted: 0.03,
     hugeResult: 0.08,
   },
@@ -99,7 +99,7 @@ const PROFILES: Profile[] = [
     windows: [28_500, 48_000],
     actions: { user: 2, stop: 0, complete: 60, deliver: 35, duplicate: 1, drop: 0, forge: 1, crash: 0, reconfigure: 2 },
     replies: { toolUse: 99, noCalls: 0, stop: 1, stopWithCalls: 0, length: 0, error: 0, aborted: 0, pending: 0, deferred: 0 },
-    handoffs: { note: 97, lengthNote: 0, empty: 3, toolUse: 0, error: 0, aborted: 0 },
+    handoffs: { note: 97, lengthNote: 0, empty: 3, toolUse: 0, noteCall: 0, error: 0, aborted: 0 },
     toolInterrupted: 0,
     hugeResult: 0.05,
   },
@@ -111,7 +111,7 @@ const PROFILES: Profile[] = [
     windows: [400_000],
     actions: { user: 2, stop: 0, complete: 60, deliver: 35, duplicate: 1, drop: 0, forge: 1, crash: 0, reconfigure: 1 },
     replies: { toolUse: 100, noCalls: 0, stop: 0, stopWithCalls: 0, length: 0, error: 0, aborted: 0, pending: 0, deferred: 0 },
-    handoffs: { note: 100, lengthNote: 0, empty: 0, toolUse: 0, error: 0, aborted: 0 },
+    handoffs: { note: 100, lengthNote: 0, empty: 0, toolUse: 0, noteCall: 0, error: 0, aborted: 0 },
     toolInterrupted: 0,
     hugeResult: 0.05,
   },
@@ -123,7 +123,7 @@ const PROFILES: Profile[] = [
     windows: [32_000, 100_000],
     actions: { user: 15, stop: 8, complete: 30, deliver: 20, duplicate: 12, drop: 5, forge: 12, crash: 8, reconfigure: 8 },
     replies: { toolUse: 45, noCalls: 4, stop: 25, stopWithCalls: 3, length: 5, error: 5, aborted: 5, pending: 4, deferred: 4 },
-    handoffs: { note: 40, lengthNote: 10, empty: 15, toolUse: 15, error: 10, aborted: 10 },
+    handoffs: { note: 40, lengthNote: 10, empty: 15, toolUse: 15, noteCall: 15, error: 10, aborted: 10 },
     toolInterrupted: 0.1,
     hugeResult: 0.08,
   },
@@ -149,6 +149,7 @@ interface Stats {
   safePoints: number;
   handoffByCall: number;
   handoffByLetter: number;
+  handoffLast: number;
   replies: number;
   emptyReplies: number;
   /** 重发（D92）：可恢复的模型失败后，同一个请求再发一次。 */
@@ -164,7 +165,7 @@ interface Stats {
 }
 
 function newStats(): Stats {
-  return { handoffOk: 0, handoffFailed: 0, done: 0, stopped: 0, stepLimit: 0, errors: 0, skipped: 0, interrupted: 0, queuedMerged: 0, dropped: 0, duplicates: 0, usageAdded: 0, processLetters: 0, images: 0, safePoints: 0, handoffByCall: 0, handoffByLetter: 0, replies: 0, emptyReplies: 0, retried: 0, reconfigured: 0, cancelled: 0, adopted: 0, tooBig: 0, pending: 0, nextAdopted: 0, nextDiscarded: 0 };
+  return { handoffOk: 0, handoffFailed: 0, done: 0, stopped: 0, stepLimit: 0, errors: 0, skipped: 0, interrupted: 0, queuedMerged: 0, dropped: 0, duplicates: 0, usageAdded: 0, processLetters: 0, images: 0, safePoints: 0, handoffByCall: 0, handoffByLetter: 0, handoffLast: 0, replies: 0, emptyReplies: 0, retried: 0, reconfigured: 0, cancelled: 0, adopted: 0, tooBig: 0, pending: 0, nextAdopted: 0, nextDiscarded: 0 };
 }
 
 /**
@@ -355,6 +356,9 @@ function simulate(profile: Profile, seed: number, stats: Stats): void {
         case "toolUse":
           s = { usage: u, stopReason: "toolUse", text: "先查一下", calls: calls(1) };
           break;
+        case "noteCall": // 说明加一个 handoff 调用：只有最后一次重发才收下（D110）
+          s = { usage: u, stopReason: "toolUse", text: text(r, r.int(1, 3_000)), calls: [call("h" + r.int(0, 999), "handoff", r.chance(0.5) ? { summary: text(r, 20) } : {})] };
+          break;
         case "error":
         case "aborted":
           s = { usage: u, stopReason: kind, ...errorMessage };
@@ -512,7 +516,7 @@ ${text(r, r.int(1, 300))}`;
     }
     if (input.kind === "toolResult" && prev.phase.tag === "awaitingTool" && w.p.phase.tag === "awaitingModel" && w.p.phase.purpose === "handoff" && contextUsed(w.p, current(w)) < handoffThreshold(w.p.preset) && !prev.phase.turn.queued.some((l) => l.handoff === true)) stats.handoffByCall++;
     // 没有任何触发条件、用途却是 handoff：只能是换段信。
-    if (w.p.phase.tag === "awaitingModel" && w.p.phase.purpose === "handoff" && contextUsed(w.p, current(w)) < handoffThreshold(w.p.preset) && !handoffRequested(current(w))) stats.handoffByLetter++;
+    if (w.p.phase.tag === "awaitingModel" && w.p.phase.purpose === "handoff" && contextUsed(w.p, current(w)) < handoffThreshold(w.p.preset) && !handoffRequested(current(w), w.p.preset)) stats.handoffByLetter++;
 
     // D92：重发不写段、不寄信、不动信箱里的信，阶段和用途不变，只计一步。
     if (input.kind === "modelResult" && prev.phase.tag === "awaitingModel" && w.p.phase.tag === "awaitingModel" && w.p.phase.turn.retry !== undefined && prev.lastEffect === input.n) {
@@ -529,6 +533,11 @@ ${text(r, r.int(1, 300))}`;
     if (input.kind === "letter" && input.letter.from.kind === "process") stats.processLetters++;
     if (s.append.some((m) => typeof m.content !== "string" && m.content.some((c) => c.type === "image"))) stats.images++;
     if (w.p.segment.seq !== prev.segment.seq) stats.handoffOk++;
+    // D110：用途 handoff、toolUse 的回复被收下，只能是最后一次重发，而且调用全是 handoff。
+    if (input.kind === "modelResult" && input.outcome.status === "ok" && input.outcome.message.stopReason === "toolUse" && prev.phase.tag === "awaitingModel" && prev.phase.purpose === "handoff" && w.p.segment.seq !== prev.segment.seq) {
+      assert.ok((prev.phase.turn.retry?.n ?? 0) >= RETRIES_PER_REPLY && input.outcome.message.content.every((c) => c.type !== "toolCall" || c.name === "handoff"));
+      stats.handoffLast++;
+    }
     for (const m of s.append) {
       if (m.role === "toolResult" && textOf(m) === "未执行") stats.skipped++;
       if (m.role === "toolResult" && textOf(m) === "被中断，结果未知") stats.interrupted++;
@@ -623,7 +632,7 @@ for (const profile of PROFILES) {
     } else if (profile.name === "长轮") {
       assert.ok(stats.stepLimit > 0, "没有用完步数");
     } else {
-      for (const k of ["handoffFailed", "done", "stopped", "errors", "skipped", "interrupted", "queuedMerged", "duplicates", "usageAdded", "processLetters", "images", "safePoints", "handoffByCall", "handoffByLetter", "replies", "emptyReplies", "retried", "cancelled", "adopted", "tooBig", "pending", "nextAdopted", "nextDiscarded"] as const) {
+      for (const k of ["handoffFailed", "done", "stopped", "errors", "skipped", "interrupted", "queuedMerged", "duplicates", "usageAdded", "processLetters", "images", "safePoints", "handoffByCall", "handoffByLetter", "handoffLast", "replies", "emptyReplies", "retried", "cancelled", "adopted", "tooBig", "pending", "nextAdopted", "nextDiscarded"] as const) {
         assert.ok(stats[k] > 0, `没有覆盖到 ${k}`);
       }
     }

@@ -3,6 +3,7 @@ import { briefBlock, briefLines, BRIEF_FIXED_BYTES, BRIEF_MAX_BYTES } from "./br
 import { CARRY_HEADER, HANDOFF_HEADER, IMAGE_UNSUPPORTED, tailStart } from "./context.ts";
 import { BYTES_PER_TOKEN, clip, contextUsed, endedReason, endedText, estimatedUsed, finalReply, HANDOFF_REQUEST_MAX_BYTES, handoffRequested, handoffThreshold, IMAGES_PER_MESSAGE, MARGIN_TOKENS, MESSAGE_MAX_BYTES, newSegmentUsed, pendingCalls, RETRIES_PER_REPLY, STEPS_PER_TURN, tokens, utf8Bytes } from "./derive.ts";
 import { sameStructure, withCallParams } from "./snapshot.ts";
+import { findTool } from "./tools.ts";
 import { textContent, unreachable } from "./types.ts";
 import type { AssistantMessage, Content, Effect, Ended, Env, ImageContent, Input, Instant, Letter, LetterMeta, Message, Phase, PresetSnapshot, Process, ProcessId, Purpose, ToolCall, ToolResultContent, Turn, Usage, UserTau } from "./types.ts";
 
@@ -234,11 +235,15 @@ function fitCalls(m: AssistantMessage): AssistantMessage | null {
 
 /**
  * 第 5.4 节。有待换配置（`p.next`，D71）时，新段按它开：快照、阈值、两个开段视图都用 `next` 和 `env.fresh` 的，检查通过才采用。
- * 没有 `next` 时，快照不变，记忆视图用 `env.memoryView`，上下文视图每次换段重取（`env.fresh`）。
+ * 没有 `next` 时，快照不变，记忆视图用 `env.memoryView`，上下文视图每次换段重取（`env.fresh`）。最后一次重发（次数用完，本来要报交接失败）时放宽（D110）：`handoff` 调用参数里的字符串也算说明，`toolUse` 而调用全是 `handoff` 也收下，调用不执行。
  */
 function onHandoff(d: Draft, turn: Turn, m: AssistantMessage): void {
-  const note = m.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n").trim();
-  if ((m.stopReason === "stop" || m.stopReason === "length") && note !== "") {
+  const last = (turn.retry?.n ?? 0) >= RETRIES_PER_REPLY;
+  const isHandoff = (c: ToolCall): boolean => findTool(d.p.preset, c.name)?.name === "handoff";
+  // 最后一次重发：调用全是 handoff 才从参数取说明，`stop` 和 `toolUse` 一样；有别的调用就照旧报失败，不悄悄丢掉它们。
+  const onlyHandoff = last && m.content.every((c) => c.type !== "toolCall" || isHandoff(c));
+  const note = m.content.flatMap((c) => (c.type === "text" ? [c.text] : onlyHandoff && c.type === "toolCall" ? Object.values(typeof c.arguments === "object" && c.arguments !== null ? c.arguments : {}).filter((v) => typeof v === "string") : [])).join("\n").trim();
+  if ((m.stopReason === "stop" || m.stopReason === "length" || (last && m.stopReason === "toolUse" && onlyHandoff)) && note !== "") {
     if (d.append.length > 0) throw new Error("换段前不能有要追加的消息");
     const { next, ...kept } = d.p;
     const to = next ?? d.p.preset;
@@ -267,7 +272,7 @@ function onHandoff(d: Draft, turn: Turn, m: AssistantMessage): void {
     const imageNote = images.length > IMAGES_PER_MESSAGE ? utf8Bytes(`[图片：省略了 ${images.length - IMAGES_PER_MESSAGE} 张较早的图片]`) + 1 : 0;
     const { used: usedWithCarried } = newSegmentUsed({ ...d.p, preset: to }, memoryView, userMessage(head + carried, images, true, d.env.now), contextView);
     const budget = Math.min(BRIEF_MAX_BYTES, MESSAGE_MAX_BYTES - utf8Bytes(head + carried) - imageNote, Math.floor((threshold - usedWithCarried) / 2) * BYTES_PER_TOKEN) - BRIEF_FIXED_BYTES;
-    const block = briefBlock(briefLines(d.seg, tail0, d.p.segment.seq), budget);
+    const block = briefBlock(briefLines(d.seg, tail0, d.p.segment.seq, d.p.preset), budget);
     const brief = block === "" ? "" : `\n\n${block}`;
     // 带过去的信，位置平移到新段第一条的文本里：每条消息的文本在 carriedText 里的起点。没有文本的消息不进 carriedText，它的信没有位置。
     let offset = (head + brief + `\n\n${CARRY_HEADER}\n\n`).length;
@@ -286,7 +291,7 @@ function onHandoff(d: Draft, turn: Turn, m: AssistantMessage): void {
     const { retry: _, ...clean } = turn;
     return continueTurn(d, { ...clean, queued: clean.queued.map(unmarked) });
   }
-  // 没写出说明（调用了工具，或者没有文字）和流出错都重发，用途仍是 handoff（D92）；次数用完才报交接失败。其余（aborted、pending、deferred）直接失败。
+  // 没写出说明（调用了工具，或者没有文字；最后一次只剩调用了 handoff 以外的工具，或者没有文字）和流出错都重发，用途仍是 handoff（D92）；次数用完才报交接失败。其余（aborted、pending、deferred）直接失败。
   const r = m.stopReason;
   const fail = () => endTurn(d, turn, { error: "交接失败：" + (m.errorMessage ?? r) });
   if (r === "error") return retry(d, turn, "handoff", "error", fail);
@@ -333,7 +338,7 @@ function unmarked(l: Letter): Letter {
 function continueTurn(d: Draft, turn: Turn, handoff = false): void {
   if (turn.steps >= STEPS_PER_TURN) return endTurn(d, turn, "stepLimit");
   const next = { ...turn, steps: turn.steps + 1 };
-  return enter(d, { tag: "awaitingModel", turn: next, purpose: handoff || overThreshold(d) || handoffRequested(d.seg) ? "handoff" : "turn" });
+  return enter(d, { tag: "awaitingModel", turn: next, purpose: handoff || overThreshold(d) || handoffRequested(d.seg, d.p.preset) ? "handoff" : "turn" });
 }
 
 function endTurn(d: Draft, turn: Turn, ended: Ended): void {

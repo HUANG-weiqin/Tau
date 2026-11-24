@@ -2,18 +2,20 @@
 // （kb-extras 的“工具库”和“换段以后查旧段”），每段再写一份简略视图 `seg-<n>.brief.md`（D103）。没有参数。只读旧段，顺手清掉 7 天前的文件。
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { extrasDir, run, tauEnv } from "./common.ts";
+import { dropUnknown, extrasDir, readArgs, run, takeArgs, tauEnv } from "./common.ts";
 import { currentSegment, fetchSegment, formatDump, headOf, probeSegment, pruneOld, readExistingBrief, readExistingSegment, renderBrief, renderSegmentParts, segmentPath, writeBrief, writeSegment } from "./history.ts";
 import type { DumpEntry } from "./history.ts";
 
 if (import.meta.main) run(async () => {
   const { proc, pipe } = tauEnv();
+  // 不拒绝任何参数：它只写自己的旧段，指向别的进程的参数也丢掉并说明。
+  dropUnknown("history_dump", takeArgs("history_dump", await readArgs()).unknown, "；它只写你自己的旧段，看别的进程用 peek");
   const now = Date.now();
   const root = extrasDir("history");
   pruneOld(root, now);
   const current = await currentSegment(pipe, proc);
   if (current === 1) {
-    process.stdout.write("现在是第 1 段，没有旧段。\n");
+    process.stdout.write("现在是第 1 段，没有旧段。当前段的内容你已经有了，不用再调；看别的进程用 peek。\n");
     return;
   }
   // 目录写成正斜杠：模型直接粘给 rg 和 read。

@@ -254,3 +254,13 @@ test("催出来的转后台结果：bgJobs 照样认得", () => {
   const seg: Message[] = [{ role: "user", content: "跑", timestamp: 100 }, hurried];
   assert.deepEqual(observe(me, seg, [me], 10_000).self.bgJobs, [{ id: "abc123", age: 9_000 }]);
 });
+
+// D109：调用写成 Bash、functions.bash:0 时，self.bgJobs 也认得转后台的命令。
+test("写成 Bash 的转后台结果：bgJobs 认得；预设里没有的名字不认", () => {
+  const me = proc("me", preset({ id: "a", tools: ["bash"] }));
+  const text = "[转入后台 abc123] 命令还在运行，没有被结束。\n输出文件：C:/x.log（还在增长，用 read 读，可带 offset 和 limit）\n跑完会给你寄一封信，内容是退出码和最后几行；你可以接着做别的事，也可以结束这一轮等信。";
+  const at = (toolName: string): Message[] => [{ role: "user", content: "跑", timestamp: 100 }, { role: "toolResult", toolCallId: "c", toolName, isError: false, timestamp: 1_000, content: [{ type: "text", text }] }];
+  assert.deepEqual(observe(me, at("Bash"), [me], 10_000).self.bgJobs, [{ id: "abc123", age: 9_000 }]);
+  assert.deepEqual(observe(me, at("functions.bash:0"), [me], 10_000).self.bgJobs, [{ id: "abc123", age: 9_000 }]);
+  assert.equal(observe(me, at("shell"), [me], 10_000).self.bgJobs, undefined);
+});

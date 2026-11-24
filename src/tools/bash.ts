@@ -15,8 +15,8 @@ const MAX_SECONDS = 600;
 // 前台等的时候进程有排队的信（D104）：最多再等这么久就转后台。
 const HURRY_MS = 1000;
 const HURRY_NOTE = "有新的信在排队，没等满 timeout 就转了后台。\n";
-// 输出过长时只留头尾各这么多字节，中段只计数。两段加上说明行仍在工具结果上限内。
-const KEEP_BYTES = MESSAGE_MAX_BYTES / 2 - 256;
+// 输出过长时只留头尾各这么多字节，中段只计数。两段加上说明行，再加执行器接的“注：”（D109），仍在工具结果上限内：decide 不会再截一次。
+const KEEP_BYTES = MESSAGE_MAX_BYTES / 2 - 768;
 // bash 退出后，它留下的后台进程（如 `sleep 100 &`）还占着输出管道，close 要等它们结束。所以 exit 后
 // 只再读这么久就关管道返回。后台进程继续运行，不归本工具管；它再写输出会遇到管道已关（msys 程序因 SIGPIPE 退出）。
 const DRAIN_MS = 200;
@@ -106,13 +106,15 @@ const commandEnv = (ctx: BashContext): NodeJS.ProcessEnv => ({
   TAU_PIPE: ctx.pipe,
 });
 
-const NO_SHELL = "需要 Git for Windows：PATH 上找不到 git.exe，也就找不到它的 bin\\bash.exe";
+const NO_SHELL = "需要 Git for Windows：PATH 上找不到 git.exe，也就找不到它的 bin\\bash.exe。bash 和工具定义都运行不了，换什么命令都一样，不要再试；read、write、edit 照常能用。结束这一轮，告诉用户：装好 Git for Windows，再重启 tau 服务";
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const POLL_MS = 200;
 // 预览每次轮询最多读这么多：写得快的命令不能让一次推送占住事件循环，剩下的留给下一次。
 const PUSH_MAX = 1024 * 1024;
 const winPath = (p: string): string => path.resolve(p).replace(/\//g, "\\");
 const bashPath = (p: string): string => path.resolve(p).replace(/\\/g, "/");
+// 启动失败的文字：工作目录没了（被删、改名、拔掉的盘）是它自己的毛病，不是模型写错，说清楚；只在 spawn 失败以后才查。
+const noStart = (workdir: string, why: string): string => existsSync(workdir) ? `无法启动 bash（工作目录 ${workdir}）：${why}` : `工作目录 ${bashPath(workdir)} 不存在了（被删了或改了名）。bash 和工具定义都运行不了，换什么命令都一样，不要再试；read、write、edit 带绝对路径照常能用。结束这一轮，告诉用户：恢复这个目录，或者给这个进程换工作目录。用户已经换了（self 的 pending 里有 workdir）时，先调用 handoff 换段，新目录才生效。`;
 const drop = (...files: string[]): void => {
   for (const f of files) {
     try {
@@ -194,7 +196,7 @@ function view(log: string): { body: string; size: number } {
  */
 export async function bash(args: { command: string; timeout?: number }, workdir: string, signal: AbortSignal, ctx: BashContext): Promise<ToolResultContent> {
   const wanted = args.timeout ?? DEFAULT_SECONDS;
-  if (!Number.isInteger(wanted) || wanted < 0) return fail(`timeout 必须是非负整数（秒）：${args.timeout}`);
+  if (!Number.isInteger(wanted) || wanted < 0) return fail(`timeout 必须是非负整数（秒）：${args.timeout}。不想等就写 0（立刻转后台，跑完寄信）；不写是 60；最长 600。到时间命令也不会被结束。`);
   const seconds = Math.min(wanted, MAX_SECONDS); // 超过 2^31 毫秒的定时器，Node 会改成 1 毫秒
   if (signal.aborted) return fail("已中止，命令没有运行");
   const exe = findShell();
@@ -211,7 +213,7 @@ export async function bash(args: { command: string; timeout?: number }, workdir:
     sweep(root, dir);
     fd = openSync(log, "w"); // 不能用 "a"：msys 写不了只追加的句柄，echo 静默失败。所有写入者共用这一个句柄，位置是共享的。
   } catch (e) {
-    return fail(`无法建输出文件 ${winPath(log)}：${e instanceof Error ? e.message : String(e)}`);
+    return fail(`无法建输出文件 ${winPath(log)}：${e instanceof Error ? e.message : String(e)}。这是这台机器的问题（多半是磁盘满了或没有写权限），换命令也一样，不要再试；结束这一轮，告诉用户。`);
   }
   const env = { ...commandEnv(ctx), TAU_PGID: pgidFile, TAU_COMMAND: args.command, TAU_CLAIM: bashPath(claim), TAU_JOB: job, TAU_LOG: bashPath(log), TAU_NODE: bashPath(process.execPath), TAU_NOTIFY: bashPath(path.join(import.meta.dirname, "notify.ts")) };
   let child: ChildProcess;
@@ -219,7 +221,7 @@ export async function bash(args: { command: string; timeout?: number }, workdir:
     child = spawn(exe, ["-c", BG_WRAPPER], { cwd: workdir, env, stdio: ["ignore", fd, fd], windowsHide: true });
   } catch (e) {
     drop(log); // 命令含 NUL 字符时 spawn 同步抛错
-    return fail(`无法启动 bash（工作目录 ${workdir}）：${e instanceof Error ? e.message : String(e)}`);
+    return fail(noStart(workdir, e instanceof Error ? e.message : String(e)));
   } finally {
     closeSync(fd);
   }
@@ -287,7 +289,7 @@ export async function bash(args: { command: string; timeout?: number }, workdir:
       drop(claim, pgidFile);
       resolve(result);
     };
-    child.on("error", (e) => settled || finish(fail(`无法启动 bash（工作目录 ${workdir}）：${e.message}`)));
+    child.on("error", (e) => settled || finish(fail(noStart(workdir, e.message))));
     child.on("exit", async (code) => {
       if (settled) return;
       clearTimeout(timer);
@@ -340,7 +342,7 @@ export async function runCommand(spec: CommandSpec, workdir: string, signal: Abo
     let killing: Promise<string> | undefined;
     const kill = (why: string): void => void (killing ??= killAll(exe, child.pid, pgidFile).then(() => why));
     const onAbort = (): void => kill("已中止，结束了命令启动的进程");
-    const timer = setTimeout(() => kill(`超时：${seconds} 秒后结束了命令启动的进程`), seconds * 1000);
+    const timer = setTimeout(() => kill(`超时：${seconds} 秒后结束了命令启动的进程。同样的调用多半还会超时：缩小范围再试，或者告诉用户调大这个工具定义的 timeout`), seconds * 1000);
     signal.addEventListener("abort", onAbort, { once: true });
     const stopWatching = (): void => {
       clearTimeout(timer);
@@ -367,7 +369,7 @@ export async function runCommand(spec: CommandSpec, workdir: string, signal: Abo
       out.push(chunk);
       ctx.onData?.(chunk);
     });
-    child.on("error", (e) => finish(fail(`无法启动 bash（工作目录 ${workdir}）：${e.message}`)));
+    child.on("error", (e) => finish(fail(noStart(workdir, e.message))));
     child.on("exit", (c) => {
       code = c;
       stopWatching();

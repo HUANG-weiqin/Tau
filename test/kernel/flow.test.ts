@@ -570,7 +570,8 @@ describe("5.4 换段", () => {
   });
 
   test("3. 其它情况都算失败：不写入，endTurn(交接失败：…)，旧段不变", () => {
-    const accepted: Record<StopReason, boolean> = { stop: true, length: true, toolUse: false, error: false, aborted: false, pending: false, deferred: false };
+    // toolUse 只在最后一次重发、调用全是 handoff 时才收下（D110，见 handoff-last.test.ts）；这里的表是“带说明时收下”，toolUse 不带说明的几种照旧失败，带 read 调用的那条（withCall）也失败。
+    const accepted: Record<StopReason, boolean> = { stop: true, length: true, toolUse: true, error: false, aborted: false, pending: false, deferred: false };
     const cases: { reason: StopReason; text?: string; thinking?: string; errorMessage?: string; withCall?: boolean }[] = [];
     for (const [reason, ok] of Object.entries(accepted) as [StopReason, boolean][]) {
       if (ok) {

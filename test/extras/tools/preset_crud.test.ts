@@ -1,7 +1,7 @@
 // create_preset / delete_preset（extras/tools）：参数校验单元测试，以及针对真实 tau 服务的建、删、回滚、并发和进程保护集成测试。
-import { after, before, describe, test } from "node:test";
+import { after, afterEach, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -14,6 +14,7 @@ import type { Service } from "../../../src/server/serve.ts";
 import { runToolDef } from "../../../src/tools/tooldef.ts";
 import { CATALOG, definitionOf } from "../../../extras/tools/catalog.ts";
 import { talk } from "../../../extras/tools/client.ts";
+import { takeNotes } from "../../../extras/tools/common.ts";
 import { createPreset, formatPresetMarkdown, parseCreateArgs } from "../../../extras/tools/create_preset.ts";
 import { deletePreset } from "../../../extras/tools/delete_preset.ts";
 import { textOfResult } from "../../plain.ts";
@@ -99,11 +100,11 @@ describe("parseCreateArgs 与 formatPresetMarkdown", () => {
     assert.throws(() => parseCreateArgs({ ...base, workdir: "/rel/path" }), /Windows 绝对路径/);
     assert.throws(() => parseCreateArgs({ ...base, workdir: join(dir, "missing") }), /不是存在的目录/);
     assert.throws(() => parseCreateArgs({ ...base, model: "no-slash" }), /model 格式/);
-    assert.throws(() => parseCreateArgs({ ...base, tools: ["bad name"] }), /tools 必须是合法工具名/);
+    assert.throws(() => parseCreateArgs({ ...base, tools: ["bad/name"] }), /tools 必须是合法工具名/);
     assert.throws(() => parseCreateArgs({ ...base, thinking: "turbo" }), /thinking/);
     assert.throws(() => parseCreateArgs({ ...base, handoff: 0 }), /handoff/);
     assert.throws(() => parseCreateArgs({ ...base, options: ["not-obj"] }), /options/);
-    assert.throws(() => parseCreateArgs({ ...base, context: ["a,b.md"] }), /逗号/);
+    assert.throws(() => parseCreateArgs({ ...base, context: ["a\u0001b.md"] }), /控制字符/);
     assert.throws(() => parseCreateArgs({ ...base, context: Array.from({ length: 9 }, (_, i) => `f${i}.md`) }), /最多 8 项/);
   });
 
@@ -231,5 +232,160 @@ describe("createPreset 与 deletePreset（对真实 tau 服务）", () => {
     assert.equal(dl.isError, false, textOfResult(dl));
     assert.match(textOfResult(dl), /已删除预设 e2e-role/);
     assert.equal(existsSync(join(tauHome, "presets", "e2e-role.md")), false);
+  });
+});
+
+// ---------- 弱模型兜底：参数规整、同参重发、换 id 的文字 ----------
+
+afterEach(() => void takeNotes());
+const fwd = (p: string): string => p.replace(/\\/g, "/");
+
+describe("parseCreateArgs 的规整（每处都有“注：”）", () => {
+  const env = () => ({ home: work, cwd: work, toolsDir: join(tauHome, "tools"), presetsDir: join(tauHome, "presets") });
+  const base = () => ({ id: "ok", workdir: work, model: "a/b", tools: ["read"], prompt: "你是助手" });
+
+  test("tools：逗号串拆开，大小写改回，self 和 handoff 去掉，多写的 memory_get 去掉", () => {
+    assert.deepEqual(parseCreateArgs({ ...base(), tools: ["read, bash"] }, env()).tools, ["read", "bash"]);
+    assert.equal(takeNotes(), "注：tools 当作 read、bash。");
+    assert.deepEqual(parseCreateArgs({ ...base(), tools: ["Read", "self"] }, env()).tools, ["read"]);
+    assert.match(takeNotes(), /tools 当作 read、self；去掉了 tools 里的 self（每个进程都有）/);
+    assert.deepEqual(parseCreateArgs({ ...base(), tools: ["memory", "memory_get"] }, env()).tools, ["memory"]);
+    assert.match(takeNotes(), /tools 里已经有 memory，去掉了多写的 memory_get/);
+  });
+
+  test("tools：memory_get 单独给就拒绝，给照抄的 tools", () => {
+    assert.throws(
+      () => parseCreateArgs({ ...base(), tools: ["bash", "memory_get"] }, env()),
+      (e: Error) => /工具按组给/.test(e.message) && e.message.includes('tools ["bash","memory"]') && /其余参数不变/.test(e.message),
+    );
+    assert.throws(() => parseCreateArgs({ ...base(), tools: ["post"] }, env()), /agents/);
+  });
+
+  test("id：去掉 .md，取预设目录下完整路径的文件名；别的目录的路径照旧拒绝", () => {
+    assert.equal(parseCreateArgs({ ...base(), id: "x.md" }, env()).id, "x");
+    assert.equal(takeNotes(), "注：id x.md 当作 x。");
+    assert.equal(parseCreateArgs({ ...base(), id: fwd(join(tauHome, "presets", "Y.MD")) }, env()).id, "Y");
+    takeNotes();
+    assert.throws(() => parseCreateArgs({ ...base(), id: "team/coder" }, env()), /预设 ID.*收到“team\/coder”/);
+  });
+
+  test("workdir：/d/x 写法、~、相对路径；context 拆开并换写法", () => {
+    const drive = work[0]!;
+    const posix = `/${drive.toLowerCase()}${fwd(work).slice(2)}`;
+    const want = `${drive.toUpperCase()}${fwd(work).slice(1)}`;
+    assert.equal(parseCreateArgs({ ...base(), workdir: posix }, env()).workdir, want);
+    assert.equal(takeNotes(), `注：workdir ${posix} 当作 ${want}。`);
+    assert.equal(parseCreateArgs({ ...base(), workdir: "~" }, env()).workdir, fwd(work));
+    takeNotes();
+    assert.equal(parseCreateArgs({ ...base(), workdir: "." }, env()).workdir, fwd(work));
+    assert.match(takeNotes(), /workdir \. 当作/);
+    const f = parseCreateArgs({ ...base(), context: ["AGENTS.md, docs/spec.md", `${posix}/AGENTS.md`] }, env());
+    assert.deepEqual(f.context, ["AGENTS.md", "docs/spec.md", `${want}/AGENTS.md`]);
+    assert.match(takeNotes(), /context/);
+  });
+
+  test("context 只按半角逗号拆：、，；; 在 Windows 文件名里合法，不拆（E1）", () => {
+    const items = ["docs/读书、写作.md", "E:/notes/a;b.md", "规范，第二版.md", "甲；乙.md", "x.md, y.md"];
+    assert.deepEqual(parseCreateArgs({ ...base(), context: items }, env()).context, ["docs/读书、写作.md", "E:/notes/a;b.md", "规范，第二版.md", "甲；乙.md", "x.md", "y.md"]);
+    takeNotes();
+    const five = Array.from({ length: 5 }, (_, i) => `d/读、${i}.md`);
+    assert.deepEqual(parseCreateArgs({ ...base(), context: five }, env()).context, five);
+  });
+
+  test("拒绝的文字给能照抄的下一步", () => {
+    assert.throws(() => parseCreateArgs({ ...base(), workdir: "/tmp/x" }, env()), /Windows 绝对路径，例如 E:\/tau，收到 \/tmp\/x/);
+    const missing = join(work, "tua");
+    assert.throws(
+      () => parseCreateArgs({ ...base(), workdir: missing }, env()),
+      (e: Error) => e.message.includes("workdir 不是存在的目录") && e.message.includes(`${fwd(work)} 里`) && e.message.includes("先用 bash 建好再调") && !/mkdir/.test(e.message),
+    );
+    assert.throws(() => parseCreateArgs({ ...base(), model: "no-slash" }, env()), /model 格式应为 <provider>\/<model-id>，收到 no-slash/);
+    assert.throws(() => parseCreateArgs({ ...base(), id: "a..b" }, env()), /不能有连续的点/);
+    assert.throws(() => parseCreateArgs({ ...base(), context: Array.from({ length: 9 }, (_, i) => `f${i}.md`) }, env()), /context 最多 8 项，收到 9 项/);
+  });
+});
+
+describe("createPreset / deletePreset 的兜底（对真实 tau 服务）", () => {
+  const opts = () => ({ tauHome, pipe, libDir: LIB, cwd: work });
+
+  test("同参重发：第二次不写文件，说已经在了、已校验；内容不同的撞名换 id、不提 delete_preset", async () => {
+    const args = { id: "again", workdir: work, model, tools: ["read"], prompt: "重发。" };
+    await createPreset(args, opts());
+    const file = join(tauHome, "presets", "again.md");
+    const before = statSync(file).mtimeMs;
+    await sleep(30);
+    const out = await createPreset(args, opts());
+    assert.match(out, /预设 again 已经在了，内容和这次要写的一样，已校验，没有改动/);
+    assert.equal(statSync(file).mtimeMs, before);
+    await assert.rejects(
+      createPreset({ ...args, prompt: "不一样。" }, opts()),
+      (e: Error) => /已存在.*不覆盖/.test(e.message) && e.message.includes("换一个 id") && e.message.includes("again-2") && !e.message.includes("delete_preset") && e.message.includes("先问用户"),
+    );
+    assert.match(readFileSync(file, "utf8"), /重发。/);
+  });
+
+  test("同参重发但校验不过：拒绝，写明是之前留下的，不删文件", async () => {
+    const file = join(tauHome, "presets", "stale.md");
+    const f = { id: "stale", workdir: work, model: "unknown/nope", tools: ["read"], prompt: "x" };
+    writeFileSync(file, formatPresetMarkdown(parseCreateArgs(f)));
+    await assert.rejects(createPreset(f, opts()), (e: Error) => /校验不过/.test(e.message) && /之前一次没校验完留下的/.test(e.message) && e.message.includes('delete_preset {"id":"stale"}'));
+    assert.ok(existsSync(file));
+  });
+
+  test("带了不认识的参数 dry_run：拒绝，文件没建", async () => {
+    await assert.rejects(createPreset({ id: "dry", workdir: work, model, tools: [], prompt: "x", dry_run: true }, opts()), /create_preset 没有参数 dry_run.*去掉 dry_run 再调，就是照剩下的参数真的建预设/);
+    assert.equal(existsSync(join(tauHome, "presets", "dry.md")), false);
+  });
+
+  test("delete_preset 带 dry_run：拒绝，写明没有预演、去掉就真删，给只看不删的路；文件还在（E2）", async () => {
+    const file = join(tauHome, "presets", "reviewer.md");
+    writeFileSync(file, "---\nworkdir: x\nmodel: a/b\ntools: read\n---\nx\n");
+    await assert.rejects(deletePreset({ id: "reviewer", dry_run: true }, { tauHome, pipe }), (e: Error) => /delete_preset 没有预演/.test(e.message) && /去掉 dry_run 就会真删 reviewer，找不回/.test(e.message) && e.message.includes("list_presets {}") && !/其余参数不变/.test(e.message));
+    assert.ok(existsSync(file));
+  });
+
+  test("校验失败：找不到工具定义时列出能用的工具", async () => {
+    await assert.rejects(
+      createPreset({ id: "needs-grep", workdir: work, model, tools: ["grep"], prompt: "x" }, opts()),
+      (e: Error) => e.message.includes("找不到工具定义：grep") && e.message.includes("能用的工具：内置 read、write、edit、bash、memory、agents") && e.message.includes("搜索和列目录用 bash（rg、ls）"),
+    );
+    assert.equal(existsSync(join(tauHome, "presets", "needs-grep.md")), false);
+  });
+
+  test("deletePreset：id 写成 x.md 当作 x；notes.md.md 和 notes.md 都在时删的是 notes.md.md", async () => {
+    writeFileSync(join(tauHome, "presets", "temp.worker2.md"), "---\nworkdir: x\n---\n");
+    const out = await deletePreset({ id: "temp.worker2.md" }, { tauHome, pipe });
+    assert.match(out, /已删除预设 temp\.worker2/);
+    assert.equal(takeNotes(), "注：id temp.worker2.md 当作 temp.worker2。");
+    writeFileSync(join(tauHome, "presets", "notes.md.md"), "a");
+    writeFileSync(join(tauHome, "presets", "notes.md"), "b");
+    await deletePreset({ id: "notes.md" }, { tauHome, pipe });
+    assert.equal(existsSync(join(tauHome, "presets", "notes.md.md")), false);
+    assert.equal(existsSync(join(tauHome, "presets", "notes.md")), true);
+    rmSync(join(tauHome, "presets", "notes.md"));
+    takeNotes();
+  });
+
+  test("deletePreset：不存在算成功，列现有的；大小写不对给照抄的精确 ID", async () => {
+    const out = await deletePreset({ id: "gone" }, { tauHome, pipe });
+    assert.match(out, /没有预设 gone，什么都没删。现有的预设：/);
+    assert.ok(out.includes("root"), out);
+    writeFileSync(join(tauHome, "presets", "reviewer.md"), "x");
+    await assert.rejects(deletePreset({ id: "Reviewer" }, { tauHome, pipe }), (e: Error) => /区分大小写/.test(e.message) && e.message.includes('delete_preset {"id":"reviewer"}'));
+    rmSync(join(tauHome, "presets", "reviewer.md"));
+  });
+
+  test("deletePreset：运行中的文字不给 stop_process；调用者自己在跑时写明是你自己", async () => {
+    await createPreset({ id: "busy", workdir: work, model, tools: ["bash"], prompt: "忙。" }, opts());
+    const [r] = await req({ op: "start", preset: "busy", text: "hold" });
+    const pid = r.process as string;
+    for (const t = Date.now(); Date.now() - t < 10_000; await sleep(50)) {
+      const [ps] = await req({ op: "ps" });
+      if (ps.processes.find((p: any) => p.self.id === pid)?.self.phase.tag === "awaitingTool") break;
+    }
+    await assert.rejects(deletePreset({ id: "busy" }, { tauHome, pipe }), (e: Error) => e.message.includes(pid) && !e.message.includes("stop_process") && e.message.includes("等它们结束再删"));
+    await assert.rejects(deletePreset({ id: "busy" }, { tauHome, pipe, proc: pid }), /你自己.*不能删自己正在用的预设/);
+    await req({ op: "stop", process: pid });
+    await untilIdle(pid);
   });
 });

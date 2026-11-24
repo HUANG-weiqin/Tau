@@ -2,12 +2,13 @@
 // 永不抛错：抛错会让事务回滚，这条输入留在信箱队头，所有进程都卡住。所有失败都是 isError 的结果。
 import { createHash } from "node:crypto";
 import { start } from "../kernel/decide.ts";
-import { endedText, HOPS_MAX, startError } from "../kernel/derive.ts";
+import { briefOf, endedText, HOPS_MAX, startError } from "../kernel/derive.ts";
 import { observe } from "../kernel/observe.ts";
 import { findBuiltin, MEMORY_KEY_MAX_BYTES, MEMORY_VALUE_MAX_BYTES, MEMORY_VIEW_MAX_BYTES } from "../kernel/tools.ts";
 import { textContent, unreachable } from "../kernel/types.ts";
 import { utcDate } from "../memory/kv.ts";
-import { fixArgs } from "../tools/args.ts";
+import { fixArgs, noted } from "../tools/args.ts";
+import { rewrite } from "../tools/files.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { PhaseView, Projection } from "../kernel/observe.ts";
 import type { DeclaredCall, Env, Input, Instant, Memory, Message, PresetSnapshot, Process, ProcessId, ToolCall, ToolResultContent, Versioned } from "../kernel/types.ts";
@@ -40,54 +41,48 @@ export function spawnId(parent: ProcessId, n: number, attempt: number): ProcessI
   return createHash("sha256").update(`${parent}\n${n}\n${attempt}`).digest("hex").slice(0, 8);
 }
 
-export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment: readonly Message[], call: ToolCall, now: Instant, readPreset: ReadPreset = noPresets): ToolResultContent {
-  // 参数的 JSON 不完整时 arguments 是 {}，原因在 argumentsError 里：说清楚，别只回“key 必须是字符串”。
-  if (call.argumentsError !== undefined) return fail(`参数的 JSON 不完整或不合法：${call.argumentsError.split("\n")[0]}。请重新发送完整的参数。`);
-  // 参数来自模型：pi-ai 把流式 JSON 'null' 解析成 null，所以不能直接解构；先按 schema 修正（tools/args.ts）。
-  const spec = findBuiltin(call.name);
-  const fixed = fixArgs(spec?.parameters ?? {}, typeof call.arguments === "object" && call.arguments !== null ? call.arguments : {});
+/** `notes` 是调用方已有的说明（工具名改了写法）；参数整理和记忆分支的说明接在后面，一起接在结果末尾（D109）。 */
+export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment: readonly Message[], call: ToolCall, now: Instant, readPreset: ReadPreset = noPresets, notes: readonly string[] = []): ToolResultContent {
+  // 参数来自模型：先整理和检查（tools/args.ts），之后类型都对、必填都在、没有多余的；记忆工具的 brief、version 例外，由下面的分支处理。
+  const fixed = fixArgs(findBuiltin(call.name) ?? { name: call.name, parameters: {} }, call, true);
   if ("error" in fixed) return fail(fixed.error);
-  const allowed = Object.keys(((spec?.parameters as { properties?: Record<string, unknown> })?.properties) ?? {});
-  const extra = Object.keys(fixed.args).filter((k) => !allowed.includes(k));
-  const badExtra = (): ToolResultContent =>
-    call.name === "handoff"
-      ? bad(`handoff 不需要参数（收到 ${extra.join(", ")}）。请不带参数调用 handoff，交接说明会在下一步单独写。`)
-      : bad(`${call.name} 没有参数 ${extra.join(", ")}。${allowed.length === 0 ? "不需要参数。" : `可用的参数：${allowed.join(", ")}。`}`);
-  const { key, value, brief, version } = fixed.args;
+  const all = [...notes, ...fixed.notes];
+  return noted(run(db, memory, p, segment, call.name, fixed.args, now, readPreset, all), all);
+}
+
+function run(db: DatabaseSync, memory: Memory, p: Process, segment: readonly Message[], name: string, args: Record<string, unknown>, now: Instant, readPreset: ReadPreset, notes: string[]): ToolResultContent {
+  const { key, value, brief, version } = args as { key: string; value: string; brief?: string; version?: unknown };
   const ns = p.preset.id;
-  switch (call.name) {
+  switch (name) {
     case "self":
-      return extra.length > 0 ? badExtra() : ok(formatSelf(observe(p, segment, loadProcesses(db), now)));
+      return ok(formatSelf(observe(p, segment, loadProcesses(db), now)));
     case "handoff":
       // 换段由 `decide` 在安全点发起：它看这个结果不是错误。
-      return extra.length > 0 ? badExtra() : ok("将在这批工具结果之后换段。");
+      return ok("将在这批工具结果之后换段。");
     case "post": {
-      const { to, text, reply } = fixed.args;
-      if (typeof to !== "string" || typeof text !== "string") return bad("to 和 text 必须是字符串。");
-      if (reply != null && typeof reply !== "boolean") return bad("reply 必须是布尔值，或者省略。");
-      if (extra.length > 0) return badExtra();
-      if (to === p.id) return fail("不能给自己寄信。");
-      if (!loadProcess(db, to)) return noProcess(to);
+      const { to, text, reply } = args as { to: string; text: string; reply?: boolean };
+      if (to === p.id) return fail(`不能给自己寄信（${p.id} 是你自己）。${selfPost(p)}`);
+      if (!loadProcess(db, to)) return noProcess(to, p.parent);
       const hops = nextHops(p);
       if (hops > HOPS_MAX) return hopsFail();
       putMail(db, to, { kind: "letter", letter: { from: sender(p), content: textContent(text), hops, ...(reply === true ? { replyTo: p.id } : {}) } });
       return ok(`已寄给 ${to}。${reply === true ? POST_REPLY : ""}`);
     }
     case "spawn": {
-      const { preset, text, workdir } = fixed.args;
-      if (typeof preset !== "string" || typeof text !== "string") return bad("preset 和 text 必须是字符串。");
-      if (workdir != null && typeof workdir !== "string") return bad("workdir 必须是字符串，或者省略。");
-      if (extra.length > 0) return badExtra();
+      const { preset, text, workdir } = args as { preset: string; text: string; workdir?: string };
       const hops = nextHops(p);
       if (hops > HOPS_MAX) return hopsFail();
+      // workdir 只换写法（~、/c/x、错写法），不按工作目录解析：相对路径、/tmp 这类仍交给读预设拒绝。空串当没写。
+      const wd = workdir === undefined || workdir.trim() === "" ? undefined : rewrite(workdir).path;
+      if (wd !== undefined && wd !== workdir) notes.push(`参数 workdir ${JSON.stringify(workdir)} 当作 ${wd}`);
       let snapshot: PresetSnapshot;
       try {
-        snapshot = readPreset(preset, typeof workdir === "string" ? workdir : undefined);
+        snapshot = readPreset(preset, wd);
       } catch (e) {
-        return fail(`预设 ${preset} 读不出：${e instanceof Error ? e.message : String(e)}`);
+        return fail(`预设 ${preset} 读不出：${e instanceof Error ? e.message : String(e)}。${SPAWN_AGAIN}`);
       }
       const tooBig = startError(snapshot);
-      if (tooBig !== null) return fail(tooBig);
+      if (tooBig !== null) return fail(`${tooBig}。${SPAWN_AGAIN}`);
       let attempt = 0;
       let id = spawnId(p.id, p.lastEffect, attempt);
       while (loadProcess(db, id)) id = spawnId(p.id, p.lastEffect, ++attempt);
@@ -98,61 +93,57 @@ export function runInStore(db: DatabaseSync, memory: Memory, p: Process, segment
       return ok(`已建进程 ${id}，预设 ${preset}。${SPAWN_REPLY}`);
     }
     case "stop_process": {
-      const { process: target } = fixed.args;
-      if (typeof target !== "string") return bad("process 必须是字符串。");
-      if (extra.length > 0) return badExtra();
+      const { process: target } = args as { process: string };
       if (target === p.id) return fail("不能停止自己。要结束这一轮，直接回复，不再调用工具。");
       if (!loadProcess(db, target)) return noProcess(target);
       putMail(db, target, { kind: "stop" });
       return ok(`已给 ${target} 发出停止。`);
     }
     case "memory_get": {
-      if (typeof key !== "string") return bad("key 必须是字符串。");
-      if (extra.length > 0) return badExtra();
       const cur = memory.get(ns, key);
       return ok(cur ? show(key, cur) : `键 ${key} 不存在。`);
     }
     case "memory_set": {
-      if (typeof key !== "string" || typeof value !== "string" || typeof brief !== "string") return bad(missing("memory_set", fixed.args, ["key", "value", "brief"]));
-      if (version != null && !isInt(version)) return bad("version 必须是整数，或者省略。");
-      if (extra.length > 0) return badExtra();
-      // 只看键还在时带的正整数 version：0、负数（D86）和新键带的都当没带，弱模型常这么填，拒绝了它会一直重发（D107）。
-      const fresh = isInt(version) && version > 0 && !memory.get(ns, key);
-      const r = memory.set(ns, key, { value, brief, now }, isInt(version) && version > 0 && !fresh ? version : null);
-      if (r.ok) return ok(`已写入 ${key}，版本 ${r.version}。${fresh ? "这个键原来不存在，按新建写入，没看 version。" : ""}`);
-      return "over" in r ? { content: textContent("超出上限，没有写入：" + overText(r.over, r.bytes)), isError: true } : conflict(key, r.current, r.current ? override(r.current.version) : "");
+      // version 只在键存在时看，只认正整数：0 和负数（D86）、新键带的（D107）、不是整数的都当没带。没给 brief：新键用值的开头，已有的键摘要不变（D109）。
+      const cur = memory.get(ns, key);
+      const r = memory.set(ns, key, { value, brief: brief ?? cur?.brief ?? briefOf(value), now }, cur && isInt(version) && version > 0 ? version : null);
+      if (!r.ok) return "over" in r ? { content: textContent("超出上限，没有写入：" + overText(r.over, r.bytes)), isError: true } : conflict(key, r.current, r.current ? override(r.current.version) : "");
+      if (brief === undefined) notes.push(cur ? "没给 brief，摘要不变" : "没给 brief，用值的开头当摘要");
+      if (!cur && version !== undefined && !(isInt(version) && version <= 0)) notes.push(`键 ${key} 原来不存在，当新建写，没看 version`);
+      return ok(`已写入 ${key}，版本 ${r.version}。`);
     }
     case "memory_edit": {
-      const { old, new: replacement } = fixed.args;
-      if (typeof key !== "string" || typeof old !== "string" || typeof replacement !== "string") return bad(missing("memory_edit", fixed.args, ["key", "old", "new"]));
-      if (old === "") return bad("old 不能为空。");
+      const { old, new: replacement } = args as { old: string; new: string };
+      if (old === "") return bad("old 不能为空。要在末尾加内容，old 写值的最后一行（不带结尾的换行；这一行不唯一就多带前面几行），new 写这一行加上新内容；要整个改写，用 memory_set。");
       // 孤立的代理项会切开一个表情，写进库就变成替换字符。
       if (!old.isWellFormed()) return bad("old 含不完整的 Unicode 字符。");
-      if (!isInt(version)) return bad(VERSION_HINT);
-      if (brief != null && typeof brief !== "string") return bad("brief 必须是字符串，或者省略。");
-      if (extra.length > 0) return badExtra();
       const cur = memory.get(ns, key);
       if (!cur) return fail(`键 ${key} 不存在。要新建，用 memory_set。`);
-      if (cur.version !== version) return conflict(key, cur);
+      // 没带、带错 version 都给现在的值和版本号，一步能照抄；写入仍带着读到的版本号（D109）。
+      if (cur.version !== version) return conflict(key, cur, `要改，先确认 old 还在上面的值里，再带 version=${cur.version} 改一次。`);
+      // 原样找不到时才放宽（D109）：开头照抄了 memory_get 的头（头两行，或只有摘要那行）就 old、new 各自去掉，new 去完还像头就不写；还找不到，把值看成首尾各有一个换行。都只认恰好一处。
+      const cut = (s: string) => s.slice(([`${key}（版本 ${cur.version}，更新 ${utcDate(cur.updated)}）：\n`, ""].map((h) => `${h}摘要：${cur.brief}\n`).find((h) => s.length > h.length && s.startsWith(h)) ?? "").length);
+      const [o, n] = cur.value.includes(old) || cut(old) === old ? [old, replacement] : [cut(old), cut(replacement)];
+      if (o !== old && /^(.*（版本 \d+，更新 .*）：\n)?摘要：/.test(n)) return fail("new 开头也带着 memory_get 的头，和现在的不一样，没有写入。old、new 都只写值的正文；要改摘要，用 brief。");
+      const framed = !cur.value.includes(o) && /\S/.test(o);
       // 用 split/join 换，不用 String.replace：`new` 里的 `$&`、`$1` 会被当成替换模式。
-      const parts = cur.value.split(old);
-      if (parts.length === 1) return fail("没找到原文，没有写入。old 必须和值逐字一致，包括标点、空格和换行；先用 memory_get 看现在的值。");
+      const parts = (framed ? `\n${cur.value}\n` : cur.value).split(o);
+      if (parts.length === 1) return fail(`没找到原文，没有写入。old 要从下面的值里逐字复制，包括标点、空格和换行，不要带 memory_get 的头两行。现在的值：\n${cur.value}`);
       if (parts.length > 2) return fail(`原文出现 ${parts.length - 1} 次，必须唯一，没有写入。把 old 写长一点，带上前后的字。`);
       // 读、换、写在同一个事务里，版本号也用刚读到的那个：无竞态。
-      const r = memory.set(ns, key, { value: parts.join(replacement), brief: brief ?? cur.brief, now }, version);
-      if (r.ok) return ok(`已写入 ${key}，版本 ${r.version}。`);
-      if ("over" in r) return { content: textContent("超出上限，没有写入：" + overText(r.over, r.bytes)), isError: true };
-      return conflict(key, r.current);
+      const r = memory.set(ns, key, { value: framed ? parts.join(n).replace(/^\n|\n$/g, "") : parts.join(n), brief: brief ?? cur.brief, now }, cur.version);
+      if (!r.ok) return "over" in r ? { content: textContent("超出上限，没有写入：" + overText(r.over, r.bytes)), isError: true } : conflict(key, r.current);
+      if (o !== old) notes.push("old 开头照抄的 memory_get 头部已去掉");
+      if (framed) notes.push(`old ${parts[0] === "" ? "开头的换行值里没有，按值的开头" : "结尾的换行值里没有，按值的末尾"}对上了`);
+      return ok(`已写入 ${key}，版本 ${r.version}。`);
     }
     case "memory_delete": {
-      if (typeof key !== "string") return bad("key 必须是字符串。");
-      if (!isInt(version)) return bad(VERSION_HINT);
-      if (extra.length > 0) return badExtra();
-      const r = memory.delete(ns, key, version);
-      return r.ok ? ok(`已删除 ${key}。`) : conflict(key, r.current);
+      // 键本来就不存在：要它没有，它已经没有，算成功。版本号从 1 起，0 对不上任何键，所以不带、带错时拿到现在的值和版本号（D109）。
+      const r = memory.delete(ns, key, isInt(version) ? version : 0);
+      return r.ok ? ok(`已删除 ${key}。`) : r.current ? conflict(key, r.current, `要删，带 version=${r.current.version} 再删一次。`) : ok(`键 ${key} 本来就不存在，不用删。`);
     }
     default:
-      throw new Error(`不是库内工具：${call.name}`);
+      throw new Error(`不是库内工具：${name}`);
   }
 }
 
@@ -183,17 +174,12 @@ export function runDeclared(db: DatabaseSync, memory: Memory, p: Process, segmen
 }
 
 function declare(db: DatabaseSync, memory: Memory, p: Process, segment: readonly Message[], c: DeclaredCall, i: number, now: Instant, readPreset: ReadPreset): ToolResultContent {
-  if (!DECLARABLE.includes(c.name)) return fail(`不能在结果里声明这个动作。能声明的有：${DECLARABLE.join("、")}。`);
+  if (!DECLARABLE.includes(c.name)) return fail(`不能在结果里声明这个动作。能声明的有：${DECLARABLE.join("、")}。这是工具定义写错了，再调用这个工具也一样：改它的定义，或者告诉用户。`);
   try {
     return runInStore(db, memory, p, segment, { type: "toolCall", id: `declared-${i}`, name: c.name, arguments: c.arguments as ToolCall["arguments"] }, now, readPreset);
   } catch (e) {
     return fail(`执行出错：${e instanceof Error ? e.message : String(e)}`);
   }
-}
-
-/** 第一个没给或类型不对的参数名，加上模型实际给的那批名字：弱模型常把 value 写成 content。调用方已经确认有一个不是字符串。 */
-function missing(name: string, args: Record<string, unknown>, fields: readonly string[]): string {
-  return `${name} 缺少 ${fields.find((f) => typeof args[f] !== "string") ?? fields[0]}（字符串）。收到的参数名：${Object.keys(args).join(", ")}。`;
 }
 
 function isInt(v: unknown): v is number {
@@ -202,8 +188,8 @@ function isInt(v: unknown): v is number {
 
 const AFTER_REPLY = "，之后的几轮不会。";
 const POST_REPLY = "它处理这封信的那一轮结束时会给你回信" + AFTER_REPLY;
+const SPAWN_AGAIN = "原样再调用结果一样：换一个预设或 workdir，或者在回复里说明建不了。";
 const SPAWN_REPLY = "它这一轮结束时会给你回信" + AFTER_REPLY;
-const VERSION_HINT = "version 必须是整数。先用 memory_get 读到现在的版本号。";
 const override = (version: number): string => `要覆盖，带 version=${version} 再写一次。`;
 
 /** `p` 寄出的信的跳数：不空闲时是本轮的跳数加 1，空闲时是 1。库内工具只在等工具时执行；协议的 `send` 带 `from` 时，`p` 可能在等模型。 */
@@ -219,7 +205,15 @@ function fail(text: string): ToolResultContent {
   return { content: textContent(text), isError: true };
 }
 
-const noProcess = (id: string): ToolResultContent => fail(`没有进程 ${id}。用 self 查运行中的进程 ID。`);
+/** `parent` 只有 post 给：停止父进程不是好建议。 */
+const noProcess = (id: string, parent?: ProcessId): ToolResultContent =>
+  fail(`没有进程 ${JSON.stringify(id)}。这里写进程 ID，不是预设名，也不带“进程”二字：信头“（来自进程 X，预设 Y）”和 spawn 的结果“已建进程 X”里的 X。self 只列同预设、同工作目录和你的子进程里正在运行的那些。${parent === undefined ? "" : `你的父进程是 ${parent}。`}`);
+
+/** 给自己寄信时的下一步：有进程在等回信，直接回复就行；没有，就要写别的进程的 ID。 */
+const selfPost = (p: Process): string => {
+  const waiting = p.phase.tag === "idle" ? [] : p.phase.turn.replyTo;
+  return waiting.length > 0 ? `等你回信的是 ${waiting.join("、")}：直接写最终回复、结束这一轮，回信会自动寄出。` : "现在没有进程在等你回信；要寄给别的进程，to 写它的进程 ID。";
+};
 
 const hopsFail = (): ToolResultContent => fail(`跳数到上限（${HOPS_MAX}）：这封信是被进程之间的信一路引出来的。结束本轮，等用户的下一封信。`);
 

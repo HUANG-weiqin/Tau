@@ -221,6 +221,18 @@ describe("relay 和 call", () => {
     assert.equal(bytes.subarray(0, 8).toString("latin1"), "\x89PNG\r\n\x1a\n");
   });
 
+  test("存图失败（图片目录被同名文件占住）：不让整次调用失败，退出码 0，那张图写成一行文字", () => {
+    const dir = join(home, ".tau", "extras", "mcp", "images");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "blocked1"), "占位");
+    const r = call("fake", "picture", {}, "blocked1");
+    assert.equal(r.code, 0, r.err);
+    const items = JSON.parse(r.out);
+    assert.equal(items.length, 1);
+    assert.equal(items[0].type, "text");
+    assert.match(items[0].text, /^\[第 1 张图片没存下：/);
+  });
+
   test("isError：文字打到标准输出，退出码 1", () => {
     const r = call("fake", "boom", {}, "boom1");
     assert.equal(r.code, 1);

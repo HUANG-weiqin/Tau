@@ -163,7 +163,16 @@ test("missing file is an error naming the preset", () => {
 test("id must match the file name exactly (case variants rejected)", () => {
   write("assistant", valid());
   assert.equal(loadPreset(root, "assistant", models, toolsRoot).id, "assistant");
-  assert.throws(() => loadPreset(root, "Assistant", models, toolsRoot), /找不到预设：Assistant/);
+  assert.throws(() => loadPreset(root, "Assistant", models, toolsRoot), /找不到预设：Assistant。现有的预设：(.*、)?assistant(、|$)/, "找不到时列出现有的预设，大小写仍须相同（D109）");
+});
+
+test("目录里没有预设文件时，找不到的话不带列表", () => {
+  const empty = mkdtempSync(path.join(os.tmpdir(), "tau-presets-empty-"));
+  try {
+    assert.throws(() => loadPreset(empty, "ghost", models, toolsRoot), (e: Error) => e.message === "找不到预设：ghost");
+  } finally {
+    rmSync(empty, { recursive: true, force: true });
+  }
 });
 
 for (const [name, line] of [

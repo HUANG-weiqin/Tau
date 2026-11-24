@@ -133,15 +133,15 @@ test("memory_set、memory_get、memory_delete：写这个预设的库；预设�
   assert.equal(JSON.stringify(allMessages(db, "boss")).includes("k: v"), false);
 });
 
-test("声明的 memory_set 缺 brief：参数错误，库不变", (t) => {
+test("声明的 memory_set 不带 brief：用值的开头当摘要，照常写（D109）", (t) => {
   const db = tempDb(t);
   const memory = fakeMemory();
   const n = waiting(db, memory);
   const r = handleResult(db, memory, "boss", result(n, [call("memory_set", { key: "k", value: "v" })]));
-  assert.equal(r.isError, true);
-  assert.match(r.text, /^ok\n\n\[memory_set\] 参数错误：memory_set 缺少 brief（字符串）。收到的参数名：key, value。$/);
-  assert.equal(memory.get("boss", "k"), null);
-  assert.deepEqual(memory.calls.filter((c) => c === "set"), []);
+  assert.equal(r.isError, false);
+  assert.match(r.text, /^ok\n\n\[memory_set\] 已写入 k，版本 \d+。\n注：没给 brief，用值的开头当摘要。$/);
+  assert.equal(memory.get("boss", "k")?.brief, "v");
+  assert.deepEqual(memory.calls.filter((c) => c === "set"), ["set"]);
 });
 
 test("memory_delete 带版本号；版本不对就失败，整条 isError", (t) => {
@@ -179,7 +179,7 @@ test("不看 agents、memory：预设什么都没列，post、spawn、stop_proce
     const n2 = waiting(db2, fakeMemory());
     const r2 = handleResult(db2, fakeMemory(), "boss", result(n2, [call(name)]));
     assert.equal(r2.isError, true, name);
-    assert.match(r2.text, new RegExp(`^ok\\n\\n\\[${name}\\] 不能在结果里声明这个动作。能声明的有：post、spawn、stop_process、memory_get、memory_set、memory_edit、memory_delete。$`));
+    assert.match(r2.text, new RegExp(`^ok\\n\\n\\[${name}\\] 不能在结果里声明这个动作。能声明的有：post、spawn、stop_process、memory_get、memory_set、memory_edit、memory_delete。这是工具定义写错了，再调用这个工具也一样：改它的定义，或者告诉用户。$`));
   }
   assert.equal(loadProcess(db, "boss")!.phase.tag, "awaitingModel");
 });
@@ -190,7 +190,7 @@ test("第一个失败后其余写“未执行”：失败的什么都不写，�
   const n = waiting(db, memory);
   const r = handleResult(db, memory, "boss", result(n, [call("memory_set", { key: "a", value: "1", brief: "甲" }), call("post", { to: "zz", text: "x" }), call("memory_set", { key: "b", value: "2", brief: "乙" }), call("nope")]));
   assert.equal(r.isError, true);
-  assert.match(r.text, /^ok\n\n\[memory_set\] 已写入 a，版本 \d+。\n\n\[post\] 没有进程 zz。用 self 查运行中的进程 ID。\n\n\[memory_set\] 未执行。\n\n\[nope\] 未执行。$/);
+  assert.match(r.text, /^ok\n\n\[memory_set\] 已写入 a，版本 \d+。\n\n\[post\] 没有进程 "zz"。这里写进程 ID，[^\n]*\n\n\[memory_set\] 未执行。\n\n\[nope\] 未执行。$/);
   assert.equal(memory.get("boss", "a")?.value, "1");
   assert.equal(memory.get("boss", "b"), null);
   assert.deepEqual(mailbox(db), []);
@@ -262,7 +262,7 @@ test("声明的 post 的目标被 remove：先删，声明失败；先寄，目�
   removeProcess(db, "b");
   const r = handleResult(db, memory, "boss", result(n, [call("post", { to: "b", text: "x" })]));
   assert.equal(r.isError, true);
-  assert.match(r.text, /\[post\] 没有进程 b。/);
+  assert.match(r.text, /\[post\] 没有进程 "b"。/);
   assert.deepEqual(mailbox(db), []);
 
   // 反过来：声明的 post 已经提交，目标的信箱里有信，删除被拒绝。

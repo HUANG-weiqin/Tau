@@ -216,9 +216,9 @@ CREATE TABLE blobs (
 | `callModel` | 插入一行 `pending` |
 | `runTool`，库外工具 | 插入一行 `pending` |
 | `runTool`，库内工具 | 在这个事务里执行（`post`、`spawn`、`stop_process` 还写别的进程的信箱，`spawn` 还插进程行），结果作为 `toolResult` 放进信箱 |
-| `runTool`，不认识的工具或预设里没有的工具 | 把内容为这句文本的错误结果（`工具 <name> 不存在，或者预设里没有它。可用的工具：<这个进程快照里有的工具名，用顿号隔开>。`）作为 `toolResult` 放进信箱 |
+| `runTool`，不认识的工具或预设里没有的工具（`findTool` 解析不到） | 把内容为 `unknownTool` 给的文本的错误结果（`工具 "<name>" 不存在，或者预设里没有它。可用的工具：<这个进程快照里有的工具名，用顿号隔开>。工具名要从这里照抄，一字不差。列表外的工具都调不通，不要再调用它。` 预设有 `bash` 时接 `grep、ls、find、python、curl 这类命令，用 bash 运行。`，最后接 `要结束这一轮或者提问，直接写回复，不调用工具。`）作为 `toolResult` 放进信箱 |
 
-- 库内还是库外，按进程快照里的预设判断：`findTool(p.preset, name)` 的 `inStore`。快照的 `tools` 只在 `reconfigure` 直接采用（空闲、段里没有助手消息等条件，见 [kb-kernel](kb-kernel.md#流程会话配置reconfigure)），或者换段采用 `next` 时才换，所以正在等的工具调用，不会因为 `reconfigure` 变成“预设里没有它”。
+- 库内还是库外，按进程快照里的预设判断：`findTool(p.preset, name)` 的 `inStore`。`findTool` 认写法不同的名字（[kb-tools](kb-tools.md#参数从哪来)）：库内执行传规范名（`runInStore` 按名字分支，传原写法会抛错，事务回滚，信箱卡住），名字不同时结果末尾注一句；段里的调用名不改。快照的 `tools` 只在 `reconfigure` 直接采用（空闲、段里没有助手消息等条件，见 [kb-kernel](kb-kernel.md#流程会话配置reconfigure)），或者换段采用 `next` 时才换，所以正在等的工具调用，不会因为 `reconfigure` 变成“预设里没有它”。
 - 事务里放进信箱的 `toolResult`，`status` 总是 `ok`，失败写在 `isError` 里。
 - 库内副作用不进 `effects`，恰好执行一次。
 - 事务只通过 `Memory` 接口访问记忆。`self` 的兄弟进程从 `processes` 表读出。
@@ -372,9 +372,9 @@ CREATE TABLE blobs (
 
 共同规则（`src/store/instore.ts` 的 `runInStore`）：
 
-- 进任何工具之前先修参数，和库外工具共用 `fixArgs`（[kb-tools](kb-tools.md#参数从哪来)）：可选的 `null` 当没填，必填的 `null` 是错误结果 `参数 <名字> 是 null，必须给出一个值。`，数字和布尔和字符串互转。手写的检查在后面，是最后一道。
-- 参数不是对象时（包括 `null`），当作空对象。pi-ai 把流式 JSON 的 `null` 解析成 `null`。
-- `call.argumentsError` 有值（参数的 JSON 被截断、不是合法 JSON）时，不进工具：错误结果 `参数的 JSON 不完整或不合法：<原因的第一行>。请重新发送完整的参数。`
+- 进任何工具之前先整理参数，和库外的内置工具共用 `fixArgs`（[kb-tools](kb-tools.md#参数从哪来)）：归一、别名、丢说明性参数、转标量；整理之后类型都对、必填都在、没有多余的，`run` 里不再手写检查。错误是统一的中文格式，带参数表。
+- 兜底照做时，结果末尾另起一行写 `注：…。`，几处用 `；` 合成一行，`isError` 跟着真实结果走（`noted`）。工具名的说明在前，参数整理的说明在中间，记忆分支的说明在最后；记忆分支的注只在写成功时有。声明的动作也这样，注跟在 `[name] …` 那一段里。
+- 参数不是对象时（包括 `null`），当作空对象。`self`、`handoff` 没有参数：多余的参数丢掉，参数的 JSON 坏了也照常执行，各注一句。别的工具的 `argumentsError` 是固定的一句，说清楚怎样写对。
 - 结果和其它工具结果一样，在 `decide` 里按字节上限裁剪（[kb-kernel.md](kb-kernel.md)）。
 - 记忆的 `ns` 是进程快照里的预设 ID。
 
@@ -383,14 +383,16 @@ CREATE TABLE blobs (
 | 工具 | 参数 | 成功的结果 |
 |---|---|---|
 | `memory_get` | `key` 字符串 | `<key>（版本 <v>，更新 <日期>）：` 换行接 `摘要：<brief>`，换行接值。日期是 UTC 的 `YYYY-MM-DD`。键不存在时是 `键 <key> 不存在。`，不算错误 |
-| `memory_set` | `key`、`value`、`brief` 字符串，都必填；`version` 整数、`null` 或省略 | `已写入 <key>，版本 <v>。` |
-| `memory_edit` | `key`、`old`、`new` 字符串，必填；`version` 整数，必填；`brief` 字符串，可选 | `已写入 <key>，版本 <v>。` |
-| `memory_delete` | `key` 字符串；`version` 整数，必填 | `已删除 <key>。` |
+| `memory_set` | `key`、`value`、`brief` 字符串，schema 里都必填，`brief` 缺了或为 `null` 时由这里补；`version` 整数、`null` 或省略 | `已写入 <key>，版本 <v>。` |
+| `memory_edit` | `key`、`old`、`new` 字符串，必填；`version` 整数，schema 里必填，没带或不对由这里回冲突；`brief` 字符串，可选 | `已写入 <key>，版本 <v>。` |
+| `memory_delete` | `key` 字符串；`version` 整数，schema 里必填，没带或不对由这里回冲突 | `已删除 <key>。` |
 
-- `memory_set` 只在键现在存在时才看 `version`。省略、为 `null`、为 0 或负数，都当没带：版本号从 1 起，0 和负数不可能是读到的版本。键不存在而带了正整数，也当没带，照样新建，结果在 `已写入 <key>，版本 <v>。` 后面接 `这个键原来不存在，按新建写入，没看 version。`（没带、带 0 或负数时不接）。原因：弱模型总给新键填 1 之类，拒绝了它不照做，会带着 version 一直重发；那句让键名写错时看得出来（[D107](kb-decisions.md#d107-新键带了-version-照样新建)，[D86](kb-decisions.md#d86-记忆的版本号保留不让系统代记0-和负数当没带)）。只在 `memory_set` 这样；`Memory.set` 和线协议的 `expected` 不变（`null` 或正整数），`memory_delete` 的 `version` 仍必填。键存在时照旧：带 0、负数、不带都冲突，不覆盖。
-- `version` 必须是整数，`1.5` 也不行。`memory_edit`、`memory_delete` 缺它时还接 `先用 memory_get 读到现在的版本号。`
-- 参数不对：结果是 `参数错误：<说明>`，`isError` 为 `true`，不碰记忆。`memory_set`、`memory_edit` 少了哪个字符串参数就指名，并列出模型实际给的名字：`memory_set 缺少 value（字符串）。收到的参数名：key, content, brief。`（弱模型常把 `value` 写成 `content`）。别的工具只说哪几个必须是字符串。更新时间是这条输入的 `now`。
-- 版本对不上：不写入，`isError` 为 `true`，结果带最新值：`版本冲突，没有写入。现在的值是 ` 接 `memory_get` 那一段（键、版本、更新日期、摘要、值）。键已不存在时（`memory_delete` 才会）是 `版本冲突，没有写入。键 <key> 现在不存在。`。键还在时，`memory_set` 在值的那段后面另起一行接 `要覆盖，带 version=<N> 再写一次。`（N 是现在的版本号，已代入）（值可能以任何字符结尾，接在同一行会黏在一起）。`memory_delete` 不加这句。
+- `memory_set` 只在键现在存在时才看 `version`，而且只认正整数。省略、`null`、0、负数、小数、写不成整数的字符串，都当没带：版本号从 1 起，0 和负数不可能是读到的版本。键不存在而带了正整数（或 `"latest"`、`1.5` 这类），也当没带，照样新建，结果注 `键 <key> 原来不存在，当新建写，没看 version`（没带、带 0 或负数时不注）。原因：弱模型总给新键填 1 之类，拒绝了它不照做，会带着 version 一直重发；注让键名写错时看得出来（[D107](kb-decisions.md#d107-新键带了-version-照样新建)，[D86](kb-decisions.md#d86-记忆的版本号保留不让系统代记0-和负数当没带)，[D109](kb-decisions.md#d109-弱模型兜底意图唯一就照做结果里说一句)）。只在 `memory_set` 这样；`Memory.set` 和线协议的 `expected` 不变。键存在时照旧：带 0、负数、不带都冲突，不覆盖。
+- `memory_set` 没给 `brief`（缺了或 `null`，空串照写）：新键用 `briefOf(value)`，已有的键摘要不变，各注一句（`没给 brief，用值的开头当摘要` 或 `没给 brief，摘要不变`）。这推翻了 [D81](kb-decisions.md#d81-记忆的摘要由模型写) 第 5 条里“工具层必填 `brief`”的一半；schema 和工具描述不动。
+- `version` 写成 `"3.0"`、`" 3 "` 算整数 3；`2.5`、`"1e3"` 不转。`memory_edit`、`memory_delete` 的 `version` 没带、是 `null`、不是整数，都当对不上，回冲突并给能照抄的版本号（见下）。
+- 参数不对：结果是 `参数错误：<说明>`，`isError` 为 `true`，不碰记忆。格式见 [kb-tools](kb-tools.md#参数从哪来)：给了但类型不对说 `value 要字符串，收到的是 对象`，没给的说 `缺少 value`，后面带参数表。`content`、`data` 之类的名字照别名表当 `value`，注一句。更新时间是这条输入的 `now`。
+- 版本对不上：不写入，`isError` 为 `true`，结果带最新值：`版本冲突，没有写入。现在的值是 ` 接 `memory_get` 那一段（键、版本、更新日期、摘要、值），再另起一行接能照抄的下一步（值可能以任何字符结尾，接在同一行会黏在一起；N 是现在的版本号，已代入）：`memory_set` 是 `要覆盖，带 version=<N> 再写一次。`，`memory_edit` 是 `要改，先确认 old 还在上面的值里，再带 version=<N> 改一次。`，`memory_delete` 是 `要删，带 version=<N> 再删一次。`。带着这个版本号再写，写入仍然带着读到的版本号，“写入必须带读到的版本号”不破。
+- `memory_delete` 删一个键本来就不存在：算成功，`isError` 为假，`键 <key> 本来就不存在，不用删。`，不看 `version`（以前带什么都冲突，模型怎么改都成功不了）。线协议 `memory_write` 的 `delete` 不变，删不存在的键仍回 `memory_rejected`。声明的 `memory_delete` 也这样，所以它不再能用“键已不存在就失败”挡住同一批后面的动作。`tools.ts` 里 `memory_delete` 的描述写“对不上时失败”，参与启动检查，故意不改。
 - `memory_set` 超出上限：不写入，`isError` 为 `true`。结果是 `超出上限，没有写入：` 接下表的一句。`N` 是 `Memory.set` 返回的 `bytes`，上限取自 `src/kernel/tools.ts` 的常量。摘要不在这张表里：201 到 300 字节原样存，超过 300 按码点截到 300（末尾 `…`），静默写入，不报错（[D96](kb-decisions.md#d96-摘要的上限分两层给模型看-200实际存-300超了截断)）。
 
 | 超出的 | 接的那句 |
@@ -401,12 +403,14 @@ CREATE TABLE blobs (
 
 - 超出上限和版本冲突同时发生时报哪个，见 [kb-memory.md 的检查顺序](kb-memory.md#set-的检查顺序)。`memory_set` 的描述引用这四个上限（[kb-kernel.md](kb-kernel.md#工具描述)）。
 - `memory_edit`（[D89](kb-decisions.md#d89-memory_edit记忆工具的另一半只换一段不重发整个值)）：把值里的一段原文换成新文本，不用重发整个值。`old` 在值里必须恰好出现一次，没有 `replaceAll`。`version` 必填，是读到的版本号。`brief` 不传就不动摘要。
-  - 只是“恰好出现一次”，和文件 `edit` 工具比少两样：没有 CRLF 兜底（那是文件 `edit` 才有的，值里就是原文），`old` 按字面子串匹配。重叠出现按不重叠计数：`old` 是 `aba` 而值是 `ababa` 时算一次（`split` 的语义）。
+  - 只是“恰好出现一次”，和文件 `edit` 工具比少两样：没有 CRLF 兜底（那是文件 `edit` 才有的，值里就是原文），`old` 先按字面子串匹配，原样找不到才放宽（见下两条）。重叠出现按不重叠计数：`old` 是 `aba` 而值是 `ababa` 时算一次（`split` 的语义）。
   - `old` 含孤立的代理项（例如 `\ud83d`，会切开一个表情）时报 `old 含不完整的 Unicode 字符。`：先换好再比，写进库才不会变成替换字符。
-  - 参数不对：`key`、`old`、`new` 缺了或不是字符串时指名 (`memory_edit 缺少 new（字符串）。收到的参数名：key, old。`)；`old` 是空串时报 `old 不能为空。`；`version` 必须是整数，缺省、`1.5` 都算参数错误（不像 `memory_set` 那样当作没带），`null` 在 `fixArgs` 就报 `参数 version 是 null，必须给出一个值。`；`brief` 给了就必须是字符串。
+  - 参数不对：`old` 是空串时报 `old 不能为空。要在末尾加内容，old 写值的最后一行（不带结尾的换行；这一行不唯一就多带前面几行），new 写这一行加上新内容；要整个改写，用 memory_set。`；`brief` 给了就必须是字符串；别的缺了、类型不对由 `fixArgs` 指名。
+  - 原样找不到，而 `old` 开头照抄了 `memory_get` 的头（头两行，或只有摘要那一行）：`old`、`new` 各自去掉头再找；`new` 去完还像头（以 `摘要：` 开头，或带 `（版本 N，更新 …）：` 的一行）就不写，回 `new 开头也带着 memory_get 的头，和现在的不一样，没有写入。old、new 都只写值的正文；要改摘要，用 brief。`。成功注 `old 开头照抄的 memory_get 头部已去掉`。
+  - 还找不到，而 `old` 有非空白字符：把值看成首尾各有一个换行再找（`old` 末尾多了值里没有的换行，或开头多了），只认恰好一处，注里说对上的是开头还是末尾。原样找得到时一律按原样（`- a\n- b\n- a` 里用 `- a\n` 会先对上第一行，这是老行为）。
   - 键不存在：`键 <key> 不存在。要新建，用 memory_set。`，`isError` 为 `true`。
-  - 版本对不上：和 `memory_set` 同一句冲突文字，带最新值，不写入。
-  - `old` 一次都没找到：`没找到原文，没有写入。old 必须和值逐字一致，包括标点、空格和换行；先用 memory_get 看现在的值。`。出现 N 次：`原文出现 N 次，必须唯一，没有写入。把 old 写长一点，带上前后的字。`。都是 `isError`，不写入。
+  - 版本对不上：同一句冲突文字，带最新值和下一步，不写入。
+  - `old` 一次都没找到：`没找到原文，没有写入。old 要从下面的值里逐字复制，包括标点、空格和换行，不要带 memory_get 的头两行。现在的值：` 换行接值（不带头）。出现 N 次：`原文出现 N 次，必须唯一，没有写入。把 old 写长一点，带上前后的字。`。都是 `isError`，不写入。
   - 替换后的值超出上限：和 `memory_set` 同一套 over 文字，不写入，原值不变。替换后的摘要同 `memory_set`：201 到 300 字节原样存，超过 300 截到 300，不报错。
   - 读、换、写都在处理这条输入的那个事务里，写入带刚读到的版本号，所以没有竞态。替换用 `split`/`join`：`new` 里的 `$&`、`$1` 原样写入（`String.replace` 的字符串形式会把它们当替换模式）。
 - 这一节的文字由 `instore.ts` 写。`Memory` 只返回结构化的失败，不带文字。
@@ -460,7 +464,7 @@ CREATE TABLE blobs (
 
 ### `handoff`
 
-没有参数。结果是 `将在这批工具结果之后换段。`，`isError` 为假。它什么都不改：换段由 `decide` 发起，条件和时机见 [kb-kernel.md](kb-kernel.md#主动换段handoff)。
+没有参数；带了参数、或参数的 JSON 坏了，也照做（多余的丢掉，结果另起一行注一句，`isError` 仍为假，弱模型常把交接说明写进参数，拒绝它会一直重发）。结果是 `将在这批工具结果之后换段。`，`isError` 为假。工具名写成 `Handoff`、`functions.handoff:0` 也算（[kb-tools](kb-tools.md#参数从哪来)）。它什么都不改：换段由 `decide` 发起，条件和时机见 [kb-kernel.md](kb-kernel.md#主动换段handoff)。
 
 ### 进程之间的工具
 
@@ -469,7 +473,7 @@ CREATE TABLE blobs (
 | 工具 | 参数 | 做什么 |
 |---|---|---|
 | `post` | `to`、`text`、`reply?` | 往 `to` 的信箱放一封信。`reply` 为真时，信带 `replyTo` = 自己 |
-| `spawn` | `preset`、`text`、`workdir?`（字符串、`null` 或省略） | 读预设，建新进程（`parent` = 自己），第一封信带 `replyTo` = 自己。带 `workdir` 就替换预设里的工作目录，检查和预设里的一样（[D77](kb-decisions.md#d77-spawnstartcheck-带-workdir)） |
+| `spawn` | `preset`、`text`、`workdir?`（字符串、`null` 或省略） | 读预设，建新进程（`parent` = 自己），第一封信带 `replyTo` = 自己。带 `workdir` 就替换预设里的工作目录，检查和预设里的一样（[D77](kb-decisions.md#d77-spawnstartcheck-带-workdir)）。`workdir` 先只换写法（`~`、`/c/x`、被 JSON 吃掉的反斜杠、引号等，[kb-tools 的路径](kb-tools.md#路径)的 `rewrite`），不按工作目录解析、不换 `/tmp`；换过就在结果后注一句 `参数 workdir <原文的 JSON 写法> 当作 <结果>`。空串当没写。相对路径、`/tmp`、`/` 这类仍交给读预设拒绝，文字给盘符写法和 `cygpath -m` |
 | `stop_process` | `process` | 往目标的信箱放一个 `stop` |
 
 信的 `from` 是 `{ kind: "process", id: 自己, preset: 自己的预设 ID }`，内容是一个文本块，`hops` = `turn.hops + 1`。
@@ -481,11 +485,11 @@ CREATE TABLE blobs (
 | `post` 成功 | `已寄给 <id>。`；`reply` 为真时再加 `它处理这封信的那一轮结束时会给你回信，之后的几轮不会。` | 否 |
 | `spawn` 成功 | `已建进程 <id>，预设 <preset>。它这一轮结束时会给你回信，之后的几轮不会。` | 否 |
 | `stop_process` 成功 | `已给 <id> 发出停止。` | 否 |
-| 收件人或目标不存在 | `没有进程 <id>。用 self 查运行中的进程 ID。` | 是 |
-| `post` 给自己 | `不能给自己寄信。` | 是 |
+| 收件人或目标不存在 | `没有进程 "<id>"。这里写进程 ID，不是预设名，也不带“进程”二字：信头“（来自进程 X，预设 Y）”和 spawn 的结果“已建进程 X”里的 X。self 只列同预设、同工作目录和你的子进程里正在运行的那些。` `post` 在有父进程时再接 `你的父进程是 <ID>。`，`stop_process` 不接（免得引着模型去停父进程） | 是 |
+| `post` 给自己 | `不能给自己寄信（<id> 是你自己）。` 接两种下一步：有进程在等回信（`turn.replyTo` 不空）时 `等你回信的是 <ID>：直接写最终回复、结束这一轮，回信会自动寄出。`；否则 `现在没有进程在等你回信；要寄给别的进程，to 写它的进程 ID。` | 是 |
 | `stop_process` 停自己 | `不能停止自己。要结束这一轮，直接回复，不再调用工具。` | 是 |
-| 预设读不出 | `预设 <preset> 读不出：<原因>`，原因是读预设抛出的错误信息 | 是 |
-| 预设通不过启动检查 | `预设 <preset> 的窗口太小，装不下：固定部分 <f> token，记忆的上界 <m> token，换段阈值 <T> token`，什么都不建 | 是 |
+| 预设读不出 | `预设 <preset> 读不出：<原因>。` 接 `原样再调用结果一样：换一个预设或 workdir，或者在回复里说明建不了。`，原因是读预设抛出的错误信息。预设文件不存在时，原因里列出现有的预设：`找不到预设：<id>。现有的预设：a、b`（大小写仍须相同，目录里没有预设时没有这半句） | 是 |
+| 预设通不过启动检查 | `预设 <preset> 的窗口太小，装不下：固定部分 <f> token，记忆的上界 <m> token，换段阈值 <T> token。` 接同一句 `原样再调用…`，什么都不建 | 是 |
 | 跳数到上限 | `跳数到上限（1024）：这封信是被进程之间的信一路引出来的。结束本轮，等用户的下一封信。` | 是 |
 | 参数不对 | `参数错误：<说明>` | 是 |
 

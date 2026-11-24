@@ -4,7 +4,7 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-import { cut, Fail, readArgs, run } from "./common.ts";
+import { cut, dropUnknown, Fail, readArgs, run, takeArgs } from "./common.ts";
 
 export interface Hit {
   title: string;
@@ -26,10 +26,21 @@ export const ANTHROPIC_MODEL = "claude-haiku-5-5";
 const ANTHROPIC_SYSTEM =
   "你是搜索助手。用网络搜索回答问题。只写搜索结果支持的事实，保留版本号、日期、数字、命令和 API 名的原文；结果互相矛盾或查不到就直说。不加客套话。";
 
+/** 后端回了非 2xx：带状态码和正文，search() 按它分类。 */
+class HttpError extends Error {
+  status: number;
+  body: string;
+  constructor(status: number, body: string) {
+    super(`HTTP ${status}：${body}`);
+    this.status = status;
+    this.body = body;
+  }
+}
+
 async function post(url: string, headers: Record<string, string>, body: unknown): Promise<any> {
   const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(REQUEST_MS) });
   const text = await r.text();
-  if (!r.ok) throw new Error(`HTTP ${r.status}：${cut(text.replace(/\s+/g, " "), 300)}`);
+  if (!r.ok) throw new HttpError(r.status, cut(text.replace(/\s+/g, " "), 300));
   try {
     return JSON.parse(text);
   } catch {
@@ -122,28 +133,52 @@ export function format(backend: string, f: Found): string {
   return `${cut(sections.join("\n\n"), BODY_CHARS)}\n\n${note}`;
 }
 
+type Failure = { name: string; kind: "key" | "quota" | "temp" | "refused"; text: string };
+
+/** 一个后端的失败分类：key 失效、额度用完、暂时失败（限流、超时、网络、5xx、返回的不是 JSON）、请求被拒（其余 4xx）。 */
+function classify(name: string, e: unknown): Failure {
+  if (e instanceof HttpError) {
+    const { status, body } = e;
+    if (status === 401 || status === 403) return { name, kind: "key", text: `key 失效（HTTP ${status}）` };
+    if (status === 402 || status === 432 || (status === 400 && /credit|balance|quota|billing/i.test(body))) return { name, kind: "quota", text: `额度用完（HTTP ${status}）` };
+    return { name, kind: status === 408 || status === 429 || status >= 500 ? "temp" : "refused", text: e.message };
+  }
+  return { name, kind: "temp", text: e instanceof Error ? e.message : String(e) };
+}
+
+/** 失败的文字。key 失效和额度用完只写名字、类别、状态码：同样的情况每次一字不差，重试的刹车才接得住。 */
+function failureText(failed: Failure[]): string {
+  const list = failed.map((f) => `${f.name}：${f.text}`).join("；");
+  if (failed.every((f) => f.kind === "key" || f.kind === "quota")) return `web_search 用不了：${list}。重试没用，别再调 web_search；需要的话告诉用户。`;
+  if (failed.some((f) => f.kind === "temp")) return `搜索暂时失败：${list}。过一会儿可以再试一次；连着失败就别再调了。`;
+  return `搜索请求被拒：${list}。换个写法再试一次；还被拒就别再调了。`;
+}
+
 /** 按顺序试有 key 的后端。某个后端出错（额度用完、网络、key 失效）就试下一个；都不行才报错。 */
 export async function search(query: string): Promise<string> {
-  const failed: string[] = [];
+  const failed: Failure[] = [];
   for (const b of BACKENDS) {
     const key = await b.key();
     if (key === undefined) continue;
     try {
       return format(b.name, await b.search(key, query));
     } catch (e) {
-      failed.push(`${b.name}：${e instanceof Error ? e.message : String(e)}`);
+      failed.push(classify(b.name, e));
     }
   }
-  if (failed.length > 0) throw new Fail(`搜索失败。\n${failed.join("\n")}`);
+  if (failed.length > 0) throw new Fail(failureText(failed));
   throw new Fail(
-    "没有可用的搜索后端。任选一个配好：环境变量 TAVILY_API_KEY（tavily.com，每月 1000 次免费，不绑卡）；环境变量 ANTHROPIC_API_KEY；" +
+    "web_search 用不了：没有可用的搜索后端。重试没用，别再调；需要搜索就告诉用户。任选一个配好：环境变量 TAVILY_API_KEY（tavily.com，每月 1000 次免费，不绑卡）；环境变量 ANTHROPIC_API_KEY；" +
       "或者在 ~/.tau/auth.json 里放 anthropic 的 api_key（界面设置里填，或 node extras/auth/login.ts login anthropic api_key）。环境变量要重启 tau 服务才进得来工具，auth.json 随时生效。",
   );
 }
 
 if (import.meta.main) run(async () => {
-  const query = (await readArgs()).query;
-  if (typeof query !== "string" || query.trim() === "") throw new Fail("query 必须是非空字符串。");
+  const { args, unknown } = takeArgs("web_search", await readArgs());
+  // 范围类的键（site、max_results 之类）丢掉以后搜的范围可能变大：要的话把 site:example.com 写进 query 再搜一次。
+  dropUnknown("web_search", unknown);
+  const query = args.query;
+  if (typeof query !== "string" || query.trim() === "") throw new Fail("query 是空的：把要搜的问题写进 query。");
   if (query.length > QUERY_MAX) throw new Fail(`query 太长（${query.length} 字，最多 ${QUERY_MAX}）。写成短一点的关键词。`);
   process.stdout.write(`${await search(query.trim())}\n`);
 });

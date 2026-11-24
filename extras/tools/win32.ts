@@ -88,7 +88,7 @@ export function withLeaseMutex<T>(fn: () => T): T {
   try {
     const r = WaitForSingleObject(h, MUTEX_WAIT_MS);
     // 0 是拿到；0x80 是前一个持有者崩了，互斥量仍归我们。
-    if (r !== 0 && r !== 0x80) throw new Fail("桌面租约正被占用，稍后再试。");
+    if (r !== 0 && r !== 0x80) throw new Fail("桌面租约正被占用，别马上重试：先做别的，或者结束这一轮。");
     try {
       return fn();
     } finally {
@@ -100,7 +100,7 @@ export function withLeaseMutex<T>(fn: () => T): T {
 }
 
 const PER_MONITOR_AWARE_V2 = -4;
-const LOCKED = "屏幕锁着、停在 UAC 提示上，或者会话断开了：拿不到输入桌面，截不了图也点不了。";
+const LOCKED = "屏幕锁着、停在 UAC 提示上，或者会话断开了：拿不到输入桌面，截不了图也点不了。重试没用，别再调 computer：结束这一轮，告诉用户解锁或回到桌面。";
 
 /** 设成每显示器 DPI 感知，坐标和截图都按物理像素。必须在任何 GetDC、GetSystemMetrics 之前调用。 */
 export function initDpi(): void {
@@ -193,7 +193,7 @@ export function foreground(): { title: string; exe: string } {
 }
 
 export function setCursor(p: Point): void {
-  if (SetCursorPos(p.x, p.y) === 0) throw new Fail(`移不动鼠标到 (${p.x}, ${p.y})。多半是屏幕锁着，或者目标窗口是管理员权限。`);
+  if (SetCursorPos(p.x, p.y) === 0) throw new Fail(`移不动鼠标。多半是屏幕锁着，或者前台是管理员权限的窗口。对这个窗口重试没用：换个办法（快捷键、bash），或者请用户操作。`);
 }
 
 export function toInput(e: InputEvent): object {
@@ -215,7 +215,7 @@ export function encodeInputs(events: InputEvent[]): Buffer {
 export function send(events: InputEvent[]): void {
   if (events.length === 0) return;
   const n = SendInput(events.length, events.map(toInput), INPUT_SIZE);
-  if (n < events.length) throw new Fail(`输入只发出了 ${n}/${events.length} 个事件。多半是目标窗口以管理员权限运行，输入被系统挡了；也可能屏幕锁着。`);
+  if (n < events.length) throw new Fail(`输入只发出了 ${n}/${events.length} 个事件。多半是目标窗口以管理员权限运行，输入被系统挡了；也可能屏幕锁着。对这个窗口重试没用：换个办法（快捷键、bash），或者请用户操作。`);
 }
 
 /** 放开卡住的键：上一次调用可能在拖动或按组合键途中被结束。 */

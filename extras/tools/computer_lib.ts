@@ -4,7 +4,8 @@ import { readdirSync, rmdirSync, statSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
 import jpeg from "jpeg-js";
-import { Fail } from "./common.ts";
+import { Fail, note } from "./common.ts";
+import { needsLease } from "./computer_lease.ts";
 
 /** 一张图片的字节上限、宽高上限：和内核的入口条件一样（extras/ 不许导入 src/，所以抄一份）。 */
 export const IMAGE_MAX_BYTES = 1572864;
@@ -305,10 +306,87 @@ function intIn(action: string, name: string, v: unknown, lo: number, hi: number,
 
 const pair = (a: number[]): [number, number] => [a[0]!, a[1]!];
 
+const DECLARED = ["coordinate", "from", "to", "region", "button", "count", "modifiers", "direction", "amount", "text", "keys", "seconds"];
+/** 每个动作用到的参数。 */
+const USES: Record<string, readonly string[]> = {
+  screenshot: [],
+  zoom: ["region"],
+  click: ["coordinate", "button", "count", "modifiers"],
+  move: ["coordinate"],
+  drag: ["from", "to"],
+  scroll: ["coordinate", "direction", "amount", "modifiers"],
+  type: ["text"],
+  key: ["keys"],
+  wait: ["seconds"],
+};
+/** 决定点哪里、输什么的参数：多出来可能改了意思，做错了收不回，所以输入动作遇到就拒绝。别的是调节参数，丢掉。 */
+const DECISIVE = ["coordinate", "from", "to", "text", "keys", "modifiers"];
+const DOING: Record<string, string> = { click: "点击", move: "移动", drag: "拖动", scroll: "滚动", type: "输入", key: "按键" };
+
+const given = (raw: Record<string, unknown>, k: string): boolean => raw[k] !== undefined && raw[k] !== null && raw[k] !== "" && !(Array.isArray(raw[k]) && (raw[k] as unknown[]).length === 0);
+const call = (o: Record<string, unknown>): string => `computer ${JSON.stringify(o)}`;
+
+/**
+ * 动作用不到的参数里，意图唯一的先并进该用的参数，说一句：key 带 modifiers 合进 keys（`ctrl+s`），click、scroll 的 keys 只是修饰键时当 modifiers。
+ * 合不出唯一结果的拒绝，文字给合好的那条调用。别的原样交给 checkUnused。
+ */
+function fold(action: string, raw: Record<string, unknown>): Record<string, unknown> {
+  const r = { ...raw };
+  const mods = r["modifiers"];
+  if (action === "key" && given(r, "modifiers") && typeof r["keys"] === "string" && r["keys"].trim() !== "") {
+    const text = Array.isArray(mods) && mods.every((x) => typeof x === "string") ? (mods as string[]).join("+") : typeof mods === "string" ? mods.trim() : undefined;
+    if (text === undefined) return r;
+    const names = parseModifiers(text).length === 0 ? [] : text.split("+").map((x) => x.trim()).filter((x) => x !== "");
+    const parts = r["keys"].trim().split(/\s+/);
+    const merge = (part: string): string => {
+      const have = part.split("+").map((x) => x.toLowerCase());
+      return [...names.filter((n) => !have.includes(n.toLowerCase())), part].join("+");
+    };
+    const merged = parts.map(merge).join(" ");
+    if (parts.length > 1) throw new Fail(`这次没有按键：keys 里有 ${parts.length} 个组合键，modifiers 不知道配给哪个。要每个都带上，调用：${call({ action: "key", keys: merged })}；只配一个，把修饰键直接写在那个组合键前面。`);
+    r["keys"] = merged;
+    delete r["modifiers"];
+    note(`key 用不到 modifiers，合进 keys 当作 ${merged}`);
+  } else if ((action === "click" || action === "scroll") && !given(r, "modifiers") && typeof r["keys"] === "string" && r["keys"].trim() !== "") {
+    try {
+      parseModifiers(r["keys"]);
+    } catch {
+      return r;
+    }
+    r["modifiers"] = r["keys"].trim();
+    note(`${action} 用不到 keys，当作 modifiers ${r["modifiers"]}`);
+    delete r["keys"];
+  }
+  return r;
+}
+
+/** 给了动作用不到的参数：输入动作遇到决定性的拒绝，其余丢掉并说明。拒绝的文字写清去掉以后会怎样，给的调用照抄就是模型原来想做的。 */
+function checkUnused(action: string, raw: Record<string, unknown>): void {
+  const extra = Object.keys(raw).filter((k) => k !== "action" && DECLARED.includes(k) && !USES[action]!.includes(k) && given(raw, k));
+  const bad = needsLease(action) ? extra.filter((k) => DECISIVE.includes(k)) : [];
+  if (bad.length > 0) {
+    const list = bad.join("、");
+    const click = (): string => call({ action: "click", coordinate: raw["coordinate"] });
+    const then = (o: Record<string, unknown>): string => `先调用 ${click()}，再调用 ${call(o)}`;
+    const hint =
+      action === "click" && bad.length === 1 && bad[0] === "text" ? `要按住修饰键写 modifiers，例如 ctrl+shift。去掉 text 再调只会点击，不会输入。要点了再输入：${then({ action: "type", text: raw["text"] })}。`
+      : action === "scroll" && bad.includes("text") ? "要按住修饰键写 modifiers，例如 ctrl+shift。去掉 text 再调只会滚动，不会输入；要输入文字，滚完再用 type。"
+      : (action === "click" || action === "scroll") && bad.includes("keys") ? `去掉 keys 就是普通${action === "click" ? "单击" : "滚动"}，不会按键。要按键，${action === "click" ? "点完" : "滚完"}另调用 ${call({ action: "key", keys: raw["keys"] })}；要按住修饰键，写 modifiers，例如 ctrl。`
+      : action === "type" && bad.includes("coordinate") ? `去掉 coordinate 再调，会往当前焦点输入，焦点可能在别的窗口（比如终端）。要输入到那个位置：${then({ action: "type", text: raw["text"] })}。`
+      : action === "key" && bad.includes("coordinate") ? `去掉 coordinate 再调，会按到当前焦点上，焦点可能在别的窗口（比如终端）。要按到那个位置：${then({ action: "key", keys: raw["keys"] })}。`
+      : action === "drag" && bad.includes("coordinate") ? "拖动要写 from 和 to；去掉 coordinate 再调，就按 from 到 to 拖动。"
+      : `去掉 ${list} 再调，会照剩下的参数${DOING[action]}，${list} 不会生效。`;
+    throw new Fail(`这次没有${DOING[action]}：${action} 用不到 ${list}。${hint}`);
+  }
+  if (extra.length > 0) note(`${action} 用不到 ${extra.join("、")}，忽略了`);
+}
+
 /** 检查类型、必填和范围，不涉及屏幕尺寸（那一半是 `checkBounds`）。 */
 export function parseArgs(raw: Record<string, unknown>): Action {
   const action = raw["action"];
   if (typeof action !== "string" || !ACTIONS.includes(action)) throw new Fail(`action 要是 ${ACTIONS.join("、")} 之一。`);
+  raw = fold(action, raw);
+  checkUnused(action, raw);
   const point = (name: string): [number, number] => pair(ints(action, name, raw[name], 2, "[x, y]，截图里的像素坐标。"));
   const modsOf = (): { mods: Key[]; modsText: string } => {
     const m = raw["modifiers"];
@@ -366,10 +444,14 @@ export function parseArgs(raw: Record<string, unknown>): Action {
 }
 
 /** 坐标和区域要落在截图里；错误里写出截图的尺寸。 */
-export function checkBounds(a: Action, shot: Size): void {
+export function checkBounds(a: Action, shot: Size, screen?: Size): void {
   const where = `截图是 ${shot.w}×${shot.h}：x 要在 0 到 ${shot.w - 1}，y 要在 0 到 ${shot.h - 1}`;
   const inside = (name: string, p: [number, number]): void => {
-    if (p[0] < 0 || p[0] >= shot.w || p[1] < 0 || p[1] >= shot.h) throw new Fail(`${a.action} 的 ${name} (${p[0]}, ${p[1]}) 超出截图范围。${where}。`);
+    if (p[0] < 0 || p[0] >= shot.w || p[1] < 0 || p[1] >= shot.h) {
+      // 在主屏尺寸内、在截图外：多半把主屏的物理坐标当成了截图坐标。不自动换算（点错地方有副作用），写出换算好的坐标。
+      const hint = screen !== undefined && p[0] >= 0 && p[1] >= 0 && p[0] < screen.w && p[1] < screen.h ? `你给的像是主屏坐标（主屏 ${screen.w}×${screen.h}）。换成截图坐标是 (${Math.round((p[0] * shot.w) / screen.w)}, ${Math.round((p[1] * shot.h) / screen.h)})；拿不准先 screenshot 看一眼。` : "";
+      throw new Fail(`${a.action} 的 ${name} (${p[0]}, ${p[1]}) 超出截图范围。${where}。${hint}`);
+    }
   };
   switch (a.action) {
     case "click":
@@ -384,7 +466,7 @@ export function checkBounds(a: Action, shot: Size): void {
     case "zoom": {
       const [x0, y0, x1, y1] = a.region;
       if (x0 < 0 || y0 < 0 || x1 > shot.w || y1 > shot.h) throw new Fail(`zoom 的 region [${a.region.join(", ")}] 超出截图范围。截图是 ${shot.w}×${shot.h}：x 要在 0 到 ${shot.w}，y 要在 0 到 ${shot.h}。`);
-      if (x0 >= x1 || y0 >= y1) throw new Fail(`zoom 的 region [${a.region.join(", ")}] 不合法：要 x0 < x1 且 y0 < y1。截图是 ${shot.w}×${shot.h}。`);
+      if (x0 >= x1 || y0 >= y1) throw new Fail(`zoom 的 region [${a.region.join(", ")}] 不对：要 x0 < x1、y0 < y1。region 是左上角和右下角 [x0, y0, x1, y1]，不是 [x, y, 宽, 高]。截图是 ${shot.w}×${shot.h}。`);
       return;
     }
     default:

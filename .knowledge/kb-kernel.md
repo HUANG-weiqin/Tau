@@ -116,7 +116,7 @@ interface Env { now: Instant; memoryView: string; fresh?: { memoryView: string; 
 | `buildContext(p, seg)`、`tailStart(seg)`、`omitOldImages(messages)` | `context.ts` | 模型请求；段末用户消息的起点；请求里成批省略旧图 |
 | `sameErrors(seg)`、`loopNote(seg)` | `loop.ts` | 段末连续相同的错误步数、工具名和错误；请求末尾的提示文字（D108） |
 | `observe(p, seg, siblings, now)` | `observe.ts` | 投影 |
-| `toolsFor(preset)`、`findTool(preset, name)` | `tools.ts` | 工具描述，含工具定义。参数只要 `tools` 和 `toolDefs` |
+| `toolsFor(preset)`、`findTool(preset, name)`、`renamed`、`unknownTool` | `tools.ts` | 工具描述，含工具定义。参数只要 `tools` 和 `toolDefs` |
 | `contextUsed`、`messageBytes`、`tokens`、`outputMax`、`handoffThreshold`、`resultReserve`、`fixedTokens`、`limits`、`startError`、`newSegmentUsed`、`pendingCalls`、`handoffRequested`、`segmentStartedAt`、`usageOf`、`clip`、`utf8Bytes` | `derive.ts` | 派生值和字节工具 |
 | `finalReply(seg)`、`endedText(ended)`、`endedReason(error)` | `derive.ts` | [最终回复](#最终回复)；[结束原因的文字](#结束原因的文字) |
 
@@ -209,7 +209,7 @@ interface Env { now: Instant; memoryView: string; fresh?: { memoryView: string; 
 - 参数都是 `additionalProperties: false` 的对象。
 - 顺序固定，按上表：工具定义最后，在 `handoff` 之后，按预设 `tools` 里的顺序。
 - `memory_set` 的描述引用 `tools.ts` 里的四个记忆上限：`MEMORY_KEY_MAX_BYTES`、`MEMORY_VALUE_MAX_BYTES`、`MEMORY_BRIEF_MAX_BYTES`、`MEMORY_VIEW_MAX_BYTES`。检查在记忆的实现里（[kb-memory.md](kb-memory.md#上限在哪里检查)）。
-- `findTool` 对不认识的工具和预设里没有的工具都返回 `undefined`。
+- `findTool` 一字不差的名字优先；写法不同时（大小写、空白、`_`、`-`、`functions.`、`default_api.` 前缀、`:数字` 后缀）恰好对上一个内置工具才返回它，有歧义和别家的名字返回 `undefined`。工具定义只认原名。`renamed(name, spec)` 给结果末尾的说明，`unknownTool(preset, name)` 给解析不到时的文字（[kb-tools](kb-tools.md#参数从哪来)，[D109](kb-decisions.md#d109-弱模型兜底意图唯一就照做结果里说一句)）。
 
 ### 派生值
 
@@ -545,7 +545,7 @@ W 是 `preset.contextWindow`。快照里只存它和 `input`，不存模型的�
 ### 主动换段（`handoff`）
 
 - 库内工具，没有参数，总是有。结果 `将在这批工具结果之后换段。`，`isError` 为假（[kb-store.md](kb-store.md#handoff)）。
-- `continueTurn` 发现最后一条助手消息里有 `handoff` 调用、并且它的结果不是错误，就进入 `awaitingModel(handoff)`，不看阈值。算法是 `derive.ts` 的 `handoffRequested`：调用和结果按位置配对。
+- `continueTurn` 发现最后一条助手消息里有 `handoff` 调用、并且它的结果不是错误，就进入 `awaitingModel(handoff)`，不看阈值。算法是 `derive.ts` 的 `handoffRequested(segment, preset)`：调用和结果按位置配对，调用名经 `findTool` 解析，所以 `Handoff`、`functions.handoff:0` 也算（D109）。
 - 补的结果（`INTERRUPTED`、`SKIPPED`）都是错误，所以没执行的 `handoff` 不触发换段。
 - 同一批里的其他工具照常执行，批做完才到安全点。
 - 不存状态：从最后一条助手消息和它的结果算出来。换段成功以后新段里没有助手消息，不会再换。
@@ -566,14 +566,14 @@ D64 第 7 组：外面也能要求换段（模型调 `handoff` 工具之外的�
 ### 流程：换段
 
 1. `continueTurn` 发现到阈值或者有成功的 `handoff` 调用，进入 `awaitingModel(handoff)`。`buildContext` 在末尾加交接指令。
-2. 交接说明 = 回复里所有 `text` 块用换行连接，再去掉首尾空白。思考块不算。
-3. 接受的条件：`stopReason` 是 `stop` 或 `length`，并且交接说明不为空。接受时：
+2. 交接说明 = 回复里所有 `text` 块用换行连接，再去掉首尾空白。思考块不算。最后一次重发（`turn.retry.n` 等于 `RETRIES_PER_REPLY`，再不行就要报交接失败）时，回复里的调用全是 `handoff`（`findTool`，写法不同也算；`stop` 和 `toolUse` 都一样）的话，参数里的字符串值也按出现顺序并进来；有别的调用就不取参数；参数不是对象时当没有（D110）。
+3. 接受的条件：`stopReason` 是 `stop` 或 `length`，或者最后一次重发时 `stopReason` 是 `toolUse` 而回复里每个调用都是 `handoff`（没有调用也算），并且交接说明不为空。调用不执行，回复不进段。接受时：
    - `segment` 变成 `{ seq: seq + 1, memoryView, contextView }`。没有待换配置时，`memoryView` 取 `env.memoryView`，`contextView` 取 `env.fresh.contextView`：上下文文件每次换段重读。有待换配置时见[换段时采用待换配置](#换段时采用待换配置)。
    - 新段的第一条消息是用户消息，时间戳 `env.now`。内容是 `HANDOFF_HEADER` + 交接说明，再接空行和[旧段的简略视图](#旧段的简略视图d103)（预算不到一行时没有这一块）。旧段末尾有用户消息时（从 `tailStart` 起），再接空行、`CARRY_HEADER`、空行和这些消息的正文，正文之间用空行连接。没有正文（只有图片）的消息不占位。
    - 段末的用户消息两种形状都带：文本照上面接在后面，图片块原样带过去，按顺序。新段第一条按[张数和省略行](#张数和省略行)整理：留最后 `IMAGES_PER_MESSAGE` 张，文本连省略行不超过 `MESSAGE_MAX_BYTES`。没有图片时第一条仍是字符串，经 `clip` 截到 `MESSAGE_MAX_BYTES`。
    - 新段第一条带 `tau: { letters, handoff: true, brief? }`：`letters` 是带过去的信，位置平移，起点算上简略视图那一块；`brief` 是简略视图那一块的起止位置（见 [`tau`](#tau消息带的结构)）。
    - 用同一个 `turn` 执行 `continueTurn`：步数和排队的消息带到新段。
-4. 没有写出说明：`stopReason` 是 `toolUse`，或者是 `stop`、`length` 但说明为空。[重发](#重发d92)交接请求，用途仍是 `handoff`，`kind` 是 `handoff`，请求末尾在交接指令后加 `HANDOFF_RETRY`。次数用完才 `endTurn(turn, { error: "交接失败：" + (errorMessage ?? stopReason) })`。`stopReason` 是 `error`：同样重发，`kind` 是 `error`；用途 `turn` 时请求不变，交接请求只要重发过就带 `HANDOFF_RETRY`。接受时去掉 `turn.retry`。
+4. 没有写出说明：`stopReason` 是 `toolUse`（最后一次时，指带了 `handoff` 以外的调用），或者是 `stop`、`length` 或最后一次的 `toolUse` 但说明为空。[重发](#重发d92)交接请求，用途仍是 `handoff`，`kind` 是 `handoff`，请求末尾在交接指令后加 `HANDOFF_RETRY`。次数用完才 `endTurn(turn, { error: "交接失败：" + (errorMessage ?? stopReason) })`。`stopReason` 是 `error`：同样重发，`kind` 是 `error`；用途 `turn` 时请求不变，交接请求只要重发过就带 `HANDOFF_RETRY`。接受时去掉 `turn.retry`。
 5. 其它情况（`aborted`、`pending`、`deferred`、pi-ai 之外的值），和 4 里次数用完的情形：`endTurn(turn, { error: "交接失败：" + (errorMessage ?? stopReason) })`。不写交接回复，不开新段。排队的消息仍按 `endTurn` 合并写进旧段。
 6. 失败后再发一条消息：新的一轮，`continueTurn` 立即再换段。新消息在段末，不进交接请求，所以请求和第一次相同。一直失败时，每条消息调用 1 + `RETRIES_PER_REPLY` 次模型（没有写出说明的重发请求多一段 `HANDOFF_RETRY`）。
 7. 换段只发生在 `continueTurn` 里。这时所有工具调用都已有结果。
@@ -605,7 +605,7 @@ D64 第 7 组：外面也能要求换段（模型调 `handoff` 工具之外的�
 - 助手消息：文字块连起来一行，写 `助手：`。带工具调用的那条最多 `NARRATION_MAX_BYTES` 字节。
 - 工具结果：按位置和调用配对，一个结果一行，序号是结果的序号。
   - 写工具名，加参数的开头：参数里的 `command`，没有就 `path`，再没有就第一个字符串值，最多 `ARG_MAX_BYTES` 字节。
-  - 成功的库外工具：只有这些。成功的库内工具：再加 ` → ` 和结果第一行（例如 `spawn` 的新进程 ID），最多 `ARG_MAX_BYTES` 字节。
+  - 成功的库外工具：只有这些。成功的库内工具：再加 ` → ` 和结果第一行（例如 `spawn` 的新进程 ID），最多 `ARG_MAX_BYTES` 字节。库内工具按 `findBuiltin` 或 `findTool` 认名字（`Memory_Get` 也算）。结果里以“注：”开头的行（D109 的兜底说明）不进视图，免得挤掉退出码和最后一行。
   - 失败的（含补的“被中断”“未执行”）：行首加 `✗ `，再加 `：`、结果第一行、` … `、结果最后一行，各最多 `ARG_MAX_BYTES` 字节，头尾相同只写一次。最后一行是 `[退出码 N]` 时，往前再取一行，退出码写在头前面。
 - 取法，两遍：
   1. 信、用户消息和交接说明，从新到旧取，总量不超过行的预算（预算减去固定文字）的一半，放不下就停。失败的行不在这一遍：长程任务里退出码不为 0 的命令很多（`rg` 没搜到、测试没过），会把最早的任务挤掉。
@@ -749,7 +749,7 @@ type PhaseView =
 - `sameDir`、`running`（D78）：和 `siblings`、`children` 各自独立，不去重；去重在 `self` 的文字里做（[kb-store](kb-store.md#self)）。`sameDir` 比较的是快照里 `workdir` 字符串的小写，不处理 junction、符号链接和 8.3 短名。`running` 是对传入记录的计数：`self`、`ps` 传全部进程，含自己；`watch` 传 `[p]`，用不到。写成可选键，因为契约只加可选键，`observe` 总是给。
 - `context.threshold` 是 `handoffThreshold(快照)`，含预设的 `handoff`。
 - `self.pending.fields`（D71）：`next` 和 `preset` 的结构性字段里不一样的键名，由 `snapshot.ts` 的 `pendingFields` 算。取值只有 `model`、`prompt`、`tools`、`workdir`、`context`，按这个顺序排。`toolDefs` 的内容变了算 `tools`；`contextWindow`、`input` 是按 `model` 查目录得来的，算 `model`。没有 `next` 时 `self` 里没有 `pending` 这个键。它放在 `self` 里，因为协议的 `watch` 的 `update` 只带 `self`，界面靠它知道有待换配置。`self` 工具的文字是同一份（[kb-store](kb-store.md#self)）。`next` 本身不在投影里：要看新快照的全部内容，用协议的 `inspect` 读进程记录。
-- `self.bgJobs`（D90 第 2 阶段）：从当前段派生。扫描 `toolName === "bash"` 且 `!isError` 的 `toolResult`，只认**整条结果以完整通知结尾**的那条：`[转入后台 <id>] 命令还在运行，没有被结束。\n输出文件：`…`（还在增长，用 read 读，可带 offset 和 limit）\n`（进程组号可选）`跑完会给你寄一封信，内容是退出码和最后几行；你可以接着做别的事，也可以结束这一轮等信。` 再加可选的空白。命令正文、或者模型 `cat` 出来的旧文件里可能原样带着这段话，只看开头会造出不会消失的幽灵任务（审查反例）。匹配到就记录 `age = now - timestamp`；再按用户信里第一行（有 `tau.letters` 时只看 `from.kind === "user"` 且有 `at` 的信正文第一行）完整匹配 `^\[后台任务 ([0-9a-f]{6})\] 退出码 -?\d+$` 的移除。没有未完成任务时没有这个键。
+- `self.bgJobs`（D90 第 2 阶段）：从当前段派生。扫描 `toolName` 是 `bash`（或经 `findTool` 解析成 `bash`，如 `Bash`、`functions.bash:0`，D109）且 `!isError` 的 `toolResult`，只认**整条结果以完整通知结尾**的那条：`[转入后台 <id>] 命令还在运行，没有被结束。\n输出文件：`…`（还在增长，用 read 读，可带 offset 和 limit）\n`（进程组号可选）`跑完会给你寄一封信，内容是退出码和最后几行；你可以接着做别的事，也可以结束这一轮等信。` 再加可选的空白。命令正文、或者模型 `cat` 出来的旧文件里可能原样带着这段话，只看开头会造出不会消失的幽灵任务（审查反例）。匹配到就记录 `age = now - timestamp`；再按用户信里第一行（有 `tau.letters` 时只看 `from.kind === "user"` 且有 `at` 的信正文第一行）完整匹配 `^\[后台任务 ([0-9a-f]{6})\] 退出码 -?\d+$` 的移除。没有未完成任务时没有这个键。
 - `messages` 是当前段的消息条数；`usage` 是进程记录里的累计用量，不是从段里算的。
 - `idle` 阶段的出错原因经 `endedReason` 截短（先截到 1024 字节再把换行换成空格）。进程记录里存的仍是原文。运行中的进程没有结束原因，所以只有空闲的自己会出现截短的原因。
 - 本地时间、时区和文本格式在纯函数层外：`self` 在事务里（[kb-store.md](kb-store.md#self)），`tau ps` 在 CLI 里（[kb-service.md](kb-service.md#tau-ps-的文字格式)）。
@@ -771,6 +771,7 @@ type PhaseView =
 | `test/invariants.ts` | `assertInvariants(p, seg, relaxed)` |
 | `test/kernel/helpers.ts` | 内存里的 `World`（含 `relaxed`）、`feed`、`reply`、`toolDone` |
 | `test/kernel/flow.test.ts` | 第 5 节每一行流程和丢弃规则 |
+| `test/kernel/handoff-last.test.ts` | 交接请求的最后一次重发（D110）：写了说明又调 `handoff`、说明写在参数里、写法不同的 `handoff`、前两次不变、带别的调用（`stop` 和 `toolUse` 一样）或说明为空仍失败、参数是 `null` 不抛 |
 | `test/kernel/derive.test.ts` | 字节估算、只取整一次、输出上限和阈值、`clip`、`finalReply`、`endedText` |
 | `test/kernel/safepoint.test.ts` | 安全点投递和 `handoff` |
 | `test/kernel/hurried.test.ts` | D104：`hurried` 只在 `awaitingTool` 且 `queued` 不空时为真；`awaitingModel` 里有排队的信不算，进了 `awaitingTool` 才算；工具运行中来信变真，批没做完仍真，安全点信并进段后变假 |
@@ -817,7 +818,7 @@ type PhaseView =
 - **`decide` 抛错会卡住整个信箱。** 事务回滚，输入留在信箱最前面，而处理输入总取全局最早的一条（见 [kb-store.md](kb-store.md)）。`decide` 只对不可能的状态抛错，外部来的怪值（未知 `stopReason`、巨大的结果）都要按普通失败处理。
 - **`decide` 里不要展开可能很长的数组。** `Math.max(...turn.queued.map(...))` 在排队信超过约 12 万封时抛 `RangeError`；换成 `reduce` 折叠。触发要进程一直等着、队列里攒到十几万封，但不值得留一条能抛错的路。验证：`regressions.test.ts` 的“排队的信多到十几万封”。
 - **`clip` 不能拷贝整串。** 它只数一次全长字节，再扫描保留的头尾。拷贝过整串时，一亿多字符的结果在事务里让 V8 中止。它也不拆开代理对。上限小于省略说明那一行时，输出只有说明行，会超过上限。验证：`regressions.test.ts`。
-- **交接调用也带工具。** 这样请求前缀不变。代价是模型可能回 `toolUse`：重发交接请求，请求里的 `HANDOFF_RETRY` 要求这次不调工具、只写文字（请求仍带 `tools`）；重发用完才算交接失败。请求不去掉 `tools`：Bedrock、Anthropic 可能拒绝带工具调用历史却没有工具定义的请求，而且前缀会变（[D92](kb-decisions.md#d92-弱模型兜底可恢复的模型失败重试不结束这一轮)）。
+- **交接调用也带工具。** 这样请求前缀不变。代价是模型可能回 `toolUse`：重发交接请求，请求里的 `HANDOFF_RETRY` 要求这次不调工具、只写文字（请求仍带 `tools`）；重发用完才算交接失败。最后一次重发时，写了说明又只调 `handoff` 的回复照样收下（D110）；`HANDOFF_RETRY` 说“没有写出交接说明”，对这样的模型不准，它是参与启动检查的量，不改。请求不去掉 `tools`：Bedrock、Anthropic 可能拒绝带工具调用历史却没有工具定义的请求，而且前缀会变（[D92](kb-decisions.md#d92-弱模型兜底可恢复的模型失败重试不结束这一轮)）。
 - **`purpose` 是进入时的判断。** `reconfigure` 改了 `handoff` 以后，已经存下的 `purpose` 可能和现算的阈值不一致，两个方向都可能：改低以后，用途 `turn` 的调用等着时用量已经到了新阈值；改高以后，用途 `handoff` 的调用等着时用量其实没到新阈值。不重算，`purpose` 就是进入等待时的决定（[D19](kb-decisions.md#d19-第四轮审查fable-52-复审-d18-之后的文档)）。下一次 `continueTurn` 起按新阈值判断；重发（D92）也保持原用途，所以不一致会保持到重发结束。`assertInvariants` 从运行中改了 `handoff` 起，到发出下一个副作用或回到 `idle` 为止，不检查这几处（[不变量](#不变量)）。
 - **`Input` 的字段名不能叫 `process`。** `test/kernel-imports.test.ts` 的扫描把 `.process.` 当成被禁用的全局，所以 `reconfigure` 带新快照的字段叫 `preset`。
 - **纯函数里遍历工具定义的 `parameters`，不能递归。** 工具定义只受 16 KB 的大小限制，嵌套的数组或对象能有几千层，递归会爆调用栈；`decide` 一抛错，这条输入就留在信箱队头，所有进程卡住，服务重启也起不来。`snapshot.ts` 的稳定序列化用显式的栈。`JSON.stringify` 自己有栈深限制（Node 24 上嵌套的数组约 4700 层），读工具定义时的大小检查就用它，所以更深的定义进不来，在读文件那一步报错，什么都没写。
