@@ -130,7 +130,7 @@
 - 用 `path.resolve(workdir, args.path)`。绝对路径原样用，相对路径按工作目录解析，`..` 照常生效。
 - 例外：开头是 `/<一个字母>/` 或恰好是 `/<一个字母>` 的，按 Git Bash 的盘符写法，当 `X:/…`（`/e/tau` 是 `E:\tau`）。不换的话 `path.resolve` 会把它当成当前盘根下的 `\e\tau`，悄悄读写到别处。其它 msys 路径（`/tmp`、`/usr`）不认。
 - 例外：`~/…` 和恰好是 `~` 的，`~` 换成家目录（`os.homedir()`，正斜杠写法）。`~user` 不认。`/tmp`、`/home` 照旧按普通路径解析，不换成家目录。
-- 三个路径工具走同一个解析函数（`resolvePath`），read、write、edit 都认上面两种写法。bash 工具的描述里写明了这两种写法，以及 PowerShell 的命令要用 `powershell -NoProfile -Command` 调用。
+- 三个路径工具走同一个解析函数（`resolvePath`），read、write、edit 都认上面两种写法。bash 工具的描述里写明了这两种写法（二选一，不要混成 `/c/C:/Users/x`），命令从工作目录开始运行、不用先 `cd`（[D106](kb-decisions.md#d106-使用反馈弱模型把盘符路径拼成-ddx)），以及 PowerShell 的命令要用 `powershell -NoProfile -Command` 调用。
 - 不限制路径（[D14](kb-decisions.md#d14-yagni-审查移出-mvp-的-20-项)）。有 bash 就能绕过任何限制。
 - 结果里写的是解析后的绝对路径。
 

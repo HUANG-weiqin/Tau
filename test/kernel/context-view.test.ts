@@ -28,6 +28,11 @@ test("系统提示词：没有上下文视图时和以前一字不变；有就�
   assert.equal(systemPrompt(withContext(start("p", preset(), env(0)), VIEW)), `${p.preset.prompt}\n\n工作目录：${p.preset.workdir}\n\n## 上下文文件（开段时的快照）\n\n${VIEW}`);
 });
 
+test("工作目录那一行写成正斜杠（D106）：盘符路径和 UNC 路径", () => {
+  assert.ok(fixedPrompt(preset({ workdir: "D:\\work\\x" })).endsWith("工作目录：D:/work/x"));
+  assert.ok(fixedPrompt(preset({ workdir: "\\\\srv\\share\\x" })).endsWith("工作目录：//srv/share/x"));
+});
+
 test("上下文一节：空视图没有；空串的 contextView 和缺省一样", () => {
   assert.equal(contextSection(""), "");
   assert.equal(contextSection(VIEW), CONTEXT_HEADING + VIEW);

@@ -35,9 +35,9 @@ export function tailStart(segment: readonly Message[]): number {
   return i;
 }
 
-/** 系统提示词里的固定部分：预设提示词和工作目录那一行。 */
+/** 系统提示词里的固定部分：预设提示词和工作目录那一行。工作目录的反斜杠写成正斜杠：bash、read、write、edit 都认，模型照抄就对（D106）。 */
 export function fixedPrompt(preset: PresetSnapshot): string {
-  return `${preset.prompt}\n\n工作目录：${preset.workdir}`;
+  return `${preset.prompt}\n\n工作目录：${preset.workdir.replaceAll("\\", "/")}`;
 }
 
 /** 记忆索引前面的标题和每列的意思，连同它前面的空行。 */

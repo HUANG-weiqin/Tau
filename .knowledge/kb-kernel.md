@@ -129,7 +129,7 @@ interface Env { now: Instant; memoryView: string; fresh?: { memoryView: string; 
 
 `buildContext`：
 
-- 系统提示词由四部分连接：预设提示词；`工作目录：<workdir>`；上下文视图不为空时，`## 上下文文件（开段时的快照）` 加视图；记忆视图不为空时，`## 记忆索引（开段时的快照）`、一行说明每列、再加视图。`systemPrompt(p)` = 固定部分（前两项）+ 上下文一节 + 记忆一节，上下文在记忆前面。每一节是空行、标题、空行、视图；标题常量放在 `context.ts`，和 `MEMORY_HEADING` 并排。记忆一节的标题带那行说明：`## 记忆索引（开段时的快照）`、空行、`每行：键 | 更新日期（UTC） | 值的字节数 | 摘要。要看值，用 memory_get。`、空行（[D81](kb-decisions.md#d81-记忆视图改成索引键更新日期字节数摘要)）。视图取自 `p.segment`。
+- 系统提示词由四部分连接：预设提示词；`工作目录：<workdir>`（反斜杠换成正斜杠，`D:\x` 写成 `D:/x`，UNC 写成 `//server/share`；快照里的 `workdir` 不变，[D106](kb-decisions.md#d106-使用反馈弱模型把盘符路径拼成-ddx)）；上下文视图不为空时，`## 上下文文件（开段时的快照）` 加视图；记忆视图不为空时，`## 记忆索引（开段时的快照）`、一行说明每列、再加视图。`systemPrompt(p)` = 固定部分（前两项）+ 上下文一节 + 记忆一节，上下文在记忆前面。每一节是空行、标题、空行、视图；标题常量放在 `context.ts`，和 `MEMORY_HEADING` 并排。记忆一节的标题带那行说明：`## 记忆索引（开段时的快照）`、空行、`每行：键 | 更新日期（UTC） | 值的字节数 | 摘要。要看值，用 memory_get。`、空行（[D81](kb-decisions.md#d81-记忆视图改成索引键更新日期字节数摘要)）。视图取自 `p.segment`。
 - 工具：`toolDescriptions(preset)`，只放 `name`、`description`、`parameters`。工具定义的 `command`、`timeout`、`output` 不给模型。交接调用带同样的工具，请求前缀不变。
 - 消息就是工作段。`awaitingModel(handoff)` 时：
   - 去掉段末连续的用户消息（从 `tailStart` 起）。下标 0 总保留：第一条消息是写交接说明的依据。段末没有用户消息时什么都不去掉。

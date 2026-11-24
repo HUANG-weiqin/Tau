@@ -26,7 +26,7 @@ const EDIT = tool("edit", "把文件里的一段原文精确替换成新文本�
 
 const BASH = tool("bash",
   "在工作目录里运行一条 bash 命令（Git for Windows）。先等 timeout 秒（默认 60，最长 600，0 表示不等）：这么久里跑完了，结果就是输出和退出码；没跑完，命令继续在后台运行，不会被结束，工具立刻返回输出文件的路径，跑完给你寄一封信。输出太长时只回头尾，完整输出存在文件里，用 read 读。等的时候来了新的信，最多再等 1 秒就转后台。没有标准输入。" +
-    "命令里的路径写 /c/Users/x 或 C:/Users/x，不要用反斜杠（bash 里它是转义）；read、write、edit 两种写法都认。PowerShell 的命令（Get-ChildItem、Get-Process 这类）bash 里没有，用 powershell -NoProfile -Command '…' 调用。",
+    "命令从工作目录开始运行，不用先 cd 过去。路径用正斜杠，写 /c/Users/x 或 C:/Users/x，二选一，不要混成 /c/C:/Users/x；不要用反斜杠（bash 里它是转义）。read、write、edit 两种写法都认。PowerShell 的命令（Get-ChildItem、Get-Process 这类）bash 里没有，用 powershell -NoProfile -Command '…' 调用。",
   { command: str("要运行的命令"), timeout: int("最多等几秒，没跑完就转后台，0 是不等") }, ["command"], false);
 
 /** 记忆的上限，按 UTF-8 字节算。由记忆的实现检查；视图按渲染后的文本算。 */
