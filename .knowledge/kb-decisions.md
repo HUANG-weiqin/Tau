@@ -2816,6 +2816,7 @@ fork 原来在这张表里，已进内核，见 [D49](#d49-fork-进内核)。
     - 题 3 的错法是文档的缺口：kb-extending 只写了“用到的已有原语”的归类不算到功能头上，没写改一个已有的上层功能也一样。测完已经补上一句（[kb-extending 的取舍顺序](kb-extending.md#取舍顺序)，“怎样用这个顺序”）。
     - 出题以后，审阅又给条目加了条件和去 BOM（见上面“审阅以后的改动”），受试者读不到。按做法，这批题本来也要作废。
     - 题目、答卷、判分和结论都并进这一条，这批题作废。
+  - 用户决定照常落地，不重测（2026-11-24）。先例是 [D59](#d59-删除原语旧段和空闲进程)、D103 和 D104 的破例。用户原话：“照常合并”。这是一次性的破例，[改契约的程序](kb-contract.md#改契约的程序)不变。
 - 写在这里的页：[kb-service 的模型补充文件](kb-service.md#模型补充文件d105)、[kb-contract 的不变量和契约清单](kb-contract.md#契约清单)、[kb-executor 的升级 pi-ai](kb-executor.md#升级-pi-ai)、[kb-extending 的核心原则和方向表](kb-extending.md#大致方向)、[kb-extras 的 Copilot 的模型列表](kb-extras.md#copilot-的模型列表)、[kb-gui 的模型目录](kb-gui.md)、[AGENTS.md](../AGENTS.md)、[设计稿第 2 节](../docs/design/mvp.md#2-预设)。
 
 ## 未确认的默认值
