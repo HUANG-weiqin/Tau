@@ -4,7 +4,7 @@ import { html, Pill, useEffect, useState, TipLayer, MenuLayer } from "./ui/commo
 import * as api from "./api.js";
 import { createConn, createHistoryReader, createPeeker } from "./conn.js";
 import { emptyStore, reduce, textShown, streamingText, streamingLive, streamingOutput, childCounts } from "./lib/store.js";
-import { emptyHistory, segmentMessages, lastTimestamp, applyPushed } from "./lib/history.js";
+import { emptyHistory, segmentMessages, lastTimestamp, applyPushed, pushPreview } from "./lib/history.js";
 import { buildEntries, buildProjects, railSections, projectView, currentOf, attention, seenFromInspect } from "./lib/derive.js";
 import { describeNow, phaseStartedAt, HANDOFF_LETTER } from "./lib/messages.js";
 import { processTitle } from "./lib/titles.js";
@@ -82,6 +82,7 @@ import { ServiceBanner, StartServiceButton } from "./ui/banner.js";
  * @typedef {object} AppReaders
  * @property {(ts: number) => number} clock 服务时间戳换成页面时钟。
  * @property {(id: string) => History} history 这个进程的完整历史缓存（按段）。只有被 `follow` 的进程才读全；没读的是空的。
+ * @property {(id: string) => import("./lib/history.js").Preview | undefined} preview 聚焦时先读到的当前段末尾；整段读到就没有了。
  * @property {(id: string) => readonly Message[]} messages 这个进程当前段的消息。被 `follow` 的是整段；其它的只有末尾几条。
  * @property {(id: string) => string} streamText 模型正在写的文字（只在等模型时有）。
  * @property {(id: string) => import("./lib/stream.js").Live | null} streamLive 这一次调用流式推来的正文、思考、工具调用参数（只在等模型时有）。
@@ -138,6 +139,8 @@ const S = {
   store: emptyStore(),
   /** @type {Record<string, History>} */
   hist: {},
+  /** 聚焦时先读到的当前段末尾，整段读到就丢掉（lib/history.js 的 `alignPreview`）。 @type {Record<string, import("./lib/history.js").Preview>} */
+  preview: {},
   /** @type {Record<string, { segment: number, total: number, msgs: Message[], lastAt: number | null }>} */
   peek: {},
   /** @type {Record<string, PresetInfo>} */
@@ -305,6 +308,13 @@ const reader = createHistoryReader({
   getHist: (id) => S.hist[id],
   setHist: (id, h) => {
     S.hist[id] = h;
+    const pv = S.preview[id];
+    if (pv && (h.segs[pv.segment]?.msgs.length ?? 0) >= pv.start + pv.msgs.length) delete S.preview[id];
+    schedule();
+  },
+  getPreview: (id) => S.preview[id],
+  setPreview: (id, v) => {
+    S.preview[id] = v;
     schedule();
   },
 });
@@ -321,7 +331,10 @@ const peeker = createPeeker({
 function follow(id) {
   const next = [id, ...S.followed.filter((x) => x !== id)];
   // 被挤出去的进程不再保持更新，旧缓存也删掉，免得显示停在被挤出的那一刻。
-  for (const old of next.slice(8)) delete S.hist[old];
+  for (const old of next.slice(8)) {
+    delete S.hist[old];
+    delete S.preview[old];
+  }
   S.followed = next.slice(0, 8);
   reader.follow(id);
 }
@@ -336,6 +349,8 @@ function onPushed(r) {
   if (!self) return;
   const h = S.hist[r.process];
   if (h) S.hist[r.process] = applyPushed(h, self, r);
+  const pv = S.preview[r.process];
+  if (pv) S.preview[r.process] = pushPreview(pv, r);
   peeker.push(r.process, r);
   schedule();
 }
@@ -360,6 +375,7 @@ function onReply(r) {
     S.psFresh = true;
     for (const p of r.processes) S.ever.add(p.self.id);
     for (const id of Object.keys(S.hist)) if (!S.store.procs[id]) delete S.hist[id];
+    for (const id of Object.keys(S.preview)) if (!S.store.procs[id]) delete S.preview[id];
     for (const p of r.processes) onSelf(p.self, 0);
     loadSnaps(null);
     const want = S.route.proc;
@@ -374,6 +390,7 @@ function onReply(r) {
   else if (r.type === "removed") {
     delete S.snaps[r.process];
     delete S.hist[r.process];
+    delete S.preview[r.process];
     delete S.peek[r.process];
     peeker.forget(r.process);
     S.followed = S.followed.filter((x) => x !== r.process);
@@ -563,6 +580,7 @@ function compute() {
 
     clock: (ts) => ts - S.skew,
     history: (id) => S.hist[id] ?? emptyHistory(),
+    preview: (id) => S.preview[id],
     messages: messagesOf,
     streamText: (id) => streamingText(S.store, id),
     streamLive: (id) => streamingLive(S.store, id),

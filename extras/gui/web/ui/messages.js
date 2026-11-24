@@ -17,10 +17,10 @@ export function Band({ label, text, warn = false }) {
   return html`<div class="band hatch-l"><span class="band-in"><span class=${`bl ${warn ? "warn" : ""}`}>${label}</span><span class="bt">${text}</span></span></div>`;
 }
 
-/** 折起来的一行：中间还有 n 条消息 + 展开。 */
+/** 折起来的一行：中间还有 n 条消息 + 展开。没有 `onOpen` 时只有文字（没有按钮）。 */
 export function FoldRow({ text, onOpen, label = "展开" }) {
   return html`<div class="wide-only" aria-hidden="true"></div>
-    <div class="foldrow"><span class="fr-line" aria-hidden="true"></span>${text}<button type="button" class="link" onClick=${onOpen}>${label}<${Icon} name="down" size=${12} sw=${2.8} /></button></div>`;
+    <div class="foldrow"><span class="fr-line" aria-hidden="true"></span>${text}${onOpen && html`<button type="button" class="link" onClick=${onOpen}>${label}<${Icon} name="down" size=${12} sw=${2.8} /></button>`}</div>`;
 }
 
 /** 一封信的卡片。 */

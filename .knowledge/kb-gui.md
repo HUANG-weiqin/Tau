@@ -274,7 +274,12 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
   - 每条 `update` 换掉这个进程的 `self`。追加的消息紧跟着推来（带 `process` 的 `message`），`app.js` 的 `onPushed` 用 `lib/history.js` 的 `applyPushed` 并进被跟着的进程的缓存，用 `createPeeker().push` 并进别的进程的末尾几条。
   - `applyPushed` 只收正好接在缓存末尾后面的一条：已有的丢掉，跳号的丢掉，没读过的段丢掉；换段时先 `noteSelf`，新段从 0 起。
   - `history` 只补缺：缓存比 `self.messages` 少就读。收到 `update` 以后先等 `PUSH_GRACE`（250ms）再决定读不读，推来的消息接得上就一次都不读（`createHistoryReader` 和 `createPeeker` 的 `grace`）。`ps`（首次和重连）、`follow` 切进程不等。
-  - 读 `history` 的同时推送也在往同一份缓存里追加：读的每一行都从缓存里取最新的再并，不用手里的旧副本盖掉。
+  - 读 `history` 的同时推送也在往同一份缓存里追加。一次请求读到的消息先攒在本地，收到 `end`（或 `error`、请求中断）时一次并进缓存、重画一次，不逐条重画。并的时候取缓存里最新的，用 `applyMessages` 按位置覆盖、保留后面已有的，不用手里的旧副本盖掉。只攒 seq 连续的，跳号就停。
+  - 聚焦一个长的当前段（从 0 读起、`self.messages` 超过 `PREVIEW`，40 条）时，先读末尾 `PREVIEW` 条当预览（`S.preview`，形状 `{ segment, start, msgs }`），再照旧读整段。历史缓存仍然每段从 0 起连续，预览不进缓存。
+  - 预览开头连着的工具结果要去掉（`alignPreview`）：它们的调用在 `start` 之前。全是工具结果就没有预览。读预览失败就跳过。
+  - 预览接推送：`onPushed` 用 `pushPreview` 收正好接在预览末尾的消息。缓存里这一段的条数追上预览的末尾，预览就删掉。进程被删、被挤出被跟着的列表时也删。
+  - 用预览时消息流（`ui/process.js` 的 `Stream`）条目的 seq 是段内绝对序号（`toItems(msgs, base)`、`itemsOf(msgs, base)`）。它只画一行“前面还有 N 条消息，正在读取…”（N 是第一个显示的条目的序号，没有按钮）和预览条目的最后 14 个；这 14 个和整段折叠时的末尾是同一批，key 相同，整段到了行不重建。
+  - 用预览时不画“换段”带，出错时也不画“这一轮”和结束带，它们要整段（`turnStart`、第 0 条的时间）。整段读到再画。`LiveRow`、`HeldRow` 照旧，按已知条数（`start` 加预览条数）算。`canHandoff`、项目概况、总管弹窗不看预览，照旧读完整缓存或末尾几条。
   - 流式片段每个 token 一条。只有聚焦的进程、或总管弹窗开着时总管的进程，收到 `text` 才重画（`lib/store.js` 的 `textShown`）。其余的只并进 store。
   - 消息变条目经 `lib/messages.js` 的 `itemsOf`，按消息数组缓存（`WeakMap`）。所以缓存里的消息数组不能原地改，新消息一律生成新数组；返回的条目只读。
   - `text` 引起的重画走 `schedule(true)`，复用上一份 `app` 和外围三栏（`Rail`、`ProcList`、`Inspector`）的 vnode（`app.js` 的 `SIDE`）。Preact 见同一个 vnode 就跳过整棵子树。
@@ -390,7 +395,7 @@ MCP 页（`bridge/mcp.ts`，做法见 [kb-extras 的 MCP 中转](kb-extras.md#mc
 | `test/extras/gui/memory.test.ts` | 记忆页的纯逻辑（字节序排序、折叠、编辑状态、写回复的判读、冲突后字和版本的处理、摘要）；经桥对着真的服务：新键带摘要、改值不丢摘要、兄弟先写造成的冲突不覆盖、删、已删键的冲突、超限（含摘要超限） |
 | `test/extras/gui/image.test.ts` | 图片常量和 `src/` 的真常量一致；缩放尺寸、原样发的条件、压缩尝试的顺序、张数；快照多带的输入类型和阈值、不收图片的判断；段尺比例和九成警告；排队的信、谁在等谁、后台任务的通知标成后台任务 |
 | `test/extras/gui/panzoom.test.ts` | 平移缩放的数学（适应、以点为中心缩放和上下限、移到中间、视野矩形和小地图、双指、搜索匹配）、存图的比例和文件名、SVG 的 viewBox 和宽高改写；mermaid 代码块的占位 |
-| `test/extras/gui/lib.test.ts` | 纯逻辑：信的来历读 `tau`（发送者、跳数、回信、`after`、换段、`filled`，旧消息、被截过的消息）、后台任务的通知认前缀（名字的字符、空格、不是进程的信不认）、`canHandoff`、进程按会话快照归类、增量读跨换段、重连后不丢不重、标题、当前进程、筛选计数、全部停止和清理的顺序、删进程的拒绝条件、`prunePatch`；模型选择（窗口的写法、思考级别取最近一档、搜索、供应商排序、最近用过、默认模型、key 提示）、预设表变成请求（只发变了的字段）、会话表变成 `reconfigure` 的 `fields`（只发变了的，去掉的发 `null`）、重读工具定义发已存的工具列表、保存失败的原文表一动就不显示、转成上下文文件要项目里有 `AGENTS.md`（`convertGate`、`convertPatch`）、待换段条的字段名、换模型的补丁、界面数据的新键、快照多带的几项；流式文本按 `kind` 分开、`text` 回复要不要重画（`textShown`）、消息变条目按数组缓存（`itemsOf`）、`tailLines`、`charCount`、`firstTextLine` 和原实现逐一对拍、`tauAll` 收到结束行就返回、watch 推来的消息并进缓存（重复、跳号、换段）、末尾几条的推送并进；吐字的节奏（平稳的小块、成批到、收尾追平、一次来一大块）和 `latestSeq`；Markdown（GFM、原始 HTML 转义、链接和图片的过滤、代码块）；通知（谁刚进入待你看、该不该弹、正文、标题）；`notify` 键 |
+| `test/extras/gui/lib.test.ts` | 纯逻辑：信的来历读 `tau`（发送者、跳数、回信、`after`、换段、`filled`，旧消息、被截过的消息）、后台任务的通知认前缀（名字的字符、空格、不是进程的信不认）、`canHandoff`、进程按会话快照归类、增量读跨换段、重连后不丢不重、标题、当前进程、筛选计数、全部停止和清理的顺序、删进程的拒绝条件、`prunePatch`；模型选择（窗口的写法、思考级别取最近一档、搜索、供应商排序、最近用过、默认模型、key 提示）、预设表变成请求（只发变了的字段）、会话表变成 `reconfigure` 的 `fields`（只发变了的，去掉的发 `null`）、重读工具定义发已存的工具列表、保存失败的原文表一动就不显示、转成上下文文件要项目里有 `AGENTS.md`（`convertGate`、`convertPatch`）、待换段条的字段名、换模型的补丁、界面数据的新键、快照多带的几项；流式文本按 `kind` 分开、`text` 回复要不要重画（`textShown`）、消息变条目按数组缓存（`itemsOf`，同一数组 `base` 不同就重算）、`toItems` 带 `base` 等于整段里 seq 不小于 `base` 的条目、`applyMessages` 和逐条 `applyMessage` 对拍、预览（`alignPreview` 去开头的工具结果、`pushPreview` 只收接得上的且不原地改）、`tailLines`、`charCount`、`firstTextLine` 和原实现逐一对拍、`tauAll` 收到结束行就返回、watch 推来的消息并进缓存（重复、跳号、换段）、末尾几条的推送并进；吐字的节奏（平稳的小块、成批到、收尾追平、一次来一大块）和 `latestSeq`；Markdown（GFM、原始 HTML 转义、链接和图片的过滤、代码块）；通知（谁刚进入待你看、该不该弹、正文、标题）；`notify` 键 |
 
 ## 坑点
 

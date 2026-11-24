@@ -86,6 +86,22 @@ export function applyMessage(h, reply) {
 }
 
 /**
+ * 一次 history 请求读到的一批消息，从 `from` 起。结果和对 `msgs` 逐条 `applyMessage`（seq = from + i）完全一样：
+ * `from` 超过已有条数就原样返回；否则覆盖 [from, from + msgs.length)，后面已有的留着。
+ * @param {History} h
+ * @param {number} segment
+ * @param {number} from
+ * @param {Message[]} msgs
+ * @returns {History}
+ */
+export function applyMessages(h, segment, from, msgs) {
+  const cur = h.segs[segment] ?? blank();
+  if (msgs.length === 0 || from > cur.msgs.length) return h;
+  const merged = [...cur.msgs.slice(0, from), ...msgs, ...cur.msgs.slice(from + msgs.length)];
+  return { ...h, segs: { ...h.segs, [segment]: { ...cur, msgs: merged } } };
+}
+
+/**
  * 一次读完。`request` 是发出这次读的计划。旧段读到末尾才封住。
  * @param {History} h
  * @param {{ segment: number, messages: number }} reply
@@ -124,4 +140,35 @@ export function applyPushed(h, self, reply) {
   const cur = noted.segs[reply.segment];
   if (!cur || reply.seq !== cur.msgs.length) return noted;
   return { ...noted, segs: { ...noted.segs, [reply.segment]: { ...cur, msgs: [...cur.msgs, reply.message] } } };
+}
+
+/** 聚焦时先读段末尾这么多条消息当预览（条）。 */
+export const PREVIEW = 40;
+
+/**
+ * 当前段末尾的预览：这一段第 `start` 条起、连续到读的那一刻段末的消息。
+ * @typedef {{ segment: number, start: number, msgs: Message[] }} Preview
+ */
+
+/**
+ * 去掉开头连着的工具结果：它们的调用在 `start` 之前，显示出来是“没有对应的调用”。全被去掉回 null。
+ * @param {number} start
+ * @param {Message[]} msgs
+ * @returns {{ start: number, msgs: Message[] } | null}
+ */
+export function alignPreview(start, msgs) {
+  let k = 0;
+  while (k < msgs.length && msgs[k]?.role === "toolResult") k++;
+  return k >= msgs.length ? null : { start: start + k, msgs: k === 0 ? msgs : msgs.slice(k) };
+}
+
+/**
+ * watch 推来的消息正好接在预览末尾就并进去（新数组），否则原样返回。
+ * @param {Preview} pv
+ * @param {{ segment: number, seq: number, message: Message }} reply
+ * @returns {Preview}
+ */
+export function pushPreview(pv, reply) {
+  if (reply.segment !== pv.segment || reply.seq !== pv.start + pv.msgs.length) return pv;
+  return { ...pv, msgs: [...pv.msgs, reply.message] };
 }

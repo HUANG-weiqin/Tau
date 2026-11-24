@@ -1,7 +1,7 @@
 // 连接：`ps` 加 `watch`，断了就退避重连；按 lib/history 的计划增量读 `history`。
 // 这里只管发请求和收回复，状态都交给调用方（app.js）。
 import { tauAll, tauStream, ApiError } from "./api.js";
-import { applyEnd, applyMessage, emptyHistory, giveUp, noteSelf, plan } from "./lib/history.js";
+import { alignPreview, applyEnd, applyMessages, emptyHistory, giveUp, noteSelf, plan, PREVIEW } from "./lib/history.js";
 import { extractTitle } from "./lib/titles.js";
 
 /** @param {number} ms */
@@ -54,6 +54,8 @@ export function createConn(hooks) {
  *   getSelf: (id: string) => import("./lib/types.js").Self | undefined,
  *   getHist: (id: string) => import("./lib/history.js").History | undefined,
  *   setHist: (id: string, h: import("./lib/history.js").History) => void,
+ *   getPreview: (id: string) => import("./lib/history.js").Preview | undefined,
+ *   setPreview: (id: string, v: import("./lib/history.js").Preview) => void,
  * }} io
  */
 export function createHistoryReader(io) {
@@ -67,6 +69,8 @@ export function createHistoryReader(io) {
   /** @param {string} id */
   async function loop(id) {
     let stuck = 0;
+    /** 这一次 loop 里试过读预览的段：读不到或对不齐就不再试。 @type {Set<number>} */
+    const previewed = new Set();
     for (;;) {
       const self = io.getSelf(id);
       if (!self) return;
@@ -77,20 +81,34 @@ export function createHistoryReader(io) {
         if (again.delete(id)) continue;
         return;
       }
+      // 聚焦一个长的当前段：先读末尾 PREVIEW 条当预览，屏幕马上有东西看；整段照旧在后面读。
+      if (!p.sealed && p.from === 0 && self.messages > PREVIEW && io.getPreview(id)?.segment !== p.segment && !previewed.has(p.segment)) {
+        previewed.add(p.segment);
+        await readPreview(id, p.segment, self.messages - PREVIEW);
+        if (!io.getSelf(id)) return;
+      }
       const before = h.segs[p.segment]?.msgs.length ?? 0;
       let ended = false;
       let failed = false;
       let gaveUp = false;
+      // 一次请求读到的消息先攒着，收到 end（或 error）时一次并进缓存、重画一次。只攒 seq 连续的，跳号就停。
+      /** @type {import("./lib/types.js").Message[]} */
+      const got = [];
+      let merged = false;
       try {
         await tauStream({ op: "history", process: id, segment: p.segment, from: p.from }, (r) => {
-          // 读的同时 watch 也在往缓存里追加：每次从缓存取最新的，别用手里的旧副本盖掉。
-          h = io.getHist(id) ?? h;
           if (r.type === "message") {
-            h = applyMessage(h, r);
-          } else if (r.type === "end") {
+            if (r.segment === p.segment && r.seq === p.from + got.length) got.push(r.message);
+            return false;
+          }
+          if (r.type !== "end" && r.type !== "error") return false;
+          // 读的同时 watch 也在往缓存里追加：从缓存取最新的再并，别用手里的旧副本盖掉。
+          h = applyMessages(io.getHist(id) ?? h, p.segment, p.from, got);
+          merged = true;
+          if (r.type === "end") {
             h = applyEnd(h, r, p);
             ended = true;
-          } else if (r.type === "error") {
+          } else {
             failed = true;
             if (p.sealed) {
               h = giveUp(h, p.segment);
@@ -98,11 +116,12 @@ export function createHistoryReader(io) {
             }
           }
           io.setHist(id, h);
-          return r.type === "end" || r.type === "error";
+          return true;
         });
       } catch {
         failed = true;
       }
+      if (!merged && got.length > 0) io.setHist(id, applyMessages(io.getHist(id) ?? h, p.segment, p.from, got));
       h = io.getHist(id) ?? h;
       const after = h.segs[p.segment]?.msgs.length ?? 0;
       if (gaveUp) continue; // 抛错（连不上）不算放弃，走下面的退避。
@@ -112,6 +131,27 @@ export function createHistoryReader(io) {
         await sleep(800 * stuck);
       } else stuck = 0;
     }
+  }
+
+  /**
+   * 读当前段末尾 `from` 起的消息当预览。失败就跳过，不影响后面读整段。
+   * @param {string} id @param {number} segment @param {number} from
+   */
+  async function readPreview(id, segment, from) {
+    /** @type {import("./lib/types.js").Message[]} */
+    const msgs = [];
+    let ok = false;
+    try {
+      await tauStream({ op: "history", process: id, segment, from }, (r) => {
+        if (r.type === "message" && r.segment === segment && r.seq === from + msgs.length) msgs.push(r.message);
+        else if (r.type === "end") ok = true;
+        return r.type === "end" || r.type === "error";
+      });
+    } catch {
+      return;
+    }
+    const aligned = ok ? alignPreview(from, msgs) : null;
+    if (aligned) io.setPreview(id, { segment, ...aligned });
   }
 
   return {

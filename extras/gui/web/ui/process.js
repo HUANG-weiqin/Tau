@@ -118,7 +118,14 @@ function Stream({ app, e }) {
   const h = app.history(e.id);
   const segs = Object.keys(h.segs).map(Number).sort((a, b) => a - b);
   const cur = e.self.segment;
-  const msgs = segmentMessages(h, cur);
+  const full = segmentMessages(h, cur);
+  // 整段还没读到预览的末尾时，先用预览（只有末尾一截）；整段到了就用整段。
+  const pv0 = app.preview(e.id);
+  const pv = pv0 && pv0.segment === cur && full.length < pv0.start + pv0.msgs.length ? pv0 : null;
+  const msgs = pv ? pv.msgs : full;
+  const base = pv ? pv.start : 0;
+  /** 已知的条数：条目的 seq 是段内绝对序号。 */
+  const count = base + msgs.length;
   const lv = app.streamLive(e.id);
   const live = lv?.text ?? "";
   const running = e.status === "running";
@@ -126,12 +133,12 @@ function Stream({ app, e }) {
   const ended = e.self.phase.tag === "idle" ? e.self.phase.ended : undefined;
 
   const onFork = (/** @type {number} */ seq) => app.fork(e.id, seq);
-  const items = itemsOf(msgs);
+  const items = itemsOf(msgs, base);
   // 正在写的字将来是当前段第 e.self.messages 条消息。写完了、历史还没读到那条的，先留住（typer.js）。
   const awaiting = e.self.phase.tag === "awaitingModel";
   const liveSeq = awaiting ? e.self.messages : -1;
-  const holds = msgs.length < e.self.messages ? pending(e.id, cur, msgs.length, liveSeq) : [];
-  const sig = `${cur}:${msgs.length}:${live.length}:${lv?.thinking.length ?? 0}:${lv?.argsLen ?? 0}:${e.self.phase.tag}`;
+  const holds = count < e.self.messages ? pending(e.id, cur, count, liveSeq) : [];
+  const sig = `${cur}:${count}:${live.length}:${lv?.thinking.length ?? 0}:${lv?.argsLen ?? 0}:${e.self.phase.tag}`;
 
   // 跟着末尾走（留白进纸，见 follow.js）：往上翻着读的时候不拽，只提示。
   useLayoutEffect(() => {
@@ -169,13 +176,20 @@ function Stream({ app, e }) {
     rows.push(html`<${FoldRow} text=${`第 ${s} 段 · ${old.length} 条消息`} label=${openOld[s] ? "收起" : "展开"} onOpen=${() => setOpenOld({ ...openOld, [s]: !openOld[s] })} />`);
     if (openOld[s]) rows.push(...renderItems(app, e, itemsOf(old), s, false, null));
   }
-  if (msgs.length > 0) {
+  if (!pv && msgs.length > 0) {
     const first = msgs[0];
     rows.push(html`<${Band} label="换段" text=${`第 ${cur} 段从 ${first ? formatClock(app.clock(first.timestamp)) : ""} 开始`} />`);
   }
 
-  const turn = error ? turnStart(msgs) : null;
-  if (error && msgs.length > 0 && turn !== null) {
+  const turn = error && !pv ? turnStart(msgs) : null;
+  if (pv) {
+    // 预览：只画末尾那一截，和整段折叠时显示的末尾 14 条是同一批。前面的条数是第一个显示的条目的序号。
+    const shown = items.slice(-14);
+    const first = shown[0];
+    const lead = first && first.kind !== "fold" ? first.seq : base;
+    rows.push(html`<${FoldRow} text=${`前面还有 ${lead} 条消息，正在读取…`} />`);
+    rows.push(...renderItems(app, e, shown, cur, running, onFork));
+  } else if (error && msgs.length > 0 && turn !== null) {
     const before = items.filter((it) => it.kind !== "fold" && it.seq < turn);
     const after = items.filter((it) => it.kind !== "fold" && it.seq >= turn);
     if (before.length > 0) {
@@ -203,9 +217,12 @@ function Stream({ app, e }) {
   }
 
   if (error) {
-    const last = msgs[msgs.length - 1];
-    const turnMsgs = turn !== null ? msgs.slice(turn) : msgs;
-    rows.push(html`<${EndBand} app=${app} e=${e} ts=${last ? last.timestamp : null} turn=${turn} msgs=${turnMsgs} />`);
+    // 预览时不画结束带：它要整段才知道这一轮从哪开始。
+    if (!pv) {
+      const last = msgs[msgs.length - 1];
+      const turnMsgs = turn !== null ? msgs.slice(turn) : msgs;
+      rows.push(html`<${EndBand} app=${app} e=${e} ts=${last ? last.timestamp : null} turn=${turn} msgs=${turnMsgs} />`);
+    }
   } else {
     // 写完了、历史还没到的字留着；后面有新的正在写的行时，工作条只留在最后那行。
     for (const r of holds) rows.push(html`<${HeldRow} key=${`held${r.key}`} rec=${r} bar=${!awaiting} />`);

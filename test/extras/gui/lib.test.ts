@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { activityAt, applyFilter, attention, buildEntries, buildProjects, classify, currentOf, defaultPreset, filterCounts, indexPresets, projectView, railSections, seenFromInspect } from "../../../extras/gui/web/lib/derive.js";
 import { formatAgo, formatBytes, formatClock, formatContext, formatDuration, formatElapsed } from "../../../extras/gui/web/lib/format.js";
-import { applyEnd, applyMessage, applyPushed, emptyHistory, giveUp, known, lastTimestamp, noteSelf, plan, segmentMessages } from "../../../extras/gui/web/lib/history.js";
+import { alignPreview, applyEnd, applyMessage, applyMessages, applyPushed, emptyHistory, giveUp, known, lastTimestamp, noteSelf, plan, pushPreview, segmentMessages } from "../../../extras/gui/web/lib/history.js";
 import { canHandoff, CARRY_HEADER, clipText, describeNow, describeStart, firstTextLine, foldMiddle, forkPoints, HANDOFF_HEADER, itemsOf, parseUser, phaseStartedAt, summarizeCall, toItems, turnStart } from "../../../extras/gui/web/lib/messages.js";
 import { cleanPlan, stopOrder } from "../../../extras/gui/web/lib/order.js";
 import { removePlan, skippedFor } from "../../../extras/gui/web/lib/remove.js";
@@ -421,6 +421,75 @@ test("messages: itemsOf 按数组缓存，结果和 toItems 一样，新数组�
   assert.equal(next.length, first.length + 1);
   assert.equal((next[next.length - 1] as any).kind, "user");
   assert.equal(itemsOf(msgs), first);
+});
+
+test("history: applyMessages 和逐条 applyMessage 结果一样", () => {
+  const rnd = lcg(7);
+  for (let t = 0; t < 400; t++) {
+    const have = Math.floor(rnd() * 8);
+    const from = Math.floor(rnd() * 11);
+    const n = Math.floor(rnd() * 9);
+    let base = emptyHistory();
+    for (let i = 0; i < have; i++) base = applyMessage(base, { segment: 2, seq: i, message: user(`old${i}`, i) });
+    const batch = Array.from({ length: n }, (_, i) => user(`new${i}`, 100 + i));
+    let want = base;
+    batch.forEach((message, i) => (want = applyMessage(want, { segment: 2, seq: from + i, message })));
+    assert.deepEqual(applyMessages(base, 2, from, batch), want, `have=${have} from=${from} n=${n}`);
+  }
+});
+
+test("history: alignPreview 去掉开头的工具结果", () => {
+  const u = user("a");
+  const a = asst([call("c", "bash", {})]);
+  const r = (id: string) => result(id, "x");
+  assert.deepEqual(alignPreview(10, [u, a]), { start: 10, msgs: [u, a] });
+  assert.deepEqual(alignPreview(10, [r("1"), a]), { start: 11, msgs: [a] });
+  assert.deepEqual(alignPreview(10, [r("1"), r("2"), r("3"), u, a]), { start: 13, msgs: [u, a] });
+  assert.equal(alignPreview(10, [r("1"), r("2")]), null);
+  assert.equal(alignPreview(10, []), null);
+});
+
+test("history: pushPreview 只收正好接上的，不原地改", () => {
+  const pv = { segment: 3, start: 10, msgs: [user("a"), user("b")] };
+  const m = user("c");
+  const next = pushPreview(pv, { segment: 3, seq: 12, message: m });
+  assert.deepEqual(next.msgs.length, 3);
+  assert.equal(next.start, 10);
+  assert.equal(pv.msgs.length, 2);
+  assert.notEqual(next.msgs, pv.msgs);
+  assert.equal(pushPreview(pv, { segment: 3, seq: 13, message: m }), pv);
+  assert.equal(pushPreview(pv, { segment: 3, seq: 11, message: m }), pv);
+  assert.equal(pushPreview(pv, { segment: 4, seq: 12, message: m }), pv);
+  assert.equal(pv.msgs.length, 2);
+});
+
+test("messages: toItems 带 base 等于整段里 seq >= base 的条目", () => {
+  const msgs = [
+    user("q1", 1),
+    asst([call("a", "bash", { command: "ls" }), call("b", "bash", { command: "pwd" })], 2),
+    result("a", "ok", false, 3),
+    result("b", "boom", true, 4),
+    user("q2", 5),
+    asst([text("答"), call("c", "read", { path: "x" })], 6),
+    result("c", "内容", false, 7),
+    asst([call("d", "bash", {})], 8),
+    user("q3", 9),
+  ];
+  const all = toItems(msgs);
+  for (const k of [0, 1, 4, 5, 7, 8]) {
+    const part = toItems(msgs.slice(k), k);
+    assert.deepEqual(part, all.filter((it) => it.kind !== "fold" && it.seq >= k), `k=${k}`);
+  }
+});
+
+test("messages: itemsOf 同一数组 base 不同重算，相同回同一对象", () => {
+  const msgs = [user("hi", 1), asst([call("a", "bash", {})], 2), result("a", "ok", false, 3)];
+  const at0 = itemsOf(msgs, 0);
+  const at5 = itemsOf(msgs, 5);
+  assert.notEqual(at5, at0);
+  assert.deepEqual(at5, toItems(msgs, 5));
+  assert.equal(itemsOf(msgs, 5), at5);
+  assert.equal(itemsOf(msgs, 0) instanceof Array, true);
 });
 
 // ---------- derive ----------

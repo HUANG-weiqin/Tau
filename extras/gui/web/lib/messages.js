@@ -188,11 +188,12 @@ function statusOf(r) {
 
 /**
  * 一段的消息变成条目。助手消息里的工具调用按位置配上它后面连着的工具结果（同内核：ID 来自模型，可能为空或重复）；多出来的结果单列。
- * 条目的 `seq` 是消息在段里的序号。
+ * 条目的 `seq` 是消息在段里的序号。`messages` 是从第 `base` 条起的一截时，传 `base`：所有输出里的 seq 都加上它。
  * @param {readonly Message[]} messages
+ * @param {number} [base]
  * @returns {Item[]}
  */
-export function toItems(messages) {
+export function toItems(messages, base = 0) {
   const claimed = new Set();
   /** 助手消息的序号 → 它后面连着的结果（按顺序）。 @type {Map<number, { seq: number, m: import("./types.js").ToolResultMessage }[]>} */
   const following = new Map();
@@ -210,7 +211,7 @@ export function toItems(messages) {
   messages.forEach((m, seq) => {
     if (m.role === "user") {
       const p = parseUser(m);
-      items.push(p.handoff ? { kind: "handoff", seq, ts: m.timestamp, note: p.handoff.note, carried: p.handoff.carried, brief: p.handoff.brief, images: p.images } : { kind: "user", seq, ts: m.timestamp, note: p.note, letters: p.letters, images: p.images });
+      items.push(p.handoff ? { kind: "handoff", seq: seq + base, ts: m.timestamp, note: p.handoff.note, carried: p.handoff.carried, brief: p.handoff.brief, images: p.images } : { kind: "user", seq: seq + base, ts: m.timestamp, note: p.note, letters: p.letters, images: p.images });
     } else if (m.role === "assistant") {
       /** @type {Call[]} */
       const calls = [];
@@ -220,12 +221,12 @@ export function toItems(messages) {
         if (b.type !== "toolCall") continue;
         const r = mine[k++];
         if (r) claimed.add(r.seq);
-        const result = r ? resultOf(r.m, r.seq) : null;
+        const result = r ? resultOf(r.m, r.seq + base) : null;
         calls.push({ id: b.id, name: b.name, args: b.arguments, summary: summarizeCall(b.name, b.arguments), status: statusOf(result), result });
       }
       items.push({
         kind: "assistant",
-        seq,
+        seq: seq + base,
         ts: m.timestamp,
         text: m.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join(""),
         thinking: m.content.flatMap((b) => (b.type === "thinking" ? [b.thinking] : [])).join("\n"),
@@ -236,26 +237,27 @@ export function toItems(messages) {
     }
   });
   messages.forEach((m, seq) => {
-    if (m.role === "toolResult" && !claimed.has(seq)) items.push({ kind: "orphanResult", seq, ts: m.timestamp, name: m.toolName, result: resultOf(m, seq) });
+    if (m.role === "toolResult" && !claimed.has(seq)) items.push({ kind: "orphanResult", seq: seq + base, ts: m.timestamp, name: m.toolName, result: resultOf(m, seq + base) });
   });
   return items.sort((a, b) => seqOf(a) - seqOf(b));
 }
 
-/** @type {WeakMap<readonly Message[], Item[]>} */
+/** @type {WeakMap<readonly Message[], { base: number, items: Item[] }>} */
 const itemsCache = new WeakMap();
 
 /**
  * `toItems` 按消息数组缓存：同一个数组回同一个结果对象。
  * 前提：缓存里的消息数组从不原地改（新消息进来总是生成新数组），返回的条目只读。
+ * 同一个数组 `base` 不同就重算。
  * @param {readonly Message[]} messages
+ * @param {number} [base]
  * @returns {Item[]}
  */
-export function itemsOf(messages) {
-  let items = itemsCache.get(messages);
-  if (!items) {
-    items = toItems(messages);
-    itemsCache.set(messages, items);
-  }
+export function itemsOf(messages, base = 0) {
+  const hit = itemsCache.get(messages);
+  if (hit && hit.base === base) return hit.items;
+  const items = toItems(messages, base);
+  itemsCache.set(messages, { base, items });
   return items;
 }
 
